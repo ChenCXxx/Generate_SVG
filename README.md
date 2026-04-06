@@ -4,8 +4,13 @@ This project contains scripts to automate generating figures and SVGs from metho
 
 ## Prerequisites
 
-- Python 3.12+ (managed via `uv` or `conda`/`venv`)
-- API Keys for Gemini, HuggingFace (RMBG-2.0), and optionally Roboflow SAM3.
+- **Python 3.12+**: Managed via `uv`, `conda`, or `venv`.
+- **Gemini API Key**: Used as the primary AI model for image generation and SVG structuring.
+- **HuggingFace Token (`HF_TOKEN`)**: Required to download the gated background removal model (`briaai/RMBG-2.0`).
+  - You must visit the model page: [briaai/RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0)
+  - Click **Agree and access repository** to accept the license agreement.
+  - Generate a **Read** token in your HuggingFace account settings to use in the `.env` file.
+- **Roboflow API Key (Optional)**: If you choose to use Roboflow's SAM3 API for image segmentation instead of a local model.
 
 ## Environment Setup
 
