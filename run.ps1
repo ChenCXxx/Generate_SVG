@@ -18,7 +18,6 @@ if ($null -eq $files) {
     foreach ($f in $files) {
         $idx = $f.BaseName
         Write-Host "--- Processing: $idx ---"
-        python autofigure2.py --method_file "$($f.FullName)" --output_dir "outputs\$idx" --provider gemini --api_key "AIzaSyCGCmEy4FyYkCU2vVW7OBIRB5GeOlf3XUA" --sam_backend roboflow --sam_api_key "vdC5opyaIIbSWzQXhEAQ"
-    }
+        python autofigure2.py --method_file "$($f.FullName)" --output_dir "outputs\$idx"
 }
 Write-Host "Success!"
