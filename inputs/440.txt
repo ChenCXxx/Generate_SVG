@@ -1,0 +1,454 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Domain adaptation (DA) problem is a widely studied area in computer vision field \cite{gong2012geodesic, ganin2016domain, tzeng2017adversarial, saito2020universal, lee2019drop}, 
+which aims to transfer knowledge from label-rich source domains to label-scare target domains where dataset shift \cite{joaquin2008dataset} or domain shift \cite{tommasi2016learning} exists.
+The existing unsupervised domain adaptation (UDA) methods usually explore the idea of learning domain-invariant feature representations based on the theoretical analysis \cite{bendavid2006analysis}.
+These methods can be generally categorized several types, 
+\emph{i.e.},
+moment matching methods \cite{li2020enhanced, long2015learning, sun2016deep}, 
+and adversarial learning methods \cite{ganin2015unsupervised, saito2018maximum, ganin2016domain, long2018conditional}.
+The most essential challenge of domain adaptation is how to find a suitable utilization of intra-domain information and inter-domain information to properly align target samples. 
+More specifically, 
+it is a trade-off 
+between
+discriminating data samples of different categories within a domain to the greatest extent possible,
+and 
+learning transferable features across domains with the existence of domain shift.
+To achieve this, adversarial learning methods implicitly mitigate the domain shift by driving the feature extractor to extract indistinguishable 
+features and fool the domain classifier.
+The adversarial DA methods have been increasingly developed and followed by a series of works \cite{cui2020gradually, li2021bi, chen2022reusing}.
+However, 
+it is very unexpected that the remarkable transferability of DANN \cite{ganin2015unsupervised} is enhanced at the expense of worse discriminability 
+\cite{chen2019transferability, kundu2022balancing}.
+To mitigate this problem, there is a promising line of studies that explore graph-based UDA algorithms \cite{chen2020graph, zhang2018structural, luo2022attention}.
+The core idea is to establish correlation graphs within domains and leverage the rich topological information to connect inter-domain samples and decrease their distances.
+In this way,
+self-correlation graphs with intra-domain information are constructed, which exhibits the homophily property whereby nearby samples tend to receive similar predictions \cite{mcpherson2001birds}.
+There comes the problem that is how to transfer the inter-domain information with these rich topological information.
+Graph matching is a direct solution to inter-domain alignment problems.
+Explicit graph matching methods are usually designed to find sample-to-sample mapping relations, requiring multiple matching stages for nodes and edges respectively \cite{chen2020graph}, or complicated structure mapping with an attention matrix
+\cite{luo2022attention}.
+Despite the promise, we find that such a point-wise matching strategy can be restrictive and inflexible.
+In effect,
+UDA does not require an exact mapping plan from one node to another one in different domains.
+Its expectation is to align the entire feature space such that label information of source domains can be transferred and utilized in target domains.
+
+In this work, we introduce a novel graph spectral alignment perspective for UDA, hierarchically solving the aforementioned problem. 
+In a nutshell, our method encapsulates a coarse graph alignment module and a fine-grained message propagation module, jointly balancing inter-domain transferability and intra-domain discriminability.
+Core to our method, we propose a novel spectral regularizer that projects domain graphs into eigenspaces and aligns them based on their eigenvalues. This gives rise to coarse-grained topological structures transfer across domains but in a more intrinsic way
+than restrictive point-wise matching. %\todo{}.
+Thereafter, we perform the fine-grained message passing in the target domain via a neighbor-aware self-training mechanism. 
+By then, our algorithm is able to refine the transferred topological structure to produce a discriminative domain classifier. 
+We conduct extensive evaluations on several benchmark datasets including DomainNet, OfficeHome, Office31, and VisDA2017.
+The exprimental results show that our method consistently outperforms existing state-of-the-art domain adaptation methods, 
+improving the accuracy on 8.6\% on original DomainNet dataset and about 2.6\% on OfficeHome dataset.
+Furthermore, 
+the comprehensive model analysis demonstrates the the superiority of our method in efficacy, robustness, discriminability and transferability.  
+
+
+Preliminaries
+
+    \vpara{Problem Description.}
+    Given source domain data $\mathcal{D}_s=\left\{\left(x_i^s, y_i^s\right)\right\}_{i=1}^{N_s}$
+    of $N_s$ labeled samples 
+    associated with $C_s$ categories from $\mathcal{X}_s \times \mathcal{Y}_s$
+    and target domain data $\mathcal{D}_t=\left\{x_i^t\right\}_{i=1}^{N_t}$ 
+    of $N_t$ unlabeled samples 
+    associated with $C_t$ categories from $\mathcal{X}_t$.
+    We assume that the domains share the same feature and label space but follow different marginal data distributions, following the Covariate Shift \cite{hidetoshi2000improving}; 
+    that is, $P\left(\mathcal{X}_s\right) \neq P\left(\mathcal{X}_t\right)$ 
+    but $P\left(\mathcal{Y}_s \mid \mathcal{X}_s\right) = P\left(\mathcal{Y}_t \mid \mathcal{X}_t\right)$. 
+    Domain adaptation just occurs when the underlying distributions corresponding to the source and target domains in the shared label space are different but similar enough to make sense the transfer \cite{david2010impossibility}. 
+    The goal of unsupervised domain adaptation is to predict the label $\left\{y_i^t\right\}_{i=1}^{N_t}$ in the target domain, where $y_i^t \in \mathcal{Y}_t$, 
+    and the source task is $\mathcal{X}_s \rightarrow \mathcal{Y}_s$ assumed to be the same with the target task $\mathcal{X}_t \rightarrow \mathcal{Y}_t$.
+
+    \vpara{Adversarial Domain Adaptation.}
+    The family of adversarial domain adaptation methods, \emph{e.g.}, Domain Adversarial Neural Network (DANN) \cite{ganin2015unsupervised} have become significantly influential in domain adaptation. 
+    The fundamental idea behind is to learn transferable features that explicitly reduce the domain shift. 
+    Similar to standard supervised classification methods, these approaches include a feature extractor 
+    $F(\cdot)$
+    and a category classifier 
+    $C(\cdot)$.
+    Additionally, 
+    a domain classifier $D(\cdot)$ is trained to distinguish the source domain from the target domain
+    and meanwhile the feature extractor $F(\cdot)$ is trained to  confuse the domain classifier and learn domain-invariant features. 
+    The supervised classification loss $\mathcal{L}_{cls}$ and 
+    domain adversarial loss $\mathcal{L}_{adv}$ are presented as bellow:
+    \begin{equation}
+    \label{eq:cls_and_adv}
+    \begin{split}
+        \mathcal{L}_{cls} & =  \mathbb{E}_{\left(x_i^s, y_i^s\right) \sim \mathcal{D}_{\mathcal{S}}} 
+        \mathcal{L}_{ce} \left(C\left( F\left(x_i^s\right) \right), y_i^s\right)
+        \\
+        \mathcal{L}_{adv} & =  \mathbb{E}_{F\left(x_i^s\right) \sim \tilde{\mathcal{D}}_s} 
+        \log \left[D\left( F\left(x_i^s\right) \right)\right] \\
+        & +\mathbb{E}_{F \left(x_i^t\right) \sim \tilde{\mathcal{D}}_t} 
+        \log \left[1-D\left(F\left(x_i^t\right)\right)\right]
+    \end{split}
+    \end{equation}
+    where $ \tilde{\mathcal{D}}_s $ and $\tilde{\mathcal{D}}_t $ denote the induced feature distributions of $\mathcal{D}_s$ and $\mathcal{D}_t$ respectively, 
+    and $\mathcal{L}_{ce} (\cdot , \cdot)$ is the cross-entropy loss function.
+
+
+
+Methodology
+    In this section, 
+    we will give a specific introduction to our approach.
+    The overall pipeline is shown in Figure \ref{fig:framework}.
+    Our method is able to effectively utilize both intra-domain and inter-domain relations simultaneously for domain adaptation tasks.
+    Specifically, 
+    based on our constructed dynamic graphs in Section \ref{sec:graph_construction},
+    we propose a novel framework that
+    utilizes graph spectra to align inter-domain relations
+    in Section \ref{sec:spectral_penalty},
+    and leverages intra-domain relations via neighbor-aware propagation mechanism in Section \ref{sec:pseudo_label}.
+    Our approach enables us to effectively capture the underlying domain distributions while ensuring that the learned features are transferable across domains.
+
+\begin{figure*}[!h]
+\centering
+\includegraphics[width=\textwidth]{figures/framework.png}
+\caption{
+The overall architecture.
+The final objective integrates 
+supervised classification loss $\mathcal{L}_{cls}$,
+domain adversarial loss $\mathcal{L}_{adv}$,
+neighbor-aware propagation loss $\mathcal{L}_{nap}$, and 
+graph spectral alignment loss $\mathcal{L}_{spa}$.
+}
+\label{fig:framework}
+\end{figure*}
+
+\subsection{Dynamic Graph Construction}  \label{sec:graph_construction}
+    Images and text data inherently contain rich sequential or spatial structures that can be effectively represented using graphs. 
+    By constructing graphs based on the data, 
+    both intra-domain relations and inter-domain relations can be exploited. 
+    For instance,
+    semantic and spatial relations among detected objects in an image \cite{li2019relation}, 
+    cross-modal relations among images and sentences \cite{cheng2022cross}, cross-domain relations among images and texts \cite{chen2020graph, iscen2019label} have been successfully modeled using graph-based representations.    
+    In this paper,
+    leveraging self-correlation graphs enables us to 
+    model the relations between different samples within domain and capture the underlying data distributions.
+    
+    Our self-correlation graphs are constructed on source features and target features respectively.
+    A feature extractor $F(\cdot)$ can be designed to learn source features $f_s$ and target features $f_t$ from source domain samples $\mathbf{x}_s$ and target domain samples $\mathbf{x}_t$ respectively,     
+    \emph{i.e.}, 
+    $f_s = F(x_s )$ and
+    $f_t = F(x_t )$.
+    Given the extracted features $f_s$, 
+    we aim to construct a undirected and weighted graph $\mathcal{G}_s = (\mathcal{V}_s, \mathcal{E}_s)$.
+    Each vertex $v_i \in \mathcal{V}_s$ is represented by a feature vector $f_i^s$.
+    Each weighted edge $e_{i, j} \in \mathcal{E}_s$ can be formulated as a relation between a pair of entities $\delta (f_i^s, f_j^s )$, 
+    where $\delta(\cdot)$ denotes a metric function.
+    With the extracted features $f_t$, 
+    another graph $\mathcal{G}_s = (\mathcal{V}_t, \mathcal{E}_t)$ can be constructed in the same way.
+    Note that both $f_s$ and $f_t$ keep evolving 
+    along with the update of parameter $\theta$ during the training process.
+    Their adjacency matrices are denoted as $\mathbf{A}_s$ and $\mathbf{A}_t$ respectively.
+    As is well-known,
+    the adjacency matrix of a graph contains all of its topological information.
+    By representing these graphs in domain adaptation tasks,
+    we can directly obtain the intra-domain relations and regard inter-domain alignment as a graph matching problem \cite{chen2020graph}.
+    
+
+\subsection{Graph Spectral Alignment}  \label{sec:spectral_penalty}
+    In this section,
+    we will introduce how to align inter-domain relations for source domain graphs and target domain graphs. 
+    In domain adaptation scenarios where domain shift exits,
+    if we directly construct a graph with source and target domain features together, 
+    we can only obtain a graph beyond the homophily assumption.
+    In this way,
+    a necessary domain alignment comes out.
+
+    
+    As stated in Section \ref{sec:graph_construction},
+    based on our correlation graphs, 
+    the inter-domain alignment can be regard as a graph matching problem.
+    Explicit graph matching methods aim to find a one-to-one correspondence between nodes or edges of two graphs and typically involve solving a combinatorial optimization problem for node matching and edge matching respectively \cite{chen2020graph}.
+    Nevertheless,
+    our goal is often to align the distributions of the source and target domains and learn domain-invariant features,
+    instead of requiring such an complicated matching approach.
+    Therefore,
+    we prefer a implicit graph alignment method, avoiding multiple stages of explicit graph matching.
+
+    The distance between the spectra of graphs is able to measure how far apart the spectrum of a graph with $n$ vertices can be from the spectrum of any other graph with $n$ vertices \cite{aouchiche2014distance, stevanovic2007research, gu2015spectral},
+    leading to a simplification of measuring the discrepancy of graphs.
+    Inspired by this, we give the definitions of graph laplacians and spectral distances:
+    \begin{definition}
+    \label{def:graph_laplacians}
+    \textsc{(Graph Laplacians \cite{luxburg2007tutorial})}.
+        Let $\mathcal{G} = (\mathcal{V}, \mathcal{E}) $ be a finite graph with vertices $\mathcal{V}$ and weighted edges $\mathcal{E}$.
+        Let $\phi : \mathcal{V} \rightarrow \mathcal{R} $ be a function of the vertices taking values in a ring
+        and $\gamma : \mathcal{E} \rightarrow \mathcal{R} $ be a weighting function of weighed edges.
+        Then, the graph Laplacian $\Delta$ acting on $\phi$ and $\gamma$ is defined by 
+        $$(\Delta_{\gamma} \phi)(v)=\sum_{w: d(w, v)=1} \gamma_{wv}[\phi(v)-\phi(w)]$$
+        where $d(w, v)$ is the graph distance between vertices $w$ and $v$, 
+        and $\gamma_{wv}$ is the weight value on the edge $wv \in \mathcal{E}$.
+    \end{definition}
+    \begin{definition}
+    \label{def:laplacian_spectra}
+    \textsc{(Spectral Distances)} .
+        Given two simple and nonisomorphic graphs
+        $\mathcal{G}_s$ and $\mathcal{G}_t$
+        on $n$ vertices 
+        with the spectra of Laplacians 
+        $\Lambda_s = \left\{\lambda_i^s\right\}_{i=1}^n$ with 
+        $\lambda_1^s \ge \lambda_2^s \ge \cdots \ge \lambda_n^s $
+        and
+        $\Lambda_t = \left\{\lambda_i^t\right\}_{i=1}^n$ with 
+        $\lambda_1^t \ge \lambda_2^t \ge \cdots \ge \lambda_n^t $
+        respectively.
+        Define the spectral distance between $\mathcal{G}_s$ and $\mathcal{G}_t$ as
+        $$ \sigma(\mathcal{G}_s, \mathcal{G}_t) = \Vert \Lambda_s - \Lambda_t \Vert_p , \quad p \ge 1 $$
+    \end{definition}
+
+    For a simple undirected graph with a finite number of vertices and edges, 
+    the definition \ref{def:graph_laplacians} is just identical to the Laplacian matrix.
+    With the adjacency matrix $\mathbf{A}_s$ of source domain graph $\mathcal{G}_s$,
+    we can obtain its Laplacian matrix $\mathbf{L}_s$ and its Laplacian eigenvalues $\Lambda_s$. 
+    Similarly, we yield Laplacian matrix $\mathbf{L}_t$ and Laplacian eigenvalues $\Lambda_t$.
+    Following the definition Def.\ref{def:laplacian_spectra}, 
+    we can calculate the spectral distances between source domain graph $\mathcal{G}_s$ and target domain $\mathcal{G}_t$, and thus the graph spectral penalty is defined as bellow:
+    \begin{equation}
+    \label{eq:spectral_loss}
+    \begin{split}
+    \mathcal{L}_{gsa} & =  \sigma(\mathcal{G}_s, \mathcal{G}_t)
+    \end{split}
+    \end{equation}
+    This spectral penalty measures the discrepancy of two graphs on spectrum space.
+    Minimizing this penalty decreases the distance of source domain graphs and target domain graphs.
+    It can also be regarded as a regularizer and easy to combine with existing domain adaptation methods.
+
+    \vpara{More Insights.}
+    Graph Laplacian filters are a type of signal processing filter to apply a smoothing operation to the signal on a graph by taking
+    advantage of the local neighborhood structure of the graph represented by the Laplacian matrix \cite{brouwer2011spectra}.
+    A graph filter can be denoted as $(f * g)_{\mathcal{G}} = U g_{\Lambda} U^{T} f$, 
+    where $f$ is a signal on graph $\mathcal{G}$, and
+    $\Lambda$ and $U$ is the eigenvalues and eigenvectors of Laplacian matrix $L = U\Lambda U^T$.
+    This filer is also the foundation of classic graph neural networks \cite{bruna2014spectral, defferrard2016convolutional, kipf2017semi} and
+    usually infers the labels of unlabeled nodes with the information from the labeled ones in a graph.
+    Similar to the hypothesis in \cite{zhuo2023towards},
+    source features and target features will be aligned into the same eigenspace along with the learning process and finally only differs slightly in the eigenvalues $g_{\Lambda}$.
+
+    
+    
+\subsection{Neighbor-aware Propagation Mechanism} \label{sec:pseudo_label}
+
+    In this section,
+    we will introduce how to exploit intra-domain relations within target domain graphs. 
+    The well-trained source domain naturally forms tight clusters in the latent space.
+    After aligning via the aforementioned graph spectral penalty,
+    the rich topological information is coarsely transferred to the target domain.
+    To perform the fine-grained intra-domain alignment,
+    we take a further step by encouraging message propagation within the target domain graph.
+
+    Intuitively,
+    we adopt the weighted $k$-Nearest-Neighbor (KNN) classification algorithm \cite{wu2018unsupervised} to generate pseudo-label for target domain graph.
+    We focus on unlabelled target samples 
+    $\left\{x_i^t\right\}_{i=1}^{N_t}$  
+    and thus omit the domain subscript $t$ for clarity.
+    Let $p_i = C\left( F\left( x_i \right)\right) $ denotes the $C_t$-dimensional prediction of unlabelled target domain sample $x_i$ 
+    and $p_{i}^m$ denotes its mapped probability stored in the memory bank.
+    A vote is obtained from the top $k$ nearest labelled samples for each unlabelled sample $x_i \in \mathbf{x}$, 
+    which is denoted as $\mathcal{N}_i$.
+    The vote of each neighbor $j \in \mathcal{N}_i$ is weighted by the corresponding predicted probabilities $p_{j, c}$
+    that data sample $x_j$ will be identified as category $c$.
+    Therefore, the voted probability $p_{i, c}$ of data sample $x_i$ corresponding to class $c$ can be defined as 
+    $q_{i, c} = \textstyle \sum_{j \neq i, j \in \mathcal{N}_i} p^m_{j, c}$.
+    and we yield the normalized probability 
+    $ \hat{q}_{i, c} =  q_{i, c}  / \textstyle \sum_{m=1}^{C_t} q_{i, m} $ and
+    the pseudo-label $\hat{y}$ for data sample $x_i$ can be calculated as 
+    $ \hat{y}_i = \mathop{\arg \max}_{c} \hat{q}_{i, c} $.
+    Considering different neighborhoods $\mathcal{N}_i$ lie in different local density, 
+    we should expect a larger weight for the target data in higher local density
+    \cite{liang2021domain}. 
+    Obviously, a larger $\hat{q}_{i, c}$ means the data sample $x_i$ lies in a neighborhood of higher density.
+    In this way, we directly utilize the category-normalized probability $\hat{q}_{i, c}$ as the confidence value for each pseudo-label and thus
+    the weighted cross-entropy loss based on the pseudo-labels is formulated as:
+    \begin{equation}
+    \label{eq:pl_loss}
+    \begin{split}
+        \mathcal{L}_{nap} & =  - \alpha \cdot \frac{1}{N_t} \textstyle \sum_{i=1}^{N_t} \hat{q}_{i, \hat{y}_i} \log p_{i, \hat{y}_i}
+    \end{split}
+    \end{equation}
+    where
+    $\alpha$ is the coefficient term properly designed to grow along with iterations
+    to mitigate the noises in the pseudo-labels at early iterations and avoid the error accumulation \cite{lee2013pseudo}.
+    Note that our neighbor-aware propagation loss only depends on unlabeled target data samples, just following the classic self-training method \cite{jin2020minimum}. 
+    \vpara{Memory Bank.}
+    We design the memory bank to store prediction probabilities and their associated feature vectors mapped by their target data indices.
+    Before storing them,
+    we firstly apply the sharpening technique to fix the ambiguity in the predictions of 
+    target domain data \cite{berthelot2019mixmatch, guo2017calibration}:
+    \begin{equation}
+    \label{eq:memory_prob}
+    \begin{split}
+        \tilde{p}_{j, c} & =  p_{j, c}^{-\tau}  / \textstyle \sum_{x=1}^{C_t} p_{j, x}^{-\tau}
+    \end{split}
+    \end{equation}
+    where $\tau$ is the temperature to scale the prediction probabilities.
+    As $\tau \rightarrow 0$, the probability will collapse to a point mass \cite{lee2013pseudo}.
+    Then, we utilize L2-norm to normalize feature vectors $f_i$.
+    Finally, we store the sharpened prediction $\tilde{p}_i$ and its associated normalized feature $\Vert f_i \Vert $ to the memory bank via $\beta$-exponential moving averaging (EMA) strategy, updating them for each iteration. 
+    The predictions stored in the memory bank $p_i^m$ are utilized to approximate real-time probability for pseudo-label generation,    
+    and the feature vectors $f_i^m$ stored in the memory bank are employed to construct graphs before neighbor-aware propagation. 
+    
+
+    
+    \vpara{The Final Objective.}
+    At the end of our approach, 
+    let us integrate all of these losses together, \emph{i.e},
+    supervised classification loss $\mathcal{L}_{cls}$ and domain adversarial loss $\mathcal{L}_{adv}$ descried in Eq.\ref{eq:cls_and_adv},
+    the loss of neighbor-aware propagation mechanism $\mathcal{L}_{nap}$ in Eq.\ref{eq:pl_loss},
+    and the loss of graph spectral alignment $\mathcal{L}_{gsa}$ in Eq.\ref{eq:spectral_loss}.
+    Finally, we can obtain the final objective as follows:
+    \begin{equation}
+    \label{eq:total_loss}
+    \begin{split}
+        \mathcal{L}_{total} & =  \mathcal{L}_{cls} 
+                              +  \mathcal{L}_{adv} 
+                              +  \mathcal{L}_{gsa} 
+                              +  \mathcal{L}_{nap}
+    \end{split}
+    \end{equation}
+    For the sake of simplicity, 
+    we leave out the loss scale for $\mathcal{L}_{adv}$ and $\mathcal{L}_{gsa}$ here. 
+    Just as the coefficient term $\alpha$ in $\mathcal{L}_{nap}$,
+    these two losses are also adjusted with specific scales in the implementation. 
+    For more detailed implementation specifics, please refer to our source code.
+    Note that we only describe the problem of unsupervised domain adaptation here 
+    our approach can easily to extend to semi-supervised domain adaptation scenario. 
+    Concerning the labeled data,
+    we employ the standard cross-entropy loss with label-smoothing regularization \cite{szegedy2016rethinking} in our implementation.
+    We also give different trials of similarity metrics and graph laplacians. 
+    More concrete details are in the following section.
+
+
+
+Experiments
+In this section, we present our main empirical results to show the effectiveness of our method.
+To evaluate the effectiveness of our architecture, 
+we conduct comprehensive experiments under unsupervised domain adaptation, semi-supervised domain adaptation settings. 
+The results of other compared methods are directly reported from the original papers.
+ 
+
+\subsection{Experimental Setups}
+    \vpara{Datasets.} 
+    We conduct experiments on 4 benchmark datasets:
+    1) \textbf{Office31} \cite{saenko2010adapting} is a widely-used benchmark for visual DA. 
+    It contains 4,652 images of 31 office environment categories from three domains: 
+    \textit{Amazon} (A), \textit{DSLR} (D), and \textit{Webcam} (W), 
+    which correspond to online website, digital SLR camera and web camera images respectively.
+    2) \textbf{OfficeHome} \cite{venkateswara2017deep} is a challenging dataset that consists of images of everyday objects from four different domains: 
+    \textit{Artistic} (A), \textit{Clipart} (C), \textit{Product} (P), and \textit{Real-World} (R). 
+    Each domain contains 65 object categories in office and home environments, 
+    amounting to 15,500 images around. 
+    Following the typical settings \cite{chen2019transferability}, 
+    we evaluate methods on one-source to one-target domain adaptation scenario, 
+    resulting in 12 adaptation cases in total.
+    3) \textbf{VisDA2017} \cite{peng2018visda} is a large-scale benckmark that attempts to bridge the significant synthetic-to-real domain gap with over 280,000 images across 12 categories. 
+    The source domain has 152,397 synthetic images generated by rendering from 3D models. 
+    The target domain has 55,388 real object images collected from \textit{Microsoft COCO} \cite{lin2014microsoft}.
+    Following the typical settings \cite{na2021fixbi}, 
+    we evaluate methods on synthetic-to-real task and present test accuracy for each category.
+    4) \textbf{DomainNet} \cite{peng2019moment} is a large-scale dataset containing about 600,000 images across 345 categories, 
+    which span 6 domains with large domain gap: 
+    \textit{Clipart} (C), \textit{Infograph} (I), \textit{Painting} (P), \textit{Quickdraw} (Q), \textit{Real} (R), and \textit{Sketch} (S).
+    Following the settings in \cite{tllib}, we compare various methods for 12 tasks among C, P, R, S domains on the original DomainNet dataset. 
+
+    \vpara{Implementation details.} 
+    We use PyTorch and tllib toolbox \cite{tllib} to implement our method 
+    and fine-tune ResNet pre-trained on ImageNet \cite{he2016deep, he2016identity}. 
+    Following the standard protocols for unsupervised domain adaptation in previous methods \cite{liang2021domain, na2021fixbi}, 
+    we use the same backbone networks for fair comparisons. 
+    For Office31 and OfficeHome dataset, we use ResNet-50 as the backbone network. 
+    For VisDA2017 and DomainNet dataset, we use ResNet-101 as the backbone network.
+    We adopt mini-batch stochastic gradient descent (SGD) with a momentum of 0.9, 
+    a weight decay of 0.005, and an initial learning rate of 0.01,
+    following the same learning rate schedule in \cite{liang2021domain}.
+
+
+\subsection{Result Comparisons}
+
+    In this section,
+    we compare SPA with various state-of-the-art methods for unsupervised domain adaptation (UDA) scenario, and  \textit{Source Only} in UDA task means the model trained only using labeled source data. 
+    We also extend SPA to semi-suerpervised domain adaptation (SSDA) scenario and conduct experiments on 1-shot and 3-shots setting. 
+    With the page limits, see supplementary material for details. 
+    
+\begin{table*}[htbp]
+\centering
+\caption{
+Classification Accuracy (\%) on DomainNet for unsupervised domain adaptation (inductive), 
+using ResNet101 as backbone. 
+The best accuracy is indicated in \textbf{bold} and 
+the second best one is \underline{underlined}.
+Note that we compare methods on the original DomainNet dataset with train/test splits in target dataset, leading to an inductive scenario.
+}
+\label{tab:close_uda_domainnet}
+    \resizebox{0.98\textwidth}{!}{
+        \begin{tabular}{l|cccccccccccc|c}
+        \toprule 
+        Method & 
+        C$\rightarrow$P & C$\rightarrow$R & C$\rightarrow$S & 
+        P$\rightarrow$C & P$\rightarrow$R & P$\rightarrow$S & 
+        R$\rightarrow$C & R$\rightarrow$P & R$\rightarrow$S & 
+        S$\rightarrow$C & S$\rightarrow$P & S$\rightarrow$R & Avg. \\
+        \midrule 
+        \textit{Source Only} \cite{he2016deep} &
+        32.7 & 50.6 & 39.4 & 41.1 & 56.8 & 35.0 & 48.6 & 48.8 & 36.1 & 49.0 & 34.8 & 46.1 
+        & 43.3 \\
+        DAN \cite{long2015learning} &
+        38.8 & 55.2 & 43.9 & 45.9 & 59.0 & 40.8 & 50.8 & 49.8 & 38.9 & 56.1 & 45.9 & 55.5 
+        & 48.4 \\
+        DANN \cite{ganin2015unsupervised} &
+        37.9 & 54.3 & 44.4 & 41.7 & 55.6 & 36.8 & 50.7 & 50.8 & 40.1 & 55.0 & 45.0 & 54.5 
+        & 47.2 \\
+        BCDM \cite{li2021bi} &
+        38.5 & 53.2 & 43.9 & 42.5 & 54.5 & 38.5 & 51.9 & 51.2 & 40.6 & 53.7 & 46.0 & 53.4 
+        & 47.3 \\
+        MCD \cite{saito2018maximum} &
+        37.5 & 52.9 & 44.0 & 44.6 & 54.5 & 41.6 & 52.0 & 51.5 & 39.7 & 55.5 & 44.6 & 52.0 
+        & 47.5 \\
+        ADDA \cite{tzeng2017adversarial} &
+        38.4 & 54.1 & 44.1 & 43.5 & 56.7 & 39.2 & 52.8 & 51.3 & 40.9 & 55.0 & 45.4 & 54.5 
+        & 48.0 \\
+        CDAN \cite{long2018conditional} &
+        39.9 & 55.6 & 45.9 & 44.8 & 57.4 & 40.7 & 56.3 & 52.5 & 44.2 & 55.1 & 43.1 & 53.2 
+        & 49.1 \\
+        MCC \cite{jin2020minimum} & 
+        40.1 & 56.5 & 44.9 & 46.9 & 57.7 & 41.4 & 56.0 & 53.7 & 40.6 & 58.2 & 45.1 & 55.9 
+        & 49.7 \\
+        JAN \cite{long2017deep} &
+        40.5 & 56.7 & 45.1 & 47.2 & \underline{59.9} & 43.0 & 54.2 & 52.6 & 41.9 & 56.6 & 46.2 & 55.5 
+        & 50.0 \\
+        MDD \cite{li2020maximum} &
+        42.9 & \underline{59.5} & 47.5 & 48.6 & 59.4 & 42.6 & 58.3 & 53.7 & 46.2 & 58.7 & 46.5 & \underline{57.7} 
+        & 51.8 \\
+        SDAT \cite{rangwani2022closer} &
+        41.5 & 57.5 & 47.2 & 47.5 & 58.0 & 41.8 & 56.7 & 53.6 & 43.9 & 58.7 & 48.1 & 57.1 
+        & 51.0 \\
+        Leco \cite{wang2022revisiting} &
+        \underline{44.1} & 55.3 & \underline{48.5} & \underline{49.4} & 57.5 & \underline{45.5} & \underline{58.8} & \underline{55.4} & \underline{46.8} & \underline{61.3} & \underline{51.1} & \underline{57.7} 
+        & \underline{52.6} \\
+        \midrule
+        \rowcolor{Gray} SPA (Ours) &
+        \textbf{54.3} & \textbf{70.9} & \textbf{56.1} & 
+        \textbf{59.3} & \textbf{71.5} & \textbf{51.8} & 
+        \textbf{64.6} & \textbf{59.6} & \textbf{52.1} & 
+        \textbf{66.0} & \textbf{57.4} & \textbf{70.6}
+        & \textbf{61.2} \\ 
+        \bottomrule
+        \end{tabular}
+    }
+\end{table*}
+    Table \ref{tab:close_uda_domainnet} (DomainNet) show the results on DomainNet dataset.
+    We compare SPA with the various state-of-the-art methods for inductive UDA scenario on this large-scale dataset.
+    The inductive setting refers that we use the train/test splits of target domain data as the original dataset \cite{peng2019moment}. 
+    During the training process, we can use the train split of target domain data and then we use the test split of target domain data for testing.
+    This setting is relatively more difficult than others with the large-scale data amount and inductive learning.
+    Only a few of works follows this setti
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,395 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[scale=0.38]{figs/concept.png}
+    \caption{Comparison of dense retrievers in terms of considered query type and supported skill configuration
+ $^{[a]}$\cite{karpukhin-etal-2020-dense}
+ $^{[b]}$\cite{xiong2020answering} 
+ $^{[c]}$\cite{wu-etal-2020-scalable}. Each box represents a skill (
+\colorbox{blue}{\color{blue}a}$=$\textit{single retrieval},
+\colorbox{green}{\color{green}a}$=$\textit{expanded retrieval},
+\colorbox{yellow}{\color{yellow}a}$=$\textit{linking},
+\colorbox{red}{\color{red}a}$=$\textit{reranking},
+) and the arrows represent the order of execution. In our case, we can flexibly combine and chain the skills at inference time for different tasks to achieve optimal performance.}
+    \label{fig:intro}
+\end{figure}
+Gathering supportive evidence from external knowledge sources is critical for knowledge-intensive tasks, 
+such as open-domain question answering \citep[ODQA;][]{lee-etal-2019-latent} and fact verification \cite{thorne-etal-2018-fever}.
+Since different ODQA datasets focus on different information-seeking goals, this task typically is handled by customized retrieval models \cite{karpukhin-etal-2020-dense,yang-etal-2018-hotpotqa,wu-etal-2020-scalable,ma2022opendomain}.
+However, this dataset-specific paradigm has limited model scalability and transferability.
+For example, augmented training with single-hop data hurts multi-hop retrieval \cite{xiong2020answering}.
+Further, as new information needs constantly emerge, dataset-specific models are hard to reuse. 
+In this work, we propose \ourmodellong (\ourmodelshort), a modular retriever based on Transformer \cite{vaswani2017attention},
+where each module implements a \textit{reusable} skill 
+that can be used for different ODQA datasets.
+Here, we identify a set of such retrieval reasoning skills:
+\textit{single retrieval, expanded query retrieval, entity span proposal, entity linking} and \textit{reranking} (\S\ref{sec:background}).
+As shown in \autoref{fig:intro}, recent work has only explored certain skill configurations.
+We instead consider jointly learning all skills in a multi-task contrastive learning fashion.
+Besides the benefit of solving multiple ODQA datasets, our multi-skill formulation provides unexplored ways to chain skills for individual use cases.
+In other words, it allows flexible configuration search according to the target domain, which can potentially lead to better retrieval performance (\S\ref{sec:exp}).
+
+For multi-task learning, one popular approach is to use a shared text encoder \cite{liu-etal-2019-mtdnn}, \ie sharing representations from Transformer and only learning extra task-specific headers atop.
+However, this method suffers from undesirable task interference, \ie negative transfer among retrieval skills.
+To address this, we propose a new modularization parameterization inspired by the recent mixture-of-expert in sparse Transformer \cite{fedus2021switch},
+\ie mixing specialized and shared representations.
+Based on recent analyses on Transformer \cite{meng2022locating}, we design an attention-based alternative that is more effective in mitigating task interference (\S\ref{sec:analysis}).
+Further, we develop a multi-task pretraining using \textit{self-supervision} on Wikipedia so that the pretrained \ourmodelshort can be directly used for retrieval without dataset-specific supervision.
+
+To validate the effectiveness of \ourmodelshort, we consider zero-shot and fine-tuning evaluations with regard to the model in-domain and cross-dataset generalization. 
+Six representative ODQA datasets are used: Natural Questions \citep[NQ;][]{kwiatkowski-etal-2019-natural}, WebQuestions \citep[WebQ;][]{berant-etal-2013-semantic}, SQuAD \cite{rajpurkar-etal-2016-squad}, EntityQuestions \cite{Sciavolino-etal-2021-simple}, HotpotQA \cite{yang-etal-2018-hotpotqa} and OTT-QA \cite{chen2021ottqa}, where the last two are multi-hop datasets.
+Experiments show that our multi-task pretrained retriever achieves superior \textit{zero-shot} performance compared to recent state-of-the-art (SOTA) \textit{self-supervised} dense retrievers and BM25 \cite{10.1561/1500000019}.
+When fine-tuned using multiple datasets jointly, \ourmodelshort can further benefit from high-quality supervision effectively, leading to new SOTA retrieval results across the board. 
+Further analyses show the benefits of our modularization parameterization for multi-task pretraining and fine-tuning, as well as flexible skill configuration via \ourmodellong inference
+
+\input{figs/model_arch.tex}
+
+
+
+Background
+\label{sec:background}
+
+We consider five retrieval reasoning skills:
+\textit{single retrieval}, \textit{expanded query retrieval}, 
+\textit{entity linking}, 
+\textit{entity span proposal} and \textit{reranking}.
+Conventionally, each dataset provides annotations on a different combination of skills (see \autoref{tab:stats}).
+Hence, we can potentially obtain training signals for individual skills from multiple datasets.
+Below we provide some background for these skills.
+
+\noindent\textbf{Single Retrieval}
+Many ODQA datasets \citep[\eg NQ;][]{kwiatkowski-etal-2019-natural} concern simple/single-hop queries.
+Using the original question as input (\autoref{fig:model_figure} bottom-left),
+single-retrieval gathers isolated supportive passages/tables from target sources in one shot \cite{karpukhin-etal-2020-dense}.
+
+\noindent\textbf{Expanded Query Retrieval}
+To answer complex multi-hop questions ,
+it typically requires evidence chains of two or more separate passages \citep[\eg HotpotQA;][]{yang-etal-2018-hotpotqa} or tables \citep[\eg OTT-QA;][]{chen2021ottqa}.
+Thus, follow-up rounds of retrieval are necessary after the initial single retrieval.
+The expanded query retrieval \cite{xiong2020answering} takes an expanded query as input, where the question is expanded with the previous-hop evidence (\autoref{fig:model_figure} bottom-center).
+The iterative retrieval process generally shares the same target source.
+
+\noindent\textbf{Entity Span Proposal}
+Since many questions concern entities, 
+detecting those salient spans in the question or retrieved evidence is useful.
+The task is related to named entity recognition (NER), except requiring only binary predictions, \ie whether a span corresponds to an entity.
+It is a prerequisite for generating entity-centric queries (context with target entities highlighted; \autoref{fig:model_figure} bottom-right) where targeted entity information can be gathered via downstream entity linking.
+
+\noindent\textbf{Entity Linking}
+Mapping detected entities to the correct entries in
+a database is crucial for analyzing factoid questions.
+Following \citet{wu-etal-2020-scalable}, we consider an entity-retrieval approach, \ie using the entity-centric query for retrieving its corresponding Wikipedia entity description.
+
+\noindent\textbf{Rereanking}
+Previous work often uses a reranker to improve the evidence recall in the top-ranked candidates.
+Typically, the question with a complete evidence chain is used together for reranking.
+
+
+Approach
+In this work, we consider a holistic approach to gathering supportive evidence for ODQA, \ie the evidence set contains both singular tables/passages (from single retrieval) and connected evidence chains (via expanded query retrieval/entity linking).
+As shown in \autoref{fig:model_figure}, \ourmodelshort supports flexible skill configurations, \eg expanded query retriever and the entity linker can build upon the single-retrieval results.
+As all retrieval skill tasks are based on contrastive learning, we start with the basics for our multi-task formulation.
+We then introduce our modularization parameterization for reducing task interference.
+Lastly, we discuss ways to use self-supervision for pretraining and inference strategies.
+
+\subsection{Reasoning Skill Modules}
+\label{ssec:reasoning_skill_modules}
+
+All reasoning skills use text encoders based on Transformer \cite{vaswani2017attention}.
+Particularly, only BERT-base \cite{devlin-etal-2019-bert} is considered without further specification. 
+Text inputs are prepended with a special token \clstoken~and different segments are separated by the special token \septoken.
+The bi-encoder architecture \cite{karpukhin-etal-2020-dense} is used for single retrieval, expanded query retrieval, and entity linking. We use dot product for sim$(\cdot, \cdot)$.
+
+\noindent \textbf{Retrieval} 
+As single retrieval and expanded query retrieval only differ in their query inputs, these two skills are discussed together here.
+Specifically, both skills involve examples of a question $Q$, a positive document $P^+$.
+Two text encoders are used, \ie a query encoder for questions and a context passage encoder for documents.
+For the expanded query case (\autoref{fig:model_figure} bottom-center), 
+we concatenate $Q$ with the previous-hop evidence
+as done in \citet{xiong2020answering}, \ie 
+\clstoken~$Q$ \septoken~$P^+_1$ \septoken.
+Following the literature, \clstoken~vectors from both encoders are used to represent the questions and documents respectively.
+The training objective is
+\begin{equation}
+      L_\textsubscript{ret} = -{\exp(\text{sim}(\qvec, \pvec^+)) \over \sum_{\pvec^\prime\in\mathcal{P}\cup\{\pvec^+\}} \exp(\text{sim}(\qvec, \pvec^\prime))},
+    \label{eqn:obj_retrieve}  
+\end{equation}
+where $\qvec, \pvec$ are the query and document vectors respectively and $\mathcal{P}$ is the set of negative documents. 
+
+\noindent \textbf{Entity Span Proposal}
+To achieve a multi-task formulation, we model entity span proposal based on recent contrastive NER work \cite{zhang2022optimizing}. 
+Specifically, for an input sequence with $N$ tokens, $x_1, \ldots, x_N$, we encode it with a text encoder to a sequence of vectors
+$\hvec_1^m, \ldots, \hvec_N^m \in\RR^d$. 
+We then build the span representations using the span start and end token vectors,
+$\mvec_{(i,j)} = \text{tanh}((\hvec^m_{i} \oplus \hvec^m_{j})W^a)$,
+where $i$ and $j$ are the start and end positions respectively,
+$\oplus$ denotes concatenation,
+tanh is the activation function,
+and $W^a \in\RR^{2d \times d}$ are learnable weights.
+For negative instances, we randomly sample spans within the maximum length of 10 from the same input which do not correspond to any entity.
+Then we use a learned anchor vector $\svec \in\RR^d$ for contrastive learning, \ie pushing it close to the entity spans and away from negative spans.
+\begin{equation}
+      L_\textsubscript{pos} = -{\exp(\text{sim}(\svec,  \mvec^+)) \over \sum_{\mvec^\prime\in\mathcal{M}\cup\{\mvec^+\}} \exp(\text{sim}(\svec, \mvec^\prime))},
+    \label{eqn:obj_pos}  
+\end{equation}
+where $\mathcal{M}$ is the negative span set which always contains a special span corresponding to \clstoken, $\mvec^\clstoken=\hvec^m_0$.
+However, the above objective alone is not able to determine the prediction of entity spans from null cases at test time. To address this, we further train the model with an extra objective to learn a dynamic threshold using $\mvec^\clstoken$
+\begin{equation}
+      L_\textsubscript{cls} = -{\exp(\text{sim}(\svec,\mvec^\clstoken) \over \sum_{\mvec^\prime\in\mathcal{M}} \exp(\text{sim}(\svec, \mvec^\prime))}.
+    \label{eqn:obj_cls}  
+\end{equation}
+The overall entity span proposal loss is computed as 
+    $L_\textsubscript{span} = (L_\textsubscript{pos} + L_\textsubscript{cls})/2$.
+Thus, spans with scores higher than the threshold are predicted as positive.
+
+\noindent \textbf{Entity Linking}
+Unlike \citet{wu-etal-2020-scalable} where entity markers are inserted to the entity mention context (the entity mention with surrounding context), we use the raw input sequence as in the entity span proposal task.
+For the entity mention context, we pass the input tokens $x_1, \ldots, x_N$ through the entity query encoder to get $\hvec_1^e, \ldots, \hvec_N^e \in\RR^d$.
+Then we compute the entity vector based on its start position $i$ and end position $j$, \ie
+    $\evec = (\hvec_i^e + \hvec_j^e)/2$.
+For entity descriptions, we encode them with the entity description encoder and use the \clstoken~vector $\pvec_e$ as representations. 
+The model is trained to match the entity vector with its entity description vector  
+\begin{equation}
+      L_\textsubscript{link} = -{\exp(\text{sim}(\evec,  \pvec_e^+)) \over \sum_{\pvec^\prime\in\mathcal{P}_e\cup\{\pvec_e^+\}} \exp(\text{sim}(\evec, \pvec^\prime))},
+    \label{eqn:obj_link}  
+\end{equation}
+where $\pvec_e^+$ is the linked description vector and $\mathcal{P}_e$ is the negative entity description set.
+
+\noindent \textbf{Reranking} 
+Given a question $Q$ and a passage $P$, we concatenate them as done in expanded query retrieval format $\clstoken~Q~\septoken~P~\septoken$, and encode it using another text encoder.
+We use the pair consisting of the \clstoken~vector $\hvec^r_{\clstoken}$ and the first \septoken~vector $\hvec_{\septoken}^r$ from the output for reranking.
+The model is trained using the loss
+\begin{equation}
+\small L_\textsubscript{rank} = -{\exp(\text{sim}(\hvec_{\clstoken}^{r+},  \hvec_{\septoken}^{r+})) \over \sum_{\pvec^{r\prime}\in\mathcal{P}_r\cup\{\pvec^{r+}\}} \exp(\text{sim}(\hvec_{\clstoken}^{r\prime}, \hvec_{\septoken}^{r\prime}))},
+    \label{eqn:obj_rank}  
+\end{equation}
+where $\mathcal{P}_r$ is the set of negative passages concatenated with the same question.
+Intuitively, our formulation encourages $\hvec^r_\clstoken$ to capture more information about the question and $\hvec^r_\septoken$ to focus more on the evidence.
+The positive pair where the evidence is supportive likely has higher similarity than the negative ones.
+Our formulation thus spares the need for an extra task-specific header. 
+As the model only learns to rerank single passages, we compute the score for each passage separately for multi-hop cases.  
+
+\input{2-2multi_task_specialization.tex}
+
+\input{2-3taser_pretraining.tex}
+
+\subsection{Inference}
+During inference, different skills can be flexibly combined to boost retrieval accuracy.
+Those studied configurations are illustrated in \autoref{fig:intro}.
+To consolidate the evidence set obtained by different skills, we first align the linking scores based on the same step retrieval scores (single or expanded query retrieval) for sorting.
+Documents returned by multiple skills are considered more relevant and thus promoted in ranking.
+ 
+
+
+
+Experiments
+\label{sec:exp}
+
+\input{tabs/zero_shot_tab.tex}
+
+\subsection{Datasets}
+We consider six popular datasets for evaluation, all focused on Wikipedia,
+ with four single-hop data, NQ \cite{kwiatkowski-etal-2019-natural}, WebQ \cite{berant-etal-2013-semantic}, SQuAD \cite{rajpurkar-etal-2016-squad} and EntityQuestions \cite{Sciavolino-etal-2021-simple}; two multi-hop data, HotpotQA \cite{yang-etal-2018-hotpotqa} and OTT-QA \cite{chen2021ottqa}.
+ Dataset-specific corpora are used for multi-hop datasets, because HotpotQA requires retrieval hopping between text passages while table-passage hopping is demanded by OTT-QA.
+ For single-hop data, we use the Wikipedia corpus from \citet{karpukhin-etal-2020-dense}.
+ 
+
+\subsection{Evaluation Settings}
+\label{ssec:eval_setup}
+We evaluate our model in three scenarios.
+
+\noindent\textbf{Zero-shot Evaluation}
+Similar to recent self-supervised dense retrievers on Wikipedia, we conduct zero-shot evaluations using the retrieval skill from our pretrained model on NQ, WebQ, EntityQuestions and HotpotQA.
+To assess the model's ability to handle expanded query retrieval, we design an oracle second-hop retrieval setting (gold first-hop evidence is used) based on HotpotQA.
+Following \citet{izacard2021contriever} and \citet{ram-etal-2022-learning}, we report top-$k$ retrieval accuracy (answer recall),
+\ie the percentage of questions for which the answer string is found in the top-$k$ passages.
+
+\noindent\textbf{Supervised In-domain Evaluation}
+We further fine-tune our pretrained model with two extra skills (entity span proposal and reranking) on NQ, HotpotQA and OTT-QA, again in a multi-task fashion.
+Unlike multi-hop data with supervision for all skills, only single retrieval and reranking data is available for NQ.
+During training, all datasets are treated equally without any loss balancing.
+Different from previous retrieval-only work, we explore \ourmodellong retrieval by using different skill configurations.
+Specifically, we use skill configuration for task A, B and C shown in \autoref{fig:intro} for NQ, OTT-QA and HotpotQA, respectively.
+We again report top-$k$ retrieval accuracy for NQ and OTT-QA following previous work.
+For HotpotQA, we follow the literature using the top-1 pair of evidence accuracy (passage EM).
+
+\noindent\textbf{Cross-data Evaluation}
+To test the model robustness towards domain shift,
+we conduct cross-data evaluations on SQuAD and EntityQuestions.
+Although considerable success has been achieved for supervised dense retrievers using in-domain evaluations,
+those models have a hard time generalizing to query distribution shift \citep[\eg questions about rare entities;][]{Sciavolino-etal-2021-simple} compared with BM25.
+In particular, we are interested to see whether \ourmodellong retrieval is more robust.
+Again, top-$k$ retrieval accuracy is used.
+
+\subsection{Results}
+\input{tabs/nq_ft_tab.tex}
+
+\input{tabs/ott_ft_tab.tex}
+\input{tabs/hotpot_ft_tab.tex}
+\noindent\textbf{Zero-shot Results}
+\label{ssec:zero_shot}
+For zero-shot evaluations, we use two recent self-supervised dense retrievers,
+Contriever \cite{izacard2021contriever} and
+Spider \cite{ram-etal-2022-learning},
+and BM25 as baselines.
+The results are presented in \autoref{tab:zero-shot}.
+As we can see, BM25 is a strong baseline matching the average retrieval performance of Spider and Contriever over considered datasets.
+\ourmodelshort achieves similar results on NQ and WebQ compared with self-supervised dense methods. 
+On the other hand, we observe significant gains on HotpotQA and EntityQuestions, where both dense retrievers are lacking.
+In summary, our model shows superior zero-shot performance in terms of average answer recall across the board, surpassing BM25 with the largest gains, which indicates the benefit of our multi-task pretraining.
+\noindent\textbf{Supervised In-domain Results}
+\label{ssec:fine_tune}
+As various customized retrievers are developed for NQ, OTT-QA and HotpotQA,
+we compare \ourmodelshort with different dataset-specific baselines separately.
+For NQ, we report two types of baselines,
+1) bi-encoders with multi-dataset training and 2) models with \textit{augmented pretraining}. For the first type, we have DPR-multi \cite{karpukhin-etal-2020-dense} and ANCE-multi \cite{xiong2021approximate}, where the DPR model is initialized from BERT-based and ANCE is initialized from DPR. For the second type, DPR-PAQ \citep{oguz-etal-2022-domain} is initialized from the RoBERTa-large model \cite{liu2019roberta} with pretraining using synthetic queries (the PAQ corpus \cite{lewis-etal-2021-paq}),
+co-Condenser \citep{gao-callan-2022-unsupervised} incorporated retrieval-oriented modeling during language model pretraining on Wikipedia; SPAR-wiki \citep{chen2021salient} combine a pretrained lexical model on Wikipedia with a dataset-specific dense retriever. Both co-Condenser and SPAR-wiki are initialized from BERT-base. As shown by results for NQ (\autoref{tab:sup-nq}), \ourmodelshort outperforms all baselines with or without pretraining. It is particularly encouraging that despite being a smaller model, \ourmodelshort achieves superior performance than DPR-PAQ. The reasons are two-fold: \citet{oguz-etal-2022-domain} has shown that scaling up the retriever from base to large size only provides limited gains after pretraining. Moreover, DPR-PAQ only learns a single retrieval skill, whereas \ourmodelshort can combine multiple skills for inference. We defer the analysis of the advantage of chain-of-skills inference later (\S\ref{ssec:cos_inference}).
+
+For OTT-QA, we only compare with the SOTA model CORE \cite{ma2022opendomain}, because other OTT-QA specific retrievers are not directly comparable where extra customized knowledge source is used.
+As CORE also uses multiple skills to find evidence chains, we include a baseline where the inference follows the CORE skill configuration but uses modules from \ourmodelshort.
+For HotpotQA, we compare against three types of baselines,
+dense retrievers focused on expanded query retrieval MDR \cite{xiong2020answering} and Baleen \cite{khattab2021baleen},
+sparse retrieval combined with query reformulation IRRR \cite{qi-etal-2021-answering} and TPRR \cite{10.1145/3404835.3462942}
+and ensemble of dense, sparse and hyperlink retrieval HopRetriever \cite{hopretriever} and AISO \cite{zhu-etal-2021-adaptive}. The results on OTT-QA and HotpotQA are summarized in \autoref{tab:sup-ott} and \autoref{tab:sup-hotpot}. It is easy to see that \ourmodelshort outperforms all the baselines here, again showing the advantage of our configurable multi-skill model over multiple types of ODQA tasks.
+Later, our analyses show that both \ourmodellong inference and pretraining contribute to the observed gains.
+
+\input{tabs/cross_eval_on_entq_squad_tab.tex}
+\noindent\textbf{Cross-data Results}\label{ssec:cross_eval}
+Given that both EntityQuestions and SQuAD are single-hop, we use baselines on NQ with improved robustness for comparison.
+Particularly, SPAR-wiki is an ensemble of two dense models with one pretrained using BM25 supervision on Wikipedia and the other fine-tuned on NQ.
+BM25 is included here, as it is found to achieve better performance than its dense counterpart on those two datasets.
+The evaluation results are shown in \autoref{tab:cross_eval}.
+Overall, our model achieves the largest gains over BM25 on both datasets,
+indicating that our multi-task fine-tuned model with \ourmodellong inference is more robust than previous retrieval-only approaches.
+
+
+
+Analysis
+\label{sec:analysis}
+
+\begin{table}
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lccc}
+\toprule
+ & \#Params & \textbf{Top-20}  &  \textbf{Top-100}\\
+\midrule
+\ourmodellong inference\\
+\midrule
+No Expert & 111M & 90.2 & 92.4 \\
+FFN Expert(naive) & 252M  & 91.3 & 93.4 \\
+MHA Expert(naive) & 182M  & 92.0 & 94.0 \\
+MHA Expert(COS) & 182M & 92.0 & 94.2 \\
+\midrule
+Retrieval-only inference \\
+\midrule
+Multi-hop Retriever & 110M & 85.1 & 88.9 \\
+MHA Expert(naive) & 182M  & 82.8 & 87.0 \\
+MHA Expert(COS) & 182M & 85.9 & 89.6 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Ablation results on HotpotQA dev using top-$k$ retrieval accuracy. All models are initialized from BERT-base and trained on HotpotQA only.}
+\label{tab:abla-hotpot}
+\end{table}
+\subsection{Task Interference}
+\label{ssec:task_interference}
+We conduct ablation studies on HotpotQA to compare different ways of implementing skill-specific specialization (discussed in \S\ref{ssec:multi_skill_specialization}) and their effects on task interference.
+As MHA experts are used for our model, we consider two variants for comparison: 1) the no-expert model where all tasks share one encoder, and 2) the FFN expert model where specialized FFN sub-layers are used.
+Then we also compare the proposed expert configuration with a variant where the expanded query retrieval inputs share the same expert as single retrieval, denoted as the naive setting.
+The results are shown in the upper half of \autoref{tab:abla-hotpot}.
+Compared with the no-expert model, both FFN and MHA experts can effectively reduce task interference, wherein MHA expert is more effective overall.
+Our proposed expert configuration can further help.
+\begin{figure}
+    \centering
+    \includegraphics[scale=0.23]{figs/skills.png}
+    \caption{Top-$100$ retrieval accuracy on inference strategy: \ourmodellong vs retrieval-only.}
+    \label{fig:skills}
+\end{figure}
+\begin{figure}
+    \centering
+    \includegraphics[scale=0.25]{figs/pretrain.png}
+    \caption{Comparison on the effect of pretraining using top-$100$ retrieval accuracy with COS inference.
+    }
+    \label{fig:pretrain}
+\end{figure}
+
+\subsection{Benefit of \ourmodellong Inference}
+\label{ssec:cos_inference}
+Here we explore the benefits of the chained skill inference over the retrieval-only version. We additionally train a multi-hop retriever following \citet{xiong2020answering}, and compare it with the two MHA expert models using the same two rounds of retrieval-only inference.
+The comparison is shown in the lower part of \autoref{tab:abla-hotpot}.
+As we can see, retrieval-only inference suffers large drops in performance.
+Although our proposed and naive MHA expert configurations have similar performance using \ourmodellong inference, the naive configuration model shows severe degradation caused by task interference compared with the multi-hop retriever,
+validating the effectiveness of our proposed model.
+We further compare our \ourmodellong inference with the retrieval-only inference on NQ, EntityQuestions and SQuAD in \autoref{fig:skills}.
+It is easy to see that our pretraining can benefit the retrieval-only version.
+However, using better skill configurations via \ourmodellong inference yields further improvements, particularly on those unseen datasets. 
+\subsection{Effect of Pretraining}
+\label{ssec:pretraining}
+To further demonstrate the benefit of our proposed multi-task pretraining, we fine-tune another multi-task model following the same training protocol as \ourmodelshort but BERT model weights are used for initialization.
+Both \ourmodelshort and the model without pretraining are then using the same skill configuration for inference.
+The results are illustrated in \autoref{fig:pretrain}.
+Similar to the retrieval-only version (\autoref{fig:skills}), we find that \ourmodelshort consistently outperforms the multi-task model without pretraining across all considered datasets using \ourmodellong inference.
+Again, the pretrained model is found to achieve improvements across the board, especially on out-of-domain datasets, which validates the benefits of our multi-task pretraining. 
+
+\input{tabs/swap_expert_tab}
+\subsection{Swapping Experts}
+To understand if different experts in our model learned different specialized knowledge, we experiment with swapping experts for different inputs on HotpotQA. In particular, we feed the single query input and expanded query input to different query experts and then retrieve from either the context passage index or the entity description index. For single query input, we measure if the model can retrieve one of the positive passages. For expanded query input, we compute the recall for the other positive passage as done in (\S\ref{ssec:zero_shot}).
+The results are shown in \autoref{tab:swap-expert}. Although both the single query expert and the expanded query expert learn to retrieve evidence using the \clstoken token, swapping the expert for either of these input types leads to a significant decrease in performance. Also, switching to the entity query expert and retrieving from the entity description index results in a large drop for both types of inputs. This implies that each specialized expert acquires distinct knowledge and cannot be substituted for one another. 
+
+
+
+Question Answering Experiments
+Here, we conduct end-to-end question-answering experiments on NQ, OTT-QA and HotpotQA, using retrieval results from \ourmodelshort.
+Following the literature, we report exact match (EM) accuracy and F1 score.
+
+For NQ and OTT-QA, we re-implement the Fusion-in-Encoder (FiE) model \cite{kedia2022fie} because of its superior performance on NQ.
+For NQ, the model reads top-100 passages returned by \ourmodelshort, and for OTT-QA, the model reads top-50 evidence chains, in order to be comparable with previous work.
+Here, separate models are trained for each dataset independently.
+Due to space constraints, we only present the results on OTT-QA and leave the NQ results to \autoref{tab:nq-qa}.
+The OTT-QA results are summarized in \autoref{tab:ott-qa}.
+Our model, when coupled with the FiE, is able to outperform the previous baselines by large margins on OTT-QA, and we can see that the superior performance of our model is mainly due to \ourmodelshort.
+
+Finally, for HotpotQA, since the task requires the model to predict supporting sentences in addition to the answer span, 
+we follow \citet{zhu-etal-2021-adaptive} to train a separate reader model to learn answer prediction and supporting sentence prediction jointly.
+Due to space constraints, we leave the full results to \autoref{tab:hotpot-qa}.
+Overall, our method achieves competitive QA performance against the previous SOTA with improved exact match accuracy. 
+
+\begin{table}
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{Dev} & \multicolumn{2}{c}{Test} \\
+ & \textbf{EM} &  \textbf{F1} & \textbf{EM} &  \textbf{F1}\\
+\midrule
+HYBRIDER \cite{chen-etal-2020-hybridqa} & 10.3 & 13.0 & 9.7 & 12.8 \\
+FR+CBR\cite{chen2021ottqa}  & 28.1 & 32.5 & 27.2 & 31.5 \\
+CARP \cite{zhong2022reasoning} & 33.2 & 38.6 & 32.5 & 38.5 \\
+OTTer \cite{huang2022mixedmodality} & 37.1 & 42.8 & 37.3 & 43.1 \\
+CORE \cite{ma2022opendomain} & 49.0 & 55.7 & 47.3 & 54.1 \\
+\midrule
+CORE + FiE & 51.4  & 57.8 & - & - \\
+\ourmodelshort + FiE & \bf 56.9 & \bf 63.2 & \bf 54.9 & \bf 61.5 \\
+\bottomrule
+\end{tabular}
+}
+\caption{End-to-end QA results on OTT-QA.}
+\label{tab:ott-qa}
+\end{table}
+
+
+
+Related Work
+Dense retrievers are widely used in recent literature for ODQA \cite{lee-etal-2019-latent,karpukhin-etal-2020-dense}. While most previous work focuses on single retrieval \cite{xiong2021approximate,qu-etal-2021-rocketqa}, some efforts have also been made towards better handling of other query types. \citet{xiong2020answering} propose a joint model to handle both single retrieval and expanded query retrieval.
+\citet{chen2021salient} train a dense model to learn salient phrase retrieval.  
+\citet{ma2022opendomain} build an entity linker to handle multi-hop retrieval.
+Nevertheless, all those models are still customized for sp
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

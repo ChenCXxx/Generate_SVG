@@ -1,0 +1,394 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Crowd counting aims to estimate the number of persons in a scene. 
+With the advances of deep learning and  construction of large-scale datasets~\cite{zhang2016single,idrees2018composition,sindagi2020jhu,wang2020nwpu}, this topic has become an important topic with numerous applications.
+State-of-the-art approaches are mainly based on convolutional neural networks (CNNs)~\cite{jiang2020attention,li2018csrnet,liu2022leveraging,wang2021self,wan2021generalized,gao2019domain,abousamra2021localization,liang2022focal,lin2022boosting} and transformers ~\cite{tian2021cctrans,sun2021boosting,qian2022segmentation,liang2022end}. 
+While these approaches count crowds effectively on normal images, they typically do not perform well under adverse weather conditions such as haze, rain, and snow. 
+However, adverse weather is a common and inevitable scenario that causes large appearance variations of crowd scenes, thereby significantly affecting the performance of methods developed for clear weather.  
+As shown in~\figref{fig:teasor_fig}, the state-of-the-art crowd counting method~\cite{lin2022boosting} performs well only under good weather conditions.
+Thus, it is of great importance to develop robust crowd counting methods for adverse weather conditions. 
+
+\begin{figure}[t!]
+\centering \includegraphics[width=0.49\textwidth,page=1]{images/teasor_fig.pdf}{}
+\makeatother 
+\caption{\textbf{Performance of State-of-the-art crowd counting methods under adverse and clear weather on the JHU-Crowd++~\cite{sindagi2020jhu} dataset using mean absolute error (MAE).} The MAN method~\cite{lin2022boosting} achieves low MAE in clear scenes but high MAE in adverse weather. 
+On the other hand, the two-stage method, based on Unified~\cite{chen2022learning} and MAN~\cite{lin2022boosting}), performs slightly better in adverse weather but slightly worse in clear scenes. 
+Overall, the proposed AWCC-Net performs favorably in both scenarios.}
+\label{fig:teasor_fig}
+\end{figure}
+To solve the crowd counting problem under adverse weather, a plausible solution is to consider a two-stage model. 
+Specifically, this strategy pre-processes images using the state-of-the-art image restoration modules~\cite{chen2022learning,valanarasu2022transweather} and then applies the state-of-the-art crowd counting method~\cite{lin2022boosting}. 
+However, this two-stage method may not perform well due to several factors.  
+First, adopting existing image restoration methods does not always facilitate the crowd counting task significantly since these methods are designed to restore image contents rather than visual classification or regression.
+As shown in~\figref{fig:teasor_fig}, a two-stage approach does not address this problem effectively. 
+Second, this strategy requires to collect and label images under adverse weather conditions for the restoration process. 
+In addition, a two-stage strategy may increase computational complexity significantly. 
+
+In this work, we propose a method based on a transformer to robustly count crowds under adverse and clear scenes without exploiting typical image restoration modules. 
+We develop the \textbf{a}dverse \textbf{w}eather \textbf{c}rowd \textbf{c}ounting network (AWCC-Net) which leverages learned weather queries for robust crowd counting. 
+In our model, the weather queries are adopted to match the keys and values extracted from the VGG encoder~\cite{simonyan2014very} based on the cross-attention design.
+However, the learned weather queries cannot well represent the weather information without appropriate constraints. 
+To improve this situation, we present a contrastive weather-adaptive module to improve the learned weather queries. 
+This adaptive module computes a weight vector which is combined with the learned weather bank to construct input-dependent weather queries. 
+We use the proposed contrastive loss to enforce the learned weather queries to be weather-related. 
+With this weather-adaptive module, more robust weather queries can be learned which help the network understand and adapt to the various weather degradation types in the input image.
+
+Extensive experimental results show that the proposed AWCC-Net model performs robustly and favorably against the state-of-the-art schemes for crowd counting under adverse weather conditions without weather annotations. 
+We make the following contributions in this work:
+\begin{compactitem}
+\item We present the AWCC-Net for crowd counting under adverse weather. Our method is based on a transformer architecture that can learn weather-aware crowd counting.
+\item We propose a module to constrain the learned queries to be weather-relevant, thereby improving model robustness under adverse weather.
+\end{compactitem}
+
+
+
+Related Work
+\subsection{Crowd Counting}
+Existing crowd counting methods are mainly based on: (i) detection~\cite{liu2018decidenet,sam2020locate,liu2019point,wang2021self}, (ii) density map~\cite{gao2019domain,idrees2018composition,abousamra2021localization,gao2020learning,liang2022focal,xu2022autoscale,jiang2020attention, sindagi2017generating}, and (iii) regression~\cite{jiang2020attention, sindagi2017generating,idrees2013multi,chen2012feature,chan2009bayesian,song2021rethinking}.
+\noindent \smallskip\\
+\textbf{Counting by detection.} These approaches use detectors, e.g., Faster RCNN~\cite{ren2015faster}, for crowd counting.
+ In~\cite{liu2019point}, a method based on curriculum learning detects and learns
+ to predict and count bounding boxes of persons via a locally-constrained regression loss.
+ Sam~\etal\cite{sam2020locate} leverages the nearest neighbor distance to generate pseudo bounding boxes and adopt the winner-take-all loss to optimize the box selection during the training stage.
+ This technique can benefit the optimization of images with higher resolutions.
+\noindent \smallskip\\
+\textbf{Counting by density map.} In this mainstream approach, the crowd count is derived via summing over the estimated density map of a scene.
+In~\cite{idrees2018composition}, the Gaussian Kernel is applied to construct the density map and propose the composition loss to optimize the crowd counting. 
+The DACC method~\cite{gao2019domain} leverages inter-domain features segregation to generate coarse counter and then applies Gaussian prior to compute the counting results.
+Abousamra~\etal\cite{abousamra2021localization} develops the topological constraint, which is achieved by a persistence loss to improve the spatial arrangement of dots for density map-based methods. 
+Recently, the focal inverse distance transform map~\cite{liang2022focal} shows better performance in representing person locations compared to the aforementioned Gaussian-based density map.
+\noindent
+\smallskip\\
+\textbf{Counting by regression.} The number of the crowd can be regressed from the contextual information among extracted features of cropped image patches.
+In~\cite{chan2009bayesian}, a closed-form approximation based on the Bayesian Poisson regression is proposed to compute the crowd counting.
+The Fourier analysis and SIFT features can be used to estimate the number of persons in a crowded scene~\cite{idrees2013multi}. 
+ On the other hand, the surrogate regression~\cite{song2021rethinking} achieves crowd counting and localization based on a set of point proposals.
+
+Although the aforementioned methods can solve the crowd counting problem on clear images effectively, they do not perform well when the input images are taken in adverse weather. 
+Thus, it is of great importance to develop a solution to cope with this problem.
+\begin{figure*}[t]
+\centering \includegraphics[width=.9\textwidth, page=1]{images/systematic_diagram.pdf}{}
+\makeatother 
+\caption{\textbf{AWCC-Net for adverse weather crowd counting.} A VGG encoder is adopted to extract image features, which are fed into the contrastive weather-adaptive module to generate patch-wise weather queries. 
+Then, the transformer decoder leverages crowd counting features and weather-adaptive queries to generate weather-aware crowd counting features. The decoder computes the density map based on the weather-aware crowd counting features.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection{Image Restoration}
+In recent years, numerous restoration algorithms have been proposed to handle images acquired in adverse weather, which can be categorized as: (i) single-weather removal; (ii) multi-degradation removal; and (iii) all-in-one weather removal.
+\noindent \smallskip\\
+\textbf{Single-purpose image restoration.} These methods are developed to restore image contents degraded by one specific degradation such as rain~\cite{jiang2017novel,fu2017removing,yang2019joint,yang2019scale,wei2017should,wang2019spatial,jiang2020multi,du2020variational,wang2020model,wang2021rain,ye2021closing,yang2020wavelet}, snow~\cite{zheng2013single,620844:14515250,620844:14582690,620844:14582739,li2019single,zhang2021deep,chen2021all}, and haze~\cite{he2010single,berman2016non,zhang2018densely,hong2020distilling,deng2020hardgan,shao2020domain,qin2020ffa,chen2019pms}. While these methods are effective for specific conditions, they do not generate clear images when inputs are degraded by other or multiple weather types.
+\noindent \smallskip\\
+\textbf{Multi-purpose image restoration.} These methods aim to recover various weather types using a unified model. 
+A general architecture is developed by Pan~\etal~\cite{pan2018learning} to estimate structures and details simultaneously in parallel branches. 
+In~\cite{zamir2021multi}, the MPRNet exploits a multi-stage strategy and  an attention module to refine the incoming features at each stage for effective image restoration. 
+Although it is based on a unified framework, different model weights need to be learned for each weather condition. 
+\noindent \smallskip\\
+\textbf{All-purpose image restoration.} In recent years, much effort has been made to all-purpose image restoration since it only requires a set of pre-trained weights to recover images degraded by different factors. 
+An end-to-end training scheme based on the neural architecture search is proposed by Li~\etal~\cite{li2020all} to investigate crucial features from multiple encoders for different weather types and then reconstruct the clear results.
+In~\cite{chen2022learning}, a two-stage learning strategy and the multi-contrastive regularization based on knowledge distillation~\cite{hinton2015distilling} are developed to recover multi-weather types. 
+Most recently, the TransWeather model~\cite{valanarasu2022transweather} leverages the intra-patch visual information to extract fine detail features for the all-purpose weather removal.
+
+Although these methods can be adopted in pre-process stage for crowd counting under adverse weather, they are designed to recover image content (visual appearance) rather than estimate head counts (visual classification or regression).
+Thus, adopting them with crowd counting may have limited performance gain under adverse weather.
+
+
+Proposed Method
+In this work, we tackle the crowd counting problem under adverse weather.
+As shown in \figref{fig:architecture}, image features are first extracted using a pre-trained backbone model, e.g., VGG-19~\cite{simonyan2014very}.
+The contrastive weather-adaptive module uses the image features as input to generate the weather-adaptive queries, which are leveraged in the weather-aware crowd counting (WACC) model to generate the weather-aware crowd counting features. 
+These features are then fed into the decoder to compute the density map for crowd estimation. 
+We discuss the details of these modules in the following sections.
+
+\subsection{Weather-Aware Crowd Counting Model}
+\label{sec:WACC}
+In this work, we learn weather conditions as queries in our crowd counting model based on a transformer.  
+Image features are first extracted via a pre-trained backbone model.
+The decoder is similar to that of a vision transformer~\cite{carion2020end}, 
+as shown in the pink region of \figref{fig:architecture}. 
+The key (K) and value (V) are computed from the image features and the query (Q) is trainable weather queries learned with the network simultaneously. 
+Through this operation, the output features of transformer decoder contain crowd counting features with weather information closest to the input scene. 
+These features are then fed into a decoder which contains three $3\times3$ convolution blocks with ReLU to predict the density map $D$. 
+
+However, as shown in~\tabref{tab:ablation}, this strategy may obtain limited performance gain since the weather queries are not adaptive to the weather types of the input image as no constraints are enforced. 
+That is, the weather information is not learned by the weather queries, and thus they cannot well represent the weather type.
+Without effective weather queries, a transformer cannot generate effective features for crowd counting. 
+
+\begin{figure}[t!]
+\centering \includegraphics[width=0.48\textwidth,page=1]{images/WBR.pdf}{}
+\makeatother 
+\caption{\textbf{Learning weather-adaptive queries.} A weight vector is combined with the prototypes in the weather bank via weighted sum to generate $N$ patch-aware weather queries for the transformer decoder.}
+\label{fig:WBR}
+\end{figure}
+\subsection{Contrastive Weather-adaptive Module}
+To enforce the learned queries are adaptive to weather conditions, we propose to construct input-dependent weather queries by computing a weight vector. 
+The input-dependent weather queries are constrained by the contrastive loss which can guarantee the learned queries to be weather-related. 
+\noindent \smallskip\\
+\textbf{Pipeline.} The learning process for weather-adaptive queries is shown in the green regions of \figref{fig:architecture} and \figref{fig:WBR}. 
+First, the weather encoder predicts a weight vector for the weather bank based on the image features. 
+This weight vector can construct the weather queries by the weighted summation of each prototype in the weather bank. 
+To constrain these weather queries, we apply the contrastive loss to enforce the weather queries to learn weather information.
+A multilayer perceptron (MLP) is then adopted to conduct non-linear operations for the generated weather queries. 
+Finally, these weather queries and image features are adopted in the transformer decoder to decode the weather-aware crowd counting features.
+\noindent \smallskip\\
+\textbf{Weather Bank.} The weather bank stores multiple weather prototypes which can be leveraged to construct weather queries. The dimension of the weather bank is $S \times N \times C$ where $S$, $N$, and $C$ denote the number of weather prototypes, the number of tokens to represent the weather prototype, and the number of channels, respectively. We set $S$, $N$, and $C$ as 8, 48, and 512 in our method. 
+These weather prototypes are trainable parameters that are learned with the network simultaneously.
+Since they can be learned automatically, our network does not need to adopt the annotations of the weather type to optimize them.
+\noindent \smallskip\\
+\textbf{Weight Vector.} To construct input-dependent weather queries, we propose to compute a weight vector to represent the weather type of an input image. 
+The weight vector is computed by the weather encoder based on the image features whose dimension is $S$. 
+With the learned weather bank, the vector can represent the input weather type and construct input-dependent weather queries with dimension $N \times C$ for the contrastive loss.
+\noindent \smallskip\\
+\textbf{Contrastive Loss.} To learn the weather-adaptive queries, we propose the constrastive loss $\mathcal{L}_{Con}$:
+\begin{equation}
+\resizebox{1\hsize}{!}{
+$\mathcal{L}_{Con}=-\log\left[\frac{\exp(\varphi({v},{{v^{+}}})/\tau)}{\exp(\varphi({v}\cdot{{v^{+}}})/\tau)+\sum_{r=1}^{R}\exp(\varphi({v}\cdot{{v^{-}_{r}}})/\tau)}\right],$}
+\label{eq:wc_loss}
+\end{equation}
+where $v$, $v^{+}$, and $v^{-}$ are the weather queries of the input image, those of the positive sample, and those of the negative samples, respectively.
+In addition, $\varphi({\cdot}, \cdot)$ is the cosine similarity function, $\tau$ is the scale temperature, and $R$ denotes the total number of negative samples.
+
+The main idea of our method is that the weather queries of the input image should be similar to those of the positive sample while dissimilar to those of the negative samples. 
+To this end, we adopt the random crop and the random flip operations to construct the positive sample. 
+Since the positive sample is generated with spatial augmentation, the weather information should be the same as the input image, and thus the two weather queries should be similar. 
+We use the rest of the images as our negative samples whose weather queries should be dissimilar.
+Although the negative samples may possibly have a similar weather type as the input image, according to~\cite{wang2021understanding}, the contrastive loss contains the tolerance to potential positive samples. 
+Thus, the images with the same weather types still have the smaller distance in the feature space. 
+We show one example in~\figref{fig:anchor_query}.
+\noindent \smallskip\\
+\textbf{Compact Prototype Loss.} To reduce the redundancy of learned prototypes in the weather bank, we propose the compact prototype loss $\mathcal{L}_{CP}$:
+\begin{equation} 
+\mathcal{L}_{CP}=\sum_{i=1}^{S}\sum_{j\neq i}\vert\varphi(P^{i}, P^{j})\vert,
+\end{equation}
+where $P^{i}$ and $P^{j}$ present the $i^{th}$ and $j^{th}$ prototype in the weather bank. 
+With this operation, the prototypes are enforced to be more compact. 
+
+\subsection{Overall Loss}
+The proposed AWCC-Net is optimized via multiple loss functions including the compact prototype loss, the contrastive loss, and the crowd counting loss. 
+The first two loss functions have been defined in the previous sections. 
+The crowd counting loss $\mathcal{L}_{CC}$ aims to constrain the learning of crowd counting and we adopt the Baysesian loss~\cite{ma2019bayesian,lin2022boosting} for the robustness and the better performance:
+\begin{equation}
+\label{eq:ialoss}
+   \mathcal{L}_{CC}=|\sum_{k} \  P_0(k) \cdot D_{k}| + \sum_{i=1}^{L}\ |1 - \sum_{k} \  P_i(k) \cdot D_{k}|,
+\end{equation}
+where $i$ and $L$ denote the index of the annotated point and the number of annotated points, respectively.
+In addition, $D$ is the computed density map, $P_i(k)$ indicates the posterior of the occurrence of the $i^{th}$ annotation given the position $k$, and $P_0(k)$ denotes the background likelihood at position $k$.
+
+The overall loss function of the AWCC-Net is:
+\begin{equation}
+\mathcal{L}_{AWCC}=\mathcal{L}_{CC}+\lambda_{1}\mathcal{L}_{CP}+\lambda_{2}\mathcal{L}_{Con},
+\label{eq:loss_overall}
+\end{equation}
+where $\lambda_{1}$ and $\lambda_{2}$ are scaling factors.
+
+
+
+Implementation Details
+\subsection{Datasets}
+We use the ShanghaiTech~\cite{zhang2016single}, UCF-QNRF~\cite{idrees2018composition}, JHU-Crowd++~\cite{sindagi2020jhu}, and NWPU-CROWD~\cite{wang2020nwpu} datasets to evaluate the performance of the proposed method against the state-of-the-art approaches. 
+\noindent \smallskip\\
+\textbf{JHU-Crowd++}~\cite{sindagi2020jhu}\textbf{.} It consists of 4,372 images and 1.51 million annotated points totally. 
+This dataset divides 2,272 images for training, 500 for validation, and the remaining 1,600 images for testing. 
+In the testing set, there are 191 images are under adverse weather and 1409 images under normal scenes.
+\noindent \smallskip\\
+\textbf{ShanghaiTech A}~\cite{zhang2016single}\textbf{.} It contains 482 images and 244, 167 annotated points. 300 images are split for training and the rest of 182 images are for testing.
+\noindent \smallskip\\
+\textbf{UCF-QNRF}~\cite{idrees2018composition}\textbf{.} It includes 1,535 high-resolution images collected from the Web, with 1.25 million annotated points. 
+There are 1,201 images in the training set and 334 images in the testing set. 
+The UCF-QNRF dataset has a wide range of people count between 49 and 12,865.
+\noindent \smallskip\\
+\textbf{NWPU-CROWD}~\cite{wang2020nwpu}\textbf{.} It consists of 5,109 images with 2.13 million annotated points. 3,109 images are divided into the training set and 500 images are in the validation set, and the remaining 1,500 images are for testing. 
+
+\subsection{Evaluation Protocol}
+Similar to the existing approaches, we apply Mean Absolute Error (MAE) and Mean Squared Error (MSE) for performance evaluation: 
+{\small
+\begin{equation}
+MAE  =\frac{1}{Q}\ \sum_{i=1}^{Q}\big|GT_{i}-N_i\big|, 
+MSE =\sqrt{\frac{1}{Q}\ \sum_{i=1}^{Q}(GT_i-N_i)^2},
+\end{equation}
+}
+where $Q$ is the number of images, $GT_i$ and $N_i$ denote the ground truth and  predicted crowd count of the $i$-th image. 
+
+\subsection{Training Details}
+In this work, the learning rate is $10^{-5}$, and the Adam optimizer is applied. 
+We set the batch size to be 1, and randomly crop all input images to $512\times512$ in the training process.
+The proposed network is trained on an Nvidia Tesla V100 GPU and implemented using the PyTorch framework. 
+Our model is based on a hybrid CNN-Transformer backbone which contains a VGG-19 model pre-trained on ImageNet, a transformer decoder, and a CNN-based regression layer. 
+The scaling factors of the losses $\lambda_1$ and $\lambda_2$ are both set to 1. 
+In addition, the total number of negative samples $R$ is 64, and the scale temperature $\tau$ is 0.2.
+
+In the spatial augmentation, we crop two patches of the training image. 
+We apply random horizontal flipping on the first patch. 
+Then, we crop a second patch overlapped with the first one with an overlap factor sampled from a uniform distribution. 
+The first patch serves as the training input for crowd counting and the anchor for the contrastive loss. 
+The second patch is the positive sample for the contrastive loss and is not directly involved in crowd counting.
+
+
+
+Experimental Results
+
+In this section, we present the evaluation results of the proposed method for crowd counting in both adverse weather scenes and normal scenes. 
+More results are available in the supplementary material.
+
+\begin{table}[t!]
+\small
+\begin{center}
+\scalebox{0.83}{
+\begin{tabular}{ccccccccc} 
+\toprule%[1.5pt]
+\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{Clear}} & \multicolumn{2}{c}{\textbf{Adverse Weather }}& \multicolumn{2}{c}{\textbf{Average}} \\ 
+\cline{2-7}
+& MAE & MSE & MAE & MSE & MAE & MSE   \\ 
+\hline\hline
+SFCN~\cite{Wang2019LearningFS} & 71.4 & 225.3 & 122.8 & 606.3 & 77.5 & 297.6 \\
+BL~\cite{ma2019bayesian} & 66.2 & 200.6 & 140.1 & 675.7& 75.0 & 299.9 \\
+BL~\cite{ma2019bayesian}-U & 65.3 & 208.4 & 134.0 & 645.6& 73.5 & 296.6 \\
+BL~\cite{ma2019bayesian}-UF & 62.6 & 205.7 & 130.4 & 638.4 & 70.7 & 293.1 \\
+LSCCNN~\cite{sam2020locate} & 103.8 & 399.2 & 178.0 & 744.3 & 112.7 & 454.4 \\
+CG-DRCN-V~\cite{sindagi2020jhu} & 74.7 & 253.4 & 138.6 & 654.0 & 82.3 & 328.0 \\
+CG-DRCN-R~\cite{sindagi2020jhu} & 64.4 & 205.9 & 120.0 & 580.8 & 71.0 & 278.6 \\
+UOT~\cite{ma2021learning} & 53.1 & 148.2 & 114.9 & 610.7 & 60.5 & 252.7 \\
+GL~\cite{wan2021generalized} & 54.2 & 159.8 & 115.9 & 602.1 & 61.6 & 256.5 \\
+GL~\cite{wan2021generalized}-U & 64.4 & 207.0 & 127.2 & 617.3 & 71.9 & 288.5 \\
+GL~\cite{wan2021generalized}-UF & 56.3 & 174.1 & 127.6 & 658.5 & 64.8 & 280.1 \\
+CLTR~\cite{liang2022end} & 52.7 & \underline{148.1} & 109.5 & 568.5 & 59.5 & 240.6 \\
+MAN~\cite{lin2022boosting} & \textbf{46.5} & \textbf{137.9} & 105.3 & \underline{478.4} & \underline{53.4} & \underline{209.9} \\
+MAN~\cite{lin2022boosting}-U & 56.9 & 182.5 & \underline{100.7} & 548.2 & 62.1 & 255.4 \\
+MAN~\cite{lin2022boosting}-UF & 60.8 & 187.7 & 117.1 & 623.2 & 67.6 & 278.2 \\
+\rowcolor{LightCyan}
+\textbf{AWCC-Net} & \underline{47.6} & 153.9 & \textbf{87.3} & \textbf{430.1}& \textbf{52.3} & \textbf{207.2}\\
+\bottomrule%[1.5pt]
+\end{tabular}}
+	\end{center}
+\caption{\textbf{Quantitative comparison on the JHU-Crowd++~\cite{sindagi2020jhu} dataset with existing methods.} We evaluate the performance in adverse weather scenes and clear scenes. The words with \textbf{boldface} indicate the best results, and those with \underline{underline} indicate the second-best results.}
+\label{tab:performance}
+\end{table}
+\begin{table*}[htb]
+\centering
+\small
+\scalebox{0.95}{
+\centering
+\begin{tabular}{ccccccccc} 
+\toprule%[1.5pt]
+\multicolumn{1}{c}{\textbf{Dataset}} & \multicolumn{2}{c}{\textbf{ShanghaiTechA}} & \multicolumn{2}{c}{\textbf{UCF-QNRF}}  & \multicolumn{2}{c}{\textbf{JHU-Crowd++}}& \multicolumn{2}{c}{\textbf{NWPU-CROWD}}  \\ 
+\hline
+\multicolumn{1}{c}{\textbf{Method}}  & MAE & \multicolumn{1}{c}{MSE}     & MAE & \multicolumn{1}{c}{MSE} & MAE & MSE & MAE & MSE                 \\ 
+\hline\hline
+SFCN~\cite{Wang2019LearningFS} & 64.8 & 107.5 & 102.0 & 171.4 & 77.5 & 297.6 & 105.7 & 424.1 \\
+BL~\cite{ma2019bayesian} & 62.8 & 101.8 & 88.7 & 154.8 & 75.0 & 299.9 & 105.4 & 454.2 \\
+LSCCNN~\cite{sam2020locate} & 66.5 & 101.8 & 120.5 & 218.2 & 112.7 & 454.4 & - & - \\ 
+CG-DRCN-VGG16~\cite{sindagi2020jhu} & 64.0 & 98.4 & 112.2 & 176.3 & 82.3 & 328.0& - & - \\
+CG-DRCN-Res101~\cite{sindagi2020jhu} & 60.2 & 94.0 & 95.5 & 164.3 & 71.0 & 278.6 & - & - \\
+UOT~\cite{ma2021learning} & 58.1 & 95.9 & 83.3 & 142.3 & 60.5 & 252.7 & 87.8 & 387.5 \\
+S3~\cite{lin2021direct} & 57.0 & 96.0 & 80.6 & 139.8 & 59.4 & 244.0 & 83.5 & 346.9 \\
+GL~\cite{wan2021generalized} & 61.3 & 95.4 & 84.3 & 147.5 & 59.9 & 259.5 & 79.3 & 346.1 \\
+ChfL~\cite{shu2022crowd} & 57.5 & 94.3 & 80.3 & 137.6 & 57.0 & 235.7 & 76.8 & 343.0 \\
+CLTR~\cite{liang2022end} & 56.9 & 95.2 & 85.8 & 141.3 & 59.5 & 240.6 & \textbf{74.3} & 333.8 \\
+MAN~\cite{lin2022boosting}  & 56.8 & \underline{90.3} & \underline{77.3} & \underline{131.5} & \underline{53.4} & \underline{209.9} & 76.5 & \textbf{323.0} \\
+GauNet~\cite{cheng2022rethinking} & \textbf{54.8} & \textbf{89.1} & 81.6 & 153.7 & 58.2 & 245.1 & - & - \\
+\rowcolor{LightCyan}
+\textbf{AWCC-Net} & \underline{56.2} & 91.3 & \textbf{76.4} & \textbf{130.5} & \textbf{52.3} & \textbf{207.2}& \underline{74.4} & \underline{329.1} \\
+\bottomrule%[1.5pt]
+\end{tabular}
+ }
+\caption{\textbf{Quantitative comparison on the ShanghaiTech A~\cite{zhang2016single}, UCF-QNRF~\cite{idrees2018composition}, JHU-Crowd++~\cite{sindagi2020jhu}, and NWPU-CROWD~\cite{wang2020nwpu} datasets with existing methods.} The words with \textbf{boldface} indicate the best results, and those with \underline{underline} indicate the second-best results.}
+\label{tab:performance_other}
+\end{table*}
+\begin{figure*}[t!]
+\begin{center}
+	\footnotesize
+    \hspace{0.006\textwidth}
+     \begin{minipage}[c]{0.195\textwidth}
+      \centering    
+        \text{Input}
+    \end{minipage}
+    \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Ground Truth}
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{MAN~\cite{lin2022boosting}}   
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Unified~\cite{chen2022learning}+MAN~\cite{lin2022boosting}}    
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{AWCC-Net}
+    \end{minipage}
+    \\
+    \begin{minipage}[c]{0.02\textwidth}
+    \rotatebox[origin = c]{90}{Haze}
+    \end{minipage}
+    \begin{minipage}[c]{0.975\textwidth}
+    \centering
+        \includegraphics[width=0.195\textwidth]{images/density/haze-input.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-gt.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-man.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-unified.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-ours.jpg}     
+    \end{minipage}
+    \\
+    \begin{minipage}[c]{0.02\textwidth}
+    \rotatebox[origin = c]{90}{}
+    \end{minipage}    
+    \begin{minipage}[c]{0.975\textwidth}
+    \centering
+        \includegraphics[width=0.195\textwidth]{images/density/haze-input1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-gt1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-man1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-unified1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/haze-ours1.jpg}     
+    \end{minipage}
+    \\
+    \hspace{0.006\textwidth}
+     \begin{minipage}[c]{0.195\textwidth}
+      \centering    
+        \text{}
+    \end{minipage}
+    \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Count=1134}
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Count=1406}
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Count=955}
+    \end{minipage}
+         \begin{minipage}[c]{0.195\textwidth}
+     \centering
+        \text{Count=1094}
+    \end{minipage}
+    \\
+    \begin{minipage}[c]{0.02\textwidth}
+    \rotatebox[origin = c]{90}{Snow}
+    \end{minipage}
+    \begin{minipage}[c]{0.975\textwidth}
+    \centering
+        \includegraphics[width=0.195\textwidth]{images/density/snow-input.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-gt.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-man.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-unified.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-ours.jpg}
+    \end{minipage}
+    \\
+    \begin{minipage}[c]{0.02\textwidth}
+    \rotatebox[origin = c]{90}{}
+    \end{minipage}    
+    \begin{minipage}[c]{0.975\textwidth}
+    \centering
+        \includegraphics[width=0.195\textwidth]{images/density/snow-input1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-gt1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-man1.jpg} \hfill
+        \includegraphics[width=0.195\textwidth]{images/density/snow-unif
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

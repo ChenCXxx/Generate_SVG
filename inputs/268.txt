@@ -1,0 +1,291 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\input{floats/fig_overall}
+
+\input{floats/fig_framwork}
+
+\label{sec:intro}
+\newcommand{\shapea}{\includegraphics[scale=0.32,trim={0 0 -0.2cm 0}]{figures/shape_a.png}}
+\newcommand{\shapeb}{\includegraphics[scale=0.33]{figures/shape_b.png}}
+\newcommand{\shapec}{\includegraphics[scale=0.32,trim={0 0 -0.2cm 0}]{figures/shape_c.png}}
+
+Text clustering, as a fundamental task in natural language processing (NLP), has a wide spectrum of applications, such as identifying public perception from social media~\cite{PARK2022103524}, analysing cause of accidents~\cite{xu2022cause}, and detecting emerging research topics~\cite{martinez2022analysis}.
+A common practice for text clustering is to apply clustering algorithms~\cite{macqueen1967classification,zhang-etal-2021-supporting} on top of pre-trained embedders~\cite{muennighoff2022mteb,wang2022text,INSTRUCTOR} which could achieve higher performance with better pre-training quality.
+State-of-the-art large language models (LLMs) such as recent GPT series~\cite{brown2020language,ouyang2022training,OpenAI2023GPT4TR} have demonstrated extraordinary language capabilities for various NLP applications
+however, these GPT models can only be utilized through the APIs without accessible embedding vectors for clustering.
+Hence, LLMs cannot be directly applied on text clustering tasks.
+
+In this paper, we provide insights on the question: \emph{Can we leverage API-based LLMs to guide text clustering efficiently?}
+We attack this challenging question by drawing inspiration from an observation that \emph{humans represent an instance through comparing with others}~\cite{nosofsky2011generalized}. 
+For instance, people often classify a new piece of music into a specific genre by relating to familiar ones. In fact, pairwise relationships have been utilized in spectral clustering~\cite{donath1972algorithms,cheeger1970lower} before.
+Nonetheless, naively traversing all the pairs within dataset is obviously intractable and too expensive for querying LLMs.
+
+We propose {\model}, a framework that utilizes LLM to guide a small embedder for finding text clusters with a low cost, as shown in Figure~\ref{fig:overall}.
+It comprises two stages that are specially designed for two aspects of clustering: 
+(1) perspective, i.e., the grouping criterion such as \emph{topic}, \emph{intent} and \emph{emotion} 
+and (2) granularity, i.e. the scope of clusters.
+
+In Stage 1, we prompt LLMs with a triplet task that predicts which one of the two candidate choices is closer to anchor instance to understand the user-preferred perspectives.
+We choose this triplet task because (a) it is irrelevant with cluster granularity and (b) the produced triplets can fine-tune small embedder towards the right perspective.
+In order to improve sample efficiency, we further propose entropy-based triplet sampling to find the most informative triplets.
+Specifically, we first calculate entropy for each instance based on cluster assignment probabilities, and then identify those with highest entropy. 
+Two candidate choices are then sampled from its nearest clusters to guarantee they are close enough to the anchor.
+
+In Stage 2, we first obtain the cluster hierarchy that starts from instance-level clusters and iteratively merge two closest clusters until the entire dataset. And then we prompt LLMs to determine cluster granularity with a few annotated data pairs as demonstrations.
+We construct the data pairs to prompt by sampling from two clusters that are merged at each step of hierarchical clustering, so that they cover a wide range of granularities.
+And the final decision is made by measuring consistency between each level of clustering and predictions.
+We extensively evaluate {\model} on $14$ datasets that include diverse tasks such as intent discovery, topic mining, type discovery, domain discovery, and emotion detection.
+Furthermore, these datasets span a wide range of granularities that have $10$ to $150$ number of clusters.
+We show that {\model} is effective overall on improving clustering quality, where the clustering performance is improved over both a deep clustering baseline and a self-supervise baseline.
+Moreover, the ablation study shows that our sampling strategy is effective compared to a random sampling baseline.
+Finally, {\model} also outperforms clustering-error based methods on determining cluster granularity.
+
+In summary, our contributions are three-fold:
+(i) We propose a framework {\model} that utilizes sentence relations predicted from API-based LLMs to guide clustering. Furthermore, it allows users to provide textual instructions and/or few-shot annotations to specify preferences on clustering.
+(ii) In order to reduce API-queries, we propose a novel entropy-based sampling strategy to find the most informative triplets. 
+Additionally, we utilize pairwise data sampled from hierarchical clustering to determine cluster granularity.
+(iii) Extensive experiments show that our proposed method can improve clustering performance at $\sim$\$0.2 for perspective and $\sim$\$0.4 for granularity with GPT-3.5.
+
+
+
+Preliminary
+\label{sec:problem}
+
+Text clustering takes an unlabeled corpus $\mathcal{D}=\{x_i\}_{i=1}^N$ as input, and outputs a clustering assignment $\mathcal{Y}=\{y_i\}_{i=1}^N$ that maps the input text to cluster indices.
+To specify user's needs, {\model} integrates additional textual instruction (e.g. ``Select the example that better corresponds with the Query in terms of entity type.'') to understand perspective and few-shot annotations (e.g. ``Sentence1 and Sentence2 have the same entity type ...'') to determine cluster granularity.
+
+
+
+Our \model
+\label{sec:method}
+{\model} is based on a pre-trained small embedder~\cite{wang2022text,INSTRUCTOR} (denoted as $f$) which usually represents sentences individually.
+In contrast, inspired by human cognitive ability~\cite{nosofsky2011generalized}, {\model} considers a pair or a triplet of sentences through prompting LLMs that are trained to follow human instructions~\cite{ouyang2022training,OpenAI2023GPT4TR}.
+Specifically, {\model} is a two-stage framework (See Figure~\ref{fig:framework}).
+In Section~\ref{sec:perspective} we introduce Stage 1 that utilizes triplet task to improve clustering quality with respect to user-specified perspectives, along with a sampling strategy that reduces number of API queries.
+In Section~\ref{sec:granularity}, we introduce Stage 2 that leverages pairwise task to determine cluster granularity based on predictions from LLMs. 
+
+\subsection{Triplet Task for Perspective}
+\label{sec:perspective}
+In this section, we explore how to harness a triplet task to refine the cluster structures for a user-specified perspective. A triplet task takes as input a tuple of three sentences $t=(a,c_1,c_2)$, where $a$ is the anchor and $(c_1,c_2)$ are two choices. We then prompt LLMs to select one of $(c_1,c_2)$ that better corresponds with $a$ using a prompt $\mathcal{P}_T$. Moreover, in order to specify the user's perspective, $\mathcal{P}_T$ also requires a task instruction $\mathcal{I}_T$ as input. The LLM should make a choice
+\begin{align}
+    c_j = \mathcal{P}_T(\mathcal{I}_T, t),
+\end{align}
+where $c_j\in \{c_1,c_2\}$ indicates one of the choices that LLM selects as positive and we denote the other (or negative) one as $c_{\backslash j}$.
+
+\subsubsection{Entropy-based Triplet Sampling}
+\label{sec:triplet_sampling}
+\input{floats/alg_triplet}
+While one can randomly sample triplets to query the LLM, we demonstrate it non-efficient in experiments. 
+In this section, we pose the question of mining \textit{informative} triplets to both save the costs from querying LLMs and optimally improve the clustering.
+To achieve this, we resort to the current clustering results from the extracted embeddings $\mathcal{Z}=\{z_i=f(x_i)\}_{i=1}^N$.
+In summary, our algorithm contains two steps:
+\textbf{Step 1:} We find the most ambiguous instances as anchors based on entropy.
+\textbf{Step 2:} For each anchor instance, we sample two choices from two of its closest clusters.
+Refer to Algorithm~\ref{alg:triplet} for entire process.
+
+In Step 1, since the granularity is unknown at current stage, we perform clustering on top of $\mathcal{Z}$, where the clustering hyperparameters\footnote{It can be number of clusters in K-means or maximum distance to merge two clusters in hierarchical clustering} are consistent across datasets and only specific to the embedder model $f$.
+Cluster center $\mu_k$ will thereafter be calculated for cluster $k$ by averaging embeddings assigned to it. Following~\cite{xie2016unsupervised,van2008visualizing}, we calculate instance-wise soft assignments with Student's $t$-distribution,
+\begin{align}
+    p_{ik} = \frac{(1+||z_i-\mu_k||^2/\alpha)^{-\frac{\alpha+1}{2}}}{\sum_{k^\prime}(1+||z_i-\mu_{k^\prime}||^2/\alpha)^{-\frac{\alpha+1}{2}}}
+    \label{eq:assignment}
+\end{align}
+where $\alpha=1$ is the degree of freedom. We then define closest clusters for instance $i$ as $K_{\text{closest}}$ clusters with largest soft assignment $p_{ik}$. Here, $K_{\text{closest}}$ is proportional to the total number of clusters $K$.
+\begin{align}
+    K_{\text{closest}} = \max(\epsilon K, 2)
+    \label{eq:closest_clusters}
+\end{align}
+where we fix $\epsilon$ to be a small value, such as $2\%$. We then compute entropy based on these closest clusters with renormalized probabilities $p_{ik}^\prime$,
+\begin{align}
+    h_i = -\sum_{k = 1}^{K_{\text{closest}}} p_{ik}^\prime \log(p_{ik}^\prime)
+    \label{eq:entropy}
+\end{align}
+where $p_{ik}^\prime=\frac{p_{ik}}{\sum_{k^\prime=1}^{K_{\text{closest}}} p_{i{k^\prime}}}$.
+We sort the entire dataset in descending order according to the entropies $H=\{h_i\}_{i=1}^N$.
+We introduce two hyperparameters $\gamma_{\text{high}}$ and $\gamma_{\text{low}}$ that control the proportion interval to filter out from ordered dataset. Our hypothesis is that higher entropy (smaller $\gamma_{\text{high}}$ and $\gamma_{\text{low}}$) anchors form more informative triplets that we verify in Section~\ref{sec:ablation_study}.
+In Step 2, we randomly sample two clusters $C_1,C_2$ from $K_{\text{closest}}$ closest clusters, and then sample two sentences $c_1,c_2$ from each of them as choices (see line~\ref{lst:sample_clusters} and line~\ref{lst:sample_data}).
+In another word, these choices should be either a positive or a hard negative to the anchor.
+Finally, we also remove triplets that are either repeated or have identical choice and anchor.
+We continue to sample triplets until reaching budget $Q$.
+
+\noindent\textbf{Remarks.} (1) Since $Q$ is defined by the user and is independent with the dataset size, our sampling is cost-efficient. For example, in our experiments, using $1,024$ queries can improve performance on both dataset scales of $\sim 3,000$ and $\sim 50,000$.
+(2) From the view of ground truth, the sampled triplets might contain ``both are correct'' or ``none of the above''. However, we argue that even these triplets might provide soft aligning information, i.e. the ranking of closeness between choices.
+(3) Our sampling method may also be utilized in active learning to acquire human annotations when no prior knowledge is available on the categories.
+
+\subsubsection{Finetuning Embedder}
+Now that we have the triplet predictions, it is still not clear how to utilize them in clustering. Previous research rely on deep constrained clustering~\cite{zhang2020framework,manduchi2021deep} which are often sensitive to noisy labels~\cite{basu2008constrained}. In this paper, we instead focus on finetuning the base embedder $f$ towards producing an embedding space that better explains the user's perspective.
+We exploit both hard and in-batch negatives. Following~\cite{INSTRUCTOR,ni-etal-2022-large}, for a triplet $t=(a,c_j,c_{\backslash j})$ with positive $c_j$ and hard negative $c_{\backslash j}$, we optimize the following objective,
+\begin{align}
+    l_j=\frac{\exp{(s(a,c_j)/\tau)}}{\sum_{c_l\in \mathcal{B}} \exp{(s(a,c_l)/\tau)}}
+\end{align}
+where $\mathcal{B}$ combines $c_j$, $c_{\backslash j}$ and other in-batch negatives. $\tau$ is a temperature parameter. Following the original implementation, we also compute the loss with $a$ and $c_j$ swapped. Finally fine-tuned embedders can be applied to find even more informative triplets with our sampling method which will further improve performance in an iterative manner. We acquire clustering assignments by running clustering algorithms on top of extracted embeddings.
+
+\subsection{Pairwise Task for Granularity}
+\label{sec:granularity}
+In this section, we build upon the refined embedding space in Section~\ref{sec:perspective} to determine cluster granularity.  In this paper, we convert the problem of determining granularity into finding the best step in a cluster hierarchy (see Figure~\ref{fig:framework} right), where each step denotes a unique granularity (or equally number of clusters). It is non-trivial, since different granularities can be applied to the same dataset (such as domains or topics).
+To tackle this challenge, we query LLM with pairwise task that predicts whether a pair of data $p$ belong to the same cluster with a prompt $\mathcal{P}_P$,
+\begin{align}
+    w=\mathcal{P}_P(\mathcal{I}_P,\{\tilde{p}_d\}_{d=1}^D,p)
+\label{eq:pair_prompt}
+\end{align}
+where $w\in\{\text{same},\text{different}\}$ is the binary decision, $\mathcal{I}_P$ is the task instruction and $\{\tilde{p}_d\}_{d=1}^D$ are few-shot demonstration pairs used for in-context learning (typically $D=4$). We assume these demonstration pairs are annotated by users who have a desired cluster granularity in mind. We also combine a brief justification for each demonstration pair (see Table~\ref{tab:prompt_example} bottom for example).
+
+\subsubsection{Determine Granularity with Pairwise Hierarchical Sampling}
+We then introduce how to sample pairs from cluster hierarchy to query LLMs and determine granularity.
+We assume a maximum and a minimum number of clusters (denoted as $k_{\text{max}}$ and $k_{\text{min}}$) following \citet{pelleg2000x} which depend on the user's expectation on the granularity.
+We then randomly sample $\lambda$ ($1$ or $3$ in our experiments) pairs of data from the two clusters to be merged at each step to form candidate pairs $\{p_i\}_{i=1}^{N_p}$, where $N_p=\lambda (k_{\text{max}}-k_{\text{min}})$.
+These pairs cover the entire range of granularity between $k_{\text{max}}$ and $k_{\text{min}}$, and will be used to query LLMs.
+After that, each level of granularity can be examined against LLM predictions to choose the one with the highest consistency measure $\mathcal{M}$,
+\begin{align}
+    k^*=\argmax_k\mathcal{M}(W^p,W^k)
+\end{align}
+where $W^p=\{w_i^p\}_{i=1}^{N_p}$ denotes the predictions obtained from Eq.~\ref{eq:pair_prompt} and $W^k$ represents a set of binary values indicating whether each pair of data is in the same cluster at granularity $k$. Empirically, we found the following performs better in our framework: use F-beta score, a weighted harmonic mean of precision and recall, as measurement $\mathcal{M}$ and set $W^p$/$W^k$ as labels/predictions.
+Finally, for large-scale datasets, we address the high time complexity of hierarchical clustering by applying it on top of mini-batch K-means.
+
+\noindent\textbf{Remarks.}
+Similar to Section~\ref{sec:triplet_sampling}, pairwise hierarchical sampling can also be used to acquire human annotations. Nonetheless, the reliability of the algorithm still depends on the quality of clusters. In an extreme case where the clusters are completely random, it is unable to find granularity even though all the pairwise predictions are correct.
+
+
+
+Experiments
+\label{sec:exp}
+
+We first evaluate {\model} on clustering quality with ground truth number of clusters in Section~\ref{sec:main_results}. Then we conduct ablation studies in Section~\ref{sec:ablation_study} to further analyze the effectiveness of {\model}. Finally, we show results of determining cluster granularity in Section~\ref{sec:results_granularity}.
+
+\subsection{Datasets}
+\label{sec:datasets}
+
+ In this paper, we evaluate on a broad range of clustering datasets with various perspectives and granularities. Furthermore, to better analyze the effect of scale, each dataset has both a small-scale and a large-scale version. The two versions are different in number of data while keeping the same number of clusters. A summary of dataset statistics is shown in Table~\ref{tab:dataset}. Note that there is no data splits in clustering.
+
+\noindent\textbf{Intent (Domain) Discovery.} Intent discovery~\cite{Zhang_Xu_Lin_Lyu_2021,zhang-etal-2022-new} discovers unknown intents in unlabeled customer utterances. For CLINC, Massive and MTOP, we also use domains as labels to convert them into domain discovery.
+
+\noindent\textbf{Type Discovery.}
+Type Discovery~\cite{li-etal-2022-open} resolves the closed-world set-up of traditional Information Extraction. In this work, we focus on three tasks: entity, relation and event type discovery. To indicate specific mentions (entities or event triggers), we directly append them behind sentences with natural language formats, such as ``The relation between [ENTITY1] and [ENTITY2]''.
+
+\noindent\textbf{Topic Mining.} We adapt three topic mining datasets from MTEB~\cite{muennighoff2022mteb}.
+
+\noindent\textbf{Emotion.} We adapt GoEmo~\cite{demszky-etal-2020-goemotions}, a fine-grained emotion detection dataset by removing multi-label or neutral instances.
+
+\input{floats/tab_dataset}
+\subsection{Experiment Details}
+\label{sec:exp_details}
+
+\input{floats/tab_perspective_sota}
+\input{floats/tab_perspective_analysis}
+
+\noindent\textbf{Query LLMs.} The prompt only contains a task-specific instruction (see Table~\ref{tab:prompt_perspective}). We set generation temperature to $0.5$. Explanations are suppressed by adding a postfix:``Please respond with 'Choice 1' or 'Choice 2' without explanation'' and set up a max token of $10$. We then assign them to binary choices by directly checking whether one of the texts ``Choice 1'' or ``Choice 2'' is in the response. We also find that a very small amount of responses do not contain any choices and we discard them during fine-tuning. We use the Python API tool provided by OpenAI.
+
+\noindent\textbf{Triplet Sampling.} For both small- or large-scale experiments, we set a budget of $Q=1,024$ triplets. We set $\gamma_{\text{low}}=20\%$ and $\gamma_{\text{high}}=0$.
+For clustering methods, we fix hyperparameters of these algorithms across datasets in Stage 1.
+We choose agglomerative clustering with fixed distance threshold $67$ for small-scale experiments on Instructor, and $77$ on E5 (the embeddings are preprocessed by standard scaler). For large-scale datasets, we choose mini-batch K-means with fixed number of clusters $100$ due to its lower latency. Clustering algorithms are implemented by scikit-learn~\cite{scikit-learn}.
+
+\noindent\textbf{Fine-tune Embedders.} In this work, we focus on two state-of-the-art pre-trained embedders: Instructor~\cite{INSTRUCTOR} and E5~\cite{wang2022text}. We only use the large versions.
+
+\noindent\textbf{Evaluation.} To reduce cost, we run {\model} once for each dataset. We then run (mini-batch) K-means on (large) small-scale datasets for $5$ seeds with ground truth K. We show two metrics. The first one is clustering accuracy calculated after Hungarian alignment~\cite{kuhn1955hungarian} that permute prediction classes back to label classes. Another popular metric for clustering is normalized mutual information (NMI) that calculates mutual information between two assignments, and normalized by their individual entropies.
+
+\subsection{Compared Methods}
+\label{sec:baselines}
+\noindent\textbf{E5 and Instructor.} We directly apply (mini-batch) K-means on extracted embeddings from \texttt{instructor-large} and \texttt{e5-large}.
+
+\noindent\textbf{self-supervise-I(E).} To verify that the performance improvement of {\model} does not only come from domain-specific fine-tuning, instead of the more accurate triplet prediction. We propose a self-supervise fine-tuning that uses exactly the same triplets as {\model} but only switch to self-supervised triplet predictions that select closest choices in embedding space.
+
+\noindent\textbf{SCCL-I(E).} We also combine Instructor and E5 with SCCL~\cite{zhang-etal-2021-supporting}, an unsupervised deep clustering algorithm that utilizes entire dataset for training. Notice that our method uses fewer data for training.
+
+\subsection{Main Results}
+\label{sec:main_results}
+
+We show main results with small-scale datasets in Table~\ref{tab:perspective_sota}.
+We show several variants of our method: {\model}-I(E) adopt Instructor or E5 as embedders. {\model}-I(E)-iter applies the entire framework twice in an iterative manner by using previous fine-tuned model as initialization and the $1,024$ triplets inferred from new embeddings for fine-tuning. All of these use GPT-3.5 for prediction.
+We make the following observations:
+(1) {\model} consistently improves upon both embedders. For example, {\model}-I increases the performance by $6.71\%$ on FewRel.
+{\model}-E increases the performance by $9.19$ on Bank77.
+However, we do observe that on Massive(D) and CLINC(D), there are no improvements.
+(2) {\model} outperforms deep clustering and self-supervise baselines. For instance, {\model}-I surpasses self-supervise-I on most datasets except for two and it is also better than SCCL-I on $11$ over $14$ datasets. Furthermore, these improvements are consistent across both reported metrics.
+
+\subsection{Analysis on Triplet Prediction Accuracy}
+\label{sec:analysis_prediction}
+
+We attribute the improvements on clustering quality to more accurate triplet predictions.
+In Table~\ref{tab:perspective_analysis}, we show the accuracy on predicted triplets that have ground truth (exactly one positive and one negative choices based on ground truth) with two different sampling methods.
+Random triplet sampling uniformly samples three random instances as query and two choices, and we guarantee the two choices are different from the anchor by filtering.
+Furthermore, we also show a selection accuracy with Euclidean distances between embeddings as a comparison.
+We observe that, GPT-3.5/4 consistently improves upon Instructor on high entropy examples, demonstrating our hypothesis. In contrast, with random sampling, the ground truth triplets is significantly fewer and the accuracy gap is much smaller or even decreases performance.
+
+\subsection{Ablation Study}
+\label{sec:ablation_study}
+
+\input{floats/tab_perspective_ablation}
+
+\noindent\textbf{Clustering Quality.}
+We show ablation studies on {\model} based on Instructor in Table~\ref{tab:perspective_ablation}.
+Specifically, we present results with $3$ kinds of predictions on the same set of triplets for fine-tuning: GPT-3.5/4, replace triplet predictions of GPT-3.5 to ground truth on those triplets that have ground truth.
+We observe that GPT-4 marginally improves upon GPT-3.5 given the much higher cost.
+When provided with human labels, {\model}-GT\&GPT3.5 achieves the highest performance, which indicates the possibility for further improvement with more accurate predictions.
+We make similar observations for large-scale datasets in Table~\ref{tab:perspective_ablation_large_1}.
+\noindent\textbf{Sampling Strategy.}
+In this section, we show ablation study on entropy-based sampling.
+In Figure~\ref{fig:sampling}, we observe that clustering accuracy increases when increasing entropies (or equally decreasing mean of interval) except for GoEmo.
+We make two hypothesis: (1) LLMs are much better than small embedders on harder instances. (2) high-entropy instances are generally more informative.
+In Table~\ref{tab:perspective_ablation}, we observe that training with randomly selected triplets even decreases performance, which demonstrates the cruciality of triplet sampling.
+
+\input{floats/fig_sampling}
+\input{floats/tab_granularity}
+
+\subsection{Determining Cluster Granularity}
+\label{sec:results_granularity}
+
+In this section, we show the results for determining cluster granularity.
+We evaluate on a subset of $8$ datasets including various cluster granularities with $k_{\text{max}}=200$ and $k_{\text{min}}=2$.
+We compare with different methods that rely on clustering errors.
+For our methods, we show results with $\lambda=\{1,3\}$ (except for GPT-4 to reduce costs), which involve $198$ \& $594$ pairs in total respectively. To simulate experts for providing demonstrations, we directly sample $16$ pairs from small-scale datasets when $\lambda=3$ and then choose $2$ positive and $2$ negative as demonstrations. Notice that we use the same demonstrations for large-scale experiments.
+
+We make several observations from Table~\ref{tab:granularity} and Table~\ref{tab:granularity_large}:
+(1) Our methods have higher ranks. Most baseline methods predict similar number of clusters for domain and intent, while our methods can effectively distinguish between the two.
+For instance, on MTOP(I)/(D) in Table~\ref{tab:granularity}, BIC predicts number of clusters $69/64$ while our method (GPT-3.5, $\lambda=3$) predicts $92/18$.
+(2) Increasing $\lambda$ generally helps (MTOP(D) in Table~\ref{tab:granularity}) but might not always make a large difference.
+(3) GPT-4 significantly improves upon GPT-3.5, probably due to its better understanding of demonstrations.
+
+
+
+Related Works
+\label{sec:related}
+\noindent\textbf{Clustering.}
+As a fundamental task in machine learning, clustering has been applied on diverse data types, including texts~\cite{xu-etal-2015-short,hadifar-etal-2019-self,zhang-etal-2021-supporting}, images~\cite{tao2021idfd,yang2016joint,caron2018deep,gatcluster2020,xie2016unsupervised} and graphs~\cite{huang2014deep,chiang2019cluster}.
+Recent research has been shifted to deep clustering~\cite{zhou2022comprehensive} which focuses on how to leverage deep neural network in clustering.
+\citet{zhou2022comprehensive} has categorized deep clustering research into four types including multi-stage~\cite{tao2021idfd,huang2014deep}, iterative~\cite{yang2016joint,caron2018deep,van2020scan,niu2022spice,chang2017deep,gatcluster2020}, generative~\cite{dilokthanakul2016deep} and simultaneous~\cite{xie2016unsupervised,zhang-etal-2021-supporting,hadifar-etal-2019-self} depended on how representation learning and clustering modules interact with each other.
+Most recently, a concurrent work~\cite{wang2023goaldriven} studies a similar problem by assigning instances to different explanations proposed by LLMs.
+Another recent work IDAS~\cite{raedt2023idas} directly encode the concatenation of sentence and abstractive summarizations from LLMs for clustering.
+
+\noindent\textbf{Clustering with Relations.}
+Clustering with relations has been explored in different situations.
+To start with, spectral clustering~\cite{donath1972algorithms,cheeger1970lower} makes use of similarity matrix where each entry measures the similarity between a pair of data.
+More recently, several works in deep clustering utilize relational supervision~\cite{yang2016joint,gatcluster2020,van2020scan,chang2017deep} via pseudo-labelling which could be noisy.
+Another line of works that is closely related to ours is constrained clustering. It usually incorporates pairwise must-link or cannot-link constraints~\cite{basu2004active,wagstaff2001constrained,basu2008constrained,zhang2020framework,manduchi2021deep}.
+Nonetheless, these constraints are often sampled from labels as a prior which significantly limits its application in our scenario.
+In this work, we study how to utilize contemporary API-based LLMs to infer relations.
+
+\noindent\textbf{Pre-trained Embedding Model.} Generic pre-trained text embedding models~\cite{reimers-gurevych-2019-sentence,gao-etal-2021-simcse,ni-etal-2022-sentence,ni-etal-2022-large} are widely applied in text similarity, classification, clustering and information retrieval. Recently, two embedding models E5~\cite{wang2022text} and Instructor~\cite{INSTRUCTOR} have shown superior performance on a popular benchmark~\cite{muennighoff2022mteb}.
+Specifically E5 is pre-trained on web-scraped data pairs with contrastive objective. Instructor is pre-trained on $330$ tasks with instructions.
+{\model} aims at improving these models with LLMs.
+
+
+
+
+
+Conclusion
+\label{sec:conclusion}
+
+In this paper, we study how to leverage API-based LLMs to guide small embedders for text clustering in order to benefit from high-level language capability of LLMs and user's instructions on clustering.
+We propose to prompt LLMs with two kinds of sentence relationship tasks: triplet task and pairwise task.
+Triplet task chooses the sentence that is most similar with anchor combining with a perspective instruction from users. The predicted triplets are used for fine-tuning small embedders.
+Pairwise task judges whether a pair of sentences belong to the same category hinted by few-shot demonstrations, and then the predictions are used to determine cluster granularity with a consistency measure.
+Extensive experiments show that our proposed framework {\model} can improve clustering quality and propose reasonable cluster granularity at a negligible cost.
+However, {\model} still relies on the embedding model itself, which is inefficient and inapplicable on black-box embedding models. We encourage future works to explore the potential of model-free training such as constrained clustering.
+
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

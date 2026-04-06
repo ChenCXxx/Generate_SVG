@@ -1,0 +1,230 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\vspacesection
+Knowledge Bases Question Answering (KBQA) 
+aims to answer natural language questions based on knowledge from KBs such as DBpedia \citep{auer2007dbpedia}, Freebase \citep{freebase} or Wikidata \citep{vrandevcic2014wikidata}. Existing methods can be divided into two categories. One category is based on semantic parsing, where models first parse the input question into a logical form (e.g., SPARQL \citep{hommeaux2011SPARQLQL} or S-expression \citep{grailqa}) then execute the logical form against knowledge bases to obtain the final answers \citep{CBR-KBQA, grailqa, ye2021rngkbqa}. The other category of methods directly outputs answers without relying on the the logical-form executor \citep{ijcai2019p701,Sun2019PullNetOD, KGT5, Ouz2022UniKQAUR}. They either classify the entities in KB to decide which are the answers \citep{Sun2019PullNetOD} or generate the answers using a sequence-to-sequence framework \citep{KGT5, Ouz2022UniKQAUR}. 
+
+Previous empirical results \citep{ye2021rngkbqa,CBR-KBQA,gu2022knowledge} show that the semantic parsing based methods can produce more accurate answers over benchmark datasets. However, due to the syntax and semantic restrictions, the output logical forms can often be non-executable and thus would not produce any answers. On the other hand, direct-answer-prediction methods can guarantee to generate output answers, albeit their answer accuracy is usually not as good as semantic parsing based methods, especially over complex questions which require multi-hop reasoning \citep{cwq}. To our knowledge, none of the previous studies have leveraged the advantages of both types of methods. Moreover, since knowledge bases are usually large-scale with millions of entities, most previous methods rely on entity linking to select relevant information from KB for answering questions. However, these entity linking methods are usually designed for specific datasets, which inevitably limits the generalization ability of these methods.
+
+In this paper, we propose a novel framework \Modelsp to overcome these limitations: 
+(1) Instead of relying on only either logical forms or direct answers, \Modelsp jointly decodes them together, and further combines the answers executed using logical forms and directly generated ones to obtain the final answers. 
+Thus the advantages of both methods can be leveraged in our model. Moreover, unlike previous methods using constrained decoding \citep{Chen2021ReTraCkAF} or post revision \citep{CBR-KBQA} to produce more faithful logical forms,  we simply treat logical forms as regular text strings just like answers during generation, reducing efforts of hand-crafted engineering.
+(2) Different from previous methods which rely on entity linking \citep{stagg,ELQ} to locate entities appeared in questions and then retrieve relevant information from KB, \Modelsp linearizes KBs into text documents and leverages free-text retrieval methods to locate relevant sub-graphs.
+Based on this simplification, \Modelsp brings better adaptation to different datasets and potentially different KBs due to the universal characteristic of text-based retrieval. Experiments 
+show that simple BM25 retrieval brings surprisingly good performance across multiple datasets.
+
+We conduct experiments on four benchmark datasets including WebQSP \citep{webqsp}, ComplexWebQuestions \citep{cwq}, FreebaseQA \citep{freebaseqa}, and GrailQA \citep{grailqa}. 
+Experiment results show that 
+our model achieves new state-of-the-art results on WebQSP,
+FreebaseQA, and GrailQA benchmarks, and gets very competitive results on the
+ComplexWebQuestions benchmark. This demonstrates the effectiveness of \Modelsp across different datasets and question categories. 
+
+
+
+\vspacesection
+
+
+Related Work
+\vspacesection
+
+\bfsec{Semantic parsing based methods for KBQA} first parse the input question into a logical form (LF) then execute it against KB to obtain the answers. 
+ReTrack \citep{Chen2021ReTraCkAF} uses a grammar-based decoder to generate LFs based on pre-defined grammar rules, and a semantic checker to discourage generating programs
+that are semantically inconsistent with KB. RnG-KBQA \citep{ye2021rngkbqa} first enumerates possible LFs based on the entity in the input question. Then a ranking-and-generation framework is applied to output the final LF. 
+ArcaneQA \citep{Gu2022ArcaneQADP} generates the LFs dynamically based on the execution results of LFs generated at intermediate steps. TIARA \citep{Shu2022TIARAMR} proposes a multi-grained retrieval method to select relevant KB context for logical form generation. All these methods rely on an external executor such as a SPARQL server to execute LFs for final answers. If the LFs are not executable, then no answers will be produced.
+
+\bfsec{Direct-Answer-Prediction methods for KBQA} 
+directly output answers without relying on the LF executor. 
+PullNet \citep{Sun2019PullNetOD} retrieves a subgraph of KB related to the input question and applies graph neural networks to predict the answer entities in the subgraphs. 
+KGT5 \citep{KGT5} uses a sequence-to-sequence framework to directly generate answers only based on the input question. UniK-QA \citep{Ouz2022UniKQAUR} is also based on a sequence-to-sequence framework, but it first retrieves relevant triplets from KB and then generates answers based on the combination of the input question and retrieved triplets. Although answers can always be produced without the need of LF executor, this type of method usually underperforms semantic parsing based methods on public benchmarks \citep{cwq,grailqa,gu2022knowledge}.
+
+\bfsec{Entity Linking \& Knowledge Linearization.} Real-world KBs are usually very large and with millions of entities and triplets. The algorithm to ground the input question onto a relevant sub-graph of KB is important. Entity linking is the most common way for this. CBR-KBQA \citep{CBR-KBQA} combines an off-the-shelf model ELQ \citep{ELQ} with an NER system provided by Google Cloud API for entity linking. RnG-KBQA \citep{ye2021rngkbqa} also uses ELQ for the WebQSP dataset, while it uses a BERT-based \citep{devlin-etal-2019-bert} NER system and trains another BERT-based entity disambiguation model for the GrailQA dataset.
+Previous works usually design different methods to optimize the performance of different datasets. A recent study \cite{Soliman2022ASO} also shows that entity linking models are usually domain-specific and hard to transfer across domains. Different from these methods, \Modelsp  reduces this burden by linearizing KBs to text documents and leveraging simple text-retrieval methods. Experimental results show that this is not only more general but also empirically effective. Similar to our method, UniK-QA \citep{Ouz2022UniKQAUR} also linearizes the KB and conducts retrieval. However, UniK-QA still requires entity linking \citep{stagg} to reduce the retrieval range, and it only generates direct answers without studying logical forms for questions requiring complex reasoning.
+Besides the studies above, UnifiedSKG \citep{UnifiedSKG} is relevant since it studies the generation of logical forms and direct answers for KBQA. However, it does not study combining the advantages of both logical forms and direct answers, and further assumes that the ground-truth question entities are provided, which dramatically eases this problem.
+\cite{Li2021DualRO} generates either an answer or an LF for an input question based on model choice, but it studies the problem of Text-Table QA, which is inherently different from KBQA. 
+\vspacesection
+
+
+Method
+\vspacesection
+In order to (1) leverage the advantages of both logical forms and direct answers and (2) reduce the dependency on entity linking models, we propose a novel framework \Model.
+As shown in Figure~1, the whole KB is first transformed into text documents. Then, for an input question, the retriever retrieves relevant passages from linearized KB documents, which will be combined with the input question into the reader. \Modelsp reader is a sequence-to-sequence generative model and uses different prefixes to generate logical forms (LFs) and direct answers respectively. Finally, the executed answers by LFs and generated direct answers are combined to obtain the final answers. %We introduce the details of each part in the following sections. 
+
+\subsection{Knowledge Bases Linearization}
+\label{sec:kbl}
+
+Given a question, retrieving relevant information from KBs is non-trivial since KBs are large-scale and complicated with both semantic (names of entities and relations) and structural (edge between entities by relations) information. On the other hand, recent studies have shown the effectiveness of text-based retrieval for question answering \citep{Chen2017ReadingWT,DPR,FiD}. By linearizing KBs to text corpus, we can easily leverage these successful text-retrieval methods to select semantically relevant information from KBs.
+
+We describe how to linearize the knowledge base. Considering the original KB format to be the most common Resource Description Format (RDF), which contains triplets composed of one head entity, relation, and tail entity. For example, (\textit{Freescape}, \textit{game\_engine.developer}, \textit{Incentive Software}) means that Incentive Software is the developer of a game engine called Freescape. To linearize this triplet, we simply concatenate them with spaces to be a sentence as \textit{Freescape game engine developer Incentive Software.} Note that we also replace punctuation marks in relation to spaces. In this case, this sentence contains both semantic information (entity and relation names) and structural information (relation between two entities). Then we further group sentences with the same head entity to become a document like \textit{Freescape game engine developer Incentive Software. Freescape release date 1987...}. This grouping is mainly to preserve the structural information of the 1-hop subgraph corresponding to the head entity. 
+
+Following \citep{DPR}, we truncate each document into multiple non-overlap passages with a maximum of 100 words.  In the next section, we show how to retrieve from these passages. 
+\begin{figure}[!tp]
+    \centering
+    \includegraphics[width=14cm]{fig/model-3.pdf}
+    \caption{Model framework of \Model. We use text-based retrieval instead of entity linking to select question-related information from the KB. Then, we add different prefixes into the reader to generate logical forms and direct answers respectively. The logical-form-executed answers and directly-generated answers are combined to obtain the final output.
+    }
+    \label{fig:model}
+\vspacereduce
+\end{figure}
+\subsection{Retrieval}
+\label{sec:retrieval}
+
+The retriever retrieves relevant passages from the linearized KB based on the input question. We consider two kinds of retrieval methods: sparse retrieval and dense retrieval. For sparse retrieval, we use BM25 \citep{bm25}, which is based on TF-IDF scores of sparse word match between input questions and KB-linearized passages. For dense retrieval, we apply the DPR \citep{DPR} framework, which is based on similarity in the embedding space between input questions and passages from two fine-tuned BERTs \citep{devlin-etal-2019-bert}. We refer readers to the original paper for details of the fine-tuning process. During inference, suppose there are totally $N$ passages in the knowledge source $\{p_1, p_2, \ldots , p_N\}$. DPR applies the passage encoder $E_P(\cdot)$ to encode all the passages and store embeddings in memory. For an input question $q$, DPR applies the question encoder $E_Q(\cdot)$ to obtain its representation, and then the passages are retrieved based on the dot-product similarity: $I_{\text{retrieve}} = \text{argtop-k}_i(E_P(p_i) \cdot E_Q(q)).$
+Then it applies FAISS\citep{faiss} to conduct an efficient similarity search due to the large number of passages $N$. Through this step, we can retrieve $|I_{\text{retrieve}}| \ll N$ passages which are potentially relevant to the input question. 
+\subsection{Reading}
+\label{sec:read}
+
+The reader takes the retrieved passages and the original question as input and generates the targeted output. Recent advanced sequence-to-sequence models like BART \citep{lewis-etal-2020-bart} and T5 \citep{T5} can be utilized here. In order to answer complicated multi-hop questions, cross-passage reasoning is important for the reader. One way is to concatenate all the passages and let the self-attention in the Transformer module capture these patterns. However, this can be inefficient when the number of retrieved passages is very large because of the quadratic computation complexity in self-attention. To achieve both cross-passage modeling and computation efficiency, we apply Fushion-in-Decoder (FiD) \citep{FiD} based on T5 as the reader model. FiD encodes the concatenation of the input question and each passage separately but decodes the output tokens jointly. Specifically, we denote the question as $q$ and the retrieved passages as $\{p_{r_i}|r_i \in I_{\text{retrieve}}\}$. The encoding process for each passage $p_{r_i}$ is:
+\begin{align}
+    \textbf{P}_i = \text{Encoder}(\text{concat}(q, p_{r_i})) \in \mathbb{R}^{L_p \times H},
+\label{eq:fid-enc}
+\end{align}
+where $H$ is the hidden dimension, and $L_p$ is the total sequence length of a question concatenated with a passage. $\text{T5-Encoder}(\cdot)$ is the encoder module of T5. Then the token embeddings of all passages output from the last layer of the encoder are concatenated and sent to the decoder to generate the output tokens $T_{\text{output}}$:
+\begin{align}
+    T_{\text{output}} = \text{Decoder}([\textbf{P}_1;\textbf{P}_2;\cdots;\textbf{P}_{|I_{\text{retrieve}}|}] \in \mathbb{R}^{|I_{\text{retrieve}}|L_p \times H}) 
+\label{eq:fid-dec}
+\end{align}
+By concatenating the encoder output embeddings, the decoder can generate outputs based on joint modeling of multiple passages. 
+\subsection{Joint Decoding Answers and Logical Forms}
+\label{sec:joint}
+
+Motivated by the success of adding prefixes to control the generation of large-scale language models \citep{T5,UnifiedSKG}, we use a shared sequence-to-sequence model to generate both logical forms and direct answers, and  differentiate the two processes by prompting the model with different prefixes. The encoding-decoding process in Equation (\ref{eq:fid-enc}) and (\ref{eq:fid-dec}) becomes:
+\begin{align}
+    \textbf{P}_i^{\text{answer}} = \text{Encoder}(\text{concat}(\text{prefix}^{\text{answer}}, q, p_{r_i})) & , \ T_{\text{answer}} = \text{Decoder}([\textbf{P}_1^{\text{answer}};\cdots;\textbf{P}_{|I_{\text{retrieve}}|}^{\text{answer}}]); \\
+    \textbf{P}_i^{\text{LF}} = \text{Encoder}(\text{concat}(\text{prefix}^{\text{LF}}, q, p_{r_i}))  & , \
+    T_{\text{LF}} = \text{Decoder}([\textbf{P}_1^{\text{LF}};\cdots;\textbf{P}_{|I_{\text{retrieve}}|}^{\text{LF}}]) 
+\label{eq:fid-prefix}
+\end{align}
+
+where $T_{\text{answer}}$ and $T_{\text{LF}}$ are the output answer tokens and logical form tokens respectively. $\text{prefix}^{\text{answer}}$ and $\text{prefix}^{\text{LF}}$ are the prefixes for answer generation and logical form generation respectively, which we set as \textit{Question Answering:} and \textit{Semantic Parsing:}. For example, given the question \textit{What video game engine did incentive software develop?}, we'll first retrieve relevant passages using the retriever. Then we add these two prefixes to produce two different inputs: \textit{Question Answering: what video game engine did incentive software develop?} and \textit{Semantic Parsing: what video game engine did incentive software develop?"} For the first input, we train the model to generate the target output answer \textit{Freescape} directly\footnote{For direct answer generation, we only consider returning one single answer. While for the second input, we aim to generate the logical form \texttt{(AND cvg.computer\_game\_engine (JOIN cvg.computer\_game\_engine.developer m.0d\_qhv))}, which is simply treated as text strings during generation without constrained decoding. However, instead of directly generating the entity ID like \textit{m.0d\_qhv} in the logical form, we replace it with the corresponding entity name like \textit{Incentive Software} and add special tokens ``[" and ``]" to identify it. The revised logical form to be generated becomes \texttt{(AND cvg.computer\_game\_engine (JOIN cvg.computer\_game\_engine.developer [ Incentive Software ]))}. After generation, we replace the entity names with their IDs for execution.
+During training, we fine-tune the whole reader in a multi-task learning manner, where one input question contributes to two training data pairs with one for answer generation and the other one for logical form generation. During inference, we use beam search to generate multiple candidates for both logical forms and answers, with the same beam size $B$. 
+
+Next, we show how we combine them to obtain the final answer. 
+We first execute these logical forms against the KB using an executor\footnote{We locally set up a Virtuoso triplestore service following the GrailQA paper.}. Suppose the list of executed answer set is $[A_1^{\text{LF}}, \cdots, A_{B^{\prime}}^{\text{LF}}]$ ($B^{\prime} \leq B$ since some logical forms can be non-executable) and the list of directly generated answer set is $[A_1^{\text{answer}}, \cdots, A_B^{\text{answer}}]$. We consider two situations: (1) If $B^{\prime} = 0$ means none of these logical forms are executable, the final answer is simply $A_1^{\text{answer}}$; (2) Otherwise when $B^{\prime} \geq 1$, we use weighted linear combination: we first assign the score $\lambda S(k)$ for $A_k^{\text{LF}}$ and the score $(1-\lambda)S(k)$ for $A_k^{\text{answer}}$, where $0 \leq \lambda \leq 1$ is a hyper-parameter controlling the weight of each type of answers, and $S(k)$ is a score function based on the answer rank $k$. If an answer set appears both in executed answer list and generated answer list with ranks $i$ and $j$ respectively, then its score is the sum of two scores: $\lambda S(i) + (1-\lambda)S(j)$. Finally, we select the answer set with the highest score as the final output. We leave the exploration of other combination methods as future work.
+
+\vspacesection
+
+
+Experiment
+\vspacesection
+\begin{table}[!t]
+\centering
+\begin{tabular}{lcccc}
+\hline
+\multirow{2}{*}{Model}  & \multicolumn{2}{c}{WebQSP} & \multicolumn{1}{c}{CWQ} & \multicolumn{1}{c}{FreebaseQA} \\  \cmidrule(lr){2-3} \cmidrule(lr){4-4}  \cmidrule(lr){5-5}      & Hits@1         & F1                              & Hits@1     & Hits@1                             \\ \hline
+ PullNet \citep{Sun2019PullNetOD} & 67.8 & 62.8 & 47.2 & - \\
+ EmQL \citep{EmQL} & 75.5 & - & - & - \\
+  NSM$_{+h}$ \citep{NSMh} & 74.3 & - & 53.9 & - \\
+  FILM \citep{FILM} & 54.7 & -  & -  & 63.3 \\
+  KGT5 \citep{KGT5} & 56.1 & - & 36.5 & - \\
+  CBR-SUBG \citep{cbr-subg} & 72.1 & - & - & 52.1 \\
+  SR+NSM \citep{sr-nsm} & 69.5 & 64.1 & 50.2 & - \\
+  UniK-QA \citep{Ouz2022UniKQAUR} & 79.1 &  - & - & - \\ \hline
+  QGG \citep{QGG} & - & 74.0 & 44.1 & - \\
+  HGNet \citep{HGNet} & 70.6 & 70.3 & 65.3 & - \\
+  ReTrack \citep{Chen2021ReTraCkAF} & 74.7 & 74.6 & - & - \\
+  CBR-KBQA \citep{CBR-KBQA} & - & 72.8  & \textbf{70.4}  & -  \\
+  ArcaneQA \citep{Gu2022ArcaneQADP} & - & 75.3 & - & - \\
+  Program Transfer \citep{cao-etal-2022-program} &  74.6 & 76.5 & 58.1 & - \\
+  RnG-KBQA \citep{ye2021rngkbqa}  & - & 75.6 & -  & - \\
+  RnG-KBQA (T5-large)$^{\star}$ & - & 76.2 $\pm$ 0.2 & - & - \\ \hline
+  \Modelsp (BM25 + FiD-large) & 79.0 $\pm$ 0.4  & 74.9 $\pm$ 0.3  &  68.1 $\pm$ 0.5 & 78.8 $\pm$ 0.5 \\
+  \Modelsp (DPR + FiD-large) & 80.7 $\pm$ 0.2 & 77.1 $\pm$ 0.2  & 67.0 $\pm$ 0.4 & \textbf{79.0} $\pm$ 0.6
+         \\
+  \Modelsp (BM25 + FiD-3B) & - & - & \textbf{70.4} & - \\
+  \Modelsp (DPR + FiD-3B) & \textbf{82.1} & \textbf{78.8}  & - & -\\
+   \hline
+\end{tabular}
+\caption{Results on the test splits of 3 benchmark datasets: WebQSP, CWQ, and FreebaseQA. The two blocks of baselines are direct-answer-prediction and semantic parsing based methods respectively. We run 5 independent experiments for FiD-large based \Modelsp and report mean and standard deviation. $^{\star}$ means that we replace the original reader T5-base with T5-large and rerun experiments to have a fair comparison with our method.}
+\label{exp:main2}
+\vspacereduce
+\end{table}
+
+\bfsec{Experiment Settings.} We use the full Freebase \citep{freebase} data pre-processed by \cite{Wang2021RetrievalRA} as the KB for all benchmarks. The total number of entities, relations, and triplets are about 88 million, 20k, and 472 million respectively. The total number of passages after linearization is about 126 million. For the retrieval module of \Model, we use BM25 implemented by Pyserini \citep{Lin2021PyseriniAP} and Dense Passage Retrieval (DPR) \citep{DPR} with BERT-base \cite{devlin-etal-2019-bert} as question and passage encoders. We train separate DPRs on each dataset following the same training process and use the same model architecture in the original paper. The number of retrieved passages is 100 if not specified. For the reading module, we leverage Fusion-in-Decoder \citep{FiD} based on the T5 \citep{T5} model: FiD-large and FiD-3B with 770 million and 3 billion model parameters respectively. For the decoding beam size, we use 10 for FiD-large model and 15 for FiD-3B model.
+
+We evaluate \Modelsp on four benchmark datasets: WebQSP \citep{webqsp}, ComplexWebQuestions (CWQ) \citep{cwq}, FreebaseQA \citep{freebaseqa}, and GrailQA \citep{grailqa}. Specifically, GrailQA provides the categories of questions: i.i.d., compositional, and zero-shot, which can be used to evaluate model performance over different levels of generalization. All datasets provide both ground-truth answers and logical forms except FreebaseQA, where our model only generates answers as the final output without using the logical form. Following previous work \citep{ye2021rngkbqa,CBR-KBQA,Ouz2022UniKQAUR}, we evaluate our model based on metrics Hits@1 and F1, where Hits@1 focus on the single top-ranked answer while F1 also considers coverage of all the answers. 
+
+\begin{table}[!t]
+\centering
+\begin{tabular}{lccccc}
+\hline
+Model                 & Overall        & I.I.D.  & Compositional & Zero-Shot                                 \\ \hline
+QGG \citep{QGG} & 36.7 & 40.5 & 33.0 & 36.6 \\
+Bert+Ranking \citep{grailqa} &  58.0 &  67.0 &  53.9 &  55.7 \\ 
+ReTrack \citep{Chen2021ReTraCkAF} & 65.3 &  87.5 & 70.9 & 52.5 \\
+S2QL \citep{zan2022s} & 66.2 &  72.9 &  64.7 & 63.6 \\
+ArcaneQA \citep{Gu2022ArcaneQADP} & 73.7 & - & 75.3 & 66.0 \\
+RnG-KBQA \citep{ye2021rngkbqa} &  74.4 (76.9) & 89.0 (88.3) & 71.2 (69.2) & 69.2 (75.1) \\
+RnG-KBQA (T5-large)$^{\star}$  & \quad  -  \, (77.1) & \quad  -  \,  (88.5) & \quad  -  \,  (69.8) & \quad  -  \,  (75.2) \\
+UniParser \citep{Liu2022UniParserUS} & 74.6 & - & 71.1 & 69.8 \\
+DeCC (Anonymous) & 77.6 & - & 75.8 & 72.5 \\
+TIARA \citep{Shu2022TIARAMR} & 78.5 & - & 76.5 & \textbf{73.9} \\ \hline
+  \Modelsp (BM25 + FiD-large) & 76.0 (78.7) & \textbf{90.5} (90.2) & 79.0 (78.7) & 68.0 (73.7) \\
+  \Modelsp (DPR + FiD-large) & \quad  -  \,  (75.4) & \quad  -  \,  (89.7) & \quad  -  \,  (75.8) & \quad  -  \,  (69.0) \\
+  \Modelsp (BM25 + FiD-3B) & \textbf{78.7} (81.4) & 89.9 (89.7) & \textbf{81.8} (80.1) & 72.3 (78.4)
+         \\
+   \hline
+\end{tabular}
+\caption{F1 scores on the test split of GrailQA. The numbers in the parentheses are F1 scores on the dev split. $^{\star}$ means that we replace the original reader T5-base with T5-large and rerun experiments.}
+\label{exp:main1}
+\vspacereduce
+\end{table}
+\subsection{Main Result}
+We compare with both direct answer prediction and semantic parsing based methods and run 5 independent experiments for FiD-large based \Modelsp to report mean and standard deviation. We don't do this for \Modelsp with FiD-3B due to the limitation of computation resource. We denote our model in the form of \Modelsp (\{Retriever\} + \{Reader\}) such as \Modelsp (BM25 + FiD-large). If the retriever is not specified, it means we choose the better one for each dataset respectively.
+
+As shown in Table \ref{exp:main2}, \Modelsp achieves new SOTA on WebQSP and FreebaseQA dataset, outperforming both direct-answer-prediction (first block) and semantic parsing based (second block) baselines. On WebQSP, \Modelsp improves the previous highest Hits@1 by 3.0\% and F1 by 2.3\%. Note that one of the best-performing baseline UniK-QA uses STAGG \citep{stagg} for entity linking on WebQSP, which is not publicly available and thus can not be applied to other datasets. Compared to UniK-QA, we see that \Modelsp (DPR + FiD-large) improves the Hits@1 by 1.6\% with the same model size, demonstrating the effectiveness of our method even without entity linking. On FreebaseQA, \Modelsp improves the SOTA Hits@1 significantly by 15.7\%. On CWQ dataset, \Modelsp achieves very competitive results, the same as the current SOTA method CBR-KBQA. CBR-KBQA is based on the K-Nearest Neighbors approach, which is complementary to our method. We also see that increasing reader size from large (770M) to 3B significantly improves model performance. Moreover, BM25 and DPR lead to different results: DPR performs significantly better than BM25 on WebQSP, slightly better on FreebaseQA, and worse on CWQ. The possible reason is that DPR is trained to retrieve passages containing the answers
+based on distant supervision \citep{DPR}, which do not necessarily contain the relations and entities that appeared in the logical form, especially for complex questions. Thus it may hurt the performance of logical form generation which results in a final performance degeneration.
+
+Table \ref{exp:main1} shows results on the GrailQA dataset, where we listed F1 scores of Overall, I.I.D., Compositional, and Zero-shot questions respectively. We see that with FiD-large reader, \Modelsp achieves better overall performance than the published SOTA method RnG-KBQA. Since original RnG-KBQA uses T5-base, we also equip it with T5-large for a fair comparison and list the results on the dev set,  
+where \Modelsp (BM25 + FiD-large) still significantly outperforms it by 1.6\% in overall F1 score. With FiD-3B reader, the overall F1 of \Modelsp is improved by 2.7\% compared to using FiD-large reader, 
+and surpasses the current SOTA method TIARA\footnote{We achieve the 1st rank on the GrailQA leaderboard as of 09/06/2022.}, which is an anonymous submission on the GrailQA leaderboard. Notably, \Modelsp performs the best in compositional questions with an F1 score 5.3\% higher than the best-performing method. 
+
+Overall we see that \Modelsp achieves new SOTA results on WebQSP, FreebaseQA, and GrailQA with very competitive results on the CWQ benchmark. Even with simple BM25 retrieval, \Modelsp outperforms most of the baselines across all the benchmark datasets, which previous studies usually use different entity linking methods specially designed for different datasets.
+
+
+\subsection{Ablation Study}
+\label{sec:ablation}
+
+In this section, we conduct some ablation studies to answer the following questions: 
+\begin{table}[!tp]
+\centering
+\begin{tabular}{lcccccccccc}
+\hline
+$\lambda$ & 0.0 & 0.2 & 0.4 & 0.45 & 0.49 & 0.51 & 0.55 & 0.6 & 0.8  & 1.0                  \\ \hline
+  $S(k)=1/k$   & 54.7 & 54.7 & 56.1 & 56.3 & 56.5 & 78.7 & 78.7 & 78.7 & 78.7 & 78.7 
+         \\
+ $S(k)=B-k+1$   & 54.7 & 55.6 & 56.4 & 56.5 & 56.5 & 78.3 & 78.3 & 78.4 & 78.6 & 78.7
+ \\
+   \hline
+\end{tabular}
+\caption{F1 scores on GrailQA (dev) using \Modelsp (BM25 + FiD-large) based on different values of $\lambda$ which is the weight of LF-executed answers in the answer combination function. $S(k)$ is the score function of answer rank $k$, and $B$ is the generation beam size.}
+\label{exp:answer-combine-grailqa}
+\end{table}
+\begin{table}[!tp]
+\centering
+\small
+\begin{tabular}{lccccccc}
+\hline
+\multirow{2}{*}{Model} & \multicolumn{2}{c}{WebQSP}    & CWQ & \multicolumn{4}{c}{GrailQA (dev)} \\  \cmidrule(lr){2-3} \cmidrule(lr){4-4} \cmidrule(lr){5-8}   & Hits@1                              & F1      & Hits@1                              & F1 (O)   & F1 (I)   & F1 (C)  & F1 (Z)               \\ \hline
+  \Modelsp (Answer only) & 74.7 & 49.8  & 50.5  & 54.7 & 59.4 & 38.3 & 59.5 \\ 
+  \Modelsp (LF only) & 74.3 & 74.0  & 55.2  & 72.4 & 88.2 & 76.3 & 63.9  \\ 
+  \Model & 80.7 & 77.1  & 68.1  & 78.7 & 90.2 & 78.7 & 73.7 \\
+  Non-Executable LF\% & \multicolumn{2}{c}{11.3}  & 30.2  & 15.8 & 6.2 & 9.6 & 22.5 \\
+  \hline
+  \Model$_{sep}$ (Answer only) & 74.2 & 49.5  & 47.9  & 54.6 & 57.7 & 38.8 & 59.8 \\
+  \Model$_{sep}$ (LF only)  & 72.7 & 73.1  & 54.3  & 74.0 & 91.4 & 75.2 & 66.0  \\
+   \Model$_{sep}$ & 80.6 & 77.1  & 66.5  & 80.3 & 92.9 & 78.9 & 75.3 \\
+   Non-Executable LF\% & \multicolumn{2}{c}{12.3}  & 32.8  & 15.9 & 5.2 & 11.9 & 22.4 \\
+   \hline
+\end{tabular}
+\caption{We study the performance of our model when only using generated answers (Answer Only) or executed answers by logical forms (LF Only). O, I, C, Z means overall, i.i.d., compositional and zero-shot. \Model$_{sep}$ means using a separate reader for answer generation and logical form generation respectively instead of a joint reader. We also show the percentage of questions where none of the generated LFs are executable.}
+\label{exp:joint}
+\end{table}
+\bfsec{What is the best way to combine LF-executed answers and generated answers?} In Section \ref{sec:joint}, we introduced a way of combining LF-executed answers and generating answers to obtain the final answer. (1) When none of the LFs are executable, we use the top-1 generated answer as output. 
+In Table \ref{exp:joint}, we show the percentage of questions where none of the generated LFs are executable. It can be observed that directly generating LFs for hard questions, such as CWQ and Zero-shot GrailQA, shows a significantly higher non-executable rate than that for easy quest
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

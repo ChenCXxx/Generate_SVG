@@ -1,0 +1,273 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.5cm]{./imgs/first_page.pdf}
+    \end{center}
+    \caption{\textbf{Top:} The conventional MIL paradigm lacks fine-tuning of the offline embedded instance features. \textbf{Bottom:} The proposed MIL paradigm that introduces instance feature re-embedding to provide more discriminative features for the MIL model.}
+    \label{fig:intro}
+\end{figure}
+
+Computational pathology~\cite{cui2021artificial, song2023artificial, cifci2023ai} is an interdisciplinary field that combines pathology, image analysis, and computer science to develop and apply computational methods for the analysis and interpretation of pathological images (also known as whole slide images, WSIs). This field utilizes advanced algorithms, machine learning, and artificial intelligence techniques to assist pathologists in tasks like sub-typing~\cite{ilse2018attention}, diagnosis~\cite{zhang2022dtfd,lin2023interventional}, prognosis~\cite{wen2023deep,yao2020whole}, and more. However, the process of pixel-level labeling in ultra-high resolution WSIs is time-consuming and labor-intensive, posing challenges for traditional deep learning methods that rely on pixel-level labels in computational pathology. 
+To address this challenge, multiple instance learning (MIL) approaches have been employed to treat WSI analysis as a weakly supervised learning problem~\cite{wang2019weakly, lu2021data}. MIL divides each WSI (referred to as a bag) into numerous image patches or instances. Previous MIL-based methods mainly follow a three-step process: 1) instance feature extraction, 2) instance feature aggregation, and 3) bag prediction. However, most previous works focus on the last two steps, where the extracted offline instance features are utilized to make bag-level predictions. 
+
+Despite achieving ``clinical-grade" performance on numerous computational pathology tasks~\cite{chen2022hipt, zhang2022dtfd}, the conventional MIL paradigm faces a significant design challenge due to the large number of instances involved. The holistic end-to-end learning of the instance feature extractor, instance-level feature aggregator, and bag-level predictor becomes infeasible due to the prohibitively high memory cost. In previous works, an offline feature extractor pre-trained on natural images is used to extract instance features. However, this approach lacks a feature fine-tuning process for specific downstream tasks~\cite{clam, shao2021transmil, zhang2022dtfd}, resulting in low discriminative features and sub-optimal performance, as illustrated in Figure~\ref{fig:intro}(a). To mitigate this issue, some works~\cite{li2021dual, chen2022hipt, huang2023plip} have employed self-supervised methods to pre-train a more powerful feature extractor on a massive amount of WSIs, which are known as foundation models. Nevertheless, pre-training foundation model requires huge amounts of data ($>$200k WSIs) and computational resources. \textbf{Furthermore, the challenge of lacking feature fine-tuning remains unresolved.} An intuitive way of addressing the issue is to perform online features re-embedding using representation learning techniques before MIL models. As shown in Figure~\ref{fig:intro}(b), 
+re-embedding modules can be trained end-to-end with MIL models to provide supervised feature fine-tuning. It enables fully exploiting the knowledge beneficial to the final task.
+
+As a powerful representation learning method, Transformer~\cite{vaswani2017attention} has proven to be effective for representation learning and has demonstrated promising results in various domains~\cite{chen2022structure, zerveas2021transformer, yang2021graphformers}. However, directly applying the existing Transformers for re-embedding is challenging due to the characteristics of WSI.
+The main problem is the unacceptable memory consumption caused by the massive input of image patches.
+The linear multi-head self-attention (MSA)~\cite{xiong2021nystromformer} can alleviate the memory dilemma, but suffers from high computational cost and sub-optimal performance.
+Moreover, the global MSA fails to capture the local detail features that are crucial for computational pathology.
+In this paper, we propose Re-embedded Regional Transformer (R$^2$T), which leverages the advantages of the native MSA while overcoming its limitations. Specifically, R$^2$T applies the native MSA to each local region separately. Then, it uses a Cross-region MSA (CR-MSA) to fuse the information from different regions. Finally, a novel Embedded Position Encoding Generator (EPEG) is used to effectively encode the positional information of the patches.
+By incorporating with mainstream MIL models, the proposed R$^2$T can ensure efficient computation while %maintaining powerful representation learning capabilities to 
+maintaining powerful representation capabilities to 
+fine-tune the offline features according to the specific downstream tasks.
+The main contributions can be summarized as follows:
+\begin{itemize}
+    \item We propose a novel paradigm for MIL models that incorporates a re-embedding module to address the issue of poor discriminative ability in instance features caused by offline feature extractors. The proposed feature re-embedding fashion can effectively improve MIL models, even achieving competitive performance compared to the latest foundation model.
+    \item For re-embedding instance features, we design a Re-embedded Regional Transformer (R$^2$T) which can be seamlessly integrated into mainstream MIL models to further improve performance. By incorporating the R$^2$T into AB-MIL, we present the R$^2$T-MIL, which achieves state-of-the-art performance on various computational pathology benchmarks.
+    \item We introduce two novel components for the R$^2$T: the  Cross-region MSA and the Embedded Position Encoding Generator. The former enables effective information fusion across different regions. The latter combines the benefits of relative and convolutional position encodings to encode the positional information more effectively.
+\end{itemize}
+
+
+Related Work
+\subsection{Computational Pathology}
+The transition from traditional glass slides to digital pathology has provided a wealth of opportunities for computational pathology, which aims to combine pathology, image analysis, and computer science techniques to develop computer-assisted methods for analyzing pathology images~\cite{cui2021artificial, song2023artificial, cifci2023ai}. By harnessing the power of advanced machine learning algorithms, computational pathology can enable large-scale data analysis and facilitate collaboration among pathologists and researchers. Traditionally, pathologists relied on visual examination of tissue samples under a microscope to make diagnoses. However, this manual process was not only time-consuming but also prone to subjective interpretations and human errors. With the emergence of computational pathology, these limitations are being addressed in remarkable ways. By automating labor-intensive processes, it can liberate pathologists' time, enabling them to focus on complex and critical decision-making tasks. Meanwhile, its ability to leverage vast amounts of data, combined with advanced analytic, holds great promise for breakthroughs in personalized medicine. By extracting quantitative features from pathology images, computational pathology can assist in making diagnosis~\cite{li2021dual, clam, ilse2018attention}, predicting patient outcomes~\cite{zhu2017wsisa, wulczyn2020deep}, identifying biomarkers~\cite{xie2021evaluating, hamilton2019digital}, and guiding tailored treatment strategies~\cite{tran2019personalized}. 
+
+\subsection{Multiple Instance Learning}
+Multiple instance learning (MIL) is the most widely used paradigm in computational pathology, involving three key steps: slide patching, instance feature extraction, and bag label prediction~\cite{ilse2018attention, campanella2019clinical, clam}. Due to the ultra-high resolution of WSIs, the instance features are typically extracted by pre-trained models, especially ResNet-50 pre-trained on ImageNet. However, the inherent difference between pathology images and nature images results in poor discrimination of extracted features. Some self-supervised learning-based methods~\cite{chen2022hipt, li2021dual, zhao2020predicting, saillard2021self,huang2023plip} attempt to alleviate the feature bias by pre-training feature extractor on a large number of WSIs. 
+For example, Huang~et al. adapted CLIP~\cite{clip} to pre-train a vision Transformer called PLIP, with more than 200k slide-text pairs~\cite{huang2023plip}.
+These efforts aim to enhance the discrimination of offline features by leveraging the vast amount of pathology-specific information available in the pre-training data. 
+The extracted instance features are then utilized for bag prediction in computational pathology. These methods can be categorized into instance label fusion~\cite{xu2019camel, campanella2019clinical, instance_mil_1, instance_mil_2} and instance feature fusion~\cite{li2021dual, clam, shao2021transmil, zhang2022dtfd, sharma2021cluster}. Instance label fusion methods first obtain instance labels and then pool them to obtain the bag label, while instance feature fusion methods aggregate all instance features into a high-level bag embedding and then obtain the bag prediction. Recently, Transformer blocks~\cite{vaswani2017attention} have been utilized to aggregate instance features~\cite{shao2021transmil, li2021dt, wang2022lymph}, demonstrating the advantage of self-attention over traditional attention~\cite{li2021dual, clam, ilse2018attention} in modeling mutual instance information. 
+While existing methods in computational pathology have shown promising results, most of them primarily focus on how to aggregate discriminative information from pre-extracted features. However, the pre-extracted features lack fine-tuning on specific downstream tasks, resulting in sub-optimal performance.
+
+\begin{figure*}
+\centerline{\includegraphics[width=0.9\textwidth]{./imgs/network.pdf}}
+\caption{Overview of proposed R$^2$T-MIL. A set of patches is first cropped from the tissue regions of a slide and embedded in features by an offline extractor. Then, the sequence is processed with the R$^2$T module: (1) region partition, (2) feature re-embedding within each region, and (3) cross-region feature fusion. Finally, a MIL model predicts the bag labels using the re-embedded instance features.}
+\label{fig:model}
+\end{figure*}
+
+
+Methodology
+\subsection{Preliminary}
+From the perspective of MIL, a WSI $X$ is considered as a bag while its patches are deemed as instances in this bag, which can be represented as $X=\{x_i\}^I_{i=1}$. The instance number $I$ varies for different bags. For a classification task, there exists a known label $Y$ for a bag and an unknown label $y_i$ for each of its instances. If there is at least one positive instance in a bag, then this bag is positive; otherwise, it is negative.
+The goal of a MIL model $\mathcal{M}(\cdot)$ is to predict the bag label with all instances $\hat{Y}\leftarrow\mathcal{M}(X)$.
+Following the recent popular approaches~\cite{xu2019camel,instance_mil_2}, the MIL prediction process can be divided into three steps: instance feature extraction, instance feature aggregation, and bag classification. Specifically, this process can be defined as follows:
+\begin{equation}
+\hat{Y}\leftarrow \mathcal{M}(X):=\mathcal{C}(\mathcal{A}(\mathcal{F}(X))),
+\end{equation}
+where $\mathcal{F}(\cdot)$, $\mathcal{A}(\cdot)$, and $\mathcal{C}(\cdot)$ are the mapping functions of these aforementioned steps respectively.
+
+In computational pathology, extracting all instances in a bag poses a huge computational challenge for the end-to-end optimization of these three steps.
+Therefore, most existing approaches rely on a pre-trained deep learning model to obtain instance features first. 
+Then, they only optimize the aggregation and classification steps. 
+\textbf{However, the non-fine-tuned features lead to sub-optimal performance, even if the features are extracted by a foundation model.}
+An intuitive way to address this problem is by re-embedding based on the extracted instance features, 
+while most of the existing approaches pay more attention to feature aggregation and neglect the importance of re-embedding. 
+In this paper, we 
+include a re-embedding step after the instance feature extraction and update the bag labeling as follows,
+\begin{equation}
+\hat{Y}\leftarrow \mathcal{M}(X):=\mathcal{C}(\mathcal{A}(\mathcal{R}(\mathcal{F}(X)))),
+\end{equation}
+where $\mathcal{R}(\cdot)$ is the mapping function of the re-embedding.
+
+\subsection{Re-embedded Regional Transformer}
+As illustrated in Figure~\ref{fig:model}, we propose a Re-embedded Regional Transformer (R$^2$Transformer, R$^2$T) to re-embed the input instance features as the new instance representations,
+\begin{equation}
+    Z= \{z_i\}_{i=1}^I:=\mathcal{R}(H)\in \mathbb{R}^{I\times D},
+\end{equation}
+where $\mathcal{R}(\cdot)$ is the mapping function of the R$^2$Transformer here, $H=\{h_i\}_{i=1}^I:=\mathcal{F}(X)\in \mathbb{R}^{I\times D}$ is the processed input instance features, and $z_i=\mathcal{R}(h_i)$ is the new embedding of the $i$-th instance. $D$ is the dimension of the embedding. The R$^2$Transformer can be flexibly plugged into the MIL framework as a re-embedding module after feature input and before instance aggregation to reduce bias caused by the shift between offline feature learning and downstream tasks. The whole re-embedding process in the R$^2$Transformer can be formulated as,
+\begin{equation}
+\begin{aligned}
+& \hat{Z}= \textrm{R-MSA}\left ( \textrm{LN}\left ( H \right ) \right ) + H \\
+& Z = \textrm{CR-MSA}\left ( \textrm{LN}\left ( \hat{Z} \right ) \right ) + \hat{Z}
+\end{aligned}
+\end{equation}
+where R-MSA$(\cdot)$ denotes Regional Multi-head Self-attention, CR-MSA$(\cdot)$ denotes Cross-region MSA, and LN$(\cdot)$ denotes Layer Normalization.
+
+\noindent\textbf{Regional Multi-head Self-attention:}
+Since instance number $I$ is very large, most Transformers in this field commonly adopt two strategies to avoid the Out-of-Memory issue. The first method is to sample or aggregate the original large instance set into a small one, after which global self-attention is performed~\cite{li2021dt,zhao2022setmil}. The second method performs the Nystrom algorithm~\cite{xiong2021nystromformer} to approximate the global self-attention~\cite{shao2021transmil}. Although these methods address the scalability issue of self-attention with a large $I$, they neglect the fact that the tumor areas are local and only occupy a small part of the whole image. Performing global self-attention on all instances results in feature homogenization. Moreover, different from the conventional MIL application scenarios, the instances in each bag have ordinal relations in computational pathology due to the fact that they are all collected from the same slide in order. These facts motivate us to design the Regional Multi-head Self-attention (R-MSA) that divides the bag into several different regions and performs self-attention in each region separately. R-MSA takes into account the aforementioned WSI properties and makes use of instance ordinal relation information to reduce computation complexity and highlight salient local features.
+
+In R-MSA, the input instance features are reshaped into a 2-D feature map, $ H \in \mathbb{R}^{I \times D} \rightarrow H \in \mathbb{R}^{\left \lceil \sqrt{I}  \right \rceil\times \left \lceil \sqrt{I}  \right \rceil \times D} $. And $L \times L$ regions are then divided evenly across the map in a non-overlapping manner, with each containing $M \times M$ instances where $L\times M= \lceil\sqrt{I}\rceil$.
+For example, the region partition starts from the top-left instance, and an $8 \times 8$ feature map is evenly partitioned into $2 \times 2$ regions of size $4 \times 4 \left ( L=2, M=4 \right )$. \textit{We fix the number of regions $L$ rather than the size of regions $M$ to obtain $L \times L$ regions with adaptive size.} By default, $L$ is set to $8$.
+Self-attention is computed within each local region.
+The whole process of R-MSA can be denoted as,
+
+\begin{equation}
+\begin{aligned}
+&\bm{Step~1:}~  H \in \mathbb{R}^{I \times D}\overset{\textrm{Squaring}}\longrightarrow H \in  \mathbb{R}^{L^2\times M^2 \times D}, \\
+&\bm{Step~2:}~ H\overset{\textrm{Partition}}\longrightarrow \{H^l\}^{L^2}_{l=1}, H^l\in  \mathbb{R}^{M\times M \times D},\\
+&\bm{Step~3:}~\hat{Z}:=\{\hat{Z}^l\}^{L^2}_{l=1},\hat{Z}^l=\mathcal{S}(H^l)\in  \mathbb{R}^{M\times M \times D},\\
+\end{aligned}
+\end{equation}
+where $\mathcal{S}(\cdot)$ is vanilla multi-head self-attention with our proposed Embedded Position Encoding Generator (EPEG).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=7cm]{./imgs/epeg.pdf}
+    \caption{Illustration of Embedded Position Encoding Generator. }
+    \label{fig:epeg}
+\end{figure}
+
+\begin{table*}[t]
+\small
+\centering
+\begin{tabular}{llccccccc}
+\toprule
+\multicolumn{2}{c}{\multirow{2}{*}{Methods }}        & \multicolumn{3}{c}{CAMELYON-16}   && \multicolumn{3}{c}{TCGA-BRCA}  \\ \cline{3-5} \cline{7-9}
+                                 && \makecell[c]{Accuracy}           & \makecell[c]{AUC}      & \makecell[c]{F1-score}
+                                 && \makecell[c]{Accuracy}          & \makecell[c]{AUC}      & \makecell[c]{F1-score}   \\ \midrule
+
+\multirow{8}{*}{\rotatebox{90}{\makecell[c]{ResNet-50\\ImageNet pretrained}}}&AB-MIL~\cite{ilse2018attention}  & 90.06$\pm$0.72             & 94.54$\pm$0.30           & 87.83$\pm$0.83
+                                 && 86.41$\pm$4.92           & 91.10$\pm$2.52        & 81.64$\pm$4.71\\
+&CLAM~\cite{clam}        & 90.14$\pm$0.85              & 94.70$\pm$0.76               & 88.10$\pm$0.63
+                                 &&                85.17$\pm$2.70           & 91.67$\pm$1.78        & 80.37$\pm$3.04\\
+&DSMIL~\cite{li2021dual}          & 90.17$\pm$1.02             & 94.57$\pm$0.40           & 87.65$\pm$1.18                                 && \underline{87.20$\pm$2.69}           & 91.58$\pm$1.33        & 82.41$\pm$2.92\\
+&TransMIL~\cite{shao2021transmil} & 89.22$\pm$2.32              & 93.51$\pm$2.13   & 85.10$\pm$4.33
+                                 && 84.68$\pm$2.67           & 90.80$\pm$1.91        & 79.86$\pm$2.63\\
+&DTFD-MIL~\cite{zhang2022dtfd}    & 90.22$\pm$0.36              &  95.15$\pm$0.14           & 87.62$\pm$0.59
+                                 && 85.92$\pm$1.76           & 91.43$\pm$1.64        & 81.09$\pm$2.05  \\
+&IBMIL~\cite{lin2023interventional}    & 91.23$\pm$0.41              &  94.80$\pm$1.03           &88.80$\pm$0.89
+                                 && 84.19$\pm$3.40           & 91.01$\pm$2.32        & 79.45$\pm$3.42\\
+&MHIM-MIL~\cite{tang2023mhim}    & \underline{91.81$\pm$0.82}              &  \underline{96.14$\pm$0.52}           & \underline{89.94$\pm$0.70}
+                                 && 86.73$\pm$5.59           & \underline{92.36$\pm$1.58}        & \underline{82.43$\pm$5.47}\\
+& 
+ \textbf{R$^2$T-MIL}        & \textbf{92.40$\pm$0.31}     & \textbf{97.32$\pm$0.29}      & \textbf{90.63$\pm$0.45}
+                                && \textbf{88.33$\pm$0.67}           & \textbf{93.17$\pm$1.45}        & \textbf{83.70$\pm$0.95}\\
+\midrule
+\multirow{8}{*}{\rotatebox{90}{\makecell[c]{PLIP\\WSI pretrained}}}
+&AB-MIL~\cite{ilse2018attention}  & 94.66$\pm$0.42& 97.30$\pm$0.31& 93.29$\pm$0.54&& 85.45$\pm$2.32           & 91.73$\pm$2.26        & 80.60$\pm$2.66         \\
+&CLAM~\cite{clam}        & 93.73$\pm$0.54              & 97.17$\pm$0.50               & 91.60$\pm$0.60
+                                 && 86.70$\pm$1.35           & 92.16$\pm$2.02        & 81.91$\pm$1.78   \\
+&DSMIL~\cite{li2021dual}          & 94.40$\pm$0.85             & 97.06$\pm$0.56           & 92.78$\pm$1.15                                 && 87.25$\pm$2.70           & 91.80$\pm$1.67        & 82.18$\pm$2.28 \\
+&TransMIL~\cite{shao2021transmil} & 94.40$\pm$0.43              & \underline{97.88$\pm$0.21}   & 92.81$\pm$0.43
+                                 && 85.83$\pm$3.44           & 92.17$\pm$2.20        & 81.12$\pm$3.25  \\
+&DTFD-MIL~\cite{zhang2022dtfd}    & 94.57$\pm$0.31              &  97.29$\pm$0.23           & 93.12$\pm$0.40
+                                 && 86.42$\pm$2.67           & 92.16$\pm$2.42        & 81.77$\pm$2.73  \\
+&IBMIL~\cite{lin2023interventional}    & 93.90$\pm$0.66 &  97.04$\pm$0.18           & {92.44$\pm$0.64}
+                                 && \underline{87.57$\pm$1.48}           & 91.71$\pm$1.74        & \underline{82.78$\pm$2.02}\\
+&MHIM-MIL~\cite{tang2023mhim}    & \underline{95.32$\pm$0.31}              &  97.79$\pm$0.15& \underline{94.13$\pm$0.42}
+                                 && 87.07$\pm$2.20           & \underline{93.17$\pm$2.00}        & 82.48$\pm$2.50  \\
+& 
+ \textbf{R$^2$T-MIL}        & \textbf{95.49$\pm$0.00}     & \textbf{98.05$\pm$0.29}      & \textbf{94.29$\pm$0.04}
+                                && \textbf{88.82$\pm$3.22}           & \textbf{93.80$\pm$1.24}        & \textbf{84.55$\pm$3.55} \\
+
+\bottomrule
+\end{tabular}
+\caption{Cancer diagnosis, and sub-typing results on C16 and BRCA. The highest performance is in bold, and the second-best performance is underlined. 
+With AB-MIL as a baseline, R$^2$T-MIL is not only capable of re-embedding ResNet-50 features to the level of foundation model (PLIP~\cite{huang2023plip}) features, but also effectively fine-tuning offline PLIP features.
+}
+\label{tab:main_comp}
+\end{table*}
+
+\noindent\textbf{Embedded Position Encoding Generator:}
+Inspired by~\cite{shao2021transmil}, we adopt a convolutional computation called Position Encoding Generator (PEG)~\cite{chu2021peg} to address the challenge of traditional position encoding strategies being unable to handle input sequences of variable length.
+Different from previous methods, we propose a novel approach called Embedded PEG (EPEG) by incorporating PEG into the R-MSA module, inspired by the relative position encoding strategy~\cite{wu2021irpe,liu2021swin,shaw2018rpe}. By embedding the PEG into the MSA module, EPEG can utilize a lightweight 1-D convolution $\textrm{Conv}_{\textrm{1-D}}(\cdot)$ to more effectively encode in each region separately.
+The structure of EPEG is shown in Figure~\ref{fig:epeg}. Taking the instances in the $l$-th region as an example, the EPEG can be formulated as,
+\begin{equation}
+\alpha_{ij}^{l} = \mathrm{SoftMax} \left ( e_{ij}^{l} {\color{blue} + \textrm{Conv}_{\textrm{1-D}}\left ( e_{ij}^{l} \right ) } \right ),
+\end{equation}
+where $\alpha_{ij}^{l}$ is the attention weight of $H^{l}_{j}$ with respect to $H^{l}_{i}$, and $e_{ij}^{l}$ is calculated using a scaled dot-product attention.
+
+\noindent\textbf{Cross-region Multi-head Self-attention:}
+R-MSA only considers the features within each region, which limits its modeling power of context-based semantic features. This is crucial for downstream tasks, such as prognosis, which requires a more comprehensive judgment. To effectively model the cross-region connections, we propose Cross-region Multi-head Self-attention (CR-MSA). First, we aggregate the representative features $R^l$ of each region,
+\begin{equation}
+\centering
+\begin{aligned}
+ W^{l}_{a} &= \mathrm{SoftMax}_{m=1}^M\left ( \hat{Z}^{l}_{m}\Phi \right ), \\
+ R^l &= W^{l\top}_a\hat{Z}^{l}, \\
+\end{aligned}
+\end{equation}
+where $\Phi \in \mathbb{R}^{D\times K}$ denotes learnable parameters. We utilize vanilla MSA to model the cross-region connection, $\hat{R}= \mathcal{S}\left ( R \right )$. Finally, the updated representative features are distributed to each instance in the region with MinMax normalized weight $W^l_d$,
+\begin{equation}
+\centering
+\begin{aligned}
+W^l_d &= \mathrm{MinMax}_{m=1}^M\left ( \hat{Z}^l_m \Phi \right ) \in \mathbb{R}^{M^2\times K}, \\
+Z^l &= W^{l\top}_d\hat{R}^{l}\hat{W}^{l}_d, \\
+\end{aligned}
+\end{equation}
+where $\hat{W}^{l}_d = \mathrm{SoftMax}_{k=1}^K\left ( \hat{Z}^{l}_{mk}\Phi \right ) \in \mathbb{R}^{K\times 1}$.
+
+\subsection{R$^2$Transformer-based MIL}
+Once we obtain the re-embedding of instances, any instance aggregation method and classifier can be applied to accomplish the specific downstream tasks. The re-embedding $\mathcal{R}(\cdot)$ will be optimized with the instance aggregation module $\mathcal{A}(\cdot)$ and the bag classifier $\mathcal{C}(\cdot)$ together, 
+\begin{equation}
+    \{\mathcal{\hat{R}},\mathcal{\hat{A}},\mathcal{\hat{C}}\}\leftarrow \arg\min L(Y,\hat{Y})=L(Y,\mathcal{C}(\mathcal{A}(\mathcal{R}(H)))),
+\end{equation}
+where $L(\cdot,\cdot)$ denotes any MIL loss. 
+R$^2$Transformer-based MIL (R$^2$T-MIL) adopts the instance aggregation method and the bag classifier of AB-MIL~\cite{ilse2018attention} by default.
+
+
+Experiments and Results
+\subsection{Datasets and Evaluation Metrics}
+\noindent\textbf{Datasets:}
+We use \textbf{CAMELYON-16~\cite{bejnordi2017diagnostic}} (C16), \textbf{TCGA-BRCA}, and \textbf{TCGA-NSCLC} to evaluate the performance on diagnosis and sub-typing tasks. For prognosis, we use \textbf{TCGA-LUAD}, \textbf{TCGA-LUSC}, \textbf{TCGA-BLCA} to evaluate the performance on the survival prediction task. Please refer to the Supplementary Material for more details.
+
+\noindent\textbf{Evaluation Metrics:}
+For diagnosis and sub-typing, we leverage Accuracy, Area Under Curve (AUC), and F1-score to evaluate model performance.
+We only report AUC in ablation experiments.
+For survival prediction, we report the C-index in all datasets.
+To reduce the impact of data split on model evaluation, we follow~\cite{clam,Zhou_2023_ICCV,Zhang_2022_BMVC} and apply 5-fold cross-validation in all remaining datasets except C16.
+We report the mean and standard deviation of the metrics over $N$ folds.
+For C16, we follow~\cite{tang2023mhim} and use 3-times 3-fold cross-validation to alleviate the effects of random seed.
+
+
+
+\noindent\textbf{Compared Methods:}
+Seven influential MIL approaches are employed for comparison. They are AB-MIL~\cite{ilse2018attention}, DSMIL~\cite{li2021dual}, CLAM~\cite{clam}, DTFD-MIL~\cite{zhang2022dtfd}, TransMIL~\cite{shao2021transmil}, IBMIL~\cite{lin2023interventional}, and MHIM-MIL~\cite{tang2023mhim}. 
+We reproduce the results of these methods under the same settings. 
+
+\noindent\textbf{Implementation Details:}
+We adopt ResNet50~\cite{he2016deep} pre-trained with ImageNet-1k and the latest foundation model PLIP~\cite{huang2023plip} pre-trained with OpenPath as the offline feature extractors.
+Supplementary Material offers more details.
+\subsection{Main Results}
+\subsubsection{Cancer Diagnosis, and Sub-typing}
+
+Table~\ref{tab:main_comp} presents the diagnosis and sub-typing performances of different MIL approaches on the C16 and BRCA datasets. The results demonstrate that our proposed R$^2$T-MIL achieves the best performance under all metrics on all benchmarks. Specifically, R$^2$T-MIL gets 0.59\%, 1.18\%, and 0.69\% performance gains over the second-best methods in Accuracy, AUC, and F1-score respectively on the C16 dataset. On the BRCA dataset, the AUC improvement is 0.69\%. R$^2$T-MIL employs the same aggregation and classification methods as AB-MIL. However, R$^2$T-MIL significantly outperforms AB-MIL. It increases the AUC by 2.78\% and 1.77\% on the C16 and BRCA datasets, respectively.
+The sub-typing results on NSCLC in Table~\ref{tab:nsclc} support a similar observation. We attribute these substantial performance improvements to the additional re-embedding step based on our proposed R$^2$T, which surpasses the performance of the foundation model (+0.02\% AUC on C16, +1.37\% on BRCA, +0.72\% on NSCLC). In addition, we find that R$^2$T can further enhance the features of the foundation model, achieving considerable improvement. This validates the effectiveness of re-embedding. 
+
+\begin{table}[tb]
+\small
+\centering
+\begin{tabular}{p{0.15cm}lccc}
+\toprule
+\multicolumn{2}{c}{Methods }        & Accuracy & AUC & F1-score \\ \midrule
+\multirow{8}{*}{\rotatebox{90}{ResNet-50}}&AB-MIL  & 90.32$_{\pm1.39}$& 95.29$_{\pm1.14}$& 89.83$_{\pm1.53}$\\
+&CLAM        & 90.52$_{\pm2.08}$& 95.37$_{\pm1.08}$& 90.08$_{\pm1.97}$\\
+&DSMIL          & 90.43$_{\pm2.52}$& 95.60$_{\pm0.81}$& 90.03$_{\pm2.61}$\\
+&TransMIL & 90.04$_{\pm1.86}$& 94.97$_{\pm1.11}$& 89.94$_{\pm1.73}$\\
+&DTFD-MIL    & 89.85$_{\pm1.53}$&  95.55$_{\pm1.47}$ & 89.60$_{\pm1.67}$\\
+&IBMIL    & 90.04$_{\pm1.48}$ &  95.57$_{\pm1.13}$& 89.73$_{\pm1.64}$\\
+&MHIM-MIL    & \underline{91.27$_{\pm2.35}$}              &  \underline{96.02$_{\pm1.35}$}           & \underline{90.85$_{\pm2.53}$}\\
+& 
+ \textbf{R$^2$T-MIL}        & \textbf{91.75$_{\pm2.38}$}     & \textbf{96.40$_{\pm1.13}$}      & \textbf{91.26$_{\pm2.60}$}\\
+\midrule
+\multirow{8}{*}{\rotatebox{90}{PLIP}}&AB-MIL  & 90.99$_{\pm2.43}$& 95.68$_{\pm1.98}$& 90.52$_{\pm2.45}$\\
+&CLAM        & 90.80$_{\pm2.35}$& 95.46$_{\pm1.72}$& 90.38$_{\pm2.46}$\\
+&DSMIL          & 90.60$_{\pm2.37}$& 95.78$_{\pm1.81}$& 90.24$_{\pm2.51}$\\
+&TransMIL & 89.09$_{\pm2.00}$& 95.30$_{\pm1.95}$& 88.83$_{\pm2.16}$\\
+&DTFD-MIL    & 90.42$_{\pm2.98}$&  95.83$_{\pm1.75}$ & 89.91$_{\pm3.01}$\\
+&IBMIL    & 91.18$_{\pm3.27}$ &  95.62$_{\pm2.09}$& 90.94$_{\pm3.20}$\\
+&MHIM-MIL    & \underline{91.74$_{\pm1.88}$}              &  \underline{96.21$_{\pm1.26}$}           & \underline{91.20$_{\pm1.89}$}\\
+& 
+ \textbf{R$^2$T-MIL}        & \textbf{92.13$_{\pm 2.55}$}     & \textbf{96.40$_{\pm 1.45}$}      & \textbf{91.83$_{\pm 2.50}$}\\
+\bottomrule
+\end{tabular}
+\caption{Sub-typing results on TCGA-NSCLC. }
+\label{tab:nsclc}
+\end{table}
+
+\begin{table}[tb]
+\small
+\centering
+\begin{tabular}{p{0.15cm}lccc}
+\toprule
+\multicolumn{2}{c}{Methods }        & BLCA & LUAD & LUSC \\ \midrule
+\multirow{8}{*}{\rotatebox{90}{ResNet-50}}&AB-MIL  & 57.50$_{\pm3.94}$             & 58.78$_{\pm4.90}$           & 56.51$_{\pm7.14}$ \\
+&CLAM        & 57.57$_{\pm3.73}$              & 59.60$_{\pm3.93}$  
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,264 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:1}
+
+\begin{figure}[tbp]
+	\centering
+	\subfloat
+ {\includegraphics[width=1\linewidth]{figure1-a.pdf}}\\
+
+	\subfloat{\includegraphics[width=1\linewidth]{figure1-b.pdf}}\\	
+
+        \subfloat{\includegraphics[width=1\linewidth]{figure1-c.pdf}}\\
+	\caption{The paradigm of (a) closed-world object detection, (b) existing open-world object detection, and (c) our RandBox that uses random proposals.}
+ \label{fig:1}
+\end{figure}
+Different objects may share common visual features. For example, the detection of ``horse'' helps that of ``cow'' as they are both ``four-legged'' cattle. Therefore, it is possible to  generalize the detector trained from a limited object class inventory to detect visually similar objects whose classes are out of the inventory.  As shown in the right column of Figure~\ref{fig:1}, besides the conventional detection of a close-world object inventory, Open-wolrd Object Detection~\cite{joseph2021towards} (OWOD) can detect out-of-inventory objects and label them as ''unknown''.
+
+To exploit the feature transfer from ``known'' to ``unknown'', the training loss of existing OWOD methods~\cite{joseph2021towards, gupta2022ow, yang2021objects} has the following break-downs (Figure~\ref{fig:1}):
+
+\noindent\textbf{Known-FG (foreground)}: like conventional closed-world detection (Figure~\ref{fig:1}a), we calculate the matching scores between the predicted region proposal labels and the ground-truth labels of known objects, where the label is a pair of class and bbox (bounding box). In particular, for two-stage detectors like Faster R-CNN~\cite{ren2015faster}, the ``proposal sampler'' and ``matching score'' are region proposal network and bbox IoU (intersection over union); for end-to-end detectors like DETR~\cite{carion2020end}, they are query transformer decoder and bipartite matching score. For the matched proposals, the loss is class cross-entropy $\mathcal{L}_{cls}$ and  bbox regression $\mathcal{L}_{reg}$.
+
+\noindent\textbf{BG (background)}: for conventional detection, all the mismatched proposals are considered background, whose loss is only $\mathcal{L}_{cls}$ with the label ''BG''; for OWOD, we only use the mismatched proposals excluding the Unknown-FG proposals below.
+
+\noindent\textbf{Unknown-FG}: this is the key difference from conventional detection. Its design heuristic is that, for the mismatched proposals with class confidence larger than a  threshold---probably unknown objects---the loss is only $\mathcal{L}_{cls}$ with a special label ``unknown'' w/o bbox regression. Note that this heuristic is based on the assumption of feature transfer~\cite{zheng2016good,chen2018lstd}---visually similar proposals have similar class confidences (see Section~\ref{sec:3.1} for the review of the loss implementation in two-stage and end-to-end detection)---the more unknown objects the Unknown-FG collects, the better the OWOD.
+\begin{figure}[t!]
+\resizebox{\linewidth}{!}{
+\centering
+
+\includegraphics[]{figure3.pdf}
+\centering
+}
+\caption{The sorted foreground confidence assigned by two baselines (ORE~\cite{joseph2021towards}, OW-DETR~\cite{gupta2022ow}) and our RandBox to the generated proposals in training. Green, red and black correspond to ``known'', ``unknown'' and ``BG'', respectively, with examples showing on the top row.}
+\label{fig:3}
+\end{figure}
+
+However, in practice, Unknown-FG usually has a low recall of unknown objects. As shown in Figure~\ref{fig:3}, in existing methods, most proposals of high confidence are matched as Known-FG; the mismatched proposals, mixed with both unknown objects and BG, all have low confidence, losing a gradual confidence decrease to differentiate Unknown-FG from BG (the red and black colors are inseparable). One may easily understand that this failure is predictable because, yet, we don't have the ground-truth labels for unknown objects, so the proposal sampler trained on known objects will be inevitably biased towards them. In fact, such bias is ubiquitously in any bootstrapping learning~\cite{riloff2003learning} with limited supervision, such as semi-supervised learning~\cite{miyato2018virtual,van2020survey} and reinforcement learning~\cite{kaelbling1996reinforcement,wiering2012reinforcement}. Unfortunately, existing OWOD methods do not properly address the bias. 
+
+In this paper, we point out that the bias is caused by the confounding effect~\cite{pearl2012calculus,pourhoseingholi2012control} of the training data with limited known object labels that mislead the feature transfer. The effect can be understood in this way: if we only let the training data determine what region proposals to be used to extract the region features for detector training (Figure~\ref{fig:1}b), we cannot avoid the trivial loss minimization from only detecting the known objects. To this end, we propose to remove the confounding effect by introducing a random Instrumental Variable~\cite{baiocchi2014instrumental}---the proposed RandBox---that is independent of the training data. Intuitively, RandBox simulates a Randomized Controlled Experiment (RCT)~\cite{braga1999problem} to learn a causal detector from region features to object labels,  by inviting an independent 3rd-party proposal sampler to explore more possible locations of unknown objects. As shown in Figure~\ref{fig:3} RandBox, the recall of unknown objects is greatly improved by RandBox, due to the fact that the confidence score change of the proposals from known to unknown is much more separable. We will detail the theory behind RandBox in Section~\ref{sec:4}. To get a qualitative sense of open-world detection task, see Figures \ref{fig:2}.
+
+\begin{figure*}[htbp]
+\resizebox{\linewidth}{50mm}{
+\centering
+
+\includegraphics[]{figure2.pdf}
+\centering
+}
+\caption{\textbf{Example results}. We show the ground-truth (GT) locations of unknown objects, those predicted by OW-DETR~\cite{gupta2022ow}, and those predicted by our RandBox. RandBox not only detects the annotated unknown objects (first 2 images), but even discovers valid unknown ones without annotations (\eg, \textit{camp} in image 3, \textit{bracelet} in image 5, \textit{banner} in image 6).}
+\label{fig:2}
+\end{figure*}
+RandBox is simple yet effective (Section~\ref{sec:3.2}). For each training image in every iteration, we sample 500 random boxes as proposals from a 4-dimensional Gaussian noise (center\_x, center\_y, height, width). For these random boxes, we crop their RoI (region of interest) features from a backbone feature map, and feed them into a detection head to obtain $\mathcal{L}_{cls}$ and $\mathcal{L}_{reg}$ as in (Figure~\ref{fig:1}c), where the proposed matching score that encourages exploration is detailed in Section~\ref{sec:3.2}. At inference, we remove the randomness and grid-sample 10,000 boxes per image by 10 scales, 10 shapes, and 100 spatial locations. We use NMS~\cite{neubeck2006efficient} (Non-maximum Suppression) to prune the 10,000 boxes for final detection. Overall, our contributions include:
+\begin{itemize}[leftmargin=+0.25in,itemsep=3pt,topsep=3pt,parsep=0pt]
+    \item Our proposed RandBox is a Fast R-CNN based architecture for OWOD, which leverages random proposals to remove the confounding effect from the known objects, and uses an improved matching score to encourage proposal exploration.
+    \item By removing the confounding effect, we learn an unbiased detector that improves both known and unknown detection accuracy. In particular, we achieve new state-of-the-art results on Pascal-VOC/MS-COCO~\cite{lin2014microsoft}.
+    \item We show that our RandBox detector trained on Pascal-VOC/MS-COCO remains robust when transferring to long-tailed datasets such as LVIS~\cite{gupta2019lvis}.
+\end{itemize}
+
+
+Related Work
+\label{sec:2}
+\noindent\textbf{Open-World Object Detection (OWOD)}.
+Object detection systems are significantly advanced recently~\cite{redmon2016you,zhu2020deformable,ren2015faster,girshick2015fast,sun2021sparse}. Yet they are based on the conventional close-world paradigm, which assumes that all objects of interests are annotated. In practice, an object detector deployed in real life is constantly challenged by the vast open and dynamic visual world~\cite{miller2018dropout,joseph2021towards}.
+To bridge the gap, open-set detection~\cite{miller2018dropout,miller2019evaluating,dhamija2020overlooked} aims to reject out-of-inventory objects as ``unknown'', and other works focus on incrementally learning~\cite{rajasegaran2020itaml,aljundi2018memory,mallya2018packnet} a detector to recognize new object classes without forgetting old ones.
+Inspired by the open-world setting proposed in image classification~\cite{bendale2015towards,bendale2016towards}, recent works~\cite{joseph2021towards,gupta2022ow,yang2021objects} unify open-set detection and incremental learning as OWOD, which are based on two stage detectors like Faster R-CNN~\cite{ren2015faster}, or end-to-end ones like DETR~\cite{zhu2020deformable}.
+We systematically analyze the failure of these existing works---low recall of unknown objects---which is caused by the confounding effect~\cite{pearl2012calculus,pearl2009causality}, and remove it using random proposals to learn a causal detector.
+\noindent\textbf{Debiasing by Randomization}.
+Randomization is an effective tool to debias across many tasks and domains.
+For example, using randomization as an instrument variable~\cite{deaton2010instruments,arellano1995another,baiocchi2014instrumental} is a classic tool to identify causal effect in social studies~\cite{didelez2007mendelian}.
+In reinforcement learning~\cite{wiering2012reinforcement}, randomization is used to encourage exploration~\cite{wilson2021balancing,kveton2020randomized}, such that the agent is not biased to exploiting spurious shortcuts.
+Several works~\cite{araujo2019robust,wang2021augmax} in adversarial training~\cite{ganin2016domain} leverages randomization to build a robust model not biased to feature that can be manipulated in adversarial attack, \eg, by image pertubation~\cite{zwanenburg2019assessing}.
+In fact, data augmentation that is prevailing in vision~\cite{shorten2019survey,he2022masked,sohn2020fixmatch} and language~\cite{shorten2021text,salazar2019masked} also leverages randomness to remove augmentation-related context bias in training (\eg, using green grass to classify cow).
+In our work, we present a novel detection framework that leverages random proposals to learn causal effect in OWOD.
+
+
+
+Method
+\label{sec:3}
+
+\begin{figure*}[htbp]
+
+\resizebox{\linewidth}{!}{
+\centering
+\includegraphics[]{figure4.pdf}
+\centering
+}
+
+\footnotesize
+
+\caption{(a) \textbf{RandBox Pipeline.} Our proposals are randomly generated. We obtain the Known-FG subset using a dynamic-$k$ matcher, and the Unknown-FG subset based on our proposed matching score. Our training losses follow existing methods. (b) \textbf{Proposed Matching Score} is the sum of likelihood of belonging to each foreground classes (including ``unknown''). The proposals of known (green) and unknown (red) objects both have large matching score, \ie, high likelihood on the ground-truth class (solid arrows) or by feature transfer (dashed arrow), while BG proposals (black) have low score.}
+\label{fig:4}
+\end{figure*}
+
+In OWOD, the task is to detect a gradually expanding set of known inventory classes $K$, while simultaneously rejecting the out-of-inventory classes set $U$ as ``unknown''.
+The training dataset contains images where known objects are labelled.
+Specifically, for a training image containing $n$ known objects, it is labelled with a set $\{(b_i,y_i)\}_{i=1}^n$, where $b_i$ specifies the bounding box (bbox) of the $i$-th object (\ie, center\_x, center\_y, height, width), and $y_i\in {K}$ is its class label.
+We drop the subscript $i$ for simplicity when the context is clear.
+The goal in OWOD is to train a detector, whose input is an image, and output is a set of $m$ predictions $P=\{(\hat{b}_i, \hat{y}_i)\}_{i=1}^m$, where $\hat{b}_i$ is the $i$-th bounding box prediction (predicted bbox), and $\hat{y}_i\in \mathbb{R}^{|{K}| + 2}$ denotes the classification logit for each class in ${K} \cup \{\textrm{``unknown''}, \textrm{``BG''}\}$.
+
+\subsection{Preliminaries: Existing OWOD Methods}
+\label{sec:3.1}
+Existing methods adopt either the two-stage Faster R-CNN~\cite{ren2015faster} or the end-to-end DETR~\cite{carion2020end} as the detector. In training, the predictions ${P}$ generated by the detector are partitioned into three subsets: Known-FG, Unknown-FG and BG, which are used to calculate the classification loss and bbox regression loss. We detail each part below:
+
+\noindent\textbf{Detector}. Given an image, a detector generates $m$ proposals, extracts ROI features ${x}_i$ for each proposal, and finally computes bounding box $\hat{b}_i$ and logits $\hat{y}_i$ using a classifier to form ${P}$.
+The two detector frameworks mainly differ in the first step:
+1) Faster R-CNN leverages a region proposal network (RPN) pre-trained on the labelled data. It outputs the top-$m$ proposals with the largest \emph{objectness} (\ie, probability of containing a known object). 2) DETR is an end-to-end detector. It first transforms an image into tokens using a combination of CNN backbone and transformer encoder. Then a transformer decoder uses the image tokens to generate the proposals.
+
+\noindent\textbf{Known-FG} is selected from all predictions $P$ by matching with the labels $\{(b_i,y_i)\}_{i=1}^n$ based on a Known-FG score.
+To compute the score for a prediction $(\hat{b}, \hat{y}) \in P$ with a ground-truth $(b,y)$, Faster R-CNN uses the IoU between $\hat{b}$ and $b$, and DETR uses the bipartite matching score, which additionally considers if $\hat{y}$ has a large value on the class $y$.
+
+After matching, we denote the Known-FG subset as ${P}^K$. For $(\hat{b}, \hat{y}) \in {P}^K$, we denote its matched ground-truth as $(b^*, y^*)$.
+
+\noindent\textbf{Unknown-FG \& BG} are selected from the unmatched predictions ${P} \setminus {P}^K$. Specifically, current methods compute an Unknown-FG score for each prediction, and select $5$ predictions with the largest score as the Unknown-FG. For the score, methods based on Faster R-CNN~\cite{ren2015faster,joseph2021towards} use objectness, and those based on DETR~\cite{gupta2022ow} use the average value of the ROI feature. We denote the Unknown-FG subset as ${P}^U$. Finally, the rest predictions become the BG subset ${P}^B$.
+
+\noindent\textbf{Training Loss}.
+
+We calculate the the loss on each of the three subsets. The loss on Known-FG $\mathcal{L}^K$ has the same form with closed-set detection:
+\begin{equation}
+    \mathcal{L}^K = \sum_{i=1}^{|{P}^K|} \mathcal{L}_{cls}(\hat{y}_i, y_i^*) + \lambda \mathcal{L}_{reg}(\hat{b}_i, b_i^*),
+    \label{eq:1}
+\end{equation}
+where $\mathcal{L}_{cls}$ is the cross-entropy loss or focal loss~\cite{lin2017focal} to handle class-imbalance, $\lambda$ is a balancing weight, and $\mathcal{L}_{reg}$ is the smooth L1 regression loss~\cite{girshick2015fast} to rectify the predicted bbox.
+As Unknown-FG and BG have no annotated bbox, we only calculate  $\mathcal{L}_{cls}$ on them:
+
+\begin{equation}
+    \mathcal{L}^{UB} = \sum_{i=1}^{|{P}^U|} \mathcal{L}_{cls}(\hat{y}_i, \textrm{``unknown''}) + \sum_{i=1}^{|{P}^B|} \mathcal{L}_{cls}(\hat{y}_i, \textrm{``BG''}),
+\label{eq:2}
+\end{equation}
+Overall, the detector parameters $\theta$ are optimized with:
+\begin{equation}
+    \mathop{\mathrm{min}}_{\theta} \mathcal{L}^K + \beta \mathcal{L}^{UB},
+    \label{eq:3}
+\end{equation}
+where $\beta$ is a weight with ablation in Section~\ref{sec:5.2}.
+
+\noindent\textbf{OWOD Pipeline}.
+The detector is first randomly initialized. Then it is trained with the labelled data on ${K}$, and evaluated with data on both ${K}$ and ${U}$ (Task 1). Next, additional labelled data on a subset of classes ${K}' \subset {U}$ is provided, \ie, the known classes set expands as ${K}\leftarrow {K} \cup {K}'$, and the unknown one becomes ${U}\leftarrow {U} \setminus {K}'$. The detector trained on Task 1 is fine-tuned and evaluated with the updated ${K}$ and ${U}$ (Task 2). This continues for the following tasks.
+
+
+\subsection{Proposed RandBox}
+\label{sec:3.2}
+
+Existing methods suffer from the low recall of the unknown objects in Unknown-FG. To tackle this, our proposed RandBox has two improvements: 1) We propose to generate region proposals randomly, instead of using a proposal sampler trained on the known objects, which explores more possible unknown object locations. 2) We propose a matching score without penalizing proposals that are not matched with the known objects, which explores more possible unknown object proposals. We detail the two improvements below, and explain why our RandBox solves the existing problems from a causal view in Section~\ref{sec:4}.
+
+\noindent\textbf{Detector with Random Proposals}.
+In training, we randomly generate 500 bboxes as region proposals on each image (Figure~\ref{fig:4}a).
+For each bbox, we sample 4 random real numbers in $[0,1]$, where each number is first drawn from the standard Gaussian distribution, truncated to $[-2,2]$ and then scaled linearly to $[0,1]$.
+The 4 numbers correspond to the horizontal and vertical coordinate of the bbox center, as well as the width and height of the bbox, respectively (proportional to image size). The width and height of out-of-boundary bboxes are adjusted to stay in the image.
+ We use non-maximum suppression to prune the bboxes as per standard practice~\cite{neubeck2006efficient}.
+We highlight the following points:
+\begin{itemize}[leftmargin=+0.1in,itemsep=1pt,topsep=1pt,parsep=0pt]
+    \item Our region proposals are randomly sampled for every image in each iteration throughout the training. 
+    \item While we use random sampling, the number of our random proposals is in fact \emph{comparable} with that used in the existing methods, \eg, ORE~\cite{joseph2021towards} uses 1024 proposals.
+\end{itemize}
+\noindent\textbf{Known-FG}. We adopted the dynamic-$k$ matcher~\cite{chen2022diffusiondet} as shown in Figure~\ref{fig:4}a. Specifically, each ground-truth bbox $b$ is matched with $k$ proposals based on the bipartite matching score, where $k$ is dynamically selected as the sum of the IoU between each proposal and $b$.
+
+\noindent\textbf{Unknown-FG}. We propose a novel \textbf{matching score} to form Unknown-FG. Specifically, we select the top $N$ proposals with the largest matching score (ablation of $N$ in Section \ref{sec:5.2}). Among the selected proposals, those already in Known-FG are removed to form our Unknown-FG subset.
+We use the following equation to compute our matching score for a proposal with the classification logits $\hat{y}$:
+\begin{equation}
+    s(\hat{y}) = \sum_{i=1}^{|K| + 1} \frac{1}{1+\mathrm{exp}(-\hat{y}_i)},
+    \label{eq:4}
+\end{equation}
+where we compute and sum the sigmoid of the $|K|$ known classes and ``+1'' unknown class, and $\hat{y}_i$ denotes the logit for the class $i$.
+Note that we implement $\mathcal{L}_{cls}$ with the BCE loss~\cite{lin2017focal}.
+Hence our score essentially computes how likely $\hat{y}$ corresponds to the foreground.
+Specifically, the top-$N$ (largest matching score) proposals that are not in Known-FG are pseudo-labeled as ``unknown'' to train the Unknown-FG logit (Eq.~\ref{eq:2} first loss). This design is based on the assumption of feature transfer~\cite{perkins1992transfer,weiss2016survey}---similarity between Unknown-FG and Known-FG is larger than that between BG and Known-FG.
+As shown in Figure~\ref{fig:4}b, an unknown object proposal can have non-trivial likelihood of belonging to a known class due to shared feature (dashed arrow), while BG proposal almost shares no feature with known. Hence future unknown object proposals can have large likelihood of belonging to ``unknown'' (solid red arrow), increasing the unknown recall. 
+We have the following comparisons with existing methods:
+\begin{itemize}[leftmargin=+0.1in,itemsep=1pt,topsep=1pt,parsep=0pt]
+    \item Methods based on Faster R-CNN use the objectness predicted by RPN as the matching score to select Unknown-FG. However, RPN is trained to produce large scores \emph{only} on the proposals matched with the known objects, thus penalizing those unmatched ones.
+    \item Without RPN, methods based on DETR use the mean activation of the ROI feature instead. However, this heuristic is extremely unreliable (Figure 3b), and unknown object proposals are often mistakenly placed in the BG subset and penalized as ``background''.
+    \item In contrast, our matching score fairly evaluates each proposal by checking both known classes (first $|K|$ logits), as well as ``unknown'' ($|K|+1$-th logit). Hence unknown object proposals can be reliably selected in the Unknown-FG subset with high likelihood of belonging to ``unknown''.
+
+\end{itemize}
+
+\noindent\textbf{Other Details}.
+Our training objective is the same as Eq.~\eqref{eq:3}.
+We used ResNet-50~\cite{he2016deep} as backbone. Our RandBox is Fast R-CNN~\cite{girshick2015fast} based architecture and detection head is borrowed from Sparse R-CNN~\cite{sun2021sparse}.
+
+
+
+
+Theory
+\label{sec:4}
+We use a Structural Causal Model (SCM) to analyze the causalities between the key components in OWOD: training data $D$, region proposal $R$, ROI feature $X$, and label $Y$ on ${K} \cup \{\textrm{``unknown''}, \textrm{``BG''}\}$. Note that $D$ only contains labelled data of the known classes $K$. The SCM is illustrated with a causal graph in Figure~\ref{fig:5}, where each directed link denotes a causal relation between the two connected nodes.
+
+\begin{figure}
+\centering
+	\subfloat{\label{fig:4a}\includegraphics[width = 0.48\textwidth]{figure5.pdf}}
+\caption{\textbf{Causal graph} of (a) existing OWOD methods, and (b) our RandBox.}
+\label{fig:5}
+\end{figure}
+\noindent$\boldsymbol{R}\to \boldsymbol{X} \to \boldsymbol{Y}$ represents the desired causal effect from region proposal $R$ to label $Y$, as label $Y$ describes what a region $R$ (or its ROI feature $X$) contains. A detector is unbiased if it identifies $R\to X\to Y$, \ie, given any region, the detector can fairly evaluate what it contains.
+
+\noindent$\boldsymbol{R} \to \boldsymbol{X} \leftarrow \boldsymbol{D}$. The ROI feature $X$ is jointly determined by what the region contains ($R \to X$), as well as the feature representation learned on the training data ($D\to X$).
+
+\noindent$\boldsymbol{D}\to \boldsymbol{Y}$ is because the detector leverages the training knowledge obtained from $D$ to predict $Y$, \eg, identifying the BG subset with prediction ``BG'' (Section~\ref{sec:3.1}).
+
+\noindent$\boldsymbol{D}\to \boldsymbol{R}$ exists in current OWOD methods as shown in Figure~\ref{fig:5}a. This is because the region proposal network in Faster R-CNN and the transformer decoder in DETR are both trained on $D$ to generate proposal $R$.
+
+\noindent\textbf{Confounding Effect}. In Figure~\ref{fig:5}a, $R\leftarrow D \to Y$ is known as a backdoor path, which leads to the undesired confounding effect~\cite{pearl2012calculus}. Specifically, as the proposal sampler is supervised by the labelled data of known objects $D$, the generated proposals $R$ are inevitably biased to them ($D\to R$), \ie, $R$ only faithfully reflects the known object locations.
+Consequently, the training is dominated by the loss $\mathcal{L}^K$ on Known-FG, and the detector recklessly exploits \emph{any} discriminative feature in $D$ towards the known objects ($D\to Y$), which may not transfer to the unknown ones.
+This causes the low recall of Unknown-FG in Figure~\ref{fig:3}.
+
+\input{table1}
+\noindent\textbf{Removing Confounding Effect}. In our RandBox, $R$ is randomly generated with no influence from $D$, \ie, $D\not\to R$ in Figure~\ref{fig:5}b.
+This makes $R$ an Instrument Variable~\cite{baiocchi2014instrumental}, which removes the confounding effect by simulating a Randomized Controlled Experiment~\cite{braga1999problem}.
+We provide a three-fold intuitive explanation:
+1) The backdoor path is cut, \ie, $R\not\leftarrow D \to Y$;
+2) The path $R \to X \leftarrow D \to Y$ is blocked due to the collider~\cite{pearl2012calculus} $X$ (\ie, with two incoming arrows).
+3) This makes $R\to X \to Y$ the only unblocked path from $R$ to $Y$. Hence when learning to predict $Y$ from $R$, our detector captures the causal effect free from the confounding one.
+
+\input{table2}
+
+
+Experiments
+\label{sec:5}
+
+\noindent\textbf{Datasets}. We extensively evaluated RandBox on three tasks: {OWOD}, {transfer learning} and {open-set detection}.
+For \textbf{OWOD}, we used Pascal VOC~\cite{everingham2010pascal} and MS-COCO~\cite{lin2014microsoft} following the standard setups~\cite{joseph2021towards,gupta2022ow}. In Task 1, the known set $K$ contains the 20 classes in Pascal VOC, and the unknown set $U$ contains the 60 classes unique to MS-COCO. For each of the Task 2-4, 20 classes in $U$ are added to $K$, \ie, Task 4 corresponds to closed-set detection with 80 classes. The training and testing images are selected from the respective split of the two datasets.
+For \textbf{transfer learning}, we evaluated models trained on Task 1 on the 4,810 validation images of LVIS v1.0~\cite{gupta2019lvis}, which are from over 1000 classes that exhibits long-tailed distribution.
+For \textbf{open-set detection}, we followed~\cite{miller2018dropout} to train models on Pascal VOC train split, and evaluate them on WR1~\cite{miller2018dropout}.
+\noindent\textbf{Evaluation Metrics:}
+On known classes, we used the standard Known-class mAP (K-mAP). On unknown classes, we used three metrics: 1) Unknown class Recall (U-R) is the recall of unknown classes at IoU threshold of 0.5. 2) Wilderness Impact (WI)~\cite{dhamija2020overlooked} is computed by $(\textrm{closed-set precision}) / (\textrm{open-set precision}) - 1$. A small WI is desired in OWOD, \ie, precision does not drop when unknown objects are introduced in evaluation. 3) Absolute Open-Set Error (A-OSE)~\cite{miller2018dropout} 
+is the predictions that are mis-classified as one of the known classes.
+
+\noindent\textbf{Implementation Details:}
+In training, we used the ResNet-50~\cite{he2016deep} pre-trained on ImageNet~\cite{deng2009imagenet} as our backbone. We trained RandBox using AdamW~\cite{loshchilov2017decoupled} optimizer with learning rate as $2.5e^{-5}$ and weight decay as $1e^{-4}$.  We used the same methodology as prior work~\cite{joseph2021towards,amemiya1986instrumental,wang2020frustratingly,knoblauch2020optimal} to mitigate forgetting, \ie, by storing a balanced set of exemplars for model fine-tuning after each incremental step.
+In inference, after getting the predictions on the 10,000 pre-defined bboxes, we used Non-Maximum Suppression (NMS)~\cite{neubeck2006efficient} to prune redundant bboxes. After pruning, the final predictions are the bboxes whose probability of belonging to a class in $K\cup \{``unknown''\}$ are at least 0.1.
+
+\subsection{Main Results}
+\label{sec:5.1}
+Table~\ref{tab:1} presents the results of OWOD evaluation. We have the following observations:
+
+\noindent\textbf{1)} For the conventional framework Faster-RCNN~\cite{ren2015faster} and Deformable-DETR (DDETR)~\cite{zhu2020deformable}, their K-mAP drops significantly in Task 2-4, showing that they suffer from catastrophic forgetting when new classes are incrementally added. By using data replay~\cite{joseph2021towards} (+Finetuning), their K-mAP results improve significantly (\eg, 6.0 to 29.4 on Task 4 for DDETR). Note that they are not capable to detect unknown objects (\eg, U-R is not applicable).
+
+\noindent\textbf{2)} By comparing existing OWOD methods with the conventional frameworks, we notice that \emph{all} of them have reduced K-mAP (\eg, the DDETR-based OW-DETR reduced 1.6 mAP on Task 4 compared with DDETR+Finetuning). This means that their capabilities of unknown detection are at the cost of known detection accuracy.
+
+\noindent\textbf{3)} By comparing RandBox with existing OWOD methods on U-R and A-OSE, we observe significant improvements, \eg,  3.1\% U-R impreovement and 391 A-OSE reduction on Task 1. This suggests that our training scheme with random boxes and the proposed matching score encourage proposal explorations, which detects and learn on more unknown objects to improve their evaluation performance.
+
+\noindent\textbf{4)} In particular, by comparing K-mAP and WI of RandBox and OWOD methods, we see that RandBox also achieves the state-of-the-art (SOTA) performance, \eg, absolute gains ranging from 2.4\% to 8.6\% in terms of K-mAP and relatively reduces ranging from 42\% to 64\% in terms of WI. Remarkably, our RandBox even outperforms the conventional detection frameworks, \eg, Faster-RCNN and DDETR. This means that instead of sacrificing ``known'' to detect ``unknown'', RandBox learns ``unknown'' to benefit ``known''. This strongly validates that our approach removes confounding bias by simulating Randomized Controlled Experiment with random boxes, where our detector captures the causal effect from \emph{any} region proposal (known, unknown or BG) to its label (Section~\ref{sec:4}). Hence we observe unconditional improvements overall.
+
+\begin{figure}[t!]
+\resizebox{0.98\linewidth}{40mm}{
+\centering
+
+\includegraphics[]{figure6.pdf}
+\centering
+}
+\caption{Ablation on $N$ by training RandBox on Task 1.}
+\label{fig:6}
+\end{figure}
+
+
+\subsection{Ablation Experiments}
+\label{sec:5.2}
+
+\noindent\textbf{Choice of $N$}. Recall that in training, we identify the top $N$ proposals with the largest matching score to form Unknown-FG (by removing those already in Known-FG). Hence $N$ is directly correlated with the size of Unknown-FG. The ablation results on $N$ are given in Figure~\ref{fig:6}.
+Initially, increasing $N$ benefits both known detection (K-mAP) and unknown recall (U-R). This is because 1) With more unknown proposals for optimizing Eq.~\eqref{eq:3}, the detector improves in recognizing ``unknown'' (increased U-R).
+2) To differentiate ``unknown'' from ``known'', the detector also avoids sp
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

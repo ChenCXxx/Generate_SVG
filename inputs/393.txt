@@ -1,0 +1,215 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Recently, Reinforcement Learning (RL) has been widely used in developing Artificial Intelligence (AI) systems for games, developing various agents that perform at a human-level performance, such as AlphaGo~\citep{silver2016mastering,silver2017mastering} in \textit{Go}, AlphaStar~\citep{vinyals2019grandmaster} in \textit{StarCraftII}, OpenAI Five~\citep{openai2019dota} in \textit{Dota2}, and Wukong AI~\citep{ye2020towards} in \textit{Honor of Kings}. 
+To further expand the applications of these agents, researchers are exploring ways to improve their generalization to human partners~\citep{carroll2019utility,hu2020other,strouse2021collaborating,lupu2021trajectory,knott2021evaluating,mckee2022quantifying,yu2022learning}, as well as enabling effective explicit communication between agents and humans~\citep{meta2022human,gao2022towards} in collaborative tasks. However, these agents primarily focus on maximizing their own rewards to complete the task, less considering the role of their human partners. This potentially leads to behaviors that are inconsistent with human values and preferences, resulting in a poor experience for human partners~\citep{fisac2020pragmatic,alizadeh2022considerate}. Thus, we say that the 
+optimization objective of these agents is \textit{self-centered}. In a qualitative study~\citep{cerny2015sarah} on companion behavior, it was found that humans reported greater enjoyment of the game when the AI assisted them more like a sidekick.
+
+Consider the scenario depicted in Figure~\ref{fig:demo}($\Leftarrow$), the self-centered agent may push the obstacle to the human side and pass through to get the coin itself, which can complete the task, but its human partner has no experience. However, as illustrated in Figure~\ref{fig:demo}($\Rightarrow$), the human may prefer the agent to play a more assisting role by pulling the obstacle to its side, thereby facilitating the human to get the coin.
+Consequently, not only is the task completed, but the experience of the human, hereafter referred to as \textit{human experience}, is also enhanced.
+In many real-world collaborative scenarios, such as robotic assistants and autonomous driving, humans not only want to complete the task but also pursue a better experience~\citep{daugherty2018human,wilson2018collaborative,crandall2018cooperating}. Therefore, it is important for a collaborative agent to learn a \textit{human-centered} objective, that is, to enhance the human experience.
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[width=0.98\linewidth]{image/demo2.pdf} 
+	\caption{Toy scenario, where an agent and its human partner are on either side of an obstacle. Only the agent is capable of pushing or pulling the obstacle. Their task goal is to obtain the coin.
+ $\Leftarrow$: The agent gets the coin by itself. The task is completed, but the human has no experience.
+ $\Rightarrow$: The agent assists the human to get the coin. Both the task is completed and the experience of the human is enhanced.
+ }
+ \label{fig:demo}
+\end{figure}
+
+In this paper, we conceptualize the human experience as the \textit{human goals} they expect to achieve during the task. Note that the human experience is task-dependent, and the corresponding goals may be explicit, such as obtaining coins, improving safety, and enhancing \textit{empowerment}~\citep{du2020ave}. Additionally, these goals may be implicit and require inference through goal reward models learned with human feedback~\citep{ng2000algorithms,ziebart2008maximum,ho2016generative,christiano2017deep,ouyang2022training}.
+These human goals can then be quantified as human goal rewards, hereafter referred to
+as \textit{human rewards}, which measure the extent to which humans achieve these goals. Our work does not aim to define or infer human goals accurately, but rather focuses on training agents to enhance the extent to which humans achieve these goals.
+One intuitive way is to directly combine agents' original (task-related) rewards with human rewards. However, we find that this approach may encounter the human-agent credit assignment challenge, where the human rewards are assigned to the agent without any assistive behavior, potentially leading to the agent learning incorrect behavior and even losing its \textit{autonomy}, i.e., the original abilities to complete the task, as shown in Section~\ref{sec:human_agent_test}. A potential solution to solve this is to carefully reshape the human reward function. However, this approach heavily relies on domain knowledge and expertise.
+
+We propose a novel approach that enables agents to learn to enhance the extent to which humans achieve their goals while maintaining agents' autonomy as much as possible. Our key insight is that the contribution made by humans themselves needs to be separated from the human rewards, and the remaining benefits can be considered as the real contribution of the agents to enhancing the humans, which we refer to as \textit{human gains}. To realize this insight, we propose the Reinforcement Learning from Human Gain (RLHG) approach, which involves two stages. 
+Firstly, we evaluate the primitive human performance in achieving human goals and consider this as a "baseline". We train a value network to estimate the primitive expected human return in achieving human goals with episodes collected by directly teaming the human and the self-centered agent to execute. Secondly, we train the agent to learn effective human enhancement behaviors. We train a gain network to estimate the expected positive gain of human return when subjected to effective enhancement, compared to the "baseline".
+The agent is fine-tuned using the combination of its original advantage and the human-centered advantage calculated by the positive human gains. 
+
+We conducted experiments to evaluate the effectiveness of the RLHG approach in \textit{Honor of Kings}~\citep{wei2022honor}, a typical Multi-player Online Battle Arena (MOBA) game~\citep{silva2017moba}, which has received much attention from researchers lately~\citep{ye2020towards,ye2020supervised,ye2020mastering,gao2021learning,gao2022towards}. We first evaluated the RLHG approach in simulated environments, i.e., human model-agent tests. Our experimental results demonstrate that the RLHG agent outperforms baseline agents in enhancing the performance of the human model in achieving human goals. We further conducted real-world human-agent tests, with the RLHG agent teaming up with participants of varying skill levels. Our experimental results show that the RLHG agent effectively enhanced the performance of general-level participants in achieving their goals, bringing them closer to the performance of high-level participants. And we find that this enhancement is generalizable across different participant skill levels. Additionally, subjective preference results reveal that most participants were satisfied with the RLHG agent, believing it provided a better gaming experience. In general, our contributions are as follows:
+\begin{itemize}[leftmargin=*]
+\setlength\itemsep{0.3em}
+\item We proposed a human-centered modeling scheme for guiding human-level agents to enhance the experience of their human partners in collaborative tasks.
+\item We gained insights into the challenge of human-agent credit assignment and addressed this challenge by presenting the RLHG algorithm, along with a detailed implementation framework.
+\item We conducted human-agent tests in \textit{Honor of Kings}, and both objective performance and subjective preference results show that the RLHG agent provides participants better gaming experience.
+\end{itemize}
+
+
+
+Background
+
+\subsection{Game Introduction}
+\textit{Honor of Kings} is a typical MOBA game, characterized by multi-agent cooperation and competition mechanisms, often used as a testbed for game AI research~\citep{wu2019hierarchical,ye2020towards,ye2020supervised,ye2020mastering,gao2021learning,gao2022towards}. The game is played by two opposing teams on a symmetrical map, each comprising five players. The game environment, depicted in Figure~\ref{fig:game_intro}(a), consists of the main hero with peculiar skill mechanisms and attributes, controlled by each player. Players can maneuver the hero's movement using the wheel (C.1) and release the hero's skills through the buttons (C.2, C.3). They can view the local environment on the screen, the global environment on the mini-map (A), and access game states on the dashboard (B). The agent and the human player share the same game information and the action mechanism. Agents team up with human players to compete against the enemy camp through collaboration. The gaming experience is crucial for a player's engagement and satisfaction. Along with the task goal, players also pursue multiple individual goals (Figure~\ref{fig:game_intro}(b)), such as achieving a higher MVP score, experiencing more highlight moments, and obtaining more in-game resources. The pursuit of these goals can contribute to a more enjoyable and rewarding gaming experience. Agents can enhance the gaming experience of their human partners through interactive behaviors, such as timely support, sharing resources, and active protection.
+
+\begin{figure}[h!]
+	\centering
+	\caption{\textbf{(a)} The UI of \textit{Honor of Kings}. \textbf{(b)} In-game goals, based on our participant survey (see Figure~\ref{fig:environment_setup}(c)). Human players pursue multiple goals for more enjoyable gaming experience.}
+	\label{fig:game_intro}
+\end{figure}
+
+\subsection{Human-Agent Collaboration}
+We formalize a human-agent collaboration task as an extension of the Decentralized Partially Observable Markov Decision Processes (Dec-POMDP)~\citep{bernstein2002complexity}, which can be represented as a tuple $<N, \mathbf{S}, \mathbf{A}, \mathbf{O}, P, R, \gamma, \pi_H, \mathcal{G}^H, R^H>$, where $N$ denotes the number of agents. $\mathbf{S}$ denotes the space of global states. $\mathbf{A} = \{\mathcal{A}^i, \mathcal{A}^H\}_{i=1,...,N}$ denotes the space of actions of $N$ agents and a human to be enhanced, respectively. $\mathbf{O} = \{\mathcal{O}^i, \mathcal{O}^H\}_{i=1,...,N}$ denotes the space of observations of $N$ agents and the human, respectively. $P:\mathbf{S} \times \mathbf{A} \rightarrow \mathbf{S}$ and $R:\mathbf{S} \times \mathbf{A} \rightarrow \mathbb{R}$ denote the shared state transition probability function and the task reward function of $N$ agents, respectively. $\gamma \in [0,1)$ denotes the discount factor. \rebuttal{We define an agent policy, $\pi^i$, to be a mapping from histories of observations $o^i= \{o_1^i, ..., o_t^i\} \in \mathcal{O}^i$ to actions $a^i \in \mathcal{A}^i$. A joint policy, $\pi_\theta = <\pi^1,...,\pi^N>$, parameterized by $\theta$, is defined to be a tuple of $N$ agent policies. We define a human policy $\pi_H$, to be a mapping from observations $o^H \in \mathcal{O}^H$ to actions $a^H \in \mathcal{A}^H$, which remains fixed during the agent's optimization process and cannot be accessible to the agent. $\mathcal{G}^H=\{g_i\}_{i=1,...,M}$ denotes the human goals, where $g_i$ is a designated goal and $M$ is the total number of human goals. $R^H: \mathbf{S} \times \mathbf{A} \times \mathcal{G}^H \rightarrow \mathbb{R}$ denotes the human reward function. } 
+
+\rebuttal{Most previous research work focuses on learning self-centered agents. In agent-only team settings, the agent is optimized to complete the task, with the optimization objective being to maximize the value function for a given state $s$, i.e., $V^{\pi_{\theta}}(s) = \mathbb{E}_{\pi_{\theta}}\left[G_t|s_t=s\right]$, where $G_t=\sum_{k=0}^{\infty}\gamma^{k}R_{t+k+1}$ represents the discounted cumulative task rewards. In human-agent team settings, the agent is optimized to adapt to its human partners to complete the task, and the corresponding optimization objective is $V^{\pi_{\theta},\pi_H}(s) = \mathbb{E}_{\pi_{\theta},\pi_H}\left[G_t|s_t=s \right]$. This optimization objective paradigm is referred to as the self-centered objective. While optimizing the self-centered objective may enhance the agents' abilities to complete tasks (i.e., task rewards $R$) in collaboration with humans, it does not necessarily enhance the human experience (i.e., human rewards $R^H$).}
+
+
+Methods
+In this section, we introduce the human-centered modeling scheme. We start with formalizing the human-centered objective (Section~\ref{sec:human_centered_modeling}). Then we propose a novel insight that enables agents learn to enhance the extent to which humans achieve their goals while maintaining the agents' autonomy (Section~\ref{sec:effective_human_enhancement}). Finally, we implement our insights by providing the RLHG algorithm and a practical implementation (Section~\ref{sec:implementation}).
+
+\subsection{Human-Centered Objective}
+\label{sec:human_centered_modeling}
+We define the human-centered objective as $V_H^{\pi_{\theta},\pi_H}(s)= \mathbb{E}_{\pi_{\theta},\pi_H}\left[G_t^H|s_t=s\right]$, where $G_t^H = \sum_{k=0}^{\infty}\gamma^{k}R_{t+k+1}^H$ is the discounted cumulative human rewards. Intuitively, the self-centered objective optimizes the agents' abilities to complete the task, while the human-centered objective optimizes the agents' abilities to enhance human performance in achieving human goals $\mathcal{G}^H$. Thus, the overall optimization objective can be formulated as: 
+\begin{small}
+\rebuttal{
+\begin{align}
+\label{eq:overall_objective}
+J(\theta) = V^{\pi_{\theta},\pi_H}(s) + \alpha \cdot V_H^{\pi_{\theta},\pi_H}(s) = \mathbb{E}_{\pi_{\theta},\pi_H} \left[G_t + \alpha \cdot G_t^H|s_t=s\right],
+\end{align}}
+\end{small}
+where $\alpha$ is a balancing parameter. The approximation to the policy gradient is defined as follows:
+\begin{small}
+\rebuttal{
+\begin{align}
+\label{eq:policy_gradient}
+    \nabla J(\theta) &= \mathbb{E}_{\pi_\theta, \pi_H} \left[\sum_{t=0}^{\infty} \nabla_\theta \log \pi_{\theta}(a_t|o_t) \left(G_t + \alpha \cdot G_t^H\right) \right], \\
+\label{eq:policy_gradient_ori}
+    & \propto \mathbb{E}_{\pi_\theta, \pi_H} \left[\sum_{t=0}^{\infty} \nabla_\theta \log \pi_{\theta}(a_t|o_t) \left(A(s_t,a_t) + \alpha \cdot A_H(s_t, a_t)\right) \right],
+\end{align}
+}
+\end{small}
+\rebuttal{where $A(s,a) = \mathbb{E}_{\pi_\theta, \pi_H}[G_t|s_t=s,a_t=a] - V^{\pi_{\theta}, \pi_H}(s)$ is the self-centered advantage and \rebuttal{$A_H(s,a) = \mathbb{E}_{\pi_\theta, \pi_H}[G^H_t|s_t=s,a_t=a] - V_H^{\pi_{\theta}, \pi_H}(s)$} is the human-centered advantage.} 
+
+However, incorporating human rewards directly into the optimization objective may lead to negative consequences, such as human-agent credit assignment issues. Intrinsically, humans possess the primitive abilities to achieve certain goals independently. Therefore, it is unnecessary to reward the agents for assisting when the human can easily achieve human goals or to reward the agents who do not provide any assistance, as it potentially leads to the agents learning incorrect behavior and even losing their autonomy. To this end, we propose a novel insight below to achieve effective human enhancement without compromising the agents' original abilities to complete the task.
+
+\subsection{Effective Human Enhancement}
+\label{sec:effective_human_enhancement}
+
+Our key insight is that the human contribution, termed \textit{human primitive value}, should be distinguished from human rewards. The residual benefits, representing the agent's actual contribution in enhancing human to achieve goals, are referred to as \textit{human gains}. 
+
+\rebuttal{We define the \textit{human primitive value} as $V_H^{\pi_0, \pi_H}(s)$, which 
+represents the expected human return for a given state $s$ under the setting of collaboration between the human $\pi_H$ and the pre-trained agent $\pi_0$. We define the \textit{human gain} as $\Delta(s,a)=\mathbb{E}_{\pi_\theta, \pi_H}[G^H_t|s_t=s,a_t=a] - V_H^{\pi_0, \pi_H}(s)$, which represents the benefits brought by taking a specific action $a$ for a given state $s$ compared to the \textit{human primitive value}. In the process of learning to enhance the human, the agents explore two types of behaviors in state $s$: effective enhancement behaviors, i.e., $A^{+}(s) = \{a|a \sim \pi_\theta, \Delta(s,a) > 0\}$, and invalid enhancement behaviors, i.e., $A^{-}(s)=A(s) \setminus A^{+}(s) = \{a|a \sim \pi_\theta, \Delta(s,a) \le 0\}$. Intuitively, $A^{+}$ can help the human achieve human goals better than the primitive and $A^{-}$ provides no benefits or even hinders the human from achieving human goals. Therefore, the agent is only encouraged to learn effective enhancement behaviors, and the Eq.~\ref{eq:policy_gradient_ori} can be reformulated as:
+\begin{footnotesize}
+\begin{equation}\label{eq:policy_gradient_new}
+    \nabla J(\theta) = \mathbb{E}_{\pi_\theta, \pi_H} \left[\sum_{t=0}^{\infty} \nabla_\theta \log \pi_{\theta}(a_t|o_t) \left(A(s_t,a_t) + \alpha \cdot \widehat{A}_H(s_t, a_t)\right) \right],
+\end{equation}
+\end{footnotesize}
+
+where $\widehat{A}_H(s,a) = \Delta(s,a) - \widehat{\Delta}(s)$ 
+is the advantage of the human gain over the expected \textit{positive human gain} $\widehat{\Delta}(s)=\mathbb{E}_{a \sim A^{+}(s)}[\Delta(s,a)]$. We use $\Delta_\omega(s)$ to denote an estimate of $\widehat{\Delta}(s)$, which can be trained by minimizing the following loss function:
+\begin{small}
+\begin{equation}\label{eqn:loss_gain}
+    L(\omega) = \mathbb{E}_{s \in S,a \in A}\left[\mathbb{I}(\Delta(s,a)) \cdot \Vert \Delta(s,a) - \Delta_\omega(s)\Vert_2\right], \quad
+    \mathbb{I}(x) = \left\{
+    \begin{aligned}
+    1, && x > 0 \\
+    0, && x \leq 0
+    \end{aligned}
+    \right.
+\end{equation}
+\end{small}
+where $\mathbb{I}$ in Eq.~\ref{eq:policy_gradient_new} and Eq.~\ref{eqn:loss_gain} is an indicator function to filter invalid enhancement samples.}
+\subsection{The Algorithm \& Practical Implementation}\label{sec:implementation}
+
+\begin{center}
+\scalebox{0.85}{
+\begin{minipage}{1.1\linewidth}
+\begin{algorithm}[H]
+\caption{Reinforcement Learning from Human Gain (RLHG)}\label{alg:RLHG_short}
+\begin{algorithmic}[1] %这个1 表示每一行都显示数字 
+    \WHILE{not converged} 
+        \STATE Freeze $\pi_0$ and collect human-agent team $<\pi_0,\pi_H>$ trajectories;
+        \STATE Compute human return $G^H$, and update human primitive value $V_\phi \leftarrow G^H$;
+    \ENDWHILE \hfill \texttt{// Stage I: Human Primitive Value Estimation}
+    \WHILE{not converged} 
+        \STATE Freeze $V_\phi$ and collect human-agent team $<\pi_\theta, \pi_H>$ trajectories;
+        \STATE Compute original return $G$, self-centered advantage $A$;
+        \STATE Compute human return $G^H$, human gain $\Delta$, and human-centered advantage $\widehat{A}_H$;
+        \STATE Update agent policy network $\pi_\theta$ using Eq.~\ref{eq:policy_gradient_new}, and value network $V_\psi \leftarrow G$;
+        \STATE Update human gain network $\Delta_\omega$ using Eq.~\ref{eqn:loss_gain};
+    \ENDWHILE \hfill \texttt{// Stage II: Human Enhancement Training}
+\end{algorithmic}
+\end{algorithm}
+\end{minipage}
+}
+\end{center}
+
+\rebuttal{
+We introduce the RLHG algorithm~\ref{alg:RLHG_short} to actualize our insights, comprising two stages: the Human Primitive Value Estimation (Stage I) and the Human Enhancement Training (Stage II).
+In Stage I, the RLHG algorithm freezes the pre-trained agent policy $\pi_0$ and collects trajectory samples to compute the human return $G^H$. Subsequently, the RLHG algorithm updates the human primitive value network $V_\phi$ by minimizing the Temporal Difference (TD) errors~\citep{sutton2018reinforcement}. In Stage II, the RLHG algorithm freezes $V_\phi$ and collects trajectory samples to compute the original return $G$ and human return $G^H$. Both $G$ and $G^H$ contribute to determining the self-centered advantage $A$ and human-centered advantage $\widehat{A}_H$, respectively. The agent's policy network $\pi_\theta$ is fine-tuned according to Eq.~\ref{eq:policy_gradient_new} and the value network $V_\psi$ is fine-tuned by minimizing the TD errors. $\Delta_\omega$ is trained by minimizing the loss function in Eq.~\ref{eqn:loss_gain}.}
+
+\begin{figure}[h!]
+	\centering
+	\caption{
+	\label{fig:framework}
+\end{figure}
+
+Figures~\ref{fig:framework}(a) and (b) show the training framework of Stage I and Stage II, respectively. The human policy $\pi_H$ can be trained via Behavior Cloning (BC)~\citep{bain1995framework} or any Supervised Learning (SL) techniques~\citep{ye2020supervised}, but this is not the focus of our concern. Since in many practical scenarios, agents cannot access the human policy, we instead learn a human policy embedding, enabling agents to adapt and infer human intentions. Similar to the Theory-of-Mind~\citep{rabinowitz2018machine}, we input the observed human historical information $h_t=(s_t^H,...,s_1^H)$ into an LSTM module~\citep{hochreiter1997long} to extract the human policy embedding. The human policy embedding is subsequently fed into two extra value networks, i.e., the human primitive value network $V_\phi$ and the gain network $\Delta_\omega$, and fused into the agent's original network $\pi_\theta$. We use \textit{surgery} techniques~\citep{chen2015net2net,openai2019dota} to fuse the human policy embedding into the agent's original network, i.e. adding more randomly initialized units to an internal fully-connected layer. We apply the absolute activation function to ensure that the predicted gains are non-negative. In practical training, we find that only conducting human enhancement training has a certain negative impact on the agent's original abilities to complete the task. Therefore, we introduce $1-\beta\%$ agent-only team settings to maintain the agent's original abilities and reserve $\beta\%$ human-agent team settings to learn effective enhancement behaviors. These two environments can be easily controlled through the task gate, i.e., the task gate is set to 1 in the human-agent team settings and 0 otherwise.
+
+
+
+Experiments
+In this section, we evaluate the proposed RLHG approach by conducting both simulated human model-agent tests and real-world human-agent tests in \textit{Honor of Kings} (HoK). All experiments\footnote{All experiments are conducted subject to oversight by an Institutional Review Board (IRB). Our demo videos and code are present at\url{https://sites.google.
+
+\subsection{Experimental Setup}
+\begin{figure}[h]
+	\centering
+	\label{fig:environment_setup}
+\end{figure}
+
+\textbf{Training Setup:} We were authorized by Ye et al. to use the Wukong agent~\citep{ye2020towards} as the pre-trained agent and use the JueWu-SL agent~\citep{ye2020supervised} as the fixed human model. Note that both the Wukong agent and the JueWu-SL agent were developed at the same level as the high-level (top 1\%) players. We adopted the top 4 human goals as $\mathcal{G}^H$ for the pre-trained agent to enhance the human model. We trained the human primitive value network and fine-tune the agent until they converge for 12 and 40 hours, respectively, using a physical computer cluster with 49600 CPU cores and 288 NVIDIA V100 GPU cards. The batch size of each GPU is set to 256. The hyper-parameters $\alpha$ and $\beta$ are set to 2 and 50, respectively. The step size and unit size of the LSTM module are set to 16 and 4096, respectively.
+
+\textbf{Baseline Setup:} We compared the RLHG agent with two baseline agents: the Wukong agent~\citep{ye2020towards} and the Human Reward Enhancement (HRE) agent.
+\begin{itemize}[leftmargin=*]
+\setlength\itemsep{0.2em}
+\item \textbf{Wukong:} A state-of-the-art agent in \textit{HoK}, trained using the PPO algorithm to optimize the Game Victory goal in an agent-only team setting.
+\item \textbf{HRE:} An agent that is fine-tuned from the pre-trained Wukong agent by directly incorporating the human-centered objective into the optimization objective \rebuttal{(see Eq.~\ref{eq:policy_gradient_ori})}.
+\item \textbf{RLHG:} An agent that is fine-tuned from the pre-trained Wukong agent by incorporating the human-centered objective based on positive human gains into the optimization objective.
+\end{itemize}
+The human model-agent team (4 Wukong agents plus 1 human model) was adopted as the fixed opponent for all tests. For fair comparisons, both the HRE and RLHG agents were trained using the same human reward function, and all common parameters, network structures, and training resources were kept consistent. Results were reported over five random seeds.
+
+\subsection{Human Model-Agent Test}
+\label{sec:human_agent_test}
+Directly evaluating agents with humans is expensive, which is not conducive to model selection and iteration. Instead, we build a simulated environment, i.e., human model-agent game tests, to evaluate agents, in which the human model, i.e., the JueWu-SL agent, teams up with different agents. The results of the human model on different goal after teaming up with different agents are shown in Figure ~\ref{fig:agent_only}, including the top 4 human goals and the task goal.
+
+\begin{figure}[h]
+	\centering
+	\label{fig:agent_only}
+\end{figure}
+
+From Figure~\ref{fig:agent_only} (b), we can observe that both the RLHG agent and the HRE agent significantly enhance the performance of the human model in achieving the top 4 human goals, and the RLHG agent has achieved the best enhancement effect on most of the human goals. These results validate that the human-centered objective can encourage agents to learn behaviors that better enhance humans in achieving their goals.
+
+However, as shown in Figure~\ref{fig:agent_only} (a), the HRE agent drops significantly on the task goal. We observed the actual performance of the HRE agent and found that the HRE agent did many unreasonable behaviors. For example, to assist the human model in achieving the Participation Rate and Highlight Times goals, the HRE agent had been following the human model throughout the entire game. Such excessive following behaviors greatly affected its original abilities to complete the task and led to a decreased Win Rate. This can also be reflected in Figure~\ref{fig:agent_only}(c), in which the HRE agent has the highest Follow-Rate metric. Although the Follow-Rate of the RLHG agent has also increased, we observed that most of the following behaviors of the RLHG agent can effectively assist the human model. We also observed that the Win Rate of the RLHG agent slightly decreased, which is consistent with expectations, as enhancing the abilities to achieve human goals inevitably sacrifices the abilities to achieve the task goal. We implement an adaptive adjustment mechanism to balance the two optimization objectives. We simply utilize the agent's original value network to measure the degree of completing the task goal and set the task gate to 1 (enhancing the human) when the original value is above the specified threshold $\xi$, and to 0 (completing the task) otherwise. The threshold $\xi$ depends on the human preference, i.e. the relative importance of the task goal and the human goals.
+\subsection{Human-Agent Test}
+In this section, we conduct online experiments to examine whether the RLHG agent can effectively enhance the experience of human participants. Note that, We did not compare the HRE agent, since the Win Rate of the HRE agent is extremely low. We used a within-participant design for the experiment: each participant teams up with four agents. This design allowed us to evaluate both objective performance as well as subjective preference. All participants read detailed guidelines and provided informed consent before the testing. Each participant tested 20 matches. After each test, participants reported their preference over their agent teammates. For fair comparisons, participants were not told the type of their agent teammates.
+
+\begin{table}[h]
+\centering
+\caption{The results of \textbf{high-level} participants achieving goals after teaming up with different agents. Results for the task goal are expressed as percentages, and results for human goals are expressed as mean (std.).} 
+\label{tbl:high_level}
+\renewcommand\arraystretch{1.6}
+\scalebox{0.7}{
+\begin{tabular}{cccccc}
+\toprule
+\multirow{2}{*}{Agent \textbackslash \; Goals} & \hspace{0.5cm} Task Goal \hspace{0.5cm} & \multicolumn{4}{c}{Top 4 human Goals}                                      \\ \cline{2-6} 
+
+                                                   & \hspace{0.5cm} Win Rate \hspace{0.5cm}   & MVP Score    & Highlight Times & Participation Rate & Resource Quantity \\ \midrule
+Wukong                                             & \hspace{0.5cm} 52\% \hspace{0.5cm}     & 8.86 (0.79)  & 0.53 (0.21)        & 0.46 (0.11)     & 5.3 (2.87)        \\ \hline
+RLHG                                               & \hspace{0.5cm} 46.7\% \hspace{0.5cm}   & \textbf{10.28} (0.75) & \textbf{0.87} (0.29)        & \textbf{0.58} (0.09)     & \textbf{6.28} (2.71)       \\ \bottomrule
+\end{tabular}}
+\caption{The results of \textbf{general-level} participants achieving goals after teaming up with different agents. Results for the task goal are expressed as percentages, and results for human goals are expressed as mean (std.).} 
+\label{tbl:general_level}
+\renewcommand\arraystretch{1.6}
+\scalebox{0.7}{
+\begin{tabular}{cccccc}
+\toprule
+\multirow{2}{*}{Agent \textbackslash \; Goals} & \hspace{0.5cm} Task Goal \hspace{0.5cm} & \multicolumn{4}{c}{Top 4 Human Goals}                                      \\ \cline{2-6} 
+                                               & \hspace{0.5cm} Win Rate  \hspace{0.5cm} & MVP Score      & Highlight Times & Participation Rate & Resource Quantity \\ \midrule
+Wukong                                             & \hspace{0.5cm} 34\% \hspace{0.5cm}   & 7.44 (0.71) & 0.37 (0.349)       & 0.41 (0.11) & 4.98 (2.73)       \\ \hline
+RLHG                                               & \hspace{0.5cm} 30\% \hspace{0.5cm}   & \textbf{9.1} (0.61)                      & \textbf{0.75} (0.253)       & \textbf{0.59} (0.05)               & \textbf{5.8} (2.78)        \\ \bot
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

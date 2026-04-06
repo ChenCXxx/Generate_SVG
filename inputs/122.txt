@@ -1,0 +1,248 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Reading Relevant Feature from Global Representation Memory for Visual Object Tracking
+
+% ArXiv ID: 2402.14392
+
+
+
+
+
+\maketitle
+
+
+\begin{abstract}
+Reference features from a template or historical frames are crucial for visual object tracking. Prior works utilize all features from a fixed template or memory for visual object tracking. However, due to the dynamic nature of videos, the required reference historical information for different search regions at different time steps is also inconsistent. Therefore, using all features in the template and memory can lead to redundancy and impair tracking performance. To alleviate this issue, we propose a novel tracking paradigm, consisting of a relevance attention mechanism and a global representation memory, which can adaptively assist the search region in selecting the most relevant historical information from reference features. Specifically, the proposed relevance attention mechanism in this work differs from previous approaches in that it can dynamically choose and build the optimal global representation memory for the current frame by accessing cross-frame information globally. Moreover, it can flexibly read the relevant historical information from the constructed memory to reduce redundancy and counteract the negative effects of harmful information. Extensive experiments validate the effectiveness of the proposed method, achieving competitive performance on five challenging datasets with 71 FPS.
+\end{abstract}
+
+
+\section{Introduction}
+Visual object tracking (VOT) is a fundamental task in computer vision, which provides only the location of an object in the first frame and then accomplishes continuous predictions of the object’s position in subsequent video frames. At present, visual object tracking is widely used in autonomous vehicle \cite{autodrive}, video surveillance\cite{videosurveillance}, and other scenes. As video frames are dynamic and continuously changing, it presents a significant challenge in addressing the appearance variation of the target and the changes in the environment.
+\begin{figure}
+  \centering
+  \includegraphics[width=1.02\linewidth]{figure/Motivation.pdf}
+  \caption{Three different methods of tracking pipeline. The purple dots represent the selected points from the new template that are updated into the memory, while the red dots and blue dots represent the selected points that are fed into the relation model.}
+  \label{motivation}
+  \vspace{-2mm}
+\end{figure}
+ The current mainstream approach to addressing this problem is in two perspectives: the first type\cite{SBT, TransT, ostrack, CSWTT, Todimp,siamfc++,siamrpn++}, as shown in Fig. \ref{motivation}(a), is to perform interactive computations on all patches of a fixed template and the search region. The second type\cite{aiatrack,STARK,memorytrack,mixformer,stmtrack,TrMeetDimp}, as shown in Fig.\ref{motivation}(b), is to perform the interactive computation of template memory and the search region. Despite their great success, they neglect the appearance variation of the target and the changes in the environment. In other words, the relevant reference information for the search region at different time steps should be diverse. Retrieving all information from the template or memory to the search region is redundant, and some unnecessary historical information that does not match the current time step may potentially degrade tracking performance.
+
+In this paper, we propose a novel tracking paradigm (RFGM) to address the aforementioned problems. As shown in Fig.\ref{motivation}(c), the core insight of our approach is to extract relevant historical cues from memory for different search frames at different time steps. The approach dynamically selects historical information from memory that is more suitable for the current search region, thereby improving tracking performance. Additionally, to obtain the target appearance features of the entire video sequence as reference features, we utilize the dynamic selection ability of our tracker to construct a global representation memory(GR Memory), which dynamically stores the target appearance features of historical frames for adapting to the appearance variation of the target and improving the robustness of the model. 
+
+Specifically, as shown in Fig.\ref{motivation}(c) we design relevance attention specifically for tracking, which is different from previous attention\cite{ostrack, STARK, TransT} based on global information reading. The relevance attention mechanism can read global information across frames on the timeline of the video sequence, and decide which token to use in the attention mechanism based on dynamic ranking. The most suitable historical information for the current frame is adaptively selected from the memory through the attention mechanism. Each stage of the relevance attention discards unselected tokens, so the computational complexity of later layers is smaller than that of previous layers. Finally, to construct the global representation memory, unlike directly replacing the earliest template with a new one in Fig.\ref{fig_overview}(b), we utilize the relevance attention to automatically select the target tokens from the new template and the original memory as the new memory. The constructed GR memory retains the most important target features of the original memory and updates new target features into the memory, as presented in Fig.\ref{motivation}(c). After multiple updates, it will obtain the most representative target features in the entire video sequence.
+
+Our contribution can be concluded in three-fold:
+(\textbf{\rmnum{1}})We propose a novel tracking framework that adapts to changes in target appearance and background by constructing a global representation memory at the token level across frames and reading from this memory to capture the most relevant features at the current time step;(\textbf{\rmnum{2}}) We design a relevance attention mechanism for the search region to selectively extract template features from memory. Simultaneously, it is utilized to update the global representation memory at the token level, reduce memory consumption and enhance tracking speed; (\textbf{\rmnum{3}}) We conduct systematic experiments and validate the effectiveness of the proposed designs. Our tracker achieves competitive performance on five widely used benchmarks.
+
+\section{Related work}
+\subsection{Visual Object Tracking Paradigms}
+
+In the past few years, many trackers have achieved great success in the field of visual object tracking. Typically, the linear matching method with cross-correlation is used to locate the target position in the search frame\cite{siamfc, siamfc++, siambox, siamr-cnn, siamrpn++, siamcar, ocean, learningattention, dimp}. SiamFC\cite{siamfc} is the first to propose the use of Siamese networks for feature extraction and linear correlation operation for visual object tracking. SiamFC++\cite{siamfc++} further extends this method by feeding the features after linear correlation into three different prediction heads for classification, quality assessment, and regression, respectively, to decompose the tracking task. After the emergence of the transformer, the cross-attention operation\cite{aiatrack,CSWTT,mixformer,stmtrack, TrMeetDimp, ostrack, TransT,Todimp,SBT,STARK} based on the attention mechanism replace the original cross-correlation as the mainstream paradigm for object tracking.
+TransT\cite{TransT} incorporates a CFA  module to achieve bidirectional interaction between the template and the search region. AiAtrack\cite{aiatrack} utilizes an attention in attention mechanism to achieve matching from the template to the search region, while OSTrack\cite{ostrack} and MixFormaer\cite{mixformer} use a one-stream paradigm to extract features and interact between the reference features and search region simultaneously. 
+
+
+
+However, the historical information required for different search regions at different time steps should be different. Therefore, cross-correlation and cross-attention operations introduce redundant information, potentially deleting tracking performance. To address this problem, we propose a novel tracking paradigm, RFGM, which automatically extracts the most suitable information for the search region from the GR memory, improving the adaptability to the appearance variation of the target and the changes in the environment.
+
+\subsection{Attention mechanism}
+
+
+The attention mechanism is widely employed in the tracking domain, and it has demonstrated remarkable performance, as exemplified by TransT\cite{TransT}, STARK\cite{STARK}, and OSTrack\cite{ostrack}, etc. However, these mechanisms integrate information from all templates with the information from the search region, resulting in redundant template features. In contrast, deformable attention possesses feature selection. Deformable attention, derived from deformable CNN\cite{DCnnV1, DCnnV2}, has been applied in various fields such as object detection\cite{detr} and image classification\cite{restnet50}. It can adaptively select neighboring tokens based on the current query. For instance, Deformable DETR\cite{Ddetr} uses deformable attention to regress the offset of the neighborhood based on the query coordinate in order to assist the query in selecting the most appropriate key and value, which accelerates the convergence of the DETR model for object detection. DAT\cite{Dtransfor} extends deformable attention to the backbone for classification. However, these deformable methods are based on regressing the coordinates of neighboring tokens within the current frame and cannot globally read all tokens across frames. Inspired by Dynamic ViT\cite{dynamicvit}, we design a relevance attention mechanism specifically for visual object tracking. Instead of regressing the coordinate offsets, we utilize ranking to dynamically assist the search region in globally reading useful features across historical frames.
+
+\subsection{Memory networks}
+
+Information from historical frames enables the network to adapt to the variation of appearance and background. Many approaches are devoted to template updates for improving performance in different fields, such as video object segmentation\cite{STM, adaptive, CFBI, stcn, hongadaptive, xmem, zhoumemory}, video obejct tracking\cite{memorytrack,stmtrack,STARK,mixformer}, etc. In video object segmentation, STM\cite{STM} and STCN\cite{stcn} construct memory networks, enabling the model to store extensive historical frame information for robust object tracking and segmentation. However, since memory incurs memory overhead and reduces model computation speed, it becomes challenging to store all historical frames during long-term video object segmentation. Therefore, XMem\cite{xmem} introduces three distinct types of memory to facilitate long-term object tracking and segmentation. In object tracking, GradNet\cite{gradnet} updates the template by backwarding the gradients. With a template controller based on LSTM, MemTrack \cite{memorytrack} design a memory network for robust object tracking. STMTrack\cite{stmtrack} proposes a memory-based tracker, which updates templates at a fixed interval. Besides, Mixformer\cite{mixformer} and STARK\cite{STARK} design a scoring head to select the representative template. We utilize the proposed relevance attention to construct a GR memory. In contrast to previous methods that update the memory with the entire template, the GR memory adaptively selects relevant tokens from both the original memory and new template tokens using relevance attention. After multiple updates, the GR memory contains the most representative tokens of the target in the entire video sequence.
+\begin{figure}
+  \centering
+  \includegraphics[width=1.02\linewidth]{figure/overview.pdf}
+  \caption{The framework of RFGM. It consists of a GR memory, token filter(TF), an encoder, and a decoder. The encoder is composed of Attention and relevance attention, while the decoder consists of a prediction head.}
+  \label{fig_overview}
+
+\end{figure}
+
+
+
+\section{Method}
+
+\subsection{Tracking with GR memory and relevance attention}
+\textbf{Pipeline}.
+
+$Encoder$. As shown in Fig.\ref{fig_overview}, The RFGM utilizes the vanilla ViT\cite{vit} as the encoder for feature interaction. The initial input of RFGM is a pair of images, which is referred to as template $z\in{\mathbb{R}^{3\times{H_z}\times{W_z}}}$ and search $x\in{\mathbb{R}^{3\times{H_x}\times{W_x}}}$. The template and search in RFGM are first divided into $N_z$ and $N_x$ non-overlapping patches $z^p$ and $x^p$, respectively. The size of these patches is $S\times{S}$, and $N_z=H_zW_z/S^2$, $N_x=H_xW_x/S^2$. These patches are then linearly mapped to a series of patch embeddings (tokens) by a convolutional layer, $T^z=\{T^z_1, T^z_2,\cdots,T^z_{N_z}\}$ and $T^x=\{T^x_1, T^x_2,\cdots,T^x_{N_x}\}$, $T\in{\mathbb{R}^{1\times{C}}}$, where $C$ is the dimension of patch embedding. We concatenate the $T^x$ and initial $T^z$ and feed them into the encoder to obtain the tracking results of the first frame. In the subsequent tracking process,  the predicted box will be used to crop a new template to adapt to changes in the target's appearance. Besides, we establish a GR memory $M$ to store the most representative target features throughout the video. Then, we feed $M$, a new template, and $T^x$ into the Token Filter (TF) module to get the selected tokens from memory and the new template. Finally, we feed the selected token and $T^x$ into the encoder for feature interaction. The entire encoder consists of 12 transformer blocks, with relevance attention transformer blocks employed at the 4-th, 7-th, and 10-th layers.
+
+$Decoder$. The prediction head is based on the decoder of \cite{ostrack} and consists of three branches: score branch, offset branch, and size branch. Each branch is composed of three convolutional layers. The score branch is used to predict the position $R\in[0, 1]^{\frac{H_x}{16}\times{\frac{H_x}{16}}}$ of the target center, the offset branch is used to compensate for the error $E\in[0, 1]^{2\times\frac{H_x}{16}\times{\frac{H_x}{16}}}$ caused by downsampling, and the size branch predicts the height and width $O\in[0, 1]^{2\times\frac{H_x}{16}\times{\frac{H_x}{16}}}$ of the target. The position with the highest score in the score map of the score branch is selected, $i.e.,(x_r,y_r)=argmax(x_r, y_r)R_{xy}$and combined with the target size to obtain the final bounding box:
+\begin{equation}
+    (x,y,w,h)=(x_r+E(0,x_r,y_r),y_r+E(1,x_r,y_r),O(0,x_r,y_r),O(1,x_r,y_r))
+\end{equation}
+
+\textbf{Global Representation Memory}.
+Previous visual object tracking methods\cite{aiatrack, mixformer, TrMeetDimp, STARK} generally push a template $z_{t}$ to memory $M_{t-1}=\{z_0, z_1,
+\cdots,z_{t-1}\}, M\in{\mathbb{R}^{n\times{3}\times{H_z}\times{W_z}}}$ at fixed time intervals and discard the earliest template $z_{1}$ in a first-in-first-out manner, where $n$ is the number of templates, and $t$ is the time step in the video. $z_0$ is the template cropped with ground truth, it will be stored in memory all the time. The memory updating can be formulated as:
+\begin{equation}
+    M_t = \{z_0, z_2
+\cdots,z_{t-1}\}\cup{z_{t}}
+\end{equation}
+However, directly pushing the entire template to memory will introduce distractor information, and discarding the earliest template is prone to losing representative features. 
+
+To address the aforementioned issues, instead of updating the whole template, we propose a global representation memory (GR memory) updating as token level, which can adaptively select the most representative tokens from both the previous time step memory $M_{t-1}$ and new template of $z_t$. We initialize a memory $M_{0}=\{T^{z_0}\}$ and add the new coming template tokens $T^{z_t}$ of $z_t$ to it when the memory is not full. When the memory $M_{t-1}=\{T^{z_0}, T^{z_1},\cdots, T^{z_{t-1}}\}$ reaches a certain maximum number $N_{max}$ of tokens, as shown in Fig.\ref{fig_token_filter}, we feed $M_{t-1}$ and $T^{z_t}$ into the Token Filter module to obtain relevant scores, and subsequently rank these tokens score in order, selecting the top $k$ tokens that are most relevant to the current search region and merge them with the initial memory $M_{0}$ to obtain the GR memory $M_t$. Because $T^p=\{T^z_1, T^z_2,\cdots,T^z_{N_z}\}$, the GR memory updating can be formulated as:
+\begin{equation}
+    m=Topk(Rank(M_{t-1}\cup{T^{z_{t}}}))
+\end{equation}
+\begin{equation}
+\begin{aligned}
+    Rank(M_{t-1}\cup{T^{z_{t}}}) = Rank(&\{T^{z_1}_1, T^{z_1}_2,\cdots,T^{z_1}_{N_z}, T^{z_2}_1, T^{z_2}_2,\cdots,T^{z_2}_{N_z},\cdots,T^{z_{t-1}}_1, T^{z_{t-1}}_2,\\ &\cdots,T^{z_{t-1}}_{N_z}\}\cup\{T^{z_t}_1, T^{z_t}_2,\cdots,T^{z_t}_{N_z}\})
+\end{aligned}
+\end{equation}
+\begin{equation}
+    M_t=M_0\cup{m}=\{T^{z_0}_1, T^{z_0}_2,\cdots,T^{z_0}_{N_z}, T^{z_1}_1, T^{z_2}_{10}, T^{z_5}_3,\cdots, T^{z_t}_{N_z}\}
+\end{equation}
+where $m=\{T^{z_1}_1, T^{z_2}_{10}, T^{z_5}_3,\cdots, T^{z_t}_{N_z}\}$ is the selected top $k$ tokens, the size of $m$ is $N_{max}$. The way of memory updating can automatically discard some distractor information and select the most suitable tokens for the search region. Through multiple rounds of updates, the final memory includes the most representative target tokens throughout the entire video sequence.
+\begin{figure}
+  \centering
+  \includegraphics[width=1.02\linewidth]{figure/ADA.pdf}
+  \caption{The token filter consists of three regular transformer blocks and an adaptive token rank, which effectively updates the features in memory. GR-M represents the global representation memory, T stands for the new template, and S represents the search region.}
+  \label{fig_token_filter}
+\end{figure}
+
+\textbf{Relevance attention}. Previous feature interaction for the search region typically involves reading all information from a regular memory $M_t=\{z_0, z_1,
+\cdots,z_{t}\}$ using linear correlation\cite{siamfc++, siamfc} or cross-attention\cite{ostrack,mixformer}, which can be represented by the following formula:
+\begin{equation}
+\label{star}
+    x_*=M_t\scalebox{1.5}{$\star$}x=\sum_{i=0}^t(z_t\scalebox{1.5}{$\star$}x)
+\end{equation}
+\begin{equation}
+\label{attn}
+    q=x,
+    k=v=M_t,
+    x_*=x+MHA(q,k,v)
+\end{equation}
+where \scalebox{1.5}{$\star$} is linear correlation\cite{siamfc++, siamfc}, the variables q, k, and v are used to denote the query, key, and value that are inputted into the multi-head attention($MHA$) block\cite{vit}. However, utilizing all the information in the memory is redundant and some harmful information may deteriorate the performance.
+
+Therefore, we propose relevance attention that can automatically select the most relevant tokens from memory, which can be represented by the following formula:
+\begin{equation}
+\begin{aligned}
+    m^{\prime}=Topk(Rank(M^l_{t}))
+\end{aligned}
+\end{equation}
+where $M^l_{t}$ is the memory tokens at time step t and serves as the input to the $l$-th layer of the transformer block.
+Then, we take the tokens $m^{\prime}$ that are most relevant to the current search region as the query,  key, and value. We also add the search region tokens $T^{x_t}_l$ to the query, key and value, resulting in the final query, key, and value. The relevance attention can be formulated as:
+\begin{equation}
+\begin{aligned}
+&q=k=v=m^{\prime}\cup{T^{x_t}_l}\\
+o^l = &m^{\prime}\cup{T^{x_t}_l}+MHA(q,k,v)\\
+&o^l_* = o^l + FFN(o^l)
+\end{aligned}
+\end{equation}
+where $T^{x_t}_l$ represents the search region tokens of $l$-th layer transformer block, $FFN$ represents a feed-forward network (FFN), and $o^l_*$ is the output of $l$-th layer transformer block.
+\subsection{Adaptive Token Ranking}
+To enable ranking in relevance attention and GR memory, we design an adaptive token ranking module in the $4$-th, $7$-th, and $10$-th transformer layers. Attention weights can represent the relevance between tokens in memory and the current search area feature. Therefore, we input the attention weights into a multi-layer perceptron(MLP) to enhance the relevance, obtaining the relevant score for the current search area feature. Finally, we select the most relevant tokens by adaptive token ranking.
+
+To simplify, we only use $T^{z_t}$ of one template from the memory to demonstrate the formula. Therefore, the multi-head attention weights of $T^{z_t}$ and $T^{x_t}$ in $l$-th layer in encoder is $w\in{\mathbb{R}^{h\times{N_z}\times{N_x}}}$, where $h=12$ is the number of multi-head. The score prediction can be represented as follows:
+\begin{equation}
+    w^\prime=\frac{\sum_{j=0}^{N_x}{w_j}}{N_x}, w_j\in{\mathbb{R}^{h\times{N_z}}}\subseteq{w}
+\end{equation}
+\begin{equation}
+    \pi= Softmax(MLP(w^{\prime^T}))\in{\mathbb{R}^{N_z\times{2}}}
+\end{equation}
+where $\pi_{y,0}$ represents the score of selecting the $y$-th token, $\pi_{y,1}$ represents the score of discarding the $y$-th token, $y\in[0\sim{N_z})$
+
+\textbf{Training stage}. We keep all tokens that $\pi_{y,0}$ is greater than $\pi_{y,1}$. As the token selection based on the score is non-differentiable, we exploit the Gumbel-Softmax function\cite{gumbel-softmax} to enable gradient backpropagation. It can be formulated as:
+\begin{equation}
+    D=Gumbel-Softmax(\pi)\in\{0, 1\}^{N_z}
+\end{equation}
+where $D$ is a one-hot tensor with length $N_z$, the differentiability of Gumbel-Softmax enables end-to-end training. Finally, multiplying $D$ with attention weights $w$ to discard low-scoring tokens:
+\begin{equation}
+    w_{masked}=Concat(w_{0,0}D,w_{0,1}D,\cdots,w_{m,n}D), m\in[0,h),n\in[0, N_x)
+\end{equation}
+where $w_{masked}$ represents the masked attention weights, and $Concat$ represents recombining all ($w_{m,n}D\in{\mathbb{R}^{N_z}}$) to $w_{masked}\in{\mathbb{R}^{h\times{N_z}\times{N_x}}}$.
+
+\textbf{Inference stage}.Instead of simply using $D$ as a mask for binary classification (keeping or discarding), we rank the scores of all tokens in $T^z=\{T^z_1, T^z_2,\cdots,T^z_{N_z}\}$ and select the top $k$ tokens, which allows selecting the tokens that are most relevant to $T^x$. It can be formulated as:
+\begin{equation}
+    T^z_*=Topk(Rank(T^z))
+\end{equation}
+\subsection{Loss Fucntion}
+In the training stage, we generate a Gaussian map using ground truth and use focal loss\cite{focalloss} to supervise the score branch. In addition, we use L1 loss and GIoU\cite{giou} loss to supervise the offset and size branches respectively. We also set up a ratio loss to supervise $D$ in the adaptive token ranking, which can help us to constrain the ratio of kept tokens:
+\begin{equation}
+    L_{ratio} = \frac{1}{BS}\sum_{b=1}^B\sum_{s=1}^S(q^{(s)}-\frac{1}{N_z}\sum_{j=1}^{N_z}D^{b,s}_j)^2
+\end{equation}
+where $q=[0.9, 0.8,0.7]$ represents kept target ratio for $s$ stages, and stages include $4$-th, $7$-th, $10$-th layer in encoder. $B$ is the batchsize.
+Finally, the total loss of a combination of the above objectives:
+\begin{equation}
+    L_{total}=\lambda_{score}L_{focal}+\lambda_{iou}L_{giou}+\lambda_{l1}L_{l1}+\lambda_{ratio}L_{ratio}
+\end{equation}
+where $\lambda_{score}=1$, $\lambda_{iou}=2$, $\lambda_{l1}=5$ and $\lambda_{ratio}=1$ are the weights to balance the objectives.
+\section{Experiments}
+\subsection{Implementation Details}
+\textbf{Model}. The proposed RFGM uses ViT-B as the encoder, namely RFGM-B256. ViT-B is initialized using the pretrained weights from the MAE model\cite{mae}. RFGM-B256: the search region, which is $4$ times the area of the target object, is resized to $256\times256$ pixels. The template, which is $2$ times the area of the target object, is resized to $128\times128$ pixels. The proposed relevance attention consists of three linear layers and the GELU activation function\cite{gelu}. The output dimensions of the three linear layers are 384, 192, and 2, respectively.
+
+\textbf{Training}.Our experiments are conducted on Intel(R) Xeon(R) Gold 6326 CPU @ 2.90GHz with 252GB RAM and 4 NVIDIA GeForce
+RTX 3090 GPUs with 24GB memory. This model training is divided into two stages. In the first stage, the number of templates is set to 3 frames and trained for 300 epochs, with 60k image pairs per epoch. The learning rate decreases by a factor of 10 after 240 epochs. In the second stage, fine-tuning is performed based on the first stage, with the number of templates increased to 7 frames and trained for 50 epochs. For GOT-10k, the model is trained for 100 epochs and decreases the learning rate at epoch 80 in the first stage. In the second stage, the model is finetuned for an extra 30 epochs. We set the learning rate of the prediction module in the relevance attention of the encoder and the decoder to 4e-4 and set the learning rate of the remaining parameters in the encoder to 4e-5. Additionally, the weight decay is set to 1e-4. Our training datasets includes COCO\cite{coco}, LaSOT\cite{lasot}, GOT-10k\cite{got}, and TrackingNet\cite{trackingnet}. Data augmentation techniques include Random horizontal flip and brightness jittering.
+
+\textbf{Inference}. The size of GR memory $N_{max}$ is set to $3\times{N_z}$ by default. The update interval of the GR memory is set to 5 for $t<=100$, doubled every 100 frames until $t=500$, and then remains 160. The gradual increase in the update interval is to reduce the accumulation of model errors caused by the template from inaccurate tracking results. 3 stages relevance attention is set to $floor(3\times{N_z}\times{0.9})$, $floor(3\times{N_z}\times{0.8})$ and $floor(3\times{N_z}\times{0.7})$ respectively, where $floor$ means rounding down to the nearest integer. We employ a single NVIDIA GeForce RTX 3090 for inference.
+\subsection{State-of-the-Art Comparisons}
+We compare the proposed RFGM with state-of-the-art methods on five tracking benchmarks, including large-scale benchmarks(TrackingNet\cite{trackingnet}, GOT-10k\cite{got}, and LaSOT\cite{lasot}) and two small-scale benchmarks(OTB\cite{OTB} and UAV123\cite{uav}).
+\begin{table*}
+  \centering
+  \caption{Comparisons with state-of-the-art methods with search resolution $<300\times{300}$ on three large-scale benchmarks.
+  The top three metrics are highlighted with \textbf{\textcolor{cRed}{red}}, \textcolor{blue}{blue}, and \textcolor{cGreen}{green} fonts.}
+  \label{tab-sota200}
+\resizebox{\linewidth}{!}{
+  \setlength{\tabcolsep}{2.2mm}{  
+  \small
+  \begin{tabular}{l|c| ccc c ccc c ccc}
+    \toprule
+    &\multirow{2}*{Method}  & \multicolumn{3}{c}{TrackingNet~\cite{trackingnet}} && \multicolumn{3}{c}{GOT-10k*~\cite{got}} && \multicolumn{3}{c}{LaSOT~\cite{lasot}}\\
+    \cline{3-5}
+    \cline{7-9}
+    \cline{11-13}
+    && AUC&P$_{Norm}$&P && AO&SR$_{0.5}$&SR$_{0.75}$&& AUC&P$_{Norm}$&P\\
+    \midrule[0.5pt]
+
+
+   &\textbf{RFGM-B256}	&\textbf{\textcolor{cRed}{84.7}}	&\textbf{\textcolor{cRed}{89.6}}	&\textbf{\textcolor{cRed}{83.6}} & &\textbf{\textcolor{cRed}{74.1}} &\textbf{\textcolor{cRed}{84.6}} &\textbf{\textcolor{cRed}{71.8}} & &\textcolor{blue}{70.3}	&\textbf{\textcolor{cRed}{82.0}}	&\textbf{\textcolor{cRed}{76.4}} \\
+    \midrule[0.1pt]
+    \multirow{14}*{\rotatebox{90}{Resolution$<300\times300$}}&SimTrack~\cite{simtrack}	 &\textcolor{blue}{83.4} &87.4	&-  &  &69.8	&78.8	&66.0 &&\textbf{\textcolor{cRed}{70.5}}	&\textcolor{blue}{79.7}	&-\\
+    &OSTrack-256~\cite{ostrack}	&\textcolor{cGreen}{83.1} &\textcolor{blue}{87.8}	&\textcolor{blue}{82.0} &  &\textcolor{cGreen}{71.0}	&\textcolor{cGreen}{80.4}	&\textcolor{blue}{68.2} &&\textcolor{cGreen}{69.1}	&\textcolor{cGreen}{78.7}	&\textcolor{blue}{75.2}  \\
+    &SwinTrack~\cite{swintrack}	&81.1	&-	&78.4 &	&\textcolor{blue}{71.3}	&\textcolor{blue}{81.9}	&64.5 &&67.2	&-	&70.8  \\
+    &SLT~\cite{slt}	&82.8 &\textcolor{cGreen}{87.5}	&\textcolor{cGreen}{81.4} & &67.5	&76.5	&60.3 &&66.8	&75.5	&- \\
+    &SBT~\cite{SBT}	&-	&-	&-	& &70.4	&80.8	&\textcolor{cGreen}{64.7} &&66.7	&-	&\textcolor{cGreen}{71.1}  \\
+    &AutoMatch~\cite{automatch} 	&76.0	&-	&72.6	& &65.2	&76.6	&54.3 &&58.3	&-	&59.9\\
+    &TransT~\cite{TransT}	&81.4	&86.7	&80.3 &	&67.1	&76.8	&60.9 &&64.9	&73.8	&69.0\\
+    &SiamAttn~\cite{Siamatten}  	&75.2	&81.7	&-	&	&-	&-	&- &&56.0	&64.8	&- \\
+    &SiamBAN~\cite{siambox}  	&-	&- 	&-	&	&-	&-	&- &&51.4	&59.8	&- \\
+    &DSTrpn~\cite{dstrpn}	&64.9	&-	&58.9 &	&-	&-	&- &&43.4	&54.4	&- \\
+    &Ocean~\cite{ocean}	&-	&-	&- &	&61.1	&72.1	&47.3 &&56.0	&65.1	&56.6 \\
+    &SiamPRN++~\cite{siamrpn++}	&73.3	&80.0	&69.4 &	&51.7	&61.6	&32.5 &&49.6	&56.9	&49.1  \\
+    &MDNet~\cite{mdnet}	   	 &60.6	&70.5	&56.5	& &29.9	&30.3	&9.9 &&39.7	&46.0	&37.3	\\
+  \bottomrule
+\end{tabular}
+}
+}
+  \vspace{-2mm}
+\end{table*}
+
+\begin{table*}
+  \centering
+  \caption{Comparisons with state-of-the-art methods with search resolution $>300\times{300}$ on three large-scale benchmarks.
+  The top three metrics are highlighted with \textbf{\textcolor{cRed}{red}}, \textcolor{blue}{blue} and \textcolor{cGreen}{green} fonts.}
+  \label{tab-sota300}
+\resizebox{\linewidth}{!}{
+  \setlength{\tabcolsep}{2.2mm}{  
+  \small
+  \begin{tabular}{l|c| ccc c ccc c ccc}
+    \toprule
+    &\multirow{2}*{Method}  & \multicolumn{3}{c}{TrackingNet~\cite{trackingnet}} && \multicolumn{3}{c}{GOT-10k*~\cite{got}} && \multicolumn{3}{c}{LaSOT~\cite{lasot}}\\
+    \cline{3-5}
+    \cline{7-9}
+    \cline{11-13}
+    && AUC&P$_{Norm}$&P && AO&SR$_{0.5}$&SR$_{0.75}$&& AUC&P$_{Norm}$&P\\
+    \midrule[0.5pt]
+
+
+   &\textbf{RFGM-B256}	&\textbf{\textcolor{cRed}{84.7}}	&\textbf{\textcolor{cRed}{89.6}}	&\textbf{\textcolor{cRed}{83.6}} & &\textbf{\textcolor{cRed}{74.1}} &\textbf{\textcolor{cRed}{84.6}} &\textbf{\textcolor{cRed}{71.8}} & &\textcolor{cGreen}{70.3}	&\textbf{\textcolor{cRed}{82.0}}	&\textbf{\textcolor{cGreen}{76.4}} \\
+    \midrule[0.1pt]
+     \multirow{6}*{\rotatebox{90}{Resolution$>300\times300$}} &OSTrack-384~\cite{ostrack}	&\textcolor{cGreen}{83.9} &\textcolor{cGreen}{88.5}	&\textcolor{cGreen}{83.2}  &  &\textcolor{blue}{73.7}	&\textcolor{blue}{83.2}	&\textcolor{blue}{70.8}&&\textcolor{blue}{71.1}	&\textcolor{blue}{81.1}	&\textbf{\textcolor{cRed}{77.6}}\\
+    &SwinTrack-384~\cite{swintrack}	&\textcol
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,308 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Visual object tracking has been a fundamental and long-standing task in computer vision, which aims to locate the object throughout a video sequence, given its initial bounding box. It has a wide range of practical applications, which often require for low computational latency. So it is important to \emph{design an efficient tracking framework while maintaining high accuracy}.
+
+Recently, the Transformer-based one-stream trackers~\cite{mixformer,simtrack,ostrack} achieve excellent tracking accuracy than the previous Siamese trackers~\cite{siamfc,siamban,transt}, due to the unified modeling of feature extraction and target integration within a transformer block, which allows both components to benefit from the transformer development (e.g. ViT~\cite{vit}, self-supervised pre-training~\cite{mae} or contrastive pre-training~\cite{clip}).
+However for these trackers, \emph{inference efficiency}, especially on CPU, is still the main obstacle to practical deployment. Taking the state-of-the-art tracker MixViT~\cite{mixformer_jour} as an instance, its pipeline contains \romannumeral1) {\bf transformer backbone} on the token sequence from target template and search area, \romannumeral2) \textbf{dense corner head} on the 2D search region for regression, and \romannumeral3) \textbf{extra complex score prediction module} for classification (i.e., estimating the box quality for reliable online samples selection).
+To achieve a high-efficiency tracker, there are still several issues on the design of MixViT.
+First, the dense convolutional corner head still exhibits a time-consuming design, as implied in Tab~\ref{tab:fps1}. This is because it densely estimates the probability distribution of the box corners through a total of ten convolutional layers on the high-resolution 2D feature maps.
+Second, to deal with online template updating, an extra complex score prediction module composed of precise RoI pooling layer, two attention blocks, and a three-layer MLP is required for improving online samples quality, which largely hinders its efficiency and simplicity of MixViT.
+
+\begin{figure}
+\begin{minipage}{\linewidth}
+        \begin{minipage}{0.52\linewidth}
+            \centering
+            \begin{table}[H]
+                \centering
+                \fontsize{8pt}{3.2mm}\selectfont
+                \setlength{\tabcolsep}{1mm}
+                \begin{tabular}{c|c|c|c|c}
+                \textbf{Layer} & \textbf{Head} & \textbf{Score} & \textbf{GPU FPS} & \textbf{GFLOPs} \\ 
+                \shline\hline
+                8 & Pyram. Corner & \checkmark & 90 & 27.2 \\
+                8 & Pyram. Corner & - & 120\textcolor{red}{($\uparrow33.3\%$)} & 26.2 \\
+                8 & Token-based & - & 166\textcolor{red}{($\uparrow84.4\%$)} & 22.5 \\
+                \shline \hline
+                \end{tabular}
+                \caption{Efficiency analysis on 8-layer MixViT with different heads. `Pyram. Corner' represents for the pyramidal corner head~\cite{mixformer_jour}.}
+                \label{tab:fps1}
+            \end{table}
+            
+            \begin{table}[H]
+                \centering
+                \fontsize{8pt}{3.2mm}\selectfont
+                \setlength{\tabcolsep}{1mm}
+                \begin{tabular}{l|c|c|c|c}
+                \multicolumn{1}{l|}{\textbf{Layer}}               & \multicolumn{1}{c|}{\textbf{MLP Ratio}}            & \multicolumn{1}{c|}{\textbf{Image Size}} & \multicolumn{1}{c|}{\textbf{CPU FPS}} & \multicolumn{1}{c}{\textbf{GPU FPS}} \\ 
+                \shline \hline
+                \multicolumn{1}{l|}{\multirow{4}{*}{4}}  & \multicolumn{1}{c|}{\multirow{2}{*}{1}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{21}  & \multicolumn{1}{c}{262} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{30}  & \multicolumn{1}{c}{280} \\ \cline{2-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{\multirow{2}{*}{4}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{12}  & \multicolumn{1}{c}{255} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{15}  & \multicolumn{1}{c}{275} \\ 
+                
+                \hline \hline
+                \multicolumn{1}{l|}{\multirow{4}{*}{8}}  & \multicolumn{1}{c|}{\multirow{2}{*}{1}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{12}  & \multicolumn{1}{c}{180} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{16}  & \multicolumn{1}{c}{190} \\ \cline{2-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{\multirow{2}{*}{4}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{7}   & \multicolumn{1}{c}{150} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{8}   & \multicolumn{1}{c}{190} \\ 
+                
+                \hline \hline
+                \multicolumn{1}{l|}{\multirow{4}{*}{12}} & \multicolumn{1}{c|}{\multirow{2}{*}{1}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{8}   & \multicolumn{1}{c}{130} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{12}  & \multicolumn{1}{c}{145} \\ \cline{2-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{\multirow{2}{*}{4}} & \multicolumn{1}{c|}{288}        & \multicolumn{1}{c|}{4}   & \multicolumn{1}{c}{100} \\ \cline{3-5} 
+                \multicolumn{1}{l|}{}                    & \multicolumn{1}{c|}{}                   & \multicolumn{1}{c|}{224}        & \multicolumn{1}{c|}{6}   & \multicolumn{1}{c}{140} \\ 
+                \shline \hline
+                \end{tabular}
+            \caption{Efficiency analysis on MixViT with different backbone settings. The employed prediction head is plain corner head~\cite{mixformer} for the analysis.}
+            \label{tab:fps2}  
+            \end{table}
+       \end{minipage}
+       \hspace{1mm}
+       \begin{minipage}{0.46\linewidth}
+            \includegraphics[width=\linewidth]{figs/bubble.pdf}
+            \makeatletter\def\@captype{figure}\makeatother
+            \caption{{\bf Comparison with the state-of-the-art trackers} in terms of AUC performance, model FLOPs and GPU Speed on LaSOT. The circle diameter is in proportion to model FLOPs. MixFormerV2-B surpasses existing trackers by a large margin in terms of both accuracy and inference speed. MixFormerV2-S achieves extremely high tracking speed of over 300 FPS while obtaining competitive accuracy compared with other efficient trackers~\cite{fear,ettrack}. 
+            }
+            \label{fig:bubble}
+        \end{minipage}
+        \hspace{1mm}
+       
+\end{minipage}
+\end{figure}
+
+To avoid the dense corner head and complicated score prediction module, we propose a new \emph{fully transformer tracking framework\textemdash MixFormerV2} without any dense convolutional operation. Our MixFormerV2 yields a very simple and efficient architecture, which is composed of a transformer backbone on the mixed token sequence and two simple MLP heads on the learnable prediction tokens.
+Specifically, we introduce four special learnable prediction tokens and concate them with the original tokens from target template and search area. Like the CLS token in the standard ViT, these prediction tokens are able to capture the complex relation between target template and search area, serving as a compact representation for subsequent regression and classification. Based on them, we can easily predict the target box and confidence score through simple MLP heads, which results in an efficient fully transformer tracker. Our MLP heads directly regress the \emph{probability distribution} of four box coordinates, which can improve the regression accuracy without increasing overhead.
+
+To further improve efficiency of MixFormerV2, we present a new model reduction paradigm based on distillation, including \emph{dense-to-sparse distillation} and \emph{deep-to-shallow distillation}.
+The dense-to-sparse distillation aims to transfer knowledge from the dense-head based MixViT to our fully transformer tracker.
+Thanks to the distribution-based regression design in our MLP head, we can easily adopt logits mimicking strategy for distilling MixViT trackers to our MixFormerV2.
+Based on the observation in Tab.~\ref{tab:fps2}, we also exploit the deep-to-shallow distillation to prune our MixFormerV2.
+We devise a new progressive depth pruning strategy by following a critical principle that constraining the initial distribution of student and teacher trackers to be as similar as possible, which can augment the capacity of knowledge transfer.
+Specifically, instructed by the frozen teacher model, some certain layers of a copied teacher model are progressively dropped and we use the pruned model as our student initialization.
+For realtime tracking on CPU, we further introduce an intermediate teacher model to bridge the gap between the large teacher and small student, and prune hidden dim of MLP based on the proposed distillation paradigm.
+
+Based on the proposed model reduction paradigm, we instantiate two types of MixFormerV2 trackers, MixFormerV2-B and MixFormerV2-S. As shown in Fig.~\ref{fig:bubble}, MixFormerV2 achieves better trade-off between tracking accuracy and inference speed than previous trackers. Especially, MixFormerV2-B achieves an AUC of 70.6\% on LaSOT with a high GPU speed of 165 FPS, and MixFormerV2-S outperforms FEAR-L by 2.7\% AUC on LaSOT with a real-time CPU speed. Our contributions are two-fold:
+1) We propose the first fully transformer tracking framework without any convolution operation, dubbed as \textbf{MixFormerV2}, yielding a more unified and efficient tracker. 2) We present a new distillation-based model reduction paradigm to make MixFormerV2 more effective and efficient, which can achieve high-performance tracking on  platforms with GPUs or CPUs.
+
+
+
+Related Work
+\paragraph{Efficient Visual Object Tracking.}
+In recent decades, the visual object tracking task has witnessed rapid development due to the emergence of new benchmark datasets~\cite{lasot, trackingnet, got10k, uav123, tnl2k} and better trackers~\cite{siamfc, siamrpn, fcot, treg, stark, transt, mixformer, ostrack}.
+Researchers have tried to explore efficient and effective tracking architectures for practical applications, 
+such as siamese-based trackers~\cite{siamfc, siamrpn, siamrpnPlus, siamfc++}, online trackers~\cite{atom, dimp}, and transformer-based trackers~\cite{stark, transt, swin}.
+Benefiting from transformer structure and attention mechanism,
+recent works~\cite{mixformer, ostrack, simtrack} on visual tracking are gradually abandoning traditional three-stage model paradigm,  i.e., feature extraction, information interaction and box localization.
+They adopted a more unified one-stream model structure to jointly perform feature extraction and interaction, 
+which turned out to be effective for visual object tracking task.
+However, some modern tracking architectures are too heavy and computational expensive, making it hard to deploy in practical applications. LightTrack~\cite{lighttrack} employed NAS to search a light Siamese network, but its speed was not extremely fast on powerful GPUs.
+FEAR~\cite{fear}, HCAT~\cite{hcat}, and E.T.Track~\cite{ettrack} designed more efficient frameworks, which were not suitable for one-stream trackers. We are the first to design efficient one-stream tracker so as to achieve good accuracy and speed trade-off.
+
+\paragraph{Knowledge Distillation.} Knowledge Distillation (KD)~\cite{kd1} was proposed to learn more effective student models with teacher model supervision.
+In the beginning, KD is applied in classification problem, where KL divergence is used for measuring the similarity of teacher and student predictions.
+For regression problem like object detection, 
+feature mimicking~\cite{fitnet, mimicking, dis-feat} is frequently employed.
+LD~\cite{ld} operated logits distillation on bounding box location by converting Dirac delta distribution representation to probability distribution representation of bounding box, which well unified logits distillation and location distillation.
+In this work, we exploit some customized strategies to make knowledge distillation more suitable for our tracking framework. 
+
+\paragraph{Vision Transformer Compression.}
+There exist many general techniques for the purpose of speeding up model inference, including model quantization~\cite{quant1, haq}, knowledge distillation~\cite{kd1, kd2}, pruning~\cite{pruning}, and neural architecture search~\cite{nas}.
+Recently many works also focus on compressing vision transformer models.
+For example, Dynamic ViT~\cite{dynamicvit} and Evo-ViT\cite{evo} tried to prune tokens in attention mechanism.
+AutoFormer~\cite{autoformer}, NASViT~\cite{nasvit}, and SlimmingViT~\cite{slimmingvit} employed NAS technique to explore delicate ViT architectures.
+ViTKD~\cite{vitkd} provided several ViT feature distillation guidelines but focused on compressing the feature dimension instead of model depth.
+MiniViT~\cite{minivit} applied weights sharing and multiplexing to reduce model parameters. 
+Since one-stream trackers highly rely on expensive pre-training, we resort to directly prune the layers of our tracker.
+
+
+
+Method
+In this section, we first present the MixFormerV2, which is an efficient and fully transformer tracking framework. Then we describe the proposed distillation-based model reduction, including dense-to-sparse distillation and deep-to-shallow distillation. Finally, we describe the training of MixFormerV2.
+
+\begin{figure*}
+    \includegraphics[width=0.95\linewidth]{figs/model.pdf}
+    \caption{\textbf{MixFormerV2 Framework.} MixFormerV2 is a fully transformer tracking framework, composed of a transformer backbone and two simple MLP heads on the learnable prediction tokens.}
+    \label{fig:model}
+\end{figure*}
+
+\subsection{Fully Transformer Tracking: MixFormerV2}
+The proposed MixFormerV2 is a fully transformer tracking framework without any convolutional operation or complex score prediction module. Its backbone is a plain vision transformer on the mixed token sequence of three types: target template tokens, search area tokens, and learnable prediction tokens. Then, simple MLP heads are placed on top for predicting probability distribution of the box coordinates and the corresponding target quality score.
+Compared with other transformer-based trackers (e.g., TransT~\cite{transt}, STARK~\cite{stark}, MixFormer~\cite{mixformer}, OSTrack~\cite{ostrack} and SimTrack~\cite{simtrack}), our MixFormerV2 streamlines the tracking pipeline by effectively removing the customized convolutional classification and regression heads for the first time, which yields a more unified, efficient and flexible tracker.
+The overall architecture is depicted in Fig.~\ref{fig:model}.
+With inputting the template tokens, the search area tokens and the learnable prediction tokens, MixFormerV2 directly predicts the target bounding boxes and quality score in an end-to-end manner.
+
+\paragraph{Prediction-Token-Involved Mixed Attention.}
+Compared to the original slimming mixed attention~\cite{mixformer_jour} in MixViT, the key difference lies in the introduction of the special learnable prediction tokens, which are used to capture the correlation between the target template and search area. These prediction tokens can progressively extract the target information and used as a compact representations for subsequent regression and classification.
+Specifically, given the concatenated tokens of multiple templates, search area and four learnable prediction tokens, we pass them into $N$ layers of prediction-token-involved mixed attention modules ({\bf P-MAM}).
+We use $q_t$, $k_t$ and $v_t$ to represent template elements (i.e. \textit{query}, \textit{key} and \textit{value}) of attention, $q_s$, $k_s$ and $v_s$ to represent search region, $q_e$, $k_e$ and $v_e$ to represent learnable prediction tokens. 
+The P-MAM can be defined as:
+\begin{equation}
+\centering
+\begin{aligned}
+    &  \ \ \ \ \ \ \ \ \ \  k_{tse} = {\rm Concat}(k_t, k_s, k_e), \ \ \ v_{tse} = {\rm Concat}(v_t, v_s, v_e), \\ 
+    & {\rm Atten_{t}} = {\rm Softmax}(\frac{q_{t}k_{t}^{T}}{\sqrt{d}})v_{t}, {\rm Atten}_{s} = {\rm Softmax}(\frac{q_{s}k_{tse}^{T}}{\sqrt{d}})v_{tse}, {\rm Atten}_{e} = {\rm Softmax}(\frac{q_{e}k_{tse}^{T}}{\sqrt{d}})v_{tse} \\
+\end{aligned}
+\end{equation}
+where $d$ represents the dimension of each elements, ${\rm Atten}_{t}$, ${\rm Attent}_{s}$ and ${\rm Atten}_{e}$ are the attention output of the template, search and the learnable prediction tokens respectively. Similar to the original MixFormer, we use the asymmetric mixed attention scheme for efficient online inference. 
+Like the CLS tokens in the standard ViT, the learnable prediction tokens automatically are trained on the tracking dataset to integrate the template and search area information. 
+
+\paragraph{Direct Prediction Based on Tokens.}
+After the transformer backbone, we directly use the prediction tokens to regress the target location and estimate its reliable score.
+Specifically, we exploit the distribution-based regression based on the four special learnable prediction tokens. In this sense, we regress the probability distribution of the four bounding box coordinates rather than their absolute positions.
+Experimental results in Section~\ref{sec:explor} also validate the effectiveness of this design.
+As the prediction tokens can compress target-aware information via the prediction-token-involved mixed attention modules, we can simply predict the four box coordinates with a weight-sharing MLP head as follows:
+\begin{equation}
+    \hat{P}_{X}(x) = \mathrm{MLP}(\mathrm{token}_{X}), X \in \{\mathcal{T}, \mathcal{L}, \mathcal{B}, \mathcal{R}\}.
+\end{equation}
+In implementation, we share the MLP weights among four prediction tokens. 
+For predicted target quality assessment, the Score Head is a simple MLP composed of two linear layers.
+Specifically, we first average these four prediction tokens to gather the target information, and then feed the token into the MLP-based Score Head to directly predict the confidence score $s$ which is a real number.
+Formally, we can represent it as:
+\begin{equation*}
+    s=\operatorname{MLP}\left(\operatorname{mean}\left(\operatorname{token}_{X}\right)\right), X \in \{\mathcal{T}, \mathcal{L}, \mathcal{B}, \mathcal{R} \}.
+\end{equation*}
+These token-based heads largely reduces the complexity for both the box estimation and quality score estimation, which leads to a more simple and unified tracking architecture.
+
+\subsection{Distillation-Based Model Reduction}
+\label{subs:distillation}
+To further improve the efficiency of MixFormerV2, we present a distillation-based model reduction paradigm as shown in Fig.~\ref{fig:pipeline}, which first performs dense-to-sparse distillation for better token-based prediction and then deep-to-shallow distillation for the model pruning.
+
+\subsubsection{Dense-to-Sparse Distillation}
+In MixFormerV2, we directly regress the target bounding box based on the prediction tokens to the distribution of four random variables $\mathcal{T}, \mathcal{L}, \mathcal{B}, \mathcal{R} \in \mathbb{R}$, which represents the box's top, left, bottom and right coordinate respectively.
+In detail, we predict the probability density function of each coordinate: $X \sim \hat{P}_{X}(x)$, where $X \in \{\mathcal{T}, \mathcal{L}, \mathcal{B}, \mathcal{R}\}$. The final bounding box coordinates $B$ can be derived from the expectation over the regressed probability distribution:
+\begin{equation}
+B_X = \mathbb{E}_{\hat{P}_X}[X] = \int_{\mathbb{R}} x \hat{P}_X(x) \mathrm{d}x.
+\end{equation}
+Since the original MixViT dense convolutional corner heads predict two-dimensional probability maps, namely the joint distribution $P_{\mathcal{TL}}(x, y)$ and $P_{\mathcal{BR}}(x, y) $ for top-left and bottom-right corners, the one-dimensional version of box coordinates distribution can be deduced easily through marginal distribution:
+\begin{equation}
+\begin{aligned}
+        &P_\mathcal{T}(x) = \int_{\mathbb{R}} P_{\mathcal{TL}}(x, y) \mathrm{d}y, &P_\mathcal{L}(y) = \int_{\mathbb{R}} P_{\mathcal{TL}}(x, y) \mathrm{d}x, \\
+        &P_\mathcal{B}(x) = \int_{\mathbb{R}} P_{\mathcal{BR}}(x, y) \mathrm{d}y, &P_\mathcal{R}(y) = \int_{\mathbb{R}} P_{\mathcal{BR}}(x, y) \mathrm{d}x.
+\end{aligned}
+\label{equ:marginal}
+\end{equation}
+Herein, this formulation can bridge the gap between the dense corner prediction and our sparse token-based prediction. In this sense, the regression outputs of original MixViT can be regarded as soft labels for dense-to-sparse distillation.
+Specifically, we use MixViT outputs $P_X$ as in Equation~(\ref{equ:marginal}) for supervising the four coordinates estimation $\hat{P}_X$ of MixFormerV2, applying KL-Divergence loss as follows:
+\begin{equation}
+    L_{\text{log}} = \sum_{X \in \{\mathcal{T}, \mathcal{L}, \mathcal{B}, \mathcal{R}\}} L_{\text{KL}} (\hat{P}_X, P_X).
+    \label{equ:corner}
+\end{equation}
+In this way, the localization knowledge is transferred from the dense corner head of MixViT to the simple token-based regression head of MixFormerV2.
+
+\subsubsection{Deep-to-Shallow Distillation}
+
+\begin{figure}
+\begin{minipage}{\textwidth}
+        \begin{minipage}[h]{0.6\linewidth}
+            \includegraphics[width=0.96\linewidth]{figs/pipeline.pdf}
+            \makeatletter\def\@captype{figure}\makeatother
+            \caption{{\bf Distillation-Based Model Reduction} for MixFormerV2. The `Stage1' represents for the dense-to-sparse distillation, while the `Stage2' is the deep-to-shallow distillation. The blocks with orange arrows are to be supervised and blocks with dotted line are to be eliminated. }
+            \label{fig:pipeline}
+        \end{minipage}
+        \hspace{1mm}   
+        \begin{minipage}[h]{0.38\linewidth}
+            \hspace{-7mm}
+            \includegraphics[width=1.2\linewidth]{figs/eliminating.pdf}
+            \makeatletter\def\@captype{figure}\makeatother
+            \caption{{\bf Progressive Depth Pruning Process} for eliminating blocks. All weights in this block decay to zeros and finally only residual connection works, turning into an identity block.}
+            \label{fig:eliminate}
+        \end{minipage}
+\end{minipage}
+\end{figure}
+
+For further improving efficiency, we focus on pruning the transformer backbone.
+However, designing a new light-weight backbone is not suitable for fast one-stream tracking.
+A new backbone of one-stream trackers often highly relies on large-scale pre-training to achieve good performance, which requires for huge amounts of computation.
+Therefore, we resort to directly cut down some layers of MixFormerV2 backbone based on both the feature mimicking and logits distillation, as can be seen in Fig.~\ref{fig:pipeline}: Stage2.
+Let $F_{i}^{S}, F_{j}^{T} \in \mathbb{R}^{h\times w \times c}$ denote the feature map from student and teacher, the subscript represents the index of layers. For logits distillation, we use the same KL-Divergence loss $L_{\mathrm{log}}$ as in Equation (\ref{equ:corner}). For feature imitation, we apply $L_2$ loss:
+\begin{equation}
+    \begin{aligned}
+    L_{\text{feat}} &= \sum_{(i,j) \in \mathcal{M}} L_2 (F_{i}^{S}, F_{j}^{T}),
+    \end{aligned}
+    \label{equ:feat}
+\end{equation}
+where $\mathcal{M}$ is the set of matched layer pairs need to be supervised. Specifically, we design a progressive model depth pruning strategy for distillation.
+
+\paragraph{Progressive Model Depth Pruning.} \label{subs:ppp}
+Progressive Model Depth Pruning aims to compress MixFormerV2 backbone by reducing the number of transformer layers.
+Since directly removing some layers could lead to inconsistency between teacher and student, we explore a progressive method for model depth pruning based on the feature and logits distillation.
+Specifically, instead of letting teacher to supervise a smaller student model from scratch,  we make the original student model as a complete copy of the teacher model. 
+Then, we will progressively eliminate certain layers of student and make the remaining layers to mimic teacher representation during training with supervision of teacher.
+This design allows the initial representation of student and teacher to keep as consistent as possible, providing a smooth transition scheme and reducing the difficulty of feature mimicking.
+
+Formally, let $x_i$ denote output of the $i$-th layer of MixFormerV2 backbone, the calculation of attention block can be represented as below (Layer-Normalization operation is omitted in equation):
+\begin{equation}
+    \begin{aligned}
+    x_i '  &= \textsc{ATTN}(x_{i-1}) + x_{i-1}, \\
+    x_{i}  &= \textsc{FFN}(x_i ') + x_i '\\
+           &= \textsc{FFN}(\textsc{ATTN}(x_{i-1}) + x_{i-1}) + \textsc{ATTN}(x_{i-1}) + x_{i-1},
+    \end{aligned}
+\end{equation}
+Let $\mathcal{E}$ be the set of layers to be eliminated in our student network, 
+we apply a decay rate $\gamma$ on the weights of these layers:
+\begin{equation}
+    \begin{aligned}
+     x_{i} &= \gamma (\textsc{FFN}(\textsc{ATTN}(x_{i-1}) + x_{i-1}) + \textsc{ATTN}(x_{i-1})) + x_{i-1}, i \in \mathcal{E}.
+    \end{aligned}
+\end{equation}
+During the first $m$ epochs of student network training, $\gamma$ will gradually decrease from $1$ to $0$ in the manner of cosine function:
+\begin{equation}
+    \gamma(t) = \left\{ 
+    \begin{aligned}
+        &0.5 \times \left(1 + \cos{\left(\frac{t}{m} \pi \right)} \right), &t \leq m,\\
+        &0, &t > m.
+    \end{aligned}
+    \right.
+    \label{equ:gamma}
+\end{equation}
+This means these layers in student network are gradually eliminated and finally turn into identity transformation, as depicted in Fig.~\ref{fig:eliminate}.
+The pruned student model can be obtained by simply removing layers in $\mathcal{E}$ and keeping the remaining blocks.
+
+\paragraph{Intermediate Teacher.}
+For distillation of an extremely shallow model (4-layers MixFormerV2), we introduce an intermediate teacher (8-layers MixFormerV2) for bridging the deep teacher (12-layers MixFormerV2) and the shallow one.
+Typically, the knowledge of teacher may be too complex for a small student model to learn.
+So we introduce an intermediate role serving as teaching assistant to relieve the difficulty of the extreme knowledge distillation.
+In this sense, we divide the problem of knowledge distillation between teacher and small student into several distillation sub-problems.
+
+\paragraph{MLP Reduction.}
+As shown in Tab.~\ref{tab:fps2}, one key factor affecting the inference latency of tracker on CPU device is the hidden feature dim of MLP in Transformer block. In other words, it becomes the bottleneck that limits the real-time speed on CPU device.
+In order to leverage this issue, we further prune the hidden dim of MLP based on the proposed distillation paradigm, i.e., feature mimicking and logits distillation.
+Specifically, let the shape of linear weights in the original model is $w \in \mathbb{R}^{d_1 \times d_2}$, and the corresponding shape in the pruning student model is $w' \in \mathbb{R}^{d_1' \times d_2'}$, in which $d_1' \leq d_1, d_2' \leq d_2$, we will initialize weights for student model as: $w' = w[:d_1', :d_2']$.
+Then we apply distillation supervision for training, letting the pruned MLP to simulate original heavy MLP.
+\subsection{Training of MixFormerV2}
+The overall training pipeline is demonstrated in Fig.~\ref{fig:pipeline}, performing dense-to-sparse distillation and then deep-to-shallow distillation to yield our final efficient MixFormerV2 tracker.
+Then, we train the MLP based score head for 50 epochs.
+Particularly, for CPU real-time tracking, we employ the intermediate teacher to generate a shallower model (4-layer MixFormerV2) based on the proposed distillation.
+Besides, we also use the designed MLP reduction strategy for further pruning the CPU real-time tracker.
+The total loss of distillation training with student $S$ and teacher $T$ is calculated as:
+\begin{equation}
+    \begin{aligned}
+    L &= \lambda_{1} L_1(B^{S}, B^{gt}) + \lambda_{2} L_{\text{ciou}}(B^{S}, B^{gt}) + \lambda_{3} L_{\text{log}} (S, T) + \lambda_{4} L_{\text{feat}} (S, T),
+    \end{aligned}
+    \label{eqa:loss}
+\end{equation}
+where the first two terms are exactly the same as the original MixFormer location loss supervised by ground truth bounding boxes, and the rest terms are for the aforementioned distillation, i.e., logit distillation and feature distillation.
+
+
+
+Experiments
+
+\subsection{Implemented Details}
+\label{sec:imp}
+\paragraph{Training and Inference.} Our trackers are implemented using Python 3.6 and PyTorch 1.7. 
+The distillation training is conducted on 8 NVidia Quadro RTX 8000 GPUs. 
+The inference process runs on one NVidia Quadro RTX 8000 GPU and Intel(R) Xeon(R) Gold 6230R CPU @ 2.10GHz.
+The training datasets includes TrackingNet~\cite{trackingnet}, LaSOT~\cite{lasot}, GOT-10k~\cite{got10k} and COCO~\cite{coco} training splits, which are the same as MixFormer~\cite{mixformer}.
+Each distillation training stage takes 500 epochs, where $m=40$ epochs are for progressively eliminating layers. We train the score prediction MLP for additional 50 epochs.
+The batch size is 256 and each GPU holding 32 samples.
+We use AdamW optimizer with weight decay of $10^{-4}$.
+The initial learning rate is $10^{-4}$ and decreases to $10^{-5}$ after $400$ epochs.
+The loss weights in Equation~(\ref{eqa:loss}) are set as $\lambda_1 = 5, \lambda_2 = 2, \lambda_3 = 1, \lambda_4 = 0.2$.
+We instantiate two types of MixFormerV2, including MixF
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

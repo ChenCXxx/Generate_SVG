@@ -1,0 +1,171 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width= \columnwidth]{Figures/ICCV23_teaser.pdf}
+    
+    \label{fig:teaser}
+    \caption{
+    In Computer Vision, Continual Learning in the class incremental setting aims to learn a single model on a sequence of tasks where each task consists of disjoint classes. While each task represents a disjoint set of classes, we argue that they can be mapped to the same semantic space of a pretrained language encoder. Based on this principle, we propose to introduce language guidance in a continual learner to mitigate catastrophic forgetting.
+    }
+\end{figure}
+In Class Incremental Continual Learning, we task a model to learn a sequence of non-overlapping tasks consisting of new classes being introduced at each task. This presents a challenge different from the common supervised learning setting as the data distribution is continuously changing, and the independent and identically distributed (i.i.d.) data assumption does not hold. As a result, a model trained with our usual training recipe of optimising a loss function on incoming data leads to catastrophic forgetting~\cite{mccloskey1989catastrophic} \ie, the model forgets the previously seen classes since the loss only incentivises performance on the current task.
+There have been several attempts to address this challenge. One popular line of works aims to identify model parameters most important for performance on each task and prevent them from changing too much through subsequent tasks~\cite{kirkpatrick2017overcoming, zenke2017continual, li2017learning, aljundi2018memory}. These regularization-based methods, however, achieve sub-optimal performance as we move to very complex tasks where the model needs to share parameters between different tasks to learn a robust representation.
+
+Another line of work takes a very simple but effective approach of storing a chunk of training data. Rehearsal-based methods~\cite{chaudhry2018efficient, chaudhry2019tiny, hayes2019memory} maintain a rehearsal buffer which is a finite set of training data stored across each task. The key intuition is that to prevent forgetting on previously seen classes, the model simply uses the examples in the rehearsal buffer when optimising for new tasks. However, these methods require large buffer sizes as the number of tasks increases and hence become expensive. Moreover, they have been criticised for being impractical in real-world settings where privacy concerns prevent storing data. Architecture-based methods~\cite{rusu2016progressive, yoon2017lifelong, li2019learn, loo2020generalized, rao2019continual, zhao2022deep} take an orthogonal approach where these works reserve specialised parts of the network for each task and take an approach similar to multi-task learning. However, this can bring a significant increase in the number of learnable parameters. Moreover, this requires knowing the task identity at test time to select the relevant network module for each task which is not a realistic setting.
+
+Recently, Learning to Prompt~(L2P)\cite{Wang2021l2p} has proposed an exciting new direction for continual learning. Instead of learning the parameters of the model for each new task, the authors propose to use a pre-trained vision encoder and learn the prompts that can instruct this pre-trained model to solve new tasks. This technique is called Prompt Tuning and is popularized by its success in Natural Language Processing~(NLP). A learned prompt instructs the model on how to solve a new task using the wide set of knowledge it has stored during pre-training. These methods have shown incredible performance boosts at a fraction of learnable parameters. L2P initialises a learnable prompt pool where each prompt is attached with a learnable key. The authors propose to use the $\mathtt{CLS}$ feature from the pre-trained vision encoder to perform a lookup with this learnable pool. The selected prompts are then appended with the patchwise embeddings of the image into the pre-trained model, and the output representations of the selected prompt tokens are used to learn a linear classification layer. This surprisingly simple formulation has brought impressive performance gains without the need to store any data in a rehearsal buffer. 
+
+While the sequence of data from each task in continual learning has a changing distribution, we argue that the classes of each task can be mapped to the same semantic space. In this work, we argue that language represents such a robust representation space where all tasks can be sufficiently mapped to. Hence if we encode the features of the continual learner to map to a semantic space of language, this can present an avenue to mitigate catastrophic forgetting and result in a more robust continual learner. We use this insight to develop a novel method \textbf{Language Guidance for Prompt-based Continual Learning~(\ours)} that can introduce language guidance into any prompt-based continual learning method. We achieve this by introducing language guidance at two levels. First, we introduce the task-level language guidance by incentivising the model to map the learnable keys of the prompt pool into a shared language representation of all classes in the task. Secondly, we incentivise the model to map the output features of the visual encoder after prompting it to align with the language representation of its respective class. The model learns a robust representation of all tasks by aligning these representations with a pre-trained semantic space of language. 
+
+Our contributions are as follows:
+1) We present a novel perspective that entails introducing language guidance in continual learning to mitigate catastrophic forgetting.
+2) We propose Language Guidance for Prompt-based Continual Learning~(\ours), a novel method that introduces language guidance in prompt-based continual learning methods.
+3) Without any additional learnable parameters or extra memory requirements at inference, \ours improves the performance of prompt-based continual learning methods and achieves state-of-the-art performance on two challenging continual learning benchmarks.
+
+
+
+Related Work
+\myparagraph{Continual Learning} tasks a model to learn a sequence of tasks while mitigating catastrophic forgetting~\cite{mccloskey1989catastrophic}. Methods in continual learning have traditionally been divided into three categories, namely regularization-based methods, rehearsal-based methods, and architecture-based methods.
+Regularization-based methods~\cite{kirkpatrick2017overcoming, zenke2017continual, li2017learning, aljundi2018memory} aim to find important parameters for each task and limit their plasticity in future tasks by adjusting the learning rate. These methods work without storing any labelled examples; however, they are unable to achieve satisfactory performance in challenging and complex datasets~\cite{mai2021online,rebuffi2017icarl, wu2019large}.
+
+Rehearsal-based methods~\cite{chaudhry2018efficient, chaudhry2019tiny, hayes2019memory} maintain a buffer to save data from older tasks and use it for training while future tasks become available. Several works improve upon it with training tricks like knowledge distillation~\cite{rebuffi2017icarl, wu2019large, chaudhry2020using, buzzega2020dark} and self-supervised learning~\cite{cha2021co2l, pham2021dualnet}. Rehearsal-based methods address catastrophic forgetting by simply retraining on stored data from all tasks the model has seen at any given stage. Although conceptually very simple, these methods have been very competitive and consistently rank among state-of-the-art~\cite {parisi2019continual, mai2021online}. However, these methods suffer from performance degradation as the replay buffer gets smaller or the number of classes increases significantly. Moreover, these methods can not be used when data privacy is a concern~\cite{shokri2015privacy}.
+
+Architecture-based methods aim to specialize parts of the model for each task. These modules are added as additional blocks~\cite{rusu2016progressive, yoon2017lifelong, li2019learn, loo2020generalized, rao2019continual, zhao2022deep}, or specialising task specific sub-networks~\cite{mallya2018packnet, serra2018overcoming, wang2020learn, ke2020continual}. Since these models specialise parts of the model for each task, they often require the task identity as an input to the model at test time which limits their use in realistic class-incremental and task-agnostic settings. Some methods infer task identity from the data~\cite{wortsman2020supermasks}, while others infer it using a rehearsal buffer~\cite{yan2021dynamically, pham2021dualnet}. However, these methods require significantly more learnable parameters, often as many as the core model. 
+Prompt-based methods~\cite{Wang2021l2p, wang2022dualprompt} have recently emerged as a new exciting fourth direction in continual learning. These methods use a pre-trained feature extractor and learn each task as a set of prompts that specialise the pre-trained model for the task. These methods are highly parameter efficient as prompts are small sequences of learnable tokens. These methods achieve this by encoding the task information in the learnable prompts rather than storing input data. Moreover, these methods do not require the task identity as input, thanks to a clever lookup formulation conditioned on the input to select the prompt.
+
+\myparagraph{Prompt Learning} has emerged as a popular transfer learning technique in Natural Language Processing~(NLP). Instead of retraining the model, prompt learning learns a set of prompts that instructs the pre-trained model to process the new task. To this end, several works introduce prompts as learnable tokens achieving impressive performance on transfer learning~\cite{lester2021power,li2021prefix}. These methods are incredibly efficient with respect to learnable parameters compared to competitors~\cite{wang2020k,pfeiffer2020adapterfusion,hu2021lora}.
+
+\myparagraph{Language Guidance} has been extensively explored in various vision tasks, including open set learning~\cite{Radford2021clip, ghiasi2022scaling, wang2022s}, zero-shot learning~\cite{naeem2022i2dformer, naeem2022i2mvformer, cge, cape}, and metric learning~\cite{roth2022integrating}. Methods in open set learning~\cite{Radford2021clip, ghiasi2022scaling} learn a vision encoder that can map to the same embedding space as language. The model can then generalise to new classes by generating the embeddings of the class names without requiring labelled visual data. Methods in zero-shot learning use word embeddings from pre-trained language models~\cite{yamada2018wikipedia2vec,GloVe,socher2013zero} and knowledge graphs~\cite{wang2018zero,kampffmeyer2019rethinking,bucher2017generating, cge, cocge} to encode semantic similarities between seen and unseen classes. Unseen classes can then be inferred by measuring a distance metric between a vision encoding and a language feature from a pre-trained model. Integrating language supervision in vision models allows the model to adapt to new classes efficiently, as these classes lie in the same semantic space as previously seen classes.
+
+Our method lies at the intersection of prompt-based continual learning and language guidance. To the best of our knowledge, we provide the first method for integrating language guidance in prompt-based continual learning methods for challenging class-incremental continual learning.
+
+
+Background
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{Figures/Architecture/lgcl_overview_arch.pdf}
+    \caption{ 
+    Our novel \textbf{Language Guidance for Prompt-based Continual Learning~(LGCL)} introduces Language Guidance in prompt-based continual learning methods. We introduce language guidance at two levels. At task level, we encode the language feature corresponding to the classes the model will encounter in the selected keys from the prompt pool. At class level, we encode the language feature corresponding the the ground truth class in the output feature of the vision transformer. Together the two modules improve the baseline prompt-based continual learning method and bring performance improvements without introducing additional learnable parameters.
+    }
+    \label{fig:model}
+\end{figure*}
+\myparagraph{Notations.}
+
+\label{sec:notations}
+Continual Learning aims to train a Machine Learning model on a stream of data from a sequence of tasks. We denote the sequence of tasks as $\mathcal{D}\ =\ \{\mathcal{D}_{1},\mathcal{D}_{2},...,\mathcal{D}_{\text{T}}\}$ where each task consists of tuples of input data $(x_{i}^{t},y_{i}^{t})$ where $x_i^t \in \mathcal{X}$ represents the input image in an RGB color space and $y_i^t \in \mathcal{Y}$ represents the corresponding label for the task $t$. In line with previous works, the tasks are non-overlapping, \ie images and labels are not repeated in subsequent tasks, and the model does not have access to the training data from the previous tasks. We focus on class incremental setting in which task identity is unknown at test time.
+Moreover, we assume that a pre-trained feature extractor $\mathcal{F}$ is available for images and is kept frozen throughout the training~\cite{wang2022dualprompt,Wang2021l2p}. Similarly, we assume that a pre-trained feature extractor is available for language and is kept frozen throughout the training~\cite{Radford2021clip}. To be consistent with previous works, vision and language feature encoders are each independently trained. We consider the class incremental setting in which task boundaries are defined clearly, and task identity is unknown during test time~\cite{Pham2021DualNetCL}.
+\subsection{Prompt-based Continual Learning}
+Since our method aims to improve prompt-based continual learning methods, we provide an overview in this section. The vast majority of continual learning works maintain a Replay Buffer consisting of labelled samples of previous tasks. This buffer is used to avoid catastrophic forgetting by continuously training on previous tasks. However, rehearsal buffers are expensive to store and do not scale well to large dataset or a large number of tasks. Recently, prompt tuning has emerged as an alternative to rehearsal buffers. Methods in this direction~\cite{wang2022dualprompt,Wang2021l2p} use a pre-trained vision encoder and rely on prompt learning to learn the tasks continually, instead of replaying samples from previous tasks. This is achieved by storing the knowledge of each task in a learnable pool of prompts without explicitly defining a pool for each task.
+
+Given a pre-trained image feature extractor $\mathcal{F}$, an image transformer, these methods aim to learn prompts that can be used to instruct the pre-trained model to solve the encoded task. Given an image $x$, they do a forward pass to extract the $\mathtt{CLS}$ token corresponding to the global feature of the image. This feature is used to look up the relevant prompt from the prompt pool, which we introduce in the next section.
+
+\myparagraph{Introducing a learnable Prompt Pool.}
+Prompt learning has emerged as a powerful technique in NLP to use a general pre-trained language model and re-purpose it for a downstream task by introducing a set of learnable tokens without changing the parameters of the pre-trained model. Prompt Tuning~\cite{lester2021power} introduces a set of learnable tokens for a pre-trained language model like T5~\cite{raffel2020exploring} to condition the pre-trained model to solve a new task. These tokens encode the task instructions and instruct the pre-trained model to solve the NLP task at hand~\cite{liu2023pre}. On the other hand, another form of utilizing learnable prompts is prefix tuning. In prefix tuning, the learnable prompt is appended to the keys and values of attention blocks~\cite{wang2022dualprompt}.
+
+Introducing Prompting for Continual Learning involves some clever design choices. We want to utilize the prompt to fine-tune the internal representations of the vision transformer for our task-specific distribution without tuning the model parameters. The simplest approach is to learn one set of prompt tokens for each task capturing the task-specific information in its tokens. However, this has a significant limitation in that the model needs the task id as an input to select the correct prompt. Moreover, this does not allow the model to create a joint representation that can share similar information between tasks. Learning to Prompt~(L2P)~\cite{Wang2021l2p} instead cleverly introduces a pool of prompts where each prompt can encode knowledge without explicitly attaching it to a task. The prompt pool is defined as:
+\begin{equation}
+\label{eq:prompt_pool}
+    \pp=\{P_1, P_2, \cdots, P_M\}, \quad \text{$M = $ total $\#$ of prompts},
+\end{equation}
+where $P_j \in \mathbb{R}^{L_p\times E}$ is a single prompt with token length $L_p$ and the same embedding size $E$ as $x_p$. Each prompt is attached to a learnable key $k_j$. Given the $\mathtt{CLS}$ feature corresponding to an input image $x$ as a query, the model can look up the relevant prompt encoding the knowledge for its task by a key query look up. Learning to Prompt~\cite{Wang2021l2p} uses top N prompts corresponding to the lookup as the selected prompts for tuning. The selected prompts are used as additional input to the pre-trained Vision Transformer, along with patch embeddings. Dual Prompt\cite{wang2022dualprompt} instead uses prefix-tuning and directly injects these prompts in the Multi-headed attention layers of the Vision Transformer by prepending the learnable prompt with keys and values of the Multi-Head Attention layer. We name the pre-trained frozen vision transformer prompted with learnable prompts the Prompting Vision Transformer. 
+
+\myparagraph{Encoding task information in the selected prompts.} 
+We define $x_o$ as the output feature of the Vision Transformer to be used for classification. In Dual Prompt\cite{wang2022dualprompt} this corresponds to the $\mathtt{CLS}$ feature of the Vision transformer after injecting the selected prompts. In L2P\cite{Wang2021l2p} this refers to the average pooled output of the tokens corresponding to the selected prompts. This feature is trained for classification with a supervised loss like Cross-Entropy for classification tasks. The training loss incentivises the model to store task-specific features in the prompt pool.
+Moreover, since the prompt selection is dependent on the input image and not the task, the task representations are shared in the pool and evolve over the training period to encode the different tasks. Dual Prompt~\cite{wang2022dualprompt} improves upon L2P~\cite{Wang2021l2p} by additionally introducing a global learnable prompt which learns a shared representation across all tasks. This global prompt is used with the prompts as input to the Vision Transformer. 
+
+
+
+Language Guidance for Prompt-based Continual Learning~(LGCL).
+
+Continual Learning addresses the task of learning a changing distribution of data coming from different tasks. While the visual data of these tasks changes, their task definition or classification targets can lie in the same space of language. Language consists of a compact representation of the world and storing language cues like class names is available to a model for free as it has access to them from the current and previous tasks. We propose to integrate this language guidance into the prompt-based continual learning methods to further mitigate catastrophic forgetting. More specifically, we propose to use a text encoder $\mathcal{T}$ from a pre-trained model to encode the task knowledge and class knowledge into the prompt pool and learned features of the continual learner. \ours is a generic framework that can be incorporated into any prompt-based method for continual learning without requiring any additional learnable parameters. We give an overview of our method in Figure~\ref{fig:model}.
+
+\subsection{Introducing Task Level Language Guidance}
+Given the $t-th$ task, we denote the class names of classes represented in this task with the set $\mathcal{Y}^t$. The task $t$ involves correctly classifying the classes contained in $\mathcal{Y}^t$. Therefore, we propose to represent the language representation of the task as a prompt of class names as follows.
+\begin{center}    
+ ``A photo of \{\textbf{class 1}\} or \{\textbf{class 2}\} $\cdots$ or \{\textbf{class n}\}"\\
+\end{center}
+where \{\textbf{class 1}\},$\cdots$, \{\textbf{class n}\} are replaced with the class names of the task. The prompt is input to the pre-trained text encoder to extract the feature corresponding to the output token to represent $L_t \in \mathbb{R}^E$, the language representation of the task $t$ with embedding dimension $E$. Since prompt-based continual learning methods learn the lookup operation for selecting the prompts against learnable keys, we aim to encode the task definition in these keys. Given $P_s = \{P_{s_1}; \cdots; P_{s_N}\}$ are the $N$ prompts selected for the task $t$, with learnable keys $K_s = \{k_{s_1}; \cdots;  k_{s_N} \}$, we aim to encode the $L_t$ in these learnable keys. 
+For each key $k \in \mathbb{R}^{E}$ in $K_s$, we compute the cosine similarity between the key and the language encoded task feature $L_t$ as follows:
+\begin{equation}
+    S(k, L_t) = \frac{k\cdot L_t}{|k||L_t|}
+\end{equation}
+We optimise the cosine similarity with a triplet loss to incentivise the model to align the selected keys close to the language representation of their respective task and away from the language representation of other tasks. Given the task $t$, the model only has access to the task definitions of the current task and the tasks before $t$. Therefore, when optimising the loss for the current task $t$, $L_{tp}$ denotes the language feature of the task $t$ as the positive and the language features of the previous tasks are randomly sampled as the negative $L_{tn}$ in each optimisation step. For a selected key $k$, we optimise the following loss:
+\begin{equation}
+    \mathcal{L}_{task}(k, L_{tp}, L_{tn})=1-S(k,L_{tp})+S(k,L_{tn})
+    \label{eq:cosine_triplet}
+\end{equation}
+
+By aligning the lookup keys with the language feature of the task, the model learns a feature representation of keys that comes from the same distribution of language and is less likely to diverge between tasks while training. Since the performance of prompt-based continual learning methods depends on the correctness of the selected prompts, learning better keys can allow for better performance.
+
+ 
+\subsection{Introducing Class Level Language Supervision.}
+The prompt pool represents the task-level knowledge for the model. We further want to guide the class-level feature of the image with language. For a given training sample $(x, y)$ consisting of image $x$ with label $y$, we take the class name for $y$ and represent it in language as the following prompt:
+\begin{center}
+``A photo of \{\textbf{class name}\}"\\
+\end{center}
+Similar to the last module, the prompt is input to the pre-trained text encoder to extract the feature corresponding to the output token to represent $L_c \in \mathbb{R}^E$, the language representation of class $y$ with embedding dimension $E$. We want to encode this language representation in the output feature $x_o \in \mathbb{R}^E$ of the vision transformer used for classification. This feature aims to represent the class-level information of the task. We introduce language guidance in this feature representation through a cosine triplet loss similar to the last module. Our positive example consists of the language-encoded feature of class $y$ as $L_{cp}$. For the negative example, we randomly sample a class from the classes of the previous tasks as $L_{cn}$ for each optimization step. We optimise the following loss for introducing language guidance in our continual learner:
+\begin{equation}
+    \mathcal{L}_{class}(x_o, L_{cp}, L_{cn})=1-S(x_o,L_{cp})+S(x_o,L_{cn})
+    \label{eq:cosine_tripletclass}
+\end{equation}
+By aligning output image features to the classwise language representation, we incentivise the model to map to the same semantic space of the pre-trained language encoder across each task. We keep all other aspects of the baseline methods the same from their respective authors. 
+
+\myparagraph{Inference.}
+The model does not require language guidance at inference, and the baseline prompt-based methods can be used with their original formulation. The $x_o$ features are extracted and classified with a linear layer.
+
+\begin{table*}[t!]
+\begin{center}
+\scalebox{0.9}{
+\begin{tabular}{l|c|cc|c|cc}
+\toprule 
+ \multirow{1}{*}{\textbf{Method}} & \multirow{1}{*}{\textbf{Buffer size}} & \multicolumn{2}{c|}{\textbf{Split CIFAR-100}} & \multirow{1}{*}{\textbf{Buffer size}} & \multicolumn{2}{c}{\textbf{Split ImageNet-R}} \\
+& &  Avg. Acc ($\uparrow$) & Forgetting ($\downarrow$) & & Avg. Acc ($\uparrow$) & Forgetting ($\downarrow$) \\
+\midrule
+   ER \cite{chaudhry2019tiny} & \multirow{6}{*}{1000} & 67.87\scriptsize{$\pm$0.57} & 33.33\scriptsize{$\pm$1.28} & \multirow{6}{*}{1000} & {55.13\scriptsize{$\pm$1.29}} & 35.38\scriptsize{$\pm$0.52} \\
+   BiC \cite{wu2019large} & & 66.11\scriptsize{$\pm$1.76} & 35.24\scriptsize{$\pm$1.64} && 52.14\scriptsize{$\pm$1.08} & 36.70\scriptsize{$\pm$1.05} \\
+  GDumb \cite{prabhu2020gdumb} & & 67.14\scriptsize{$\pm$0.37} & - && 38.32\scriptsize{$\pm$0.55} & - \\
+ DER++ \cite{buzzega2020dark} & & 61.06\scriptsize{$\pm$0.87} & 39.87\scriptsize{$\pm$0.99} && 55.47\scriptsize{$\pm$1.31} & 34.64\scriptsize{$\pm$1.50} \\
+ Co$^2$L \cite{cha2021co2l} & & 72.15\scriptsize{$\pm$1.32} & 28.55\scriptsize{$\pm$1.56} && 53.45\scriptsize{$\pm$1.55} & 37.30\scriptsize{$\pm$1.81} \\
+ \midrule
+ ER \cite{chaudhry2019tiny} &\multirow{6}{*}{5000 }& 82.53\scriptsize{$\pm$0.17} & 16.46\scriptsize{$\pm$0.25} &\multirow{6}{*}{5000 }& 65.18\scriptsize{$\pm$0.40} & 23.31\scriptsize{$\pm$0.89} \\
+ BiC \cite{wu2019large} & & 81.42\scriptsize{$\pm$0.85} & 17.31\scriptsize{$\pm$1.02} && 64.63\scriptsize{$\pm$1.27} & 22.25\scriptsize{$\pm$1.73} \\
+ GDumb \cite{prabhu2020gdumb} & & 81.67\scriptsize{$\pm$0.02} & - && 65.90\scriptsize{$\pm$0.28} & -  \\
+ DER++ \cite{buzzega2020dark} & & 83.94\scriptsize{$\pm$0.34} & 14.55\scriptsize{$\pm$0.73} && 66.73\scriptsize{$\pm$0.87} & 20.67\scriptsize{$\pm$1.24} \\
+ Co$^2$L \cite{cha2021co2l} & & 82.49\scriptsize{$\pm$0.89} & 17.48\scriptsize{$\pm$1.80} && 65.90\scriptsize{$\pm$0.14} & 23.36\scriptsize{$\pm$0.71} \\
+ \midrule
+ FT-seq &  & 33.61\scriptsize{$\pm$0.85} & 86.87\scriptsize{$\pm$0.20} & \multirow{5}{*}{0} & 28.87\scriptsize{$\pm$1.36} & 63.80\scriptsize{$\pm$1.50}\\
+ EWC \cite{kirkpatrick2017overcoming} & & 47.01\scriptsize{$\pm$0.29} & 33.27\scriptsize{$\pm$1.17} && 35.00\scriptsize{$\pm$0.43} & 56.16\scriptsize{$\pm$0.88} \\
+ LwF \cite{li2017learning} & 0 & 60.69\scriptsize{$\pm$0.63} & 27.77\scriptsize{$\pm$2.17} && 38.54\scriptsize{$\pm$1.23} & 52.37\scriptsize{$\pm$0.64} \\
+ \midrule
+ {L2P} \cite{wang2021learning} & & {83.86\scriptsize{$\pm$0.28}} & {7.35\scriptsize{$\pm$0.38}} & &{61.57\scriptsize{$\pm$0.66}} & {9.73\scriptsize{$\pm$0.47}} \\
+ \bf{L2P + \ours} (Ours) & 0 & \underline{{84.33}\scriptsize{$\pm$0.06}} & \underline{5.83\scriptsize{$\pm$0.23}} & 0 &\underline{62.51\scriptsize{$\pm$0.05}} & \underline{8.9\scriptsize{$\pm$0.17}} \\
+ \midrule
+{\method} &  &  86.51\scriptsize{$\pm$0.33} &  5.16\scriptsize{$\pm$0.09} &  &  68.13\scriptsize{$\pm$0.49} &  4.68\scriptsize{$\pm$0.20}  \\
+  \bf{\method + \ours (Ours)} & 0& \underline{\bf 87.23\scriptsize{$\pm$0.21}} & \underline{\bf 5.10\scriptsize{$\pm$0.15}} & 0 & \underline{\bf 69.46\scriptsize{$\pm$0.04}} & \underline{\bf 4.2\scriptsize{$\pm$0.06}}  \\
+\midrule
+Upper-bound & -& 90.85\scriptsize{$\pm$0.12} & - & - & 79.13\scriptsize{$\pm$0.18} & - \\
+\bottomrule
+\end{tabular}
+}
+\caption{\textbf{Results on class incremental learning.} We compare \ours with baseline and previous methods. Following \cite{wang2022dualprompt}, we group methods by buffer size. Our method is proposed for prompt-based methods like ~\cite{wang2022dualprompt,Wang2021l2p} and therefore, require no rehearsal buffer. We observe \ours outperforms previous baseline methods in Split-ImageNet-R~\cite{wang2022dualprompt} and Split CIFAR-100~\cite{Krizhevsky2009cifar100} consistently.}
+\label{tab:mainresults}
+\end{center}
+\end{table*} 
+
+
+
+Experiments
+\myparagraph{Experiment Protocol.} 
+Consistent with previous works\cite{Wang2021l2p, pham2021dualnet}, we used ViT B/16\cite{vit} pre-trained on ImageNet 1k as our Image feature extractor. This is kept frozen during training. On the language side, we use the text transformer of CLIP L/14\cite{Radford2021clip} for our main experiments. We use the Adam optimizer ~\cite{kingma2014adam} with $\beta_1 = 0.9$ and $\beta_2 = 0.999$. We set the batch size to 24 for Dual Prompt~\cite{wang2022dualprompt} and 16 for L2P~\cite{Wang2021l2p}. 
+We train on one A100-40GB GPU with the code released by the authors of each method. Input images are resized to $224 \times 224$ and normalized to the range of [0,1].  We follow ~\cite{Buzzega2020DER,Wang2021l2p,wang2022dualprompt} and train for multiple epochs. For L2P~\cite{Wang2021l2p} Split CIFAR-100~\cite{Krizhevsky2009cifar100}, we train 5 epochs, for L2P~\cite{Wang2021l2p} Split ImageNet-R~\cite{wang2022dualprompt} we train 50 epochs. We train Dual Prompt~\cite{wang2022dualprompt} for 20 epochs on Split CIFAR-100~\cite{Krizhevsky2009cifar100} and for 50 epochs on Split ImageNet-R~\cite{wang2022dualprompt}. 
+For comparison with state-of-the-art, we use the widely adopted Average accuracy~(higher is better) and Forgetting~(lower is better) to compare model performance~\cite{lopez2017gradient,chaudhry2018efficient,mai2021online}.
+Since prompt-based continual learning is a very recent development, we use the two most recent baselines Learning to Prompt\cite{Wang2021l2p} and Dual Prompt\cite{wang2022dualprompt}
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

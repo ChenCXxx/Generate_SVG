@@ -1,0 +1,207 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{introduction}
+
+Remote sensing image understanding has been reaping the benefits of recent advances in computer vision while at the same time posing unique challenges. First, remote sensing imagery usually covers the Earth's surface extensively for Earth observation purposes \cite{zhou2020single,tellman2021global,moran2022snowpack}. Compared to the vast area the images cover, even a large amount of training samples would become sparse. Furthermore, generating a set of representative training samples is challenging, especially in less-explored regions. Hence, self-supervised learning (SSL) becomes a viable solution since no training data is required for representation learning purposes. A recently published paper \cite{Wang:SSL:22} provides a comprehensive review of SSL in remote sensing. 
+
+The second challenge arises from the inherent hardware limitations of remote sensing devices, where one can only expect to acquire images of high resolution in the spatial, spectral, or temporal domain, but not all. These devices usually sacrifice spatial resolution to gain spectral and/or temporal resolution for different functional and/or material analyses of the Earth's surface. Ground Sample Distance (GSD) measures the spatial resolution, denoting the physical distance between two adjacent pixels. For example, Landsat-8 \cite{Landsat8} has 8 spectral bands at 30 m GSD; Sentinel-2 \cite{Sentinel2} has 4 bands at 10 m, 6 bands at 20 m, and 3 bands at 60 m GSD; and WorldView-3 \cite{WV3} has 8 multi-spectral bands at 1.24 m GSD. 
+These multi-scale images, although imaging the same site, might not be aligned at all, and the alignment process can be both time-consuming and expensive. 
+
+It is worth noting that in remote sensing imagery, due to the rich and unique data provided along the temporal and spectral domains, algorithms tend to exploit more on the spectral and temporal organization but neglect the spatial characteristics, as pointed out in \cite{CatMac:78}. So, extracting effective representations from these misaligned multi-scale images poses a significant challenge. In this paper, we delve into multi-scale analysis and develop novel ways to fully explore the wealth of information offered by images at multiple scales. We present Cross-Scale MAE, a self-supervised model based on the Masked Autoencoder (MAE) \cite{he2022masked} that explicitly learns relationships between data at different scales throughout the pre-training process. By leveraging this information, Cross-Scale MAE produces a robust pre-trained model with superior performance across various GSDs and tasks.
+
+
+ 
+Like MAE, Cross-Scale MAE also masks most of the transformed image and then tasks a Vision Transformer (ViT)-based Autoencoder with embeddings of the unmasked components. A decoding light ViT then decodes the entire image from these learned embeddings, where the decoder is later discarded, and the encoder is used to produce representations for an unmasked input image. The main differences can be addressed from two aspects. First, Cross-Scale MAE introduces the ``scale augmentation'' to synthesize inputs of different scales of one input image to engage the transformer to learn features with varying scales in the encoder. The scale augmentation eliminates the need for aligned multi-scale images of the same ground site as input. The pre-trained model is generic enough to extract arbitrary scale input image representations. The second key difference stems from the term ``Cross-Scale'', where features extracted from the multi-scale images are not simply concatenated or combined in any ad hoc fashion as many existing fusion frameworks do; instead, Cross-Scale MAE exploits information consistency across the multi-scale images and uses it as constraints to train a more robust Autoencoder model. The cross-scale information consistency is examined at both the encoder and decoder end to ensure consistency is reinforced at both the structural level (i.e., the encoder end) and the semantic level (i.e., the decoder end). 
+
+The experimental results overwhelmingly show that Cross-Scale MAE yields more robust multi-scale representations and better performance for downstream tasks as compared to other state-of-the-art methods,
+across a couple of remote sensing datasets with a variety of scale and resolution characteristics. Our contributions can be summarized as follows:
+
+\begin{itemize}
+\item[(1)] We develop Cross-Scale MAE, a flexible SSL framework that yields robust representations by enforcing cross-scale information consistency at both structural and semantic levels without the need for aligned multi-scale remote sensing imagery.
+
+\item[(2)] We investigate the combination of contrastive learning and masked imagery modeling, specifically, the effect of negative samples on representation at different levels. 
+
+\item[(3)] We deploy xFormers to realize Cross-Scale MAE, where both the pre-training time and memory usage are improved without performance degradation, making large language model training affordable on a single GPU. %And, we evaluate the Cross-Scale MAE using different benchmarks and show superior performance. %fine-tune the Cross-Scale MAE for various downstream tasks and have achieved superior performance. \textcolor{red}{need to give more details after the downstream task test.} 
+\end{itemize}
+
+The remainder of this paper is organized as follows. Sec.~\ref{sec:related_work} reviews recent developments in SSL and multi-scale representation learning. Sec.~\ref{sec:methodology} elaborates on the proposed Cross-Scale MAE model design. Sec.~\ref{sec:eval} presents details about experiments and results. Sec.~\ref{sec:conclusion} concludes the paper and provides general directions for further improvements.
+
+
+Related Work
+\label{sec:related_work}
+
+We mainly discuss recent works related to SSL and multi-scale representation learning.
+
+\textbf{Self-Supervised Learning (SSL).}
+Self-supervised learning is a branch of unsupervised learning aiming to learn effective representations for downstream tasks without using training labels. SSL can be divided into two groups, namely, discriminative models and generative models. The discriminative approach, e.g., contrastive learning (CL), requires the representation to be distinctive in information for different inputs. The gist of CL is to make the representations of positive samples close and those of negative samples far from each other, where positive samples are obtained by applying various augmentation schemes on the same image. CL has emerged as a dominant visual SSL method, especially after the advent of MoCo \cite{he2020momentum} and SimCLR \cite{chen2020simple}. %The positive samples are the two samples containing the same or almost the same information, and the negative samples are the samples containing almost different information. 
+Negative-free, i.e., non-contrastive, joint-embedding methods have been developed \cite{zhang2022does, zbontar2021barlow, chen2021exploring}, demonstrating comparable performance as CL methods. In the remote sensing community, the CL-based representation learning methods have been developed, such as SeCo \cite{manas2021seasonal}, mCL-LC \cite{tang2023semantic}, where the SeCo, short for Seasonal Contrast, offers a novel approach to the challenge of insufficient labeled data in remote sensing by capitalizing on self-supervised learning mechanisms. 
+The mCL-LC method jointly learns global-local representations to improve the segmentation performance for satellite images. On the other hand, the generative approach, e.g., MAE, requires the representation to preserve as much of the input information as possible. MAE is an autoencoder with masked prediction, i.e., predicting a property of masked input from unmasked input. Benefiting from the success of masked language models \cite{radford2018improving, radford2019language, brown2020language, devlin2018bert}, the similar mechanism was investigated in vision tasks and has dramatically advanced the field of SSL \cite{dosovitskiy2020image, he2022masked}. Following the trend in computer vision, the masked image model has also shown strength in the remote sensing field. For example, the GFM model \cite{mendieta2023gfm} excels in representation learning through continual learning, aiming to enhance the applicability of large language models to satellite imagery via knowledge distillation.
+
+In Cross-Scale MAE, both the discriminative and generative mechanisms are used to guarantee the representation from images of different scales to be consistent and meaningful.
+
+\textbf{Multi-Scale Representation Learning.}
+As mentioned in Sec.~\ref{introduction}, the multi-scale phenomenon is common in vision tasks. %because of the variances in sensors, processing pipeline and viewing geometries. 
+To leverage the information in multi-scale sources, the vision community has proposed to extract multi-scale features using traditional approaches, including, for example, spatial pyramids \cite{rosenfeld1971edge, burt1987laplacian, lazebnik2006beyond}, dense sampling of windows \cite{ji2013region, yan2012beyond, yan2014image}, and the combination of them \cite{felzenszwalb2008discriminatively}. In the last decade, deep convolution neural networks (CNNs) have emerged as the de facto architecture for a wide range of vision tasks. Because of the pooling and multi-convolution kernel operation, the CNN constructs the feature pyramids inherently so that it has been used to build deep multi-scale representations \cite{jiao2021multi}. CNN-based multi-scale representation learning is commonly approached in two ways. The first approach involves utilizing external or preset factors, which can include multi-scale kernel architecture  \cite{szegedy2015going, kovashka2010learning, reininghaus2015stable, zou2021transfer} and multi-scale inputs architecture \cite{dollar2014fast, farabet2012learning, lin2016efficient}. The second approach involves designing internal layers of the network, such as skip and dense connections  \cite{singh2018analysis, pohlen2017full, chen2017deeplab}. Over the past three years, there has been a notable surge of interest in applying transformer-based architectures to computer vision tasks. Among these architectures, the Vision Transformer (ViT) \cite{dosovitskiy2020image} stands out as a particularly successful example, where, compared to CNN, ViT balances the global and local features much better. Recently, other efforts have been made for the multi-scale feature learning, including the multi-scale Deformable Attention and Multi-level Features Aggregation (MSDAM and MLFAM) network \cite{dong2022multi}, and the Shunted Self-Attention (SSA) network \cite{ren2022shunted}. These methods have shown strength in multi-level feature extraction for the natural image containing multiple objects of different sizes. However, in remote sensing images, the multi-scale phenomenon is even more prevalent and dynamic. As a result, there has been a growing recognition of the need for customized approaches to address this. The recently published Scale-MAE \cite{reed2022scale} is one such example.
+
+Essentially, compared with the most recent two state-of-the-art MAE-based satellite imagery representation learning methods, i.e., SatMAE \cite{cong2022satmae}, and Scale-MAE \cite{reed2022scale}, SatMAE is the first paper that applies MAE to extract representations from satellite images with single and fixed scale. Scale-MAE and the proposed Cross-Scale MAE are based on MAE but focus on multi-scale characteristics. Specifically, Scale-MAE develops the GSD position encoding and applies multi-de-convolution after the decoder to reconstruct images of different scales. Nonetheless, Scale-MAE integrates the scale information into the network via hard coding of known GSD, and the de-convolution can only result in a specific scale ratio. The proposed Cross-Scale MAE designs the network to learn the information across different scales. With scale augmentation and multi-level contrastive loss between the scale pair and masked patches reconstruction, Cross-Scale MAE can learn informative and consistent representation across different scales without the need of known GSD. Additionally, we leverage xFormers on a single GPU for pre-training efficiency.
+
+
+
+\begin{figure}[ht]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=1\textwidth]{model_framework_v5.png}}
+\caption{The architecture of Cross-Scale MAE comprises an encoder and a decoder (Left). The encoder (Top-Right) employs a vision transformer (ViT) backbone, specifically a ViT-base with 12 self-attention blocks. The decoder (Bottom-Right) uses a lightweight ViT backbone with 8 self-attention blocks. A single satellite image undergoes scale augmentation through random cropping and resizing. The contrastive loss is computed using encoder outputs for the two scale inputs. The cross-prediction loss (in MSE) is applied to the last self-attention block's decoder output. Reconstruction loss compares the predicted masked patch and the actual input.}
+\label{fig:cs_mae_arch}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+
+
+Methodology
+\label{sec:methodology}
+
+This section elaborates on the Cross-Scale MAE pre-training framework as illustrated in Fig. \ref{fig:cs_mae_arch}. Cross-Scale MAE is a self-supervised pre-training framework built upon the MAE \cite{he2022masked}. Its objective is to learn consistent representations from multi-scale images captured at the same site by harnessing the strengths of both discriminative and generative learning approaches. Cross-Scale MAE incorporates two novel loss functions at the encoder and decoder stages to achieve this objective. Firstly, the representations obtained from images of different scales are enforced to be consistent. This ensures that the learned representations capture relevant information \textit{across} scales. Secondly, a decoder is employed to reconstruct the corresponding input, promoting the learned representation to be more representative. Additionally, the decoder utilizes cross-prediction, where the embeddings generated by the decoder from an image with a lower GSD are used to predict the embeddings from an image with a higher GSD. This cross-prediction mechanism helps capturing and leveraging the multi-scale information present in the images.
+
+\subsection{Basic Setting}
+\label{Base Setting}
+
+Let $p \in \mathbb{R}^{H \times W \times C}$ represent an input image of height $H$ and width $W$ with $C$ channels. First, multi-scale augmentation (Sec.~\ref{multi-scale}) is applied to $p$ to generate two images, $p_h$ of relatively higher GSD and $p_l$ of relatively lower GSD. For each of the augmented images, a sequence of $|S|$ independent patches of height and width of $n$ pixels are created, where each of the patches, $s \in S$, has dimension $s \in \mathbb{R}^{n^{2} C}$. A fraction, $m$, of the patches is removed, while the remaining patches are passed through a projection function (e.g., a linear layer) to project the patches $s$ into $D$ dimensions, $f_{emd}: \mathbb{R}^{n^{2} C} \rightarrow \mathbb{R}^{D}$, to obtain embedded patches $S_{emd}=f_{emd}(S)$. A standard positional encoding vector is added to the embedded patches and fed into the encoder. After the encoder, the removed $m$ patches are placed back into their original location in the sequence of patches where a learned mask token represents the masked patches that were not encoded. Another positional encoding vector is added to all patches, and a sequence of transformer blocks decodes these patches to form the original input image; these steps are illustrated in Fig. \ref{fig:cs_mae_arch}.
+
+
+\subsection{Multi-Scale Augmentation}
+\label{multi-scale}
+
+A specialized augmentation method is applied to the input image before patchifying it in the Cross-Scale MAE framework. This augmentation process generates an additional image of lower GSD for the same site, and the two images are then used as inputs through two independent instances of the MAE network. More specifically, given an input image $p$ with a certain GSD, the framework randomly selects two scale ratios, $r_h$ and $r_l$, from the range [0, 1], where $r_l < r_h$. The image $p$ is then down-sampled using these scale ratios to generate two images, $p_h$ and $p_l$. In our experiments, we set $r_h = 1$, so $p_h = p$. Both images, $p_h$ and $p_l$, are subsequently resized to a fixed size of $128 \mathrm{px}^{2}$, and the GSD values of $p_h$ and $p_l$ are denoted as $g_h$ and $g_l$, respectively.  
+
+Note that this augmentation approach differs from traditional augmentation, where the rescaled images are traditionally only used as separate samples. Instead, the multi-scale inputs are generated dynamically at runtime and used as inputs through multiple network branches, where the branches have shared weights. The constraints enforced upon the learned representations of these network branches are detailed in the following sections.
+\subsection{Cross-Scale Information Consistency in the Encoder}
+
+Typically, the standard MAE trains a network to reconstruct an image by masking out a significant portion of its pixels. However, the standard MAE encoder does not explicitly address the issue of representation consistency for multi-scale input sources. In contrast, the proposed Cross-Scale MAE aims to learn meaningful and consistent scale-invariant representations. To achieve this, Cross-Scale MAE focuses on two fundamental properties in the learned representations: (1) consistency of information across different-scale images and (2) representativeness of the raw image. In the Cross-Scale MAE framework, a contrastive learning strategy is employed within the encoder to ensure consistency among representations derived from different-scale images.
+
+The intuitive idea behind Cross-Scale MAE is that different-scale images captured at the same ground site contain highly relevant information despite potential visual differences. Cross-Scale MAE leverages this notion by maximizing the shared information between representations derived from different-scale images of the same site while minimizing the shared information between images from different sites. This approach aligns with the principles of contrastive learning.
+In contrastive learning, the InfoNCE loss is commonly used to estimate the lower bound of mutual information between data samples. By minimizing the InfoNCE loss, we effectively maximize the mutual information between representations from different scales \cite{tian2020contrastive, oord2018representation}. 
+
+Specifically, the encoder ${E}$, uses the ViT-base \cite{dosovitskiy2020image} as the backbone. Upon feeding an input image $p$ to encoder ${E}$, a high-level representation, ${E}(p)$, can be obtained. Before computing the contrastive loss, a nonlinear projection head ${g}_{f}(\cdot)$ is needed, which has been proven to be effective \cite{chen2}. So, after the encoder and projection head, we obtain the representation, 
+$z=g_{f}\left(E\left({p}\right)\right)$. The cross-scale consistency loss is thus defined as:
+
+\begin{equation}\label{latent_E}
+  \mathcal{L}_{cc}=\frac{1}{2 N} \sum_{k=1}^{N}\left(\ell_{info}\left(p_{l}^{k}, p_{h}^{k}\right)+\ell_{info}\left(p_{h}^{k}, p_{l}^{k}\right)\right)
+\end{equation}
+
+where $p_{h}^{k}$ and $p_{l}^{k}$ are the different-scale images from the same input image $p_k$,  $N$ denotes the number of samples in a mini-batch, and the InfoNCE contrastive loss function $\ell_{\text{info}}$ is the same as in   \cite{Chen}, which is defined as follows:
+\begin{equation}\label{NTX-style}
+  \ell_{info}\left(p_{l}^{k}, p_{h}^{k}\right)=-\log \frac{\exp \left(\operatorname{sim}\left(z_{l}^{k}, z_{h}^{k}\right) / \tau\right)}{\sum_{p \in \Lambda} \exp \left(\frac{\operatorname{sim}\left(z_{l}^{k}, g_f\left(E(p)\right)\right)}{\tau}\right)}
+\end{equation}
+where $z_{l}^{k}=g_{f}\left(E\left({p_{l}^{k}}\right)\right)$, $z_{h}^{k}=g_{f}\left(E\left({p_{h}^{k}}\right)\right)$ and $\Lambda$ is the sample batch. The sim operator is the cosine distance.  
+\subsection{Cross-Scale Prediction in the Decoder}
+
+The InfoNCE loss in the encoder provides consistency for multi-scale input but cannot guarantee that the learned representation adequately represents the input. In other words, the representation learned by the network from multi-scale images should be not only consistent among different scales, but also representative of the semantic information. According to \cite{caron2021emerging}, the self-supervised ViT automatically learns class-specific features leading to unsupervised object segmentation; specifically, the attention block's last layer includes abundant semantic information. Motivated by \cite{caron2021emerging}, the decoder of the Cross-Scale MAE has two tasks: (1) reconstruction of the multi-scale input as close as possible, (2) cross-scale prediction between attentions from different scales, as shown in the decoder part of Fig.~\ref{fig:cs_mae_arch} and detailed below. 
+
+Similar to the standard MAE, Cross-Scale MAE also adopts a light decoder. Decoding follows the standard MAE decoder where, following the encoder, the removed $m$ patches are placed back into their original location in the sequence of patches where a learned mask token represents the masked patches that were not encoded, and a positional encoding is added. Then, a series of transformer layers decode all patches. Given the two representations $f_{e,h}$ and $f_{e,l}$, where $f_{e,h}=E\left({p_{h}}\right)$, $f_{e,l}=E\left({p_{l}}\right)$, after the decoder attention block, we will obtain two new representations, $f_{d,h}$ and $f_{d,l}$. Then, the cross-scale prediction is applied between them to get the cross-scale prediction loss, defined as:
+
+\begin{equation}\label{Cross_predict}
+  \mathcal{L}_{cp}=\frac{1}{N} \sum_{k=1}^{N}\left(\ell_{pred}\left(f_{d,l}^{k}, f_{d,h}^{k}\right)\right)
+\end{equation}
+where $N$ is the batch size and the prediction loss $\ell_{pred}$ is defined as: 
+\begin{equation}\label{MSE-style}
+  \ell_{pred}\left(f_{d,l}^{k}, f_{d,h}^{k}\right)= ||f_{d,h}^{k} - g_{p}(f_{d,l}^{k}) ||_{2}^{2}
+\end{equation}
+It follows the Mean Squared Error (MSE) between the prediction and target representation, where the predictor, $g_{p}(\cdot)$, is a multi-layer perceptron (MLP). Besides the cross-scale prediction loss, the decoder reconstructs images of different scales. The reconstruction loss is thus defined as:
+
+\begin{equation}\label{reconstruction}
+  \mathcal{L}_{re}=\frac{1}{N} \sum_{k=1}^{N}\left(||p_{l} - \Tilde{p}_{l} ||_{2}^{2} + ||p_{h} - \Tilde{p}_{h} ||_{2}^{2}\right)
+\end{equation}
+where $\Tilde{p}_{l} = D(E(p_{l}))$ and $\Tilde{p}_{h} = D(E(p_{h}))$.
+Via the cross-scale prediction loss and the reconstruction loss, the consistency and effectiveness of the semantic information of the representation can be better preserved. 
+
+The total loss of the Cross-Scale MAE is the sum of cross-scale consistency loss at the encoder ($\mathcal{L}_{cc}$), cross-scale prediction loss at the decoder ($\mathcal{L}_{cp}$), and the reconstruction loss ($\mathcal{L}_{re}$), defined as:
+
+\begin{equation}\label{total_loss}
+  \mathcal{L} = \mathcal{L}_{cc} + \mathcal{L}_{cp} + \mathcal{L}_{re}
+\end{equation}
+
+
+Experiments \& Results
+\label{sec:eval}
+
+We investigate the quality of representations learned from Cross-Scale MAE pre-training through comparisons to state-of-the-art approaches (Sec. 4.1) and comprehensive ablation studies (Sec. 4.2). Sec. 4.3, we briefly explore their robustness to scale variation and transfer performance to additional tasks. We use SatMAE \cite{cong2022satmae} as the baseline, the state-of-the-art MAE-based approach for remote sensing image analysis. We pre-train Cross-Scale MAE with a ViT-Large model (unless mentioned otherwise) using the Functional Map of the World (fMoW) \cite{christie2018functional} RGB training set, which consists of $363.6 \mathrm{k}$ images of varying image resolution and GSD. In Sec.~\ref{sec:sota_comparison}, we present experiments and results to validate the effectiveness of the proposed method, compared with baseline and other state-of-art methods, such as Scale-MAE \cite{reed2022scale}. Section \ref{sec:ablation} presents a set of ablation experiments to show how different losses and hyper-parameters affect the performance of Cross-Scale MAE. Section \ref{xFormers} briefly describes the efficient backbone built through xFormers.
+
+\begin{table}
+  \centering
+  \caption{ The information of datasets used in Sec.~\ref{sec:eval} }\label{tab:dataset}
+  \setlength{\tabcolsep}{5mm}{
+  \begin{tabular}{cccc}
+  \hline
+ Dataset & GSD(m) & Number of Images & Number of Categories \\
+ \hline
+ RESISC45 & 0.2-30 & 31500 & 45 \\
+ WHU-19 & 0.5 & 1050 & 19 \\
+ UC Merced & 0.3 & 2100 & 21 \\
+ EuroSAT & 10 & 27000 & 10\\
+ \hline
+  \end{tabular}}
+\end{table}
+
+\subsection{Comparison with State-of-the-Art}
+\label{sec:sota_comparison}
+
+Similar to Scale-MAE, we use both the K-nearest neighbors (KNN) classification accuracy and performance in downstream tasks as metrics to evaluate the quality of the representation learned by Cross-Scale MAE. Specifically, we pre-train the Cross-Scale MAE on the fMoW-RGB dataset and freeze the encoder as a representation generator; then, we test its effectiveness on different datasets via KNN classification. 
+
+\textbf{KNN Performance.} Similar to the original MAE configuration, the encoder of Cross-Scale MAE uses a ViT-Large model, and the decoder is a light ViT model with the 8-layer attention blocks. The datasets we use include RESISC45 \cite{cheng2017remote}, WHU-RS19 \cite{xia2017aid}, UC Merced \cite{xia2017aid}, EuroSAT \cite{helber2019eurosat}, as shown in Table ~\ref{tab:dataset}. To evaluate the representation learning capacity of the proposed method with different GSD images, we evaluate the network performance using images with different scale ratios, $\left\{ 12.5\%, 25\%, 50\%, 100\% \right\}$, to the raw image to simulate different GSD.
+
+The results are presented in Fig.~\ref{fig:lineplot_knn}. This figure shows the performance of  Cross-Scale MAE compared to both SatMAE and Scale-MAE for different scale ratios. From Fig.~\ref{fig:lineplot_knn}, we observe that, in general, the Cross-Scale MAE performs better than SatMAE or Scale-MAE in all different scale ratios on all datasets. And, for scale ratio in  $\left\{ 25\%, 50\%, 100\% \right\}$, the Cross-Scale MAE can obtain more stable performance compared with SatMAE or Scale-MAE. When the scale ratio equals $12.5\%$, all three models perform relatively worse. This is because the scale ratio set during pre-training is from 0.2 to 0.8, and 0.125 is out of this range. Nonetheless, Cross-Scale MAE still presents overwhelmingly better performance than the other two. Table ~\ref{tab:KNN} shows the average accuracy at all scale ratios and compares Cross-Scale MAE with SatMAE and Scale-MAE. We can find that Cross-Scale MAE presents overwhelmingly better performance than SatMAE in all datasets and we observe similar trend as in Fig. 2. Cross-Scale MAE generally performs better than Scale-MAE except in the UC Merced dataset. It may be because RESISC45 covers an extensive range of GSD, from $0.2m$ to $30m$, but the other three datasets have fixed GSD. This comparison effectively demonstrates the robustness of representations generated from Cross-Scale MAE, especially on multi-scale datasets. 
+
+\begin{figure}[ht]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=1\textwidth]{KNN-eval-multidata-2.png}}
+\caption{The KNN classification of Cross-Scale MAE for different datasets.}
+\label{fig:lineplot_knn}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+\begin{table}
+  \centering
+  \caption{Average KNN accuracy with different scale ratios ($12.5\%, 25\%, 50\%, 100\%$) }\label{tab:KNN}
+  \setlength{\tabcolsep}{3.5mm}{
+  \begin{tabular}{ccccc}
+  \toprule
+ {} & RESISC45 & WHU-RS19 & UC Merced & EuroSAT \\
+ \hline
+ SatMAE & 66.3 & 69.9 & 69.7 & 81.9\\
+ Scale-MAE & 70.0 & 79.5 & 75.0 & 86.7\\
+ Cross-Scale MAE & 75.6 & 79.8 & 74.5 & 87.8\\
+ \bottomrule
+  \end{tabular}}
+\end{table}
+
+\textbf{Downstream Tasks.}  We further evaluate the performance of Cross-Scale MAE on different downstream tasks to assess the effectiveness of the learned representations in various practical scenarios, including classification and segmentation. We conduct the classification task on the fMoW-RGB dataset. The segmentation downstream tasks are performed on two datasets, Potsdam and Vaihungen. We fine-tune the model for 50 epochs for all downstream tasks, following the same hyper-parameter settings as Scale-MAE \cite{reed2022scale}.
+
+To test the capability of handling multi-scale inputs, we compare the performance of different methods on low-resolution images with different scaling ratios applied on full-resolution images. In Table ~\ref{tab:fmow_linear_cls}, we report the classification performance regarding Top-1 and Top-5 accuracy. In Table ~\ref{tab:semseg_miou}, we report the segmentation performance regarding mIoU. The proposed Cross-Scale MAE performs superior to state-of-the-art methods in both classification and semantic segmentation downstream tasks.
+\begin{table}
+  \centering
+  \caption{Linear classification fine-tuning performance on fMoW-RGB}\label{tab:fmow_linear_cls}
+  \setlength{\tabcolsep}{3.5mm}{
+  \begin{tabular}{c|c|cc|cc}
+  \toprule
+  \multicolumn{1}{c}{}&\multicolumn{1}{c|}{}&\multicolumn{2}{c|}{Scale=50\%}&\multicolumn{2}{c}{Scale=100\%}\\
+	\hline
+	{} & Backbone & Top-1 & Top-5& Top-1 & Top-5 \\
+	\hline
+	GASSL & ResNet50 & 0.494 & 0.540 & 0.683 & 0.715 \\
+	SeCo  & ResNet50 & 0.508 & 0.602 & 0.614 & 0.796 \\
+	SatMAE & ViT-Base & 0.551 & 0.776 & 0.651 & 0.892 \\
+	SatMAE & ViT-Large & 0.591 & 0.793 & 0.678 & 0.923 \\
+	Scale-MAE & ViT-Base & 0.623 & 0.850 & 0.673 & 0.930 \\
+	\midrule \midrule
+
+	Cross-Scale MAE & ViT-Base & \textbf{0.632} & \textbf{0.914} & \textbf{0.692} 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

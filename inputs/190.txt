@@ -1,0 +1,244 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+3D scene perception has become an increasingly important task for a wide range of applications, including self-driving and robotic navigation. Lying in the heart of 3D vision, 3D panoptic segmentation is a comprehensive perception task composed of semantic and instance segmentation \cite{kirillov2019panoptic}. This is still challenging since it not only requires predicting semantic labels of each point for \textit{Stuff} classes, such as \textit{tree}, \textit{road}, but also needs recognizing instances for \textit{Thing} classes, e.g., \textit{car}, \textit{bicycle}, and \textit{pedestrian} simultaneously.
+
+ \begin{figure}[!htbp]
+ \centering
+ \includegraphics[width=0.45\textwidth]{sec1_difference.png} % Reduce the figure size so that it is slightly narrower than the column.
+ \caption{
+ The distinctions between LiDAR point cloud and images. (a) The red box displays a vehicle segment (orange points) in the point cloud, where points are sparsely and unevenly distributed. (b) The lower-right green mask demonstrates a vehicle with dense texture and color features, effectively detected via \cite{zhou2021probablistic}. The upper-left blue mask (partly occluded) shows image features that help detect small objects in the distance. Better zoomed in.}
+ \label{fig:sec1_difference}
+ \end{figure}
+Currently, the leading 3D panoptic methods use LiDAR-only data as input sources. However, We have observed that using only LiDAR data for perception has some insufficiencies: 1) LiDAR point cloud is usually sparse and unevenly distributed, as illustrated in Figure \ref{fig:sec1_difference} (a), making it challenging for 3D networks to capture the notable difference between the foreground and the background; 2) distant objects that occupy just a few points appear to be small in the view and cannot be effectively detected. On the contrary, images provide rich texture and color information, as shown in Figure \ref{fig:sec1_difference} (b). This observation motivates us to use images as an additional input source to complement LiDAR sensors for scene perception. Moreover, most autonomous driving systems come equipped with RGB cameras, which makes LiDAR-Camera fusion studies more feasible.
+
+Although LiDAR sensors and cameras complement each other, their fusion strategy remains challenging. Existing fusion strategy could be generally split into proposal-level fusion \cite{Ku_2018}, result-level fusion \cite{Qi_2018}, and point-level fusion \cite{Vora_2020, Huang_2020, Wang_2021}, as summarized in PointAugmenting \cite{wang2021pointaugmenting}. Yet, proposal-level and result-level fusion focus on integrating 2D and 3D proposals (or bounding box results) for object detection, which limits their generalizability in dense predictions like segmentation tasks.
+   The previous point-fusion methods also suffer: 
+   1) the asynchronous working frequency between LiDAR and camera sensors is not considered, which may result in misaligned feature correspondence;
+   2) point-fusion is a one-to-one fusion mechanism, and large image areas are unable to be mapped to sparse LiDAR points, resulting in the waste of abundant information from dense pixel features; \textit{e.g.}, for a 32-beams LiDAR sensor, only about $5\%$ pixels can be mapped to correlated points, while the $95\%$ of pixel features would be dropped \cite{liu2023bevfusion}.
+   3) previous point-level fusion methods \cite{Vora_2020, Huang_2020, Wang_2021} often use simple concatenation, which excludes points whose projections fall outside the image plane, as image features cannot support them. 
+Motivated by these insufficiencies, we propose the first LiDAR-Camera Panoptic Segmentation (LCPS) network to exploit the complementary information from multiple sensors. In this work, we propose a novel three-stage fusion strategy involving the Asynchronous Compensation Pixel Alignment (ACPA) module, Semantic-Aware Region Alignment (SARA) module, and Point-to-Voxel feature Propagation (PVP) module. 
+The ACPA module employs ego-motion compensation operations to achieve spatial-temporal alignment between the LiDAR and camera modalities, overcoming asynchronous issues in point fusion. 
+Then, our novel SARA module extends the one-to-one point-pixel mapping to one-to-many semantic relations, highly improving the image utilization rate. Specifically, SARA introduces Class Activation Maps (CAM) for image branch to localize semantic-related image regions for each point.
+Next, the PVP module replaces simple concatenation with local attention to propagate information from point-aligned pixels and regions to the entire point cloud. Points outside camera frustums can also be preserved and attached to image features. Finally, we design a Foreground Object selection Gate (FOG) module to enforce the network to learn a class-agnostic foreground object mask in addition to the semantic prediction head. This gate effectively reduces incorrect predictions and stabilizes the training process. To sum up, our main contributions are:
+
+\begin{itemize}
+    \item To the best of our knowledge, this is the first LiDAR-Camera fusion network for 3D panoptic segmentation, which effectively exploits the complementary information of the LiDAR and image data.
+    
+    \item We have improved the former point-fusion approach with our novel Asynchronous Compensation Pixel Alignment (ACPA), Semantic-Aware Region Alignment (SARA), and Point-to-Voxel feature Propagation (PVP) modules. These contribute to the geometry-consistent and semantic-aware alignment between LiDAR and Camera sensors.
+    
+    \item We present the Foreground Object selection Gate (FOG) to reduce the incorrect predictions of confusing points, further boosting panoptic segmentation quality.
+    
+    \item Extensive quantitative and qualitative experiments demonstrate the effectiveness of our approach. Our fusion approach improves performance at $6.9\%$ PQ on NuScenes and $3.3 \%$ PQ in SemanticKITTI compared to the LiDAR-only baseline.
+\end{itemize}
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{Main3.png} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{The overall pipeline of our LiDAR-Camera Panoptic Segmentation network (LCPS). LCPS consists of multi-modal encoding, feature fusion, and panoptic prediction modules. The encoding module extracts cylinder features, MLP features, and image features. In the fusion stage, MLP features are geometrically and semantically aligned with pixel features via ACPA and SARA. Next, the PVP module merges fused point features with original cylinder features to obtain fused ones. Finally, the panoptic prediction module yields predictions of four heads, which are post-processed to obtain panoptic segmentation results.}
+\label{fig2:overview}
+\end{figure*}
+
+
+
+Related Work
+
+Panoptic segmentation is initially proposed from 2D vision \cite{kirillov2019panoptic}, for the purpose of integrating semantic and instance segmentation. Later, research of panoptic segmentation extends to videos and LiDAR point cloud. Early work LPSAD \cite{milioto2020lidar} handles LiDAR panoptic segmentation via projecting points into range view and then using 2D convolution network to extract features. Although pure 2D network can boost efficiency, it also suffers performance degradation when mapping 2D predictions back to the point cloud. Later, 3D LiDAR networks are designed for this task. Generally, 3D panoptic segmentation can be divided into two categories, {\it i.e.,}  proposal-based and proposal-free methods.
+
+\noindent \textbf{Proposal-based 3D Panoptic Segmentation.} Proposal-based methods Panoptic-Deeplab \cite{Cheng_2020} and EfficientLPS \cite{sirohi2021efficientlps} predict bounding-box proposals and then merge them with semantic results to obtain panoptic predictions, following classical object detection framework\cite{chen2017deeplab, he2017mask}. 
+However, proposal-based methods tend to result in inconsistent segmentation between instance and semantic branches. Moreover, the segmentation result is susceptible to the quality of object detection.
+
+\noindent \textbf{Proposal-free 3D Panoptic Segmentation.} 
+Proposal-free methods abandon object proposals and predict object center and point offset instead. The post-processing module will cluster points into instance groups according to object center and point offset.
+DS-Net \cite{DBLP:conf/cvpr/Hong0Z0L21} proposes a dynamic-shifting mechanism of instance points toward its possible centers for Mean Shift clustering. SMAC-Seg \cite{Li_2022} and SCAN \cite{xu_2022} attempt to use attention module on multi-directional or multi-scale feature maps. GP-S3Net \cite{razani_gp-s3net_2021} constructs a dynamic graph composed of foreground clusters as graph nodes, processed by graph convolutional network for instance segmentation branch. Panoptic-Polarnet \cite{zhou_panoptic_polarnet_2021} projects 3D features into BEV and utilizes learnable BEV heatmap with non-maximum suppression(NMS) to predict centers. Following Panoptic-Polarnet's BEV design, Panoptic-PHNet \cite{li2022panoptic} improves center and offset generation by replacing NMS with a center grouping module to merge duplicated centers, as well as augmenting offset via KNN-Transformer. For now, Panoptic-PHNet has achieved 1st place on NuScenes and SOTA performance on SemanticKITTI benchmarks.
+
+Nevertheless, sparse and uneven LiDAR points will impose large variance for center and offset predictions in Bird-Eye-View and thus becomes a bottleneck for current SOTA approaches. RGB images can compensate for LiDAR features, which motivates us to design LCPS.
+
+\noindent \textbf{LiDAR-Camera Fusion Models.}
+In object detection and semantic segmentation, pioneering research already considers modal fusion between images and LiDAR points. For example, PMF \cite{zhuang2021perception} attempts to project LiDAR points to the perspective view and proposes a two-branch 2D network to extract semantic features with an attentive fusion module. TransFuser \cite{prakash2021multi} and TransFusion \cite{bai2022transfusion} 
+consider utilizing transformers to fuse 3D LiDAR points and 2D images. DeepFusion \cite{li2022deepfusion} focuses on how to avoid feature misalignment when extensive data augmentation is performed in both LiDAR and camera branches. However, multi-modal panoptic segmentation has yet to be explored, accompanied by asynchronous and utilization issues. 
+
+
+
+Methodology
+
+\subsection{Overview} \label{sec:overview}
+
+\noindent \textbf{Problem Formulation.}
+This paper considers 3D panoptic segmentation \cite{fong2022panoptic}. Formally, we denote a set of LiDAR points as $\{(x_i^{\text{3D}}, f_i^{\text{3D}}) | (x_i^{\text{3D}} \in \mathbb{R}^3, f_i^{\text{3D}} \in \mathbb{R}^C \}_{i=1}^N$, where $N$, $x_i^{\text{3D}}$ and $f_i^{\text{3D}}$ represent the total number of points, 3D positions, and point features of $C$ dimensions, respectively. This task requires predicting a unique semantic class $\{\hat{y}_i^{\text{3D}}\}_{i=1}^N$ for each point and accurately identifying groups of points as foreground objects with an instance ID, denoted as $\{\text{ID}^{\text{3D}}_i\}_{i=1}^N$. 
+
+Besides, we assume that $K$ surrounding cameras, which are cheap and common, capture images associated with the LiDAR frame for LiDAR-Camera fusion. Similarly, we represent each image as a set of pixels $\{ (x_{k,i}^{\text{2D}}, f_{k,i}^{\text{2D}}) | (x_{k,i}^{\text{2D}} \in \mathbb{R}^2, f_{k,i}^{\text{2D}} \in \mathbb{R}^C \}_{i=1, k=1}^{i=N', k=K}$, where $N'$, $x_i^{\text{2D}}$, $f_i^{\text{2D}}$ and $k$ represent the total number of pixels, 2D positions, pixel features, and the camera index, respectively. Our primary objective in this paper is to improve panoptic segmentation performance by fully exploring the complementary information in the LiDAR and Camera sensors.
+
+\noindent \textbf{Pipeline Architecture.}
+The framework in Figure \ref{fig2:overview} consists of a multi-modal encoding module, a LiDAR-Camera feature fusion module, and a panoptic prediction module. In the encoding stage, the LiDAR points are respectively encoded by a cylindrical voxel encoder and an MLP encoder, while the images are encoded using SwiftNet \cite{Wang_2021_CVPR}.
+In the fusion stage, the MLP feature and image features, which are not strictly correlated, are first aligned through the proposed Asynchronous Compensation and Semantic-Aware Region Alignment, and then are concatenated into fused point features. Subsequently, our Point-to-Voxel Propagation module (PVP) accepts the fused point features and outputs the final cylinder representation.
+In the prediction stage, the backbone network includes a proposed FOG head, a semantic segmentation head, a heatmap head, and an offsets head. The latter two heads follow Panoptic-Polarnet \cite{zhou_panoptic_polarnet_2021}, where we regress a binary object center mask and a 2D offset among bird-eye-view grids. During inference, the post-processing shifts the predicted foreground BEV grids to their nearest centers and clusters the points within the grids into instances.
+
+\subsection{Asynchronous Compensation Pixel Alignment} \label{sec:ACPA}
+
+A straightforward solution \cite{Liang_2018,Vora_2020, Zhuang_2021} for fusing LiDAR and Camera is to establish point-to-pixel mappings, such that points can be directly projected to image planes and decorated with pixel features. However, this mapping would lead to false mapping due to the asynchronous frequency between cameras and LiDAR sensors. For instance, on NuScenes dataset, each camera operates at a frequency of 12Hz, while the LiDAR sensor operates at 20Hz. 
+Motivated by this, we improve the point-level fusion by incorporating additional asynchronous compensation to achieve a consistent geometric alignment over time. The fundamental idea is to transform the LiDAR points into a new 3D coordination system when the corresponding images are captured at that time. The transformation matrix is obtained by considering the ego vehicle's motion matrix. Specifically, let $t_1$ and $t_2$ denote the time when the LiDAR point cloud and the related images are captured. Then we have:
+
+\textbf{Step-1.} Transform LiDAR points from world coordinates to ego-vehicle coordinates at time $t_1$. By multiplying the coordinate transformation matrix $\mathbf{T}_{t_1}^{\text{W} \rightarrow \text{V}} $ provided by the dataset, we can obtain the 3D position in the ego-vehicle coordinate system, denoted as  $\hat{x}_i^{\text{3D}}$.
+\textbf{Step-2.} Transform LiDAR points in ego-vehicle coordinates from time $t_1$ to time $t_2$. %for ego-motion compensation. 
+To achieve this, a time-variant transformation matrix is required, denoted $\mathbf{T}_{t_1 \rightarrow t_2}^{\text{V} \rightarrow \text{V}}$. However, such a matrix is often not directly available in datasets. Instead, the ego vehicle's motion matrices from the current frame to the first frame are often provided for each sliced sequence. Therefore, we can divide $\mathbf{T}_{t_1 \rightarrow t_2}^{\text{V} \rightarrow \text{V}}$ as the product of $ (\mathbf{T}_{t_2 \rightarrow t_0}^{\text{V} \rightarrow \text{V}})^{-1}$ and $ \mathbf{T}_{t_1 \rightarrow t_0}^{\text{V} \rightarrow \text{V}} $, where $t_0$ is the time of the first frame. Using this ego-motion transformation matrix, we obtain the point position in ego-vehicle coordinates at time $t_2$, denoted as  $\tilde{x}_i^{\text{3D}}$.
+\textbf{Step-3.} Obtain pixel features at time $t_2$. By using camera extrinsic and intrinsic matrices ($\mathbf{E}_k$ and $\mathbf{I}_k$), we get the projected 2D position $\tilde{x}_{k, i}^{\text{2D}}$ of each point in the $k_{\text{th}}$ image plane at time $t_2$. After excluding the points whose projections are outside the image plane, the resulting pixel features $\{\tilde{f}_{k,i}^{\text{2D}}\}_{i=1}^{N_k}$ are indexed by $\tilde{x}_{k,i}^{\text{2D}}$. $N_k$ is the number of points inside the image plane (${N_k} < N$).
+
+These homogeneous transformation steps can be summarized in the following equation:
+
+\begin{equation}
+\label{proj_eq}
+\left[ \begin{array}{c} \tilde{x}_{k,i}^{\text{2D}} \\ 1 \end{array} \right] = \mathbf{I}_k \mathbf{E}_k\mathbf{T}_{t_1 \rightarrow t_2}^{\text{V} \rightarrow \text{V}} \mathbf{T}_{t_1}^{\text{W} \rightarrow \text{V}}\left[\begin{array}{c} x_i^{\text{3D}} \\ 1 \end{array} \right].
+\end{equation}
+
+In summary, we obtain pixel-aligned features for each point using Equation \ref{proj_eq}. Our approach adopts ego-motion compensation via Step 2, resulting in a simple but more accurate geometric-consistent feature alignment.
+\subsection{Semantic-Aware Region Alignment} \label{sec:SARA}
+
+\begin{figure}[t]
+ \centering
+ \includegraphics[width=0.5\textwidth]{sec34.png} % Reduce the figure size so that it is slightly narrower than the column.
+ \caption{(a) Overview of the SARA module, which employs pixel-wise semantic classifier, constructs CAMs and locates semantic regions. 
+ (b) Overview of the PVP Module, which involves a cylindrical partition of fused point features and attentive propagation. Better zoomed in. }
+ \label{fig:sec34}
+\end{figure}
+ Due to the sparse nature and limited eyeshot of LiDAR point clouds, only a small fraction of image features can be matched with LiDAR points. To address this issue, we propose to find semantic-relevant regions, extending the one-to-one mapping to one-to-many relations. Inspired by \textit{Class Activation Maps} (CAMs) \cite{Zhou_2016, mcever2020pcams}, we present a Semantic-Aware Region Alignment module by using image CAMs to localize relevant semantic regions, as illustrated in Figure \ref{fig:sec34} (a).
+ 
+
+\textbf{Step-1.} %Using point labels to learn an image classifier. 
+We first introduce a pixel-wise semantic classifier $\phi^{\text{2D}}(\cdot)$ to learn the semantic information in the image branch, and define $\mathbf{\Theta^{\text{2D}}}\in \mathbb{R}^{M \times C}$ as the classifier parameters, where $M$ is the number of semantic categories. Based on the observation that projected pixels share the same semantic category with matched points, we use point labels to train the image classifier with cross-entropy loss: 
+
+\begin{equation}
+    \label{eq:L_2d}
+    \mathcal{L}_{\text{2D}} = -\frac{1}{N_k}\sum_{i=1}^{N_k} y_{i}^{\text{3D}} \log(\hat{y}_{i}^{\text{2D}}),
+\end{equation}
+
+\noindent where $\hat{y}_{i}^{\text{2D}}$ and $y_{i}^{\text{3D}}$ denote the predicted pixel label and related ground-truth point label (such alignment is obtained in Section \ref{sec:ACPA}), and $N_K$ represents the number of points which can be projected into the $k$-th image plane.   
+
+\textbf{Step-2.} We use this classifier to generate the class activation maps (CAMs). Let $ \mathbf{F}_k^{\text{2D}} \in \mathbb{R}^{ C \times H^{\text{2D}} \times W^{\text{2D}} }$ be the image feature map extracted by the last convolution layer, and $H^{\text{2D}}$ and $W^{\text{2D}}$ are the height and width of image feature maps. We can then obtain CAMs using the following formula:
+
+\begin{equation}
+    \label{eq:F_CAM}
+    \mathbf{F}_k^{\text{CAM}} = \mathbf{\Theta}^{\text{2D}} \times  \mathbf{F}_k^{\text{2D}},
+\end{equation}
+
+\noindent where $\times$ denotes the matrix multiplication. The generated CAMs are represented by $\mathbf{F}_k^{\text{CAM}} \in \mathbb{R}^{ M \times H^{\text{2D}} \times W^{\text{2D}}}$. Each channel in CAM is a $ H^{\text{2D}} \times W^{\text{2D}}$ heatmap related to a specific semantic category.
+
+\textbf{Step-3.} For each LiDAR point, we use the generated CAMs to localize sets of pixels as semantic-related image regions. We design a filtering gate $\mathbf{G}_{k,i}^y \in \mathbb{R}^{H^{\text{2D}} \times W^{\text{2D}}}$, constructed by selecting a single heatmap of class $y$ from CAMs $F_k^{\text{CAM}}$ according to the ground-truth or predicted pixel label. The gate is controlled by subtracting a predefined confidence threshold $\tau$. 
+Pixels with heatmap values lower than that threshold will be set to zero in $\mathbf{G}_{k,i}^y$. Finally, we get a set of related pixels:
+
+\begin{equation}
+    \label{eq:pixel_region}
+    \{ f^{\text{CAM}} \}_{k,i} =  \textit{Flatten}(\sigma(\mathbf{G}_{k,i}^y \otimes \mathbf{F}_k^{\text{2D}})),
+\end{equation}
+
+\noindent where $\otimes$ denotes element-wise multiplication, and $\sigma$ denotes the activation function. 
+\textit{Flatten} function is adopted to transform features from matrix format $C \times H^{\text{2D}} \times W^{\text{2D}}$ into a set format $(H^{\text{2D}} W^{\text{2D}}) \times C$, followed by discarding zero vectors which is filtered by $G_{k,i}$.
+Consequently, we obtain a set of pixel features $ \{ f^{\text{CAM}} \in \mathbb{R}^{C} \}_{k,i} $ for each LiDAR point $i$ and each camera $k$.
+
+We finally average the set of region features to a single vector, then concatenate it with the MLP output and pixel-aligned features to constitute the fused point features.
+In summary, unlike one-to-one pixel alignment via pure geometric projection, the image regions are directly collected in a one-to-many semantic-aware manner.
+
+\subsection{Point-to-Voxel Feature Propagation} \label{sec:PVP}
+Image features seem to not support the points outside the camera frustum; therefore, these points are usually excluded \cite{Sindagi_2019, Vora_2020, Huang_2020}. To overcome this problem, we propose the Point-to-Voxel Feature Propagation to integrate both geometric and semantic information for the entire point cloud. To this end, we choose cylindrical voxels as the bridge to complete the fusion process since the tensor shape of the voxel representation is invariant to the alteration of point numbers, which naturally provides an alignment between the original point cloud and the image-related point cloud subset. 
+
+ 
+ As shown in Figure \ref{fig:sec34} (b), a cylindrical encoder first encodes the original point cloud into voxels. %while point features and the other two types of pixel features are concatenated. 
+ Meanwhile, for the fused point features, we first align their channel dimensions with the original voxel using MLP, and then divide these fused points into another set of cylindrical voxels, where features will be scattered and pooled within the same voxel to obtain voxel features. A noticeable observation is that a LiDAR point may have alignment with more than one camera, resulting in multiple fused point features of a single point. Therefore, we treat such multiple features as multiple points at the same 3D position during voxelization. Then we propagate the voxels of the fused point features (denoted as $\vartheta^{\text{im}}$) to the original cylindrical voxels (denoted as $\vartheta^{\text{p}}$) using modified local attention \cite{vaswani2017attention}. In this attention mechanism, each voxel $\vartheta^{\text{p}}$ acts as queries $Q$, while the neighboring $27$ $\vartheta^{\text{im}}$ voxels act as keys $K$ and values $V$. Then the computation is given by:
+ 
+ \begin{equation}
+     \text{Att}(\vartheta^{\text{p}}, \vartheta^{\text{im}}, \vartheta^{\text{im}}) = \text{Softmax}(\frac{QK^T}{\sqrt{C}})V,
+ \end{equation}
+ 
+\noindent where $C$ is the channel dimensions. After that, we add the attentive voxels with original $\vartheta^{\text{p}}$ to make a residual connection, as shown in the following equation:
+
+\begin{equation}
+    \label{eq:add}
+    \vartheta = \text{Att}(\vartheta^{\text{p}}, \vartheta^{\text{im}}, \vartheta^{\text{im}}) + \vartheta^{\text{p}}.
+\end{equation}
+ 
+ Through this attentive propagation, information from the entire point cloud and multiple cameras is comprehensively integrated into a single cylindrical voxel representation $\vartheta$. 
+\subsection{Improved Panoptic Segmentation} \label{sec:improved_ps}
+
+Here we briefly describe the Foreground Object selection Gate (FOG) head and loss functions for panoptic prediction.
+
+\noindent \textbf{Foreground Object Selection Gate.}
+  In Panoptic-PolarNet \cite{zhou_panoptic_polarnet_2021}, the panoptic network diverges into three prediction heads for semantic labels, centers, and offset prediction. However, we find that semantic predictions largely affect the final quality of panoptic segmentation. This is because the center and offset head only provide class-agnostic predictions, while accurate semantic information is required for post-processing to cluster foreground grids into the nearest object centers. Inspired by \cite{lim2020learning}, we propose FOG, a Foreground Object Selection Gate, to enhance the original semantic classifier. FOG is a binary classifier aiming to differentiate foreground objects. Given voxel features obtained from the backbone network as $\vartheta^{\text{b}} \in \mathbb{R}^{ H\times W \times Z}$, FOG predicts a class-agnostic binary mask $y^{\text{FOG}} \in [0, 1]^{H\times W \times Z}$, which is supervised by binary cross-entropy loss $\mathcal{L}^{\text{BCE}}$. As a result, the foreground mask complements the semantic head by filtering out background points in the post-processing period.
+
+\noindent \textbf{Loss Designs.}
+    The total loss is derived in the following equation: %\textbf{\ref{eq:total_loss}}
+    \begin{equation}
+        \label{eq:total_loss}
+        \mathcal{L}^{\text{total}} = 
+        \alpha_1 (\mathcal{L}^{\text{CE}} + \mathcal{L}^{\text{Lovasz}}) + 
+        \alpha_2 \mathcal{L}^{\text{MSE}} + 
+        \alpha_3 \mathcal{L}^{\text{L1}} + 
+        \alpha_4 \mathcal{L}^{\text{BCE}} + 
+        \alpha_5 \mathcal{L}^{\text{2D}}.
+    \end{equation}
+
+    The top four terms are based on Panoptic-Polarnet \cite{zhou_panoptic_polarnet_2021}. $\mathcal{L}^{\text{CE}}$ and $\mathcal{L}^{\text{Lovasz}}$ represent cross-entropy loss and Lovasz loss \cite{berman2018lovasz} for semantic supervision. $\mathcal{L}^{\text{MSE}}$ is a Mean-Squared-Error (MSE) loss for BEV center heatmap regression. $\mathcal{L}^{\text{L1}}$ is an L1 loss for BEV offset regression. 
+    In addition, the last two terms are new in this paper. $\mathcal{L}^{\text{BCE}}$ represents a binary entropy loss used for FOG head, and $\mathcal{L}^{\text{2D}}$ is a pointly-supervised loss for region-fusion, given by Equation \ref{eq:L_2d}. $\alpha_2$ and $\alpha_3$ are set to 100 and 10 respectively, while the other three weights are set to 1.
+
+
+
+Experiments
+\begin{table*}[htbp]
+\scriptsize
+\centering
+\resizebox{1.0\textwidth}{!}{
+\begin{tabular}{l|cccc|ccc|ccc|c} %需要12列
+\toprule %添加表格头部粗线
+Method & PQ & PQ$^\dagger$ & SQ & RQ & PQ$^{\textit{th}}$ & SQ$^{\textit{th}}$ & RQ$^{\textit{th}}$ & PQ$^{\textit{st}}$ & SQ$^{\textit{st}}$ & RQ$^{\textit{st}}$ & mIoU \\
+\hline %绘制一条水平横线
+ DS-Net \cite{DBLP:conf/cvpr/Hong0Z0L21} & 42.5 & 51.0 & 83.6 & 50.3& 32.5 & 83.1 & 38.3 & 59.2 & 84.4 & 70.3 & 70.7 \\ % √
+ GP-S3Net \cite{razani_gp-s3net_2021} & 48.7 & 60.3 & 61.3 & 63.7 &  61.6& 86.4 & 71.7 & 43.8 & 51.8 & 60.8 & 61.8 \\ % √
+ PanopticTrackNet \cite{hurtado2020mopt}& 50.0 & 57.3 & 80.9 & 60.6& 45.1 & 80.3& 52.4& 58.3 &81.9 & 74.3& 63.1 \\ % √
+ EfficientLPS \cite{sirohi2021efficientlps}& 62.0 & 65.6& 83.4& 73.9& 56.8& 83.2& 68.0& 70.6& 83.8& 83.6 & 65.6 \\ % √
+ SCAN \cite{xu_2022}& 65.1 & 68.9 & 85.7 & 75.3& 60.6& 85.7& 70.2& 72.5& 85.7& 83.8& 77.4\\ % √
+ Panoptic-PolarNet \cite{zhou_panoptic_polarnet_2021}& 67.7 & 71.0 & 86.0 & 78.1 & 65.2 & 87.2& 74.0 & 71.9 & 83.9& 84.9 & 69.3 \\ % √
+ SMAC-Seg HiRes \cite{Li_2022}& 68.4 & 73.4 & 85.2 & 79.7 & 68.0 & 87.3 & 77.2 & 68.8 & 83.0 & 82.1 & 71.2 \\ % √
+ CPSeg HR \cite{Li_2023}& 71.1 & 75.6& 85.5& 82.5& 71.5& 87.3& 81.3& 70.6& 83.6& 83.7& 73.2\\ % √
+ Panoptic PH-Net \cite{li2022panoptic}& 74.7 & 77.7 & 88.2 & 84.2& 74.0 & 89.0 & 82.5 & \textbf{75.9} & \textbf{86.8} & \textbf{86.9} & 79.7\\ % √
+ PUPS \cite{Su_2023} & 74.7 & 77.3 & 89.4 & 83.3 & 75.4 & 91.8 & 81.9 & 73.6 & 85.3 & 85.6 & -\\
+ \hline
+ \textbf{LCPS (Baseline)} & 72.9 & 77.6 & 88.4 & 82.0 & 72.8 & 90.1 & 80.5 & 73.0 & 85.5 & 84.5 & 75.1 \\
+ \textbf{LCPS (Full)} & \textbf{79.8} & \textbf{84.0} & \textbf{89.8} & \textbf{88.5} & \textbf{82.3} & \textbf{91.7} & \textbf{89.6} & 75.6 & 86.7 & 86.5 & \textbf{80.5}\\
+          
+\bottomrule %添加表格底部粗线
+\end{tabular}
+}
+\setlength{\abovecaptionskip}{2pt}
+\caption{3D panoptic segmentation results on NuScenes validation set. The evaluation metric is provided in PQ\%.}
+\label{nusc_val}
+\end{table*}
+\begin{table*}[!ht]
+\scriptsize
+\centering
+\resizebox{1.0\textwidth}{!}{
+\begin{tabular}{l|cccc|ccc|ccc|c} %需要11列
+\toprule %添加表格头部粗线
+Method & PQ & PQ$^\dagger$ & SQ & RQ & PQ$^{\textit{th}}$ & SQ$^{\textit{th}}$ & RQ$^{\textit{th}}$ & PQ$^{\textit{st}}$ & SQ$^{\textit{st}}$ & RQ$^{\textit{st}}$ & mIoU\\
+\hline %绘制一条水平横线
+ EfficientLPS \cite{sirohi2021efficientlps}& 62.4 & 66.0& 83.7 & 74.1& 57.2& 83.6& 68.2 & 71.1& 83.8 & 84.0 & 66.7 \\ % √
+ Panoptic-PolarNet \cite{zhou_panoptic_polarnet_2021}& 63.6 & 67.1 & 84.3 & 75.1& 59.0 & 84.3 & 69.8 & 71.3 & 84.2& 83.9&  67.0 \\ % √
+ Panoptic PH-Net \cite{li2022panoptic}& \textbf{80.1} & \textbf{82.8} & \textbf{91.1} & \textbf{87.6} & \textbf{82.1} & \text{93.0} & 88.1 & \textbf{76.6} & \textbf{87.9} & \textbf{86.6} & \textbf{80.2}\\
+ \hline
+ \textbf{LCPS (Baseline)} & 72.8 & 76.3 & 88.6 & 81.7 & 72.4 & 90.2 & 80.0 & 73.5 & 86.1 & 84.6 & 74.8 \\
+ \textbf{LCPS (Full)}& 79.5 & 82.3 & 90.3 & \textbf{87.7} & 81.7 & 92.2 & \textbf{88.6} & 75.9 & 87.3 & 86.3 & 78.9 \\
+\bottomrule %添加表格底部粗线
+\end{tabular}
+}
+\setlength{\abovecaptionskip}{2pt}
+\caption{3D panoptic segmentation results on NuScenes test set. Our result is compared with other methods without test-time augmentation and ensemble operations.}
+\label{nusc_test}
+\end{table*}
+In this section, we evaluate our proposed LiDAR-Camera Panoptic Segmentation network on NuScenes \cite{fong2022panoptic} and SemanticKITTI \cite{behley2019SemanticKITTI} dataset, making comparisons with recent state-of-the-art methods. 
+
+\subsection{Datasets and Evaluation Metric} \label{sec:datasets_and_metrics}
+
+\noindent \textbf{NuScenes} is a large-scale multi-modal dataset for autonomous driving. It 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

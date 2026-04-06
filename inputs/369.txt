@@ -1,0 +1,383 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Empathetic response generation, as a conditional text generation task, aims to endow agents with the ability to understand interlocutors and accurately express empathy in their communication \cite{rashkin-etal-2019-towards,lin-etal-2019-moel,li-etal-2020-empdg,shen2021constructing}. 
+However, the generated responses tend to be generic and monotonous \cite{Chen2022EmpHiGE}, i.e.,  showing shallow empathy and few connections to the context. As shown in the upper part of \figureautorefname~\ref{fig-intro}, ``I'm sorry to hear that.'' is used as a reaction to different contexts with negative feelings.
+To alleviate the problem, existing works mainly incorporate emotion or knowledge modules into the encoder-decoder framework and train their models with the maximum likelihood estimation (MLE) \cite{rashkin-etal-2019-towards,lin-etal-2019-moel,majumder-etal-2020-mime,li-etal-2020-empdg,CEM2021,li-etal-2022-kemp}.
+\begin{figure}
+    \centering
+    \includegraphics[width=0.48\textwidth]{figures/intro_example2.pdf}
+    \caption{A monotonous empathetic response (upper) and an informative empathetic response (lower). ``CM'', ``IT'', and ``SF'' are abbreviations for ``Communication Mechanism'', ``Intent'', and ``Semantic Frame'', which represent control signals at the utterance, sentence, and token level respectively. }
+    \label{fig-intro}
+\end{figure}
+
+Recently, diffusion models \cite{Ho2020DenoisingDP,Dhariwal2021DiffusionMB} have emerged as a brand-new and promising paradigm for generative models.  
+A few prior works that explored using diffusion models on text data are mainly designed for unconditional text generation \cite{Austin2021StructuredDD,Hoogeboom2021ArgmaxFA,he2022diffusionbert}.
+For text generation with extra conditions (control signals or contexts), Diffusion-LM \cite{Li-2022-DiffusionLM} applies extra-trained classifiers to make the generated text satisfy input signals like sentiment and syntactic structure.
+DiffuSeq \cite{gong2022diffuseq} is proposed as a classifier-free diffusion model that uses ``partial noising'' in the forward process to distinguish the input and output text.
+
+In this paper, we add control signals to empathetic response generation and propose a diffusion model-based framework, \method, to solve the aforementioned monotonous empathy problem. 
+First, since empathy is a multi-dimensional factor \cite{Davis1980AMA}, i.e., several factors affect the realization of empathy, we use explicit control signers at different levels to guide response generation.
+At the utterance level, \textit{communication mechanism} (CM) \cite{sharma-etal-2020-computational} divides text-based empathy into emotional reaction, interpretation, and exploration to describe the high-level functionality. Then, we use \textit{intent} (IT) \cite{welivita-pu-2020-taxonomy} to reflect the behaviors of an agent in each sentence\footnotemark[2]\footnotetext[2]{An utterance, the response here, may consist of more than one sentence.}, such as questioning (e.g., \textit{What happened to you?}). Finally, the fine-grained signal \textit{semantic frame} (SF) \cite{baker-etal-1998-berkeley-framenet} is imposed on each token, which represents their universal categories of events, concepts, and relationships. An example of how multi-grained control signals work is illustrated in the lower part of \figureautorefname~\ref{fig-intro}. To have exact guidance over responses, these signals are extracted from golden responses in the training process, while during inference, an emotion-enhanced matching method is used to obtain response candidates as the source of control signals.
+
+We then design a diffusion model to make the generated responses not only relevant to dialogue contexts but also express specific empathy under the multi-grained control.
+The dialogue context, multi-grained control, and response are considered as the model input. 
+For the forward diffusion process, we apply the partial noising \cite{gong2022diffuseq} strategy so that both the context and control signals are unchanged, and only the response is noised.
+To fulfill the reverse diffusion process, we use the transformer architecture \cite{vaswani2017attention} and introduce a masking strategy to indicate the control range of each signal on response tokens.
+Specifically, each CM/IT controls all tokens in an utterance/sentence, while an SF term corresponds to exactly one token. 
+Tokens out of the control range are masked in the self-attention layer.
+Finally, we conduct experiments on a benchmark dataset \dataset to demonstrate the effectiveness of \method.
+
+The main contribution of this paper is threefold:
+(1) We introduce explicit multi-grained control signals to solve the monotonous empathy problem, and convert the empathetic response generation into a controllable setting. 
+(2) We propose \method, a novel diffusion model-based framework, to unify the utilization of dialogue context and control signals, achieve elaborate control with a specific masking strategy, and integrate an emotion-enhanced matching method to produce diverse responses for a given context.
+(3) Experimental results show that our method outperforms competitive baselines in generating informative and empathetic responses.
+
+
+
+Related Work
+
+\subsection{Empathetic Response Generation}
+\citet{rashkin-etal-2019-towards} firstly formulate the empathetic response generation task and construct the \dataset dataset.
+Existing works that focus on this task can be divided into two lines.
+The first is to detect and utilize the user's emotion with diverse structures \cite{lin-etal-2019-moel,majumder-etal-2020-mime,shen2021constructing}.
+The second is to consider cognition-based factors other than emotions (EM), such as dialogue act (DA) \cite{welivita-pu-2020-taxonomy}, communication mechanism (CM) \cite{sharma-etal-2020-computational}, emotion cause \cite{jiang2019improving}, psychological skill \cite{kim-etal-2021-perspective}, and commonsense \cite{Sabour2021CEM, li-etal-2022-kemp}.
+\citet{Zheng2021CoMAEAM} propose a framework CoMAE to model the relationship among CM, DA, and EM at the utterance level.
+The differences between CoMAE and \method are: 
+(1) Instead of predicting each factor based on the context representation, \method explicitly uses control signals that are highly related to a response as task input. 
+(2) We achieve the elaborate control with multi-grained signals, i.e., tokens in response are influenced by different signals, while CoMAE applies the same combined factor to all decoding positions.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{figures/overview5.pdf}
+    \caption{The overview of \method. The left part describes the training and inference stages, the middle part shows the forward process and reverse process in the diffusion model, and the right part illustrates details in a Transformer \cite{vaswani2017attention} block with control-range masking for the reverse process.}
+    \label{fig-overview}
+\end{figure*}
+
+\subsection{Diffusion Models}
+
+Diffusion models are a class of generative models with promising performance and have been used in a variety of real-world applications.
+Most existing works of diffusion models focus on continuous data, such as vision \cite{Nichol2021GLIDETP, Radford2021LearningTV, rombach2021highresolution} and audio \cite{Popov2021GradTTSAD, Yang2022DiffsoundDD, Tae2021EdiTTSSE}.
+Due to the discrete nature of text data, the utilization of diffusion models for NLP is challenging.
+\citet{Hoogeboom2021ArgmaxFA} and \citet{Austin2021StructuredDD} extend diffusion models to discrete state spaces for character-level text generation. 
+Diffusion-LM \cite{Li-2022-DiffusionLM} uses embedding and rounding strategy to bridge the continuous and discrete domain, and trains extra classifiers for controllable text generation.
+DiffuSeq \cite{gong2022diffuseq} leverages partial noising for sequence-to-sequence text generation to keep the text input unchanged in the forward process.
+DiffusionBERT \cite{he2022diffusionbert} combines pretrained language models with absorbing-state discrete diffusion models for text.
+To the best of our knowledge, we are the first to achieve controllable empathetic response generation using a diffusion model.
+
+
+\method
+
+In this paper, we perform empathetic response generation in a controllable setting. 
+The dialogue context is an alternating sequence of utterances from a speaker and a listener, i.e. $\mathbf{w}^u=\{u_1,u_2,\dots,u_{n}\}$.
+Here, we aim to generate an empathetic and context-related response $\mathbf{w}^y=\{y_1,y_2,\dots,y_{n}\}$ conditioned on the given context $\mathbf{w}^u$ and a set of control signals $\mathbf{w}^c$ obtained in advance (Section \ref{sec-cf}).
+Then, the context, control signals, and response are concatenated and fed into a diffusion model with control-range masking (Section \ref{sec-diffmodel}). 
+In the training process, golden responses are used to extract control signals, while during inference, we integrate an emotion-enhanced matching method to get proper response candidates (Section \ref{sec-train/inf}).
+The framework of \method is illustrated in \figureautorefname~\ref{fig-overview}.
+
+\subsection{Acquisition of Control Signals}
+\label{sec-cf}
+
+To better model and express multi-dimensional empathy, we use control signals at different levels. 
+However, the benchmark dataset \dataset does not contain such annotations.
+Here, we introduce three types of signals used in this paper and the way to collect them for each golden response or response candidate using pre-trained tagging models.
+The definition and components of empathy in psychology are complex\cite{Davis1980AMA, Waal2008PuttingTA, Decety2008FromER}, and we choose the control signals that intersect with computational linguistics.
+Note that the design of \method is not limited to the following control signals, other factors of empathy can also be used.
+
+\noindent\textbf{Communication Mechanism (CM).} 
+We employ the taxonomy in \citet{sharma-etal-2020-computational}: \textit{Emotional Reaction (ER), Interpretation (IP),} and \textit{Exploration (EX)}. 
+ER expresses emotions such as warmth, compassion, and concern,
+IP represents an understanding of feelings and experiences inferred from the speaker,
+and EX stands for exploring the feelings and experiences not stated in previous utterances. 
+Following \citet{sharma-etal-2020-computational}, we use three RoBERTa-based \cite{liu2019roberta} classifiers to individually identify whether a response implies a certain mechanism. 
+
+\noindent\textbf{Intent (IT).}
+A previous analysis \cite{welivita-pu-2020-taxonomy} argues that humans demonstrate a wide range of intents when regulating empathy and proposes a dataset \textsc{EmpatheticIntent}. 
+Besides, many works \cite{xie-etal-2022-comma,Zheng2021CoMAEAM} insist that intents and emotions have a strong relationship.
+Specifically, listeners are much more likely to respond to positive or negative emotions with specific empathetic intents such as \textit{acknowledgment}, \textit{consolation}, and \textit{encouragement}, rather than only expressing similar or opposite emotions.
+We train a BERT-based \cite{Devlin2019BERTPO} classifier on \textsc{EmpatheticIntent} to label responses.
+
+\noindent\textbf{Semantic Frame (SF).}
+Semantic frames are based on FrameNet \cite{baker-etal-1998-berkeley-framenet}, a linguistic knowledge graph containing information about lexical and predicate-argument semantics. 
+The frame of a token represents its universal categories of events, concepts, and relationships, and can be regarded as a high-level abstraction of meaning. 
+For example, tokens like \textit{bird, cat, dog, horse, sheep} share the same frame label \textit{Animals}.
+Here, we utilize the open-SESAME model \cite{Swayamdipta2017FrameSemanticPW} to extract semantic frames from responses.
+
+\begin{table}[]
+    \centering\small
+    \resizebox{0.35\textwidth}{!}{%
+    \begin{tabular}{c|ccc}
+        \hline
+        
+        \hline
+        \textbf{Signal Type}& \textbf{Accuracy} & \textbf{F1}    & \textbf{\#Classes} \\ \hline\hline
+        \textbf{CM-ER} & 79.43    & 74.46 & 2         \\
+        \textbf{CM-IP} & 84.04    & 62.60 & 2         \\
+        \textbf{CM-EX} & 92.61    & 72.58 & 2         \\
+        \textbf{IT}    & 87.75    & 87.71 & 9         \\
+        \textbf{SF}    & -       & 86.55 & 1222      \\ 
+        \hline
+        
+        \hline
+    \end{tabular}
+}
+\caption{The performance of tagging tools used to get control signals. Since SF is from a frame semantic parsing task, we only report the F1 score following the original task setting.}
+\label{table-classifier}
+\end{table}
+
+The performance of tagging tools is listed in \tableautorefname~\ref{table-classifier}.
+Note that control signal tokens are concatenated into a flat sequence from coarse to fine.
+\subsection{Diffusion Model with Control-Range Masking}
+\label{sec-diffmodel}
+
+A diffusion model contains a forward process and a reverse process. 
+We first concatenate a context with the control signals and corresponding response, i.e., $\mathbf{w}=\mathbf{w}^u\oplus\mathbf{w}^c\oplus\mathbf{w}^y$.
+Then we use an \textit{embedding} function \cite{Li-2022-DiffusionLM} $\textsc{Emb}(\mathbf{\cdot})$ to map the discrete text $\mathbf{w}$ into a continuous representation $\mathbf{x}_0=\mathbf{u}_0\oplus\mathbf{c}_0\oplus\mathbf{y}_0$, where $\mathbf{u}_0$, $\mathbf{c}_0$, and $\mathbf{y}_0$ represent parts of $\mathbf{x}_0$ that belong to $\mathbf{w}^u$, $\mathbf{w}^c$, and $\mathbf{w}^y$, respectively.
+
+\noindent\textbf{Forward Process.}
+In forward process $q$, the model adds noise to the original sample $\mathbf{x}_0$ step by step:
+\begin{equation}
+    q(\mathbf{x}_t\vert\mathbf{x}_{t-1})=\mathcal{N}(\mathbf{x}_t;\sqrt{1-\beta_t}\mathbf{x}_{t-1},\beta_t\mathbf{I}),
+\end{equation}
+where $\mathbf{x}_1,...,\mathbf{x}_T$ make up a chain of Markov variants and $\mathbf{x}_T \sim \mathcal{N}(0, \mathbf{I})$.
+$\beta_t\in(0,1)$ is a noise schedule that controls the noise scale added in each step.
+Note that the conventional diffusion models corrupt the entire $\mathbf{x}_0$.
+However, empathetic response generation is a conditional text generation (Seq2Seq) task and we only concern with the generative effect on response.
+Therefore, we use partial noising \cite{gong2022diffuseq} to only impose noise on the parts of $\mathbf{x}_t$ that belong to $\mathbf{w}^y$, i.e., $\mathbf{y}_t$.
+\noindent\textbf{Reverse process.}
+Once the forward process is completed, the reverse process aims to gradually recover $\mathbf{x}_0$ by denoising $\mathbf{x}_T$ according to:
+\begin{equation}
+    p_\theta(\mathbf{x}_{t-1}\vert \mathbf{x}_t, t)=\mathcal{N}(\mathbf{x}_{t-1};\mu_\theta(\mathbf{x}_t,t),\sigma_\theta(\mathbf{x}_t,t)),
+\end{equation}
+where $\mu_\theta(\cdot)$ and $\sigma_\theta(\cdot)$ are predicted mean and standard variation of $q(\mathbf{x}_{t-1}|\mathbf{x}_t)$ (derived using Bayes' rule) in forward process and can be implemented by a Transformer \cite{vaswani2017attention} model $f_\theta$.
+In the reverse process, we add a \textit{rounding} step \cite{Li-2022-DiffusionLM}, parameterized by $p_\theta(\mathbf{w}|\mathbf{x}_0)=\prod^n_{i=1}p_\theta(w_i|x_i)$, where $p_\theta(w_i|x_i)$ is a softmax distribution.
+\begin{figure}
+    \centering
+    \includegraphics[width=0.48\textwidth]{figures/control_factors2.pdf}
+    \caption{An example of \cs and control-range masking. The upper left part shows a response with labeled signals, the lower left part illustrates the control range of each signal on response tokens, and the right part is the corresponding mask matrix. ``-'' means the SF signal is empty.}
+    \label{fig-control-example}
+\end{figure}
+
+\noindent\textbf{Control-Range Masking.}
+The non-autoregressive nature of conventional diffusion models make one input token can attend to all other tokens with the full self-attention mechanism to update its representation.
+Instead, we need to distinguish between tokens of control signals and responses, and further model the relationship between them with a mask matrix $M$ and integrate it into the self-attention layer in Transformer:
+\begin{align}
+    &Q^{i+1},K^{i+1},V^{i+1}=h^iW_q,h^iW_k,h^iW_v,\\
+    &S^{i+1}=softmax(\frac{Q^{i+1}K^{i+1 \mathsf{T}}+M}{\sqrt{d_k}}),\\
+    &h^{i+1}=S^{i+1}V^{i+1},
+\end{align}
+where $W_q, W_k$ and $W_v$ are trainable parameters, $h^i$ is the hidden state of the $i$-th transformer layer. $d_k$ is the dimension of $K$, which is used for scaling.
+
+Basically, if token $i$ controls $j$, then the calculation of $j$ is influenced by $i$. In terms of implementation, we do not mask $i$ when updating the representation of $j$.
+Particularly, tokens at the same level, including IT signal tokens, SF signal tokens, and response tokens, are also designed to control each other, thus ensuring the overall logic and fluency of the generated responses.
+For example, it is reasonable that \textit{Sympathizing} is followed by \textit{Questioning} at the intent level, i.e., expressing more concerns by questioning after showing sympathy for a negative situation or feeling.
+Therefore, to model the control relationship among tokens, we design the  control-range masking and utilize it in the self-attention layer of $f_\theta$.
+Specifically, for a mask matrix, the value on position $(i, j)$ is 0 if token$_j$ is controlled by token$_i$; otherwise is negative infinity:
+\begin{equation}
+M(i,j)=\left\{
+\begin{aligned}
+0,& &  i \Rightarrow j \\
+-\inf,& & i \not\Rightarrow j \\
+\end{aligned}
+\right.
+\end{equation}
+
+\figureautorefname~\ref{fig-control-example} gives an example of control-range masking. 
+For the intent signal \textit{Acknowledging} (index 2), it is visible to \textit{Questioning} (line 3) and corresponding response tokens \textit{Sounds great!} in the first sentence (line 12-14).
+Meanwhile, since the response token \textit{great} (line 13) is controlled by \textit{Exploration} (index 1), \textit{Acknowledge} (index 2), \textit{Desirability} (index 5), and the rest of response tokens (index 12-19), it attends to them in the mask matrix.
+
+With the existence of control-range masking, we can elaborately guide the generation of each response token with signals from different levels that reflect diverse factors for empathy expression.
+
+\subsection{Training and Inference}
+\label{sec-train/inf}
+\noindent\textbf{Training.}
+In the training process, we label control signals based on golden responses as described in \ref{sec-cf}.
+To train model $f_\theta$ in the reverse process, we minimize the variational lower bound following \citet{gong2022diffuseq}:
+\begin{equation}
+\begin{split}
+\mathcal{L}_{\text{vlb}}= &  \sum_{t=2}^T||\mathbf{y}_0-\tilde f_{\theta}(\mathbf{x}_t, t)||^2 \\ 
+& + ||\textsc{Emb}(\mathbf{w}^y)-\tilde f_{\theta}(\mathbf{x}_1, 1)||^2 \\
+& + \mathcal{R}(||\mathbf{x}_0||^2),
+\end{split}
+\end{equation}
+where $\tilde f_{\theta}(\mathbf{x}_t, t)$ denotes the fractions of recovered $\mathbf{x_0}$ corresponding to $\mathbf{y}_0$, and $\mathcal{R}(\cdot)$ is a mathematically equivalent regularization term to regularize the
+embedding learning.
+
+\noindent\textbf{Inference.}
+During inference, since golden responses are unavailable, we design an emotion-enhanced matching method to obtain response candidates and use them to extract control signals.
+We treat dialogue contexts in the training set as the candidate pool and use each context in the test set as a query to perform context-context matching.
+Then the response corresponding to a returned context with the highest similarity is used as the candidate. 
+Regarding the importance of emotions in empathetic response generation, we consider two aspects to score each candidate, semantic similarity and emotional consistency, in context-context matching.
+Specifically, we first train a BERT model \cite{Devlin2019BERTPO} on the training set to classify emotions for contexts.
+Then, we use this model to get emotional distribution for contexts in both the candidate pool and queries.
+Finally, we compute the cosine similarity of both sentence embeddings and predicted emotional distributions for each query-context pair. 
+The contexts are re-ranked according to a weighted sum of two similarity scores:
+\begin{equation}
+    Score=\textsc{Sim}_{\text{semantic}}+\gamma \textsc{Sim}_{\text{emotional}},
+    \label{score-match}
+\end{equation}
+where $\gamma$ is a hyperparameter to balance the semantic and emotional similarity.
+
+
+Experimental Setup
+
+\subsection{Dataset} 
+\dataset \cite{rashkin-etal-2019-towards} dataset comprises 24,850 open-domain multi-turn conversations between two interlocutors.
+Each conversation contains one emotion label, a situation where the speaker feels the exact emotion, and utterances about the speaker’s descriptions of the situation or the listener’s empathetic replies. 
+There are 32 evenly-distributed emotion labels in the dataset. 
+We apply the data provided by the original paper with the split ratio of 8:1:1 for training/validation/test set
+and use the script released by \citet{lin-etal-2019-moel} to preprocess the data.
+\begin{table*}[htb]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l|c|c|c|ccc|cccc|c} 
+\hline
+
+\hline
+\multicolumn{1}{c|}{\multirow{2}{*}{\textbf{Method}}} & \multirow{2}{*}{\textbf{\#Params}} & \multicolumn{2}{c|}{\textbf{Relevance}} & \multicolumn{3}{c|}{\textbf{Controllability}}                      & \multicolumn{4}{c|}{\textbf{Informativeness}}     & \multicolumn{1}{c}{\textbf{Length}}                           \\ 
+\cline{3-12}
+\multicolumn{1}{c|}{}                                 &                           & \textbf{BERTScore} ↑  & \textbf{MIScore} ↓ & \textbf{ACC-CM} ↑ & \textbf{ACC-IT} ↑ & \textbf{F1-SF} ↑ & \textbf{D1} ↑ & \textbf{D2} ↑  & \textbf{D4} ↑  & \textbf{sBL} ↓ & \textbf{AvgLen} ↑     \\ 
+\hline\hline
+\multicolumn{10}{l}{\textit{Transformer-Based Methods}} & \multicolumn{1}{l}{}  \\ 
+\hline
+\textbf{TRS} & 15M & 0.5717 & 4598.26 & 60.98 & 22.07 & 15.74 & 0.42 & 1.55 & 4.26 & 13.63 & 10.53 \\
+\textbf{MTRS} & 15M & 0.5735 & 7156.26 & 60.48 & 25.77 & 15.62 & 0.50 & 1.89 & 5.56 & 11.26 & 9.92  \\
+\textbf{MoEL}& 21M & 0.5758  & 14595.61 & 59.29 & 26.20 & 16.51 & 0.40 & 1.65 & 4.62 & 12.83 & 11.47 \\
+\textbf{MIME} & 17M & 0.5800 & 4878.71 & 61.16 & 22.00 & 16.54 & 0.26 & 0.87 & 2.15 & 14.21 & 11.12 \\
+\textbf{EmpDG} & 29M & 0.5745 & 9088.11 & 61.94 & 20.06 & 17.36 & 0.60 & 2.54 & 7.75 & 11.78 & 10.11 \\
+\textbf{CEM} & 17M & 0.5713 & 7635.05 & 62.28 & 30.09 & 14.20 & 0.54 & 2.00 & 4.98 & 9.13 & 8.25 \\ 
+\hline
+\multicolumn{10}{l}{\textit{Pre-Trained Language Model-Based Methods}}  & \multicolumn{1}{l}{}  \\ 
+\hline
+\textbf{TransferTransfo} & 117M & 0.5634 & 2138.39 & 59.70 & 25.08 & 18.39 & 2.81 & 17.22 & 36.54 & 2.68 & 11.40 \\
+\textbf{BART} & 140M & \textbf{0.5977} & 706.31  & 60.39 & 30.69 & 18.98 & \textbf{2.88} & 14.12 & 38.82 & 2.79 & 11.09 \\ 
+\hline
+\multicolumn{10}{l}{\textit{Diffusion Model-Based Methods}}    & \multicolumn{1}{l}{}  \\ 
+\hline
+\textbf{DiffuSeq} & 91M & 0.5101 & 715.95  & 59.23 & 28.58 & 17.26 & 1.79  & 26.97 & \textbf{88.17} & 1.29 & 10.30 \\
+\textbf{\method} & 91M & 0.5205 & \textbf{626.92}  & \textbf{92.36} & \textbf{84.24} & \textbf{52.79} & 2.84  & \textbf{29.25} & 73.45 & \textbf{1.09} & \textbf{14.12} \\
+\hline
+\multicolumn{10}{l}{\textit{References}}  & \multicolumn{1}{l}{}  \\ 
+\hline
+\textbf{\method(Oracle)} & 91M & 0.7458 & 615.13 & 92.38 & 83.66 & 51.95 & 2.84 & 30.46 & 89.35 & 1.11 & 14.01 \\
+\textbf{Human} & - & 1.0000 & 507.97 & 100.00 & 100.00 & 98.40 & 19.49 & 43.55 & 49.02 & 0.85 & 13.04 \\ 
+
+\hline
+
+\hline
+\end{tabular}
+}
+\caption{Automatic evaluation results. The best results of standard settings are reported in the \textbf{bold} format. ``ACC'', ``D'', and ``sBL'' are abbreviations of Accuracy, Dist, and Self-BLEU, respectively. ``ACC-CM'' is the average Accuracy of ER, IP, and EX, which are three mechanisms of CM.}
+\label{tab-results}
+\end{table*}
+
+\subsection{Comparable Methods} 
+We compare our method with three groups of representative methods.
+
+\noindent\textbf{Transformer-Based Methods.}
+(1) TRS \cite{rashkin-etal-2019-towards} is a vanilla Transformer with MLE loss.
+(2) MTRS \cite{rashkin-etal-2019-towards} uses multi-task learning with emotion classification in addition to MLE loss.
+(3) MoEL \cite{lin-etal-2019-moel} utilizes different decoders to combine different outputs for each emotion category.
+(4) MIME \cite{majumder-etal-2020-mime} applies emotion grouping, emotion mimicry, and stochasticity strategies.
+(5) EmpDG \cite{li-etal-2020-empdg} learns emotions and responses based on adversarial learning.
+(6) CEM \cite{CEM2021} leverages commonsense to enhance empathetic response generation.
+
+\noindent\textbf{Pre-Trained Language Model-Based Methods.}
+(1) TransferTransfo \cite{Wolf2019TransferTransfoAT} is a transfer learning-based GPT-2 \cite{radford2019language} model fine-tuned on \dataset.
+(2) BART \cite{lewis-etal-2020-bart} is a pre-trained encoder-decoder Transformer with great success in many seq2seq tasks.
+
+\noindent\textbf{Diffusion Model-Based Method.} 
+DiffuSeq \cite{gong2022diffuseq} is proposed as a conditional diffusion language model for seq2seq tasks.
+
+Two more results are provided as references.
+Under the Oracle setting, control signals are obtained from golden responses in the test set, which can be regarded as the upper bound of \method. 
+Golden responses themselves are also evaluated, which reflects human performance on the task.
+\subsection{Metrics}
+\noindent\textbf{Automatic Evaluation.} 
+We evaluate the generated responses from four aspects: 
+(1) Relevance: \textit{BERTScore} \cite{Zhang2020BERTScoreET} computes a semantic similarity between generated responses and golden references.
+\textit{MIScore} is the likelihood of generating a context with the given response, which applies the idea of Maximum Mutual Information (MMI) \cite{li-etal-2016-diversity,Zhang2018GeneratingIA} and indicates whether the generated response is context-related. 
+(2) Controllability: We calculate the success rate of empathy expression with multi-grained control signals to validate the controllability of \method. For utterance-level CM and sentence-level IT, we report Accuracy, while for token-level SF, we report F1.
+(3) Informativeness: \textit{Dist-n} \cite{li-etal-2016-diversity} calculates the number of distinct n-grams in generated responses. 
+\textit{Self-BLEU} \cite{Zhu2018TexygenAB} reflects the difference of all generated responses to a large extent. We calculate the average BLEU-5 overlap between each two generated responses. 
+(4) Response Length: \textit{AvgLen} represents the average number of tokens for generated responses. Intuitively, too short text often fails to convey good content.
+
+\noindent\textbf{Human Evaluation.}
+We evaluate the response quality based on the following aspects: 
+(1) \textit{Empathy} reflects whether a response understands the speaker's feeling or situation and responds appropriately.
+(2) \textit{Relevance} considers whether a response is relevant to the topic mentioned by the speaker.
+(3) \textit{Informativeness} evaluates whether a response provides rich and meaningful information.
+\subsection{Implementation Details}
+\method is based on the architecture of BERT-base \cite{Devlin2019BERTPO}.
+For diffusion model settings, we adopt the square-root noise schedule \cite{Li-2022-DiffusionLM} and set 2000 diffusion steps in the training and inference process. 
+The maximum input length is 128 with WordPiece tokenizer and word embeddings are in the size of 128 with random initialization.
+For training settings, we use AdamW optimizer and set the learning rate as 1e-4. 
+The batch size and dropout value are set as 128 and $0.1$, respectively.
+$\gamma$ in Equation \ref{score-match} equals to $0.2$.
+For all comparable methods, we use their official codes with settings that follow the original papers.
+
+
+Results and Discussions
+\subsection{Main Results}
+
+\begin{table}[t]
+  \small
+  \centering
+  \resizebox{0.45\textwidth}{!}{
+      \begin{tabular}{l|ccc}
+          \hline 
+          
+          \hline
+          \textbf{Method} & \textbf{Empathy} & \textbf{Relevance} & \textbf{Informativeness}\\
+          \hline
+          \hline
+          \textbf{TRS} & 2.96 & 2.49 & 2.31\\
+          \textbf{CEM} & 2.84 & 2.69 & 2.75 \\
+          \textbf{BART} & 3.04 & 2.94 & 3.92 \\
+          \textbf{DiffuSeq} & 2.77 & 2.66 & 3.74\\
+          \hline
+          \textbf{\method} & \textbf{3.68} & \textbf{3.39} & \textbf{4.63} \\
+          \hline
+          
+          \hline
+      \end{tabular}
+      }
+\caption{Human evaluation results. The Fleiss' kappa \cite{fleiss1973equivalence} of the results is 0.47, indicating a moderate level of agreement.}
+\label{table-human}
+\end{table}
+
+\begin{table}[h]
+  \small
+  \centering
+  \resizebox{0.45\textwidth}{!}{
+  \begin{tabular}{l|cc|cc|c} 
+      \hline
+      
+\hline
+\multicolumn{1}{c|}{\multirow{2}{*}{\textbf{Method}}}  & \multicolumn{2}{c|}{\textbf{CM}} & \multicolumn{2}{c|}{\textbf{IT}} & \multicolumn{1}{c}{\textbf{SF}}  \\
+\cline{2-6}& \textbf{ACC} ↑ & \textbf{F1} ↑ & \textbf{ACC} ↑ & \textbf{F1} ↑ & \textbf{F1} ↑ \\ 
+\hline\hline
+          \textbf{\method} & 92.36 & 90.26 & 84.24 & 77.15 & 52.79 \\
+          \hline
+          \textbf{w/o Mask}& 90.76 & 87.99 & 73.80 & 66.58 & 49.43 \\
+          \hline
+          \textbf{w/o CM}& \sethlcolor{soulgreen}\hl{89.34} & \sethlcolor{soulgreen}\hl{85.55} & 83.80 & 76.38 & 52.89 \\
+          \textbf{w/o IT}& 92.24 & 90.21 & \sethlcolor{soulgreen}\hl{47.92} & \sethlcolor{soulgreen}\hl{41.77} & 52.63 \\
+          \textbf{w/o SF}& 89.70 & 86.96 & 83.12 & 74.90 & \sethlcolor{soulgreen}\hl{22.48} \\
+          \hline
+          
+          \hline
+      \end{tabular}
+      }
+\caption{Ablation study on control-range masking and control signals.}
+\label{table-control}
+\end{table}
+
+\noindent\textbf{Automatic Evaluation Results.}
+The overall results
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

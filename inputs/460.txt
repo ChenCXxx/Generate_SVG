@@ -1,0 +1,247 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+Compared to conventional vision tasks~\cite{li2023betweenness, li2023idm, li2024feddiv, li2021cross, li2022nce, zhang2023semidetr, huang2023divide, AlignSAM}, object detection has witnessed significant success in research, such as~\cite{ren2015faster, lin2017feature, shao2019objects365, zheng2022towards}, however, solely detecting and classifying objects within known categories (base classes) during inference significantly diminishes its generalization capacity in real-world applications. Open Vocabulary Object Detection (OVD) emerges as a prospective means to overcome this restriction, endowed with the capability to detect unseen categories (novel classes), without the explicit need for annotations.
+
+Leveraging large-scale pre-trained Vision and Language Models (PVLMs), exemplified by CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling}, recent advances in OVD, e.g.~\cite{gu2021open, du2022learning, wu2023aligning}, employ knowledge distillation to transfer insightful knowledge of PVLMs to the task of object detection, generalizing its powerful capabilities to detect more unknown object categories. 
+However, these methods face a critical limitation in background interpretation. Specifically, these approaches tend to represent background proposals with a single ``background class'', encompassing all categories beyond foreground base classes. With solely a singular learnable embedding to interpret this background class, the trained model may fail to capture the diverse implicit knowledge within background proposals. %leading to the loss of essential background information. This results in incomplete and ambiguous representations,  causing the OVD detector to fail in distinguishing objects from unseen categories by their representations.
+This leads to the loss of essential background information, resulting in incomplete and ambiguous representations of unseen categories by the model. Consequently, the model is incapable of distinguishing objects from those unknown categories using their representations.
+
+
+To tackle this problem, researchers experimented with various strategies like binary cross-entropy loss~\cite{bangalath2022bridging} or soft background loss~\cite{du2022learning} for background interpretation.
+However, their basic assumption that background proposals are uniformly dissimilar to any foreground category overlooks the nuanced class relations between foreground and background classes, as illustrated in Figure~\ref{fig:teaser}. Additionally, these methods struggle with model overfitting during training due to an abundance of fully supervised data from base classes, which makes detectors biased toward those categories.
+  Recent advances like \cite{zhao2022exploiting,bangalath2022bridging,gao2022open,feng2022promptdet} propose mining implicit objects of novel categories from background proposals and employing pseudo-labeling to enhance their interpretation. Yet, these methods often rely on additional prior knowledge, such as the names of novel categories,  leaving substantial unexplored knowledge.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth, trim=0 10 0 0, clip]{images/teaser_v2.pdf}
+\caption{An example to illustrate previous and our designs in background interpretation. 
+Conventional designs use a single background embedding to push the RoI embedding away from the CLIP embedding. DetPro~\cite{du2022learning} proposes to uniformly push the RoI embedding away when the CLIP embedding nears a base class embedding, leading to a loss of class relation. Our LBP, on the other hand, learns multiple background underlying class embeddings, effectively preserving class relations and alleviating loss conflict.
+``Distillation loss'' uses knowledge distillation to align visual features encoded by the decoder with CLIP embeddings, while ``Background classification loss'' refers to the classification loss for background proposals.
+\label{fig:teaser}
+\end{figure} 
+  
+
+
+In this paper, we present LBP, a novel framework for open-vocabulary object detection.
+Without any prior knowledge, LBP proposes learning background prompts to harness explored implicit background knowledge, thus enhancing the detection performance w.r.t. base and novel categories. Specifically, the LBP framework initially introduces a Background Category-specific Prompt module.  It discovers and represents background underlying categories estimated from background proposals by leveraging learnable category-specific contexts, consequently resulting in improved background interpretation. Then, an online module, namely Background Object Discovery, is introduced to further explore and exploit implicit object knowledge correlated with those estimated underlying categories from background proposals, significantly contributing to mitigating model overfitting. 
+Moreover, an Inference Probability Rectification module is presented to address conceptual overlaps between estimated background categories and novel categories provided during inference. This rectification enables the model to accurately compute probabilities for novel categories, thereby significantly enhancing the detector performance. The contributions are summarized as follows.
+\begin{itemize}
+    \item We propose a novel framework, termed LBP, for open-vocabulary object detection, where learning background prompts is presented to harness explored implicit background knowledge, thereby enhancing detection of both base and novel categories during inference.
+    
+    \item 
+    We devise three modules: Background Category-specific Prompt, Background Object Discovery, and Inference Probability Rectification,  to empower the detector to discover, represent, and leverage implicit object knowledge explored from background proposals.
+    
+    \item 
+    Evaluation on two benchmark datasets, OV-COCO \cite{lin2014microsoft} and  OV-LVIS \cite{gupta2019lvis}, demonstrates the superiority of our proposed method over existing state-of-the-art approaches in handling the OVD tasks.
+\end{itemize}
+
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth, height=9.0 cm, trim=10 0 20 5, clip]{images/pipeline_final.pdf}
+\caption{An overview of the proposed LBP approach, consisting of three modules:  Background Category-specific Prompt (BCP), Background Object Discovery (BOD), and Inference Probability Rectification (IPR).
+During training, BCP is first proposed to discover and represent background underlying categories, estimated from background proposals, with learnable background category-specific contexts. Then, BOD is presented to employ $k$-means clustering on background proposals across all images to harness implicit objects explored from background underlying knowledge. During inference, IPR is introduced to rectify probability scores of novel categories provided, by loosening their conceptual overlaps with background underlying categories estimated from background proposals.
+\label{fig:pipeline}
+\end{figure*}
+
+
+
+Related Work
+
+
+
+
+\textbf{Open vocabulary object detection (OVD).} 
+OVR-CNN~\cite{zareian2021open} pioneered open vocabulary object detection, by expanding object detection capabilities through image-caption datasets. 
+Subsequently, prevailing approaches to tackle OVD have primarily relied on fine-tuning PVLMs~\cite{kim2023region,minderer2022simple,zhong2022regionclip,li2022grounded,kuo2022f,lin2022learning}. However, retraining PVLMs with large-scale learnable model weights is resource-intensive. 
+Consequently, more recent approaches rooted in knowledge distillation~\cite{wang2023object,ma2022open,wu2023cora} to address OVD by leveraging knowledge distilled from CLIP~\cite{radford2021learning} into the detector, predominantly adopting source-free strategies. For example, ViLD~\cite{gu2021open} aligns detector-encoded features with CLIP embeddings, while BARON~\cite{wu2023aligning} generates region ensembles using random masking within grid spaces to distill visual concept co-occurrence within a scene.
+Despite partially transferring knowledge of novel categories from PVLMs, detectors exhibit bias towards base classes due to disparities between vision-language alignment and detection tasks. To mitigate this bias, researchers explore pseudo labeling techniques utilizing prior knowledge of novel category names~\cite{zhao2022exploiting} or weakly-supervised annotations to the detection dataset~\cite{zhou2022detecting,bangalath2022bridging,gao2022open}. However, integrating additional knowledge poses limitations in real-world scenarios.
+
+Our proposed method extracts background implicit knowledge about classes beyond known/base categories from the provided detection dataset without requiring prior information about novel categories during inference. This utilization of implicit knowledge enables the detector to identify objects from unknown categories, enhancing its applicability across diverse scenarios.
+
+\textbf{Prompt tuning for OVD:}
+Prompt tuning, stemming from natural language processing, has evolved with PVLM advancements to enhance their efficacy in specific downstream tasks~\cite{khattak2023maple}. CoOp, proposed in \cite{zhou2022learning}, introduces learnable contexts for 2D vision-language classification. CoCoOp, an extension proposed by~\cite{zhou2022conditional}, further enhances CoOp by generating input-conditioned tokens for each image. Various visual prompting approaches advocate integrating prompts into the image encoder of PVLMs, including works such as \cite{jia2022visual,bahng2022visual,guo2023viewrefer,chen2023visual}.
+
+In the realm of OVD, DetPro~\cite{radford2021learning} pioneered prompt engineering by implementing a soft background loss, significantly improving the detector's ability to represent specific categories. Similarly, proposals for pre-training prompts on large-scale datasets~\cite{ren2023prompt,feng2022promptdet} aim to generate more universally applicable prompts.
+In contrast to DetPro~\cite{radford2021learning}, our approach has no reliance on uniform distribution assumption. Instead, by prompting underlying background categories estimated from proposals, our method enhances the learning of unknown category representations, leading to significant performance gains in detection.
+
+
+
+Approach
+
+
+
+\subsection{Preliminaries}
+
+
+\noindent
+\textbf{Problem formulation.}
+Open vocabulary object detection (OVD) aims at seeking an optimal object detector capable of recognizing objects from both base and novel (previously unseen) categories, denoted by $\mathcal{C}_b=\{c_i\}_{i=1}^{n_b}$ and $\mathcal{C}_u=\{c_i\}_{i=1}^{n_u}$, respectively, in the inference dataset $\mathcal{D}_I$. This detector is achieved through optimization on the training dataset $\mathcal{D}_T$, annotated exclusively with instances from the base classes within $\mathcal{C}_b$.
+Here, $\mathcal{C}_b \cap \mathcal{C}_u = \emptyset$, while $n_b$ and $n_u$ represent the cardinality of the respective category sets.
+Built upon Faster R-CNN~\cite{ren2015faster}, given an input image, it is initially encoded by Faster R-CNN into global image features and generates a set of proposals through a region proposal network (RPN).
+In general, these region proposals are categorized into \textit{foreground} proposals and \textit{background} proposals~\cite{du2022learning}, designated as $\mathcal{P}$ and $\mathcal{N}$, respectively. The {foreground} proposals in $\mathcal{P}$ encompass all base categories within $\mathcal{C}_b$, while all {background} proposals from $\mathcal{N}$ are collectively classified as a singular \textbf{\textit{super-class}} (denoted as $\textit{\textbf{c}}_{bg}$ here), representing any category outside of $\mathcal{C}_b$.
+
+
+\noindent
+\textbf{Knowledge distillation.}
+Leveraging large-scale pre-trained large-scale Vision and Language Models (PVLMs), specifically CLIP~\cite{zhou2022learning}, knowledge distillation empowers Faster R-CNN to effectively detect objects from arbitrary vocabularies by transferring insightful knowledge from CLIP. This process involves aligning the proposal features generated by the detector (actually output by the RoI Head of the detector, denoted by  $\textit{\textbf{w}}{(\cdot)}$) with those extracted by the image encoder of CLIP (denoted by  $\mathcal{I}{(\cdot)}$), effectively simulating coherence between the feature spaces of the detector and CLIP. Consequently, this process implicitly projects the visual embedding space of the detector into the textual embedding space of CLIP (output by the text encoder of CLIP, denoted by  $\mathcal{T}{(\cdot)}$). In this way,  the original classifier of Faster R-CNN is replaced.
+
+\noindent
+\textbf{Foreground/background interpretation.}
+Given class $c$ from $\mathcal{C}_b$, its contextual prompt is defined as \texttt{`a photo of \{category\} in the scene'}, noted as $\textit{\textbf{V}}_c$. Here,  \texttt{`\{category\}'} denotes the contextual word for class $c$. Then its contextual embedding is obtained by feeding $\textit{\textbf{V}}_c$ into the CLIP text encoder $\mathcal{T}(\cdot)$, as follows,
+\begin{equation}
+\label{eq:context_embed_foreground}
+\textit{\textbf{t}}_{c} = \mathcal{T}(\textit{\textbf{V}}_c).
+\end{equation}
+However, it is challenging to determine the contextual word for the ``\textit{background}'' class $\textit{\textbf{c}}_{bg}$. ViLD~\cite{gu2021open} or BARON~\cite{wu2023aligning} represents it with a learnable contextual embedding, without encoding it via CLIP's text encoder $\mathcal{T}(\cdot)$, thus defining it as $\textit{\textbf{t}}_{bg}$.
+\noindent
+\textbf{Probability calculation.}Having obtained $\{\textit{\textbf{t}}_{c}|c\in\mathcal{C}_{b}\}\cup\{\textit{\textbf{t}}_{bg}\}$, let $\textit{\textbf{w}}{(\cdot)}$  denote the visual embedding of a proposal generated by the RoI Head of the object detector. Consider $\mathcal{C}_b^{bg}=\mathcal{C}_b\cup\{\textit{\textbf{c}}_{bg}\}$. For any proposal $x\in\mathcal{P}\cup\mathcal{N}$ from $\mathcal{D}_T$ with its visual embedding $\textit{\textbf{w}}{(x)}$, the probability of categorizing this proposal under the category $c\in\mathcal{C}_b^{bg}$ is defined as follows:
+\begin{equation}
+\label{prob}
+p(c|x; \mathcal{C}_b^{bg}) = \frac{\exp( \cos(\textit{\textbf{w}}(x), \textit{\textbf{t}}_{c})/ \tau)}{\sum_{c^{\prime}\in \mathcal{C}_b^{bg}} \exp(\cos(\textit{\textbf{w}}(x), \textit{\textbf{t}}_{c^{\prime}})/ \tau)},
+\end{equation}
+where $\exp(\cdot)$ and $\cos(\cdot)$ represent the exponential function and cosine similarity, respectively, while $\tau$ is the temperature parameter used for rescaling the values. 
+
+
+
+
+
+
+
+
+
+During inference, once the novel classes from $\mathcal{C}_u$ are introduced, the probability of a proposal from $\mathcal{D}_I$ being classified as class $c$ of $\mathcal{C}_b\cup\{\textit{\textbf{c}}_{bg}\}\cup\mathcal{C}_u$ during detection can be computed simply by replacing $\mathcal{C}_b^{bg}$ in Eq. (\ref{prob}) with $\mathcal{C}_{b,u}^{bg}=\mathcal{C}_b\cup\{\textit{\textbf{c}}_{bg}\}\cup\mathcal{C}_u$.
+\subsection{The Proposed Method}
+In this paper, we introduce LBP, a novel framework designed for open-vocabulary object detection. The key idea of LBP is that without any prior knowledge, learning background prompts is proposed to harness explored implicit background knowledge. This ensures the model attains improved background interpretation and decreased model overfitting, thus empowering the detector capable of better recognizing both base and novel categories. Specifically, the LBP framework initially introduces a Background Category-specific Prompt (\textbf{BCP}) module, discovering underlying categories from background proposals, and representing those using learnable context-specific prompts. Moreover, we introduce an online Background Object Discovery (\textbf{BOD}) to further exploit implicit object knowledge w.r.t. those estimated underlying categories, consequently alleviating model bias towards base categories, and present an Inference Probability Rectification (\textbf{IPR}) module to resolve conceptual overlaps between estimated background categories and novel categories during inference, leading to precisely computed probability scores for novel categories.
+Our primary focus lies in exploring background interpretation, distinct from prevailing OVD approaches rooted in knowledge distillation. This enables seamless integration of our method into existing OVD frameworks~\cite{wu2023aligning} and ViLD~\cite{gu2021open}, etc.
+An overview of the proposed approach is illustrated in Figure~\ref{fig:pipeline}.
+
+\subsubsection{Background Category-specific Prompt}
+\label{sec:BCP}
+In this section, we model the underlying categories for background proposals in OVD and learn the corresponding category-specific prompts. 
+However, the absence of prior knowledge of those categories necessitates the estimation of their optimal number in background proposals. 
+
+Towards this end, we first produce background proposals for all training images using a class-agnostic RPN trained on $\mathcal{D}_T$ with only base classes, adopting a similar technique as in VL-PLM~\cite{zhao2022exploiting}. 
+Those proposals are subsequently filtered based on RPN scores (with a threshold ${\theta}$), and Non-Maximum Suppression (NMS). 
+Then, we obtain features for these filtered proposals generated from the image encoder of CLIP,
+and we refer to~\cite{han2019learning,zheng2022towards} to estimate the optimal number of the underlying categories in background proposals via K-mean clustering~\cite{vaze2022generalized}, denoted by $n_o$, in the obtained proposal features.
+During this procedure, potential ambiguity in data partitioning during estimation may arise due to feature overlap, leading to the underestimation of $n_o$. Consequently, we expand the count of background underlying categories to $n_o+n_a$, where $n_a$ serves as a pre-defined hyper-parameter. Here, let $\mathcal {C}_O=\{c_i\}_{i=1}^{n_o+n_a}$ denote those estimated background categories, for simplicity. 
+
+
+
+However, due to the absence of prior knowledge of $\mathcal {C}_O$, identifying their contextual words is a non-trivial task. To address this issue, we propose to learn category-specific context vectors.
+In this case, the contextual words of those background underlying categories can be described with the learned continuous vectors. 
+Specifically, we adopt the prompt form for a given class  $c\in \mathcal{C}_O$ as follows:
+\begin{equation}
+\overline{\textit{\textbf{V}}}_c = \text{\texttt{`a photo of }} \{{v}_c\} \text{\texttt{ in the scene'}},
+\end{equation}
+where the context vectors $\{{v}_c|{c\in\mathcal{C}_O}\}$ are learnable.
+Following Eq. (\ref{eq:context_embed_foreground}), the corresponding contextual embeddings can be acquired as $\overline{\textit{\textbf{t}}}_{c} = \mathcal{T}(\overline{\textit{\textbf{V}}}_c)$.
+
+
+Additionally, we present a specific \textit{\textbf{sub-class}} category, $\overline{\textit{\textbf{c}}}_{bg}$, designed to represent the ``background'' within background proposals, distinct from the super-class ``\textit{background}'' ${\textit{\textbf{c}}}_{bg}$. Specifically, $\overline{\textit{\textbf{c}}}_{bg}$ covers unexplored categories not estimated in $\mathcal{C}_O$ and includes any \textit{\textbf{untargeted}} object within background proposals. Similar to $\textit{\textbf{t}}_{bg}$, we define a learnable contextual embedding, $\overline{\textit{\textbf{t}}}_{bg}$, for this category $\overline{\textit{\textbf{c}}}_{bg}$.
+Once we obtain $\{\textit{\textbf{t}}_{c}|c\in\mathcal{C}_{b}\}\cup\{\overline{\textit{\textbf{t}}}_{c}|c\in\mathcal{C}_{O}\}\cup\{\overline{\textit{\textbf{t}}}_{bg}\}$, the corresponding set of categories can be defined as $\mathcal{C}_{b,o}^{bg}=\mathcal{C}_b\cup\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}\}$. With reference to Eq. (\ref{prob}), 
+for any proposal $x\in\mathcal{P}\cup\mathcal{N}$, its probability of being classified as class $c\in\mathcal{C}_{b,o}^{bg})$ can be defined as
+$p(c|x; \mathcal{C}_{b,o}^{bg})$. At this point, the model optimization in the \textbf{BCP} for the proposals in $\mathcal{P}$ and $\mathcal{N}$ can be achieved using the following cross-entropy losses:
+\begin{equation}
+\label{eq:cross_entropy_foreground}
+\mathcal{L}_{cls} =  \frac{1}{|\mathcal{P}|} \sum_{x\in\mathcal{P}}{ -\log p(c=\textit{\textbf{C}}(x)}|x; \mathcal{C}_{b,o}^{bg}),
+\end{equation}
+\begin{equation}
+\label{eq:bh}
+\mathcal{L}_{bcp} =  \frac{1}{|\mathcal{N}|} \sum_{x\in\mathcal{N}}{-\log \sum_{c\in{\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}}\}} p(c|x; \mathcal{C}_{b,o}^{bg})},
+\end{equation}
+ where $\textit{\textbf{C}}(x)$ represents the true label class of the given proposal $x$.
+  $\mathcal{L}_{bcp}$ enhances the sum of probabilities of all background underlying categories estimated and $\overline{\textit{\textbf{c}}}_{bg}$ within each background proposal, enabling the detector to softly learn the probabilities scores assigned for those categories.
+
+However, contextual embeddings of $\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}\}$ might not be sufficient to represent all background proposals with diverse scenes. When a background proposal belongs to $\overline{\textit{\textbf{c}}}_{bg}$ and cannot be adequately represented by its contextual embedding, the visual embeddings of that proposal will be distant from any contextual embeddings of the estimated categories from $\mathcal{C}_O$. Consequently, the sum of probabilities of those categories, i.e., $\sum_{c\in{\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}}\}} p(c|x; \mathcal{C}_{b,o}^{bg})$ in Eq. (\ref{eq:bh}), denoted as $\textit{\textbf{p}}_o^{bg}$, for simplicity,  would become very small.
+
+In this situation, we should uniformly push the visual embeddings of that proposal towards the estimated background underlying categories and $\overline{\textit{\textbf{c}}}_{bg}$, given that the proposal is distinct from those categories.
+When $\textit{\textbf{p}}_o^{bg} < \gamma$, we introduce an additional softer background loss component to relax $\mathcal{L}_{bcp}$ for all background proposals in $\mathcal{N}$ as follows,
+\begin{equation}
+\mathcal{L}_{rlx} =
+\frac{1}{|\mathcal{N}|}\sum_{x\in\mathcal{N}} \frac{1}{n_{oa}} \sum_{c\in{\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}\}}}- \log p(c|x; \mathcal{C}_{b,o}^{bg}),
+\end{equation}
+where $n_{oa}=n_{o}+n_{a}+1$ represents the size of $\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}\}$, while $\gamma$ is a threshold with a small value.  Therefore, the final version of the loss component in this \textbf{BCP}  for background proposals to optimize the model is formulated as,
+\begin{equation}
+\label{eq:bcp}
+\mathcal{L}_{bcp}^{\prime} =
+\begin{cases}
+\mathcal{L}_{bcp}, & \text{if}~\textit{\textbf{p}}_o^{bg} \geq \gamma, \\
+\mathcal{L}_{rlx}, & \text{otherwise}.
+\end{cases}
+\end{equation}
+Note that $\mathcal{L}_{bcp}^{\prime}$ enriches the discrimination capability of the detector by incorporating diverse contextual embeddings of estimated background categories, diverging from the soft background loss in DetPro~\cite{du2022learning}. This enables the model to exploit implicit object knowledge w.r.t. those estimated underlying categories, while also reconciling training conflicts between the losses utilized for classification and distillation, as highlighted in prior works~\cite{wu2023aligning}.
+ 
+
+\subsubsection{Background Object Discovery}
+
+To enhance model training, we introduce an online Background Object Discovery (\textbf{BOD}) module to effectively discover and exploit unseen objects. This aims to extract implicit objects w.r.t. the underlying categories estimated from background proposals.
+To simplify, we here decompose $\mathcal{C}_O$ into $\mathcal{C}_O^{\prime} = \{c_i\}_{i=1}^{n_o}$ and $\mathcal{C}_a = \{c_i\}_{i=1}^{n_a}$ in this section.
+During initial training, with a given $n_o$, we conduct $k$-means clustering (where $k$ is set to $n_o$) on the set of visual embeddings $\{\mathcal{I}(x)|x\in\mathcal{N}\}$ generated by the image encoder of CLIP for background proposals as in Sec.~\ref{sec:BCP}. 
+Then,
+we subsequently obtain the embeddings of the cluster centers, denoted as $\{\tilde{\textit{\textbf{w}}}_c|c\in\mathcal{C}_O^{\prime}\}$. These cluster centers function as the embedding centers for the estimated background categories within $\mathcal{C}_O^{\prime}$, allowing for online generation of pseudo labels from background proposals in each training batch.
+Throughout the training process, motivated by VL-PLM proposed in \cite{zhao2022exploiting}, background proposals of each training batch undergo being filtered based on RPN scores using a threshold of $\theta$, with an additional step to filter out proposals overlapping with ground-truth boxes. Subsequently, CLIP is employed to generate pseudo labels, preventing the detector from being biased towards estimated background categories.
+
+Then, for a proposal $x\in\mathcal{N}$, its probability score of being classified as $c\in\mathcal{C}_O^{\prime}$ is calculated as follows, 
+\begin{equation}
+\tilde{p}(c|x; \mathcal{C}_O^{\prime}) = \frac{\exp( \cos(\mathcal{I}(x), \tilde{\textit{\textbf{w}}}_c)/ \tau)}{\sum_{c^{\prime}\in \mathcal{C}_O^{\prime}} \exp(\cos(\mathcal{I}(x). \tilde{\textit{\textbf{w}}}_{c^{\prime}})/ \tau)}.
+\end{equation}
+Once such background proposal has probability scores corresponding to all categories in $\mathcal{C}_O^{\prime}$, we choose the predicted class label with the highest score as its pseudo label,
+\begin{equation}
+\textit{\textbf{y}}^o(x)={\underset{c}{\text{argmax}}}\{\tilde{p}(c|x; \mathcal{C}_O^{\prime}) |c\in\mathcal{C}_O^{\prime}\}.
+\end{equation}
+
+To eliminate unconfident pseudo labels generated above, we will filter proposals based on probability scores of pseudo labels using a threshold $\theta$. Referring to VL-PLM~\cite{zhao2022exploiting}, we also apply per-class NMS and use RoI Head to refine their box predictions, generating final pseudo labels. 
+Afterward, those final pseudo labels are used to assign class labels of $\mathcal{C}_O^{\prime}$ for all background proposals $\mathcal{N}^{B}\subseteq\mathcal{N}$ in each training batch. Let $\mathcal{N}^{B}_p$ denote the set of positive background proposals assigned class labels from $\mathcal{C}_O^{\prime}$, while the remaining proposals are all collected as $\mathcal{N}^{B}_n$.
+
+Therefore, the loss component proposed by this \textbf{BOD} module to optimize the model is formulated as follows,
+\begin{equation}
+\label{eq:bod}
+\begin{split}
+\mathcal{L}_{bod}& =  \frac{1}{|\mathcal{N}^{B}_p|} \sum_{x \in \mathcal{N}^{B}_p} - \log p(c=\textit{\textbf{y}}^o(x)|x; \mathcal{C}_{b,o}^{bg})  \\
+&+ \lambda_{bg} \frac{1}{|\mathcal{N}^{B}_n|}  \sum_{x \in \mathcal{N}^{B}_n}-\log \sum_{c\in{\mathcal{C}_a}\cup\{\overline{\textit{\textbf{c}}}_{bg}\}} p(c|x; \mathcal{C}_{b,o}^{bg}),
+\end{split}
+\end{equation}
+where $\lambda_{bg}$ is a loss weight with a small value used for background proposals. 
+This loss component emphasizes aligning visual embeddings of background proposals with their contextual embeddings related to estimated background categories from $\mathcal{C}_O$. It is especially critical for majority classes within $\mathcal{C}_O$, which are more prone to knowledge loss. Additionally, it empowers \textbf{BOD} to leverage insights from implicit objects within background proposals.
+
+\noindent
+\textbf{Training Objective. }
+ The final training objective for model optimization is a combination of the loss components formulated by Eq. (\ref{eq:cross_entropy_foreground}), Eq. (\ref{eq:bcp}), and Eq. (\ref{eq:bod}), respectively:
+\begin{equation}
+\mathcal{L}_{final} = \mathcal{L}_{cls} 
++\mathcal{L}_{bcp}^{\prime} + \mathcal{L}_{bod}.
+\end{equation}
+It's worth noting that, the text encoder and image encoder of CLIP should be frozen during model training.
+
+\subsubsection{Inference Probability Rectification}
+Once performed \textbf{BCP} and \textbf{BOD}, the detector capability of recognizing previously unseen classes has been significantly enhanced.
+However, a new challenge arises during inference. The background underlying categories ${\mathcal{C}_O}$, estimated from background proposals during training, might share semantics similarities with the novel classes $\mathcal{C}_u$ of the detector aiming to classify during inference, vividly symbolized by $\mathcal{C}_O \cap \mathcal{C}_u \neq \emptyset$. In such cases, there exist conceptual overlaps of contextual embeddings between those two types of categories during inference. This overlap could hinder the accurate computation of probability scores for novel classes, leading to detection ambiguity during inference. 
+To overcome this, an Inference Probability Rectification (\textbf{IPR}) is presented to enable the detector to precisely predict the probabilities of novel classes during inference.
+
+To be specific, let $\mathcal{C}_{b,u,o}^{bg}=\mathcal{C}_b\cup\mathcal{C}_u\cup\mathcal{C}_O\cup\{\overline{\textit{\textbf{c}}}_{bg}\}$. Then, with reference to Eq. (\ref{prob}),
+the probability of a proposal $x\in\mathcal{D}_I$ being classified as class $c\in\mathcal{C}_b\cup\mathcal{C}_u$ during inference can be computed as follows,
+\begin{equation}
+\label{prob_ipr}
+p(c|x; \mathcal{C}_{b,u,o}^{bg}) = \frac{\exp( \cos(\textit{\textbf{w}}(x), \textit{\textbf{t}}_{c})/ \tau)}{\mathbf{\Sigma}^{b,u}+\mathbf{\Sigma}^{o}+\mathbf{\Sigma}^{bg}},
+\end{equation}
+where 
+
+
+\begin{alignat}{2}
+&\mathbf{\Sigma}^{b,u} &&= \sum_{c^{\prime}\in \mathcal{C}_b\cup\mathcal{C}_u} \exp(\cos(\textbf{\textit{w}}(x), \textbf{\textit{t}}_{c^{\prime}})/ \tau), 
+\nonumber \\
+&\mathbf{\Sigma}^{o} &&= \sum_{c^{\prime}\in \mathcal{C}_O} \exp(\cos(\textbf{\textit{w}}(x), \textbf{\textit{t}}_{c^{\prime}})/ \tau), 
+\nonumber \\
+&\mathbf{\Sigma}^{bg} &&= \sum_{c^{\prime}\in \{\overline{\textit{\textbf{c}}}_{bg}\}} \exp(\cos(\textbf{\textit{w}}(x), \textbf{\textit{t}}_{c^{\prime}})/ \tau). \label{eq:simga_bg}
+\end{alig
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,215 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Image restoration (IR) aims to reconstruct a high-quality (HQ) image from its degraded low-quality (LQ) counterpart. Recent deep learning-based IR approaches excel in addressing single degradation, such as denoising~\cite{zhang2017beyond,zhang2018ffdnet,wang2023lg}, deblurring~\cite{drbnet,stripformer,nrknet}, adverse weather removal~\cite{idt,drsformer,huang2021memory,weatherdiff,li2017aod,snow100k,huang2021selective}, low-light enhancement~\cite{guo2020zero,smg,skf}, \etc. However, these task-specific methods often fall short in real-world scenarios, such as autonomous driving and outdoor surveillance, where images may encounter unknown, dynamic degradations~\cite{mao2017can,zhu2016traffic}.
+The concept of all-in-one image restoration has recently gained significant traction, aiming to tackle multiple degradations with a unified model using a single set of pre-trained weights. Leading approaches leverage techniques such as contrastive learning~\cite{airnet,chen2022learning}, task-specific sub-networks~\cite{park2023all,zhu2023learning}, task-specific priors~\cite{idt,valanarasu2022transweather}, and task-agnostic priors~\cite{liu2022tape} to enhance the network's capability across various degradations. Despite their promising performance, the adaptability and generalizability of all-in-one models to real-world scenarios, characterized by intricate and diverse degradations, remain challenging.
+
+Large-scale text-to-image diffusion models, like Stable Diffusion (SD)~\cite{ldm}, succeed in high-quality and diverse image synthesis. This motivates our exploration of leveraging SD for all-in-one image restoration, capitalizing on its HQ image priors to enhance reconstruction quality and generalization across realistic scenarios. However, direct application of SD faces challenges in adaptiveness, generalizability, and fidelity for all-in-one image restoration. SD's proficiency in HQ image synthesis relies on intricately designed prompts, complicating the crafting of suitable prompts for complex, authentic degradations, thereby limiting adaptability and generalization. Furthermore, as a latent diffusion model, SD adopts a VAE architecture with high compression, risking the loss of fine details in restored images and consequently restricting the fidelity of IR~\cite{dai2023emu,zhu2023designing}.
+
+In this paper, we propose MPerceiver, a multimodal prompt learning approach harnessing the generative priors of Stable Diffusion to enhance adaptiveness, generalizability and fidelity of all-in-one image restoration. MPerceiver comprises two modules: a dual-branch module learning textual and visual prompts for diverse degradations, and a detail refinement module (DRM) to boost restoration fidelity. For textual prompt learning, it predicts HQ text embeddings as SD's text condition using CLIP image features from LQ inputs. A cross-modal adapter (CM-Adapter) converts CLIP image embeddings into degradation-aware text vectors, dynamically integrated into HQ textual embeddings based on degradation probabilities estimated by a lightweight predictor. For visual prompts, MPerceiver acquires multiscale detail representations that are crucial for image restoration. An image restoration adapter (IR-Adapter) decomposes VAE image embeddings into multiscale features, dynamically modulated by visual prompts. This dynamic integration in both textual and visual prompt learning enables adaptation to diverse degradations and improves generalization by treating training-unseen degradations as a combination of those in the training set. Additionally, a detail refinement module (DRM) extracts degradation-aware LQ features from the VAE encoder, fused into the decoder through direct encoder-to-decoder information transformation, further enhancing fidelity.
+
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/psnr.pdf}
+    \caption{PSNR comparison with state-of-the-art all-in-one and task-specific methods across 10 tasks. Best viewed in color.}
+    \label{fig:psnr}
+\end{figure}
+
+To demonstrate the superiority of MPerceiver as an all-in-one approach, it's trained on 9 IR tasks covering both synthetic and real settings.  As shown in Fig.~\ref{fig:psnr}, our method outperforms all compared all-in-one methods and achieves even better results than state-of-the-art task-specific methods in many tasks. Besides, MPerceiver can even handle challenging mixed degradations that may occur in real-world scenarios (Fig.~\ref{fig:15task} \uppercase\expandafter{\romannumeral1}).
+Furthermore, after multitask pre-training, MPerceiver has learned general representations in low-level vision. Comprehensive experiments show that pre-trained MPerceiver exhibits favorable zero-shot and few-shot capabilities in 6 unseen tasks (Fig.~\ref{fig:15task} \uppercase\expandafter{\romannumeral2}, \uppercase\expandafter{\romannumeral3}). 
+
+The main contributions can be summarized as follows:
+\begin{itemize}
+    \item We propose a novel multimodal prompt learning approach to fully exploit the generative priors of Stable Diffusion for better adaptiveness, generalizability and fidelity of all-in-one image restoration.
+    \item We propose a dual-branch module with CM-Adapter and IR-Adapter to learn holistic and multiscale detail representations, respectively. The dynamic integration mechanism for textual and visual prompts enables adaptation to diverse, unknown degradations.
+    \item Extensive experiments on 16 IR tasks (all-in-one, zero-shot, few-shot) validate MPerceiver's superiority in achieving high adaptiveness, robust generalizability, and superior fidelity when addressing intricate degradations.
+\end{itemize}
+\label{sec:intro}
+
+
+
+Related Work
+\subsection{Image Restoration}
+Image restoration (IR) methods for known degradations~\cite{swinir,mprnet,mou2022deep,chen2021pre,restormer,uformer,nafnet,li2023efficient,zhao2023comprehensive,zhang2022accurate,zhou2023msra,zhou2024ristra,ai2023sosr} have been widely explored, while all-in-one approaches are still in the exploratory stage~\cite{as2020,chen2022learning,liu2022tape,park2023all}. 
+TransWeather~\cite{valanarasu2022transweather} designs a transformer-based network with learnable weather type queries to tackle different types of weather. AirNet~\cite{airnet} recovers various degraded images through a contrastive-based degraded encoder. Zhu~\etal~\cite{zhu2023learning} propose a strategy for investigating both weather-general and weather-specific features. IDR~\cite{zhang2023ingredient} employs an ingredients-oriented paradigm to investigate the correlation among various restoration tasks. 
+Most of the existing methods are capable of handling a limited range of degradation types and cannot cover complex real-world scenarios.
+
+Since diffusion models have shown a strong capability to generate realistic images~\cite{ddpm,song2020score,beatgan,ramesh2022hierarchical,saharia2022photorealistic}, several diffusion-based methods have been proposed for image restoration~\cite{survey_diff}. These methods can primarily be categorized into zero-shot and supervised learning-based approaches. Zero-shot methods~\cite{DDRM,mainfold,DDNM,chung2022diffusion,GDP,zhu2023denoising,song2022pseudoinverse} leverage pre-trained diffusion models as generative priors, seamlessly incorporating degraded images as conditions into the sampling process. Supervised learning-based methods~\cite{sr3,whang2022deblurring,weatherdiff,saharia2022palette,choi2021ilvr,li2022srdiff} train a conditional diffusion model from scratch. Recently, several approaches~\cite{stablesr,diffbir} have endeavored to employ pre-trained text-to-image diffusion models for blind image super-resolution.  
+\subsection{Prompt Learning for Vision Tasks}
+Inspired by the success of prompt learning in NLP~\cite{brown2020language,gao2020making,li2021prefix,liu2021p}, the computer vision community has begun to explore its applicability to vision~\cite{jia2022visual,wang2022learning,huang2023diversity,liu2023explicit} and vision-language models~\cite{coop,cocoop,rao2022denseclip,feng2023diverse}. CoOp~\cite{coop} learns a set of task-specific textual prompts to fine-tune CLIP~\cite{clip} for downstream image recognition. CoCoOP~\cite{cocoop} refines the generalizability of CoOp by learning a lightweight neural network to generate image-conditional dynamic prompts. VPT~\cite{jia2022visual} learns a set of visual prompts to finetune transformer-based vision models for downstream recognition tasks. 
+Compared to concurrent works that introduce prompt learning into IR~\cite{promptir,prores,daclip,liu2023unifying}, ours is the first to explore multimodal prompt design in low-level vision.
+
+
+
+Method
+\begin{figure*}[tb] 
+\centering
+    \includegraphics[width=1.0\textwidth]{figs/arch.pdf}
+    \caption{Illustration of MPerceiver's dual-branch module with multimodal prompts. \textit{Textual Branch}: CLIP image embeddings are transformed into text vectors through cross-modal inversion, which are then used alongside textual prompts as holistic representations for SD. \textit{Visual Branch}: IR-Adapter decomposes VAE image embeddings into multi-scale features, which are then dynamically modulated by visual prompts to provide detail guidance for SD adaptively.} \label{fig:arch}
+\end{figure*}
+We propose MPerceiver for all-in-one image restoration in complex real-world scenarios. First, we review the latent diffusion models~\cite{ldm} in Sec.~\ref{sec:preliminary}. To effectively leverage priors in SD, we propose a dual-branch module with the cross-modal adapter (CM-Adapter) and image restoration adapter (IR-Adapter) and encode degradation-dedicated information into multimodal prompts, which is illustrated in Sec.~\ref{sec:dual}. Finally, we introduce a detail refinement module (DRM) to enhance the restoration fidelity in Sec.~\ref{sec:drm}. 
+
+\subsection{Preliminary: Latent Diffusion Models}
+\label{sec:preliminary}
+Our method is based on Stable Diffusion (SD)~\cite{ldm}, a  text-to-image diffusion model that conducts the diffusion-denoising process in the latent space. SD utilizes a pre-trained VAE to encode images into latent embeddings $z_0$ and then trains the denoising U-Net $\epsilon_\theta$ in the latent space, which can be formulated as 
+\begin{equation}
+\label{eq:ldm}
+\mathcal{L}_{\text{LDM}}=\mathbb{E}_{z_0,c,t,\epsilon}[|| \epsilon-\epsilon_\theta(\sqrt{\bar{\alpha}_t}z_0+\sqrt[]{1-\bar{\alpha }_t}\epsilon ,c,t)||^2_2],
+\end{equation}
+where $\epsilon \in \mathcal{N}(0,\mathbf{{I}} )$ is the ground truth noise map at time step $t$. $c$ represents the conditional information. $\bar{\alpha}_t$ is the diffusion coefficient in DDPM~\cite{ddpm}.
+
+\subsection{Dual-branch with Multimodal Prompts}
+\label{sec:dual}
+As shown in Fig.~\ref{fig:arch}, the proposed MPerceiver adopts a dual-branch (\ie, textual branch and visual branch) module with textual and visual prompts in their corresponding branch. Motivated by CLIP's powerful representation capability for images~\cite{distill2021multimodal,hernandez2021natural,materzynska2022disentangling}, we utilize the pre-trained image encoder $\mathcal{E}_{clip}^{img}$ to extract features rich in degradation-aware information. The degraded features $e_{clip}^{img}$ will be fed into a lightweight trainable degradation predictor to provide predictions $P \in \mathbb{R}^N$ ($N$ denotes the number of degradations), which will serve as dynamic weights to adjust the integration process of multimodal prompts. The degradation predictor is optimized through focal loss~\cite{focalloss}.
+
+\noindent \textbf{Textual branch with CM-Adapter.}
+To effectively leverage the powerful text-to-image generation capability of SD, we aim to obtain the text description of desired HQ images. As shown in Fig.~\ref{fig:arch}, we propose a cross-modal adapter (CM-Adapter) with the cross-modal inversion mechanism to transform CLIP LQ image embeddings $e_{clip}^{img}$ to desired HQ text embeddings $e_{clip}^{txt}$.
+
+Specifically, LQ image embeddings $e_{clip}^{img}$ will first go through a small network for degradation-agnostic mapping. Then we employ a series of parallel self-attention~\cite{attention} layers as the degradation-dedicated mapping  to obtain one set of degradation-dedicated cross-modal embeddings (i.e., text vectors) $e^{cm}=\left \{ e^{cm}_1,\cdots, e^{cm}_N\right  \}$, where $e^{cm}_i$ corresponds to a specific type of degradation. The whole process of cross-modal inversion can be formulated as:
+\begin{equation}
+    e^{cm}_i=\mathrm{Attn}_i(\mathrm{LN}(\mathrm{FC}(e^{img}_{clip}))),i\in\{1,\cdots ,N\},
+\end{equation}
+where $\mathrm{Attn}_i$ is the self-attention layer for the $i$-th degradation, and $N$ is the number of degradations. 
+
+Furthermore, we establish a textual prompt (TP) pool $T = \{T_1,\cdots,T_N\}\in \mathbb{R}^{N\times L\times C_{clip}}$ to encapsulate degradation-dedicated information, where $L$ represents the number of tokens, and $C_{clip}$ is the embedding dimension of CLIP. Serving as learnable parameters, $T$ collaborates with cross-modal embeddings $e^{cm}$ to constitute a comprehensive set of SD text prompts, functioning as representations aware of image degradations. Given degradation probabilities $P=\left \{ p_1,\cdots, p_N\right  \}\in \mathbb{R}^N$ estimated by the degradation predictor, we dynamically integrate the set of text prompts to obtain the High-Quality (HQ) text embeddings:
+\begin{equation}
+    \label{eq:cm-adapter}
+    e_{clip}^{txt}= \sum_{i=1}^{N}p_i\mathcal{E}_{clip}^{txt}(\{e^{cm}_i,T_i\}).
+\end{equation} 
+where $\mathcal{E}_{clip}^{txt}$ denotes the CLIP text encoder. Finally, we integrate   $e_{clip}^{txt}$ into SD through a frozen cross-attention layer to provide a holistic representation.
+
+\noindent \textbf{Visual branch with IR-Adapter.}
+The textual branch can provide a holistic representation for SD, but it lacks detailed information that is crucial for restoration fidelity.  A visual branch is introduced to extract multi-scale detail representations and complement with the textual branch. As shown in Fig.~\ref{fig:arch}, we first project degraded images into latent embeddings $e_{vae}\in \mathbb{R}^{H\times W\times 4}$ through the VAE encoder of SD. 
+Then we propose an image restoration adapter (IR-Adapter) to acquire multi-scale detail features as guidance for SD. We utilize a feature extractor to decompose $e_{vae}$ into multi-scale features $f_{vae}=\{f_{vae}^1,f_{vae}^2,f_{vae}^3,f_{vae}^4\}$. In each scale, we employ a residual block (RB) and a self-attention layer to extract features. Similar to the textual prompt pool, we construct 4 visual prompt pools $V=\{V^k,|k\in\{1,2,3,4\}\}$ for each scale, where $V^k \in\mathbb{R}^{N\times M \times C_k}$, $M$ is a hyper-parameter specifying the capacity of visual prompt (VP) pools and $C_k$ is the channel dimension of the $k$-th scale.  As shown in Fig.~\ref{fig:arch}, we propose a visual prompt (VP) modulator to dynamically integrate the degradation-aware information provided by visual prompts into multi-scale features,  formulated as:
+\begin{equation}
+    \label{eq:ir-adapter}
+    f^k_{vae}=\mathrm{RB}_k(f^k_{vae}+\sum_{i=1}^Np_i\mathrm{MHCA}_k(f^k_{vae},V^k_i,V^k_i)),
+\end{equation}
+where $\mathrm{MHCA}_k(q,k,v)$ is the multi-head cross-attention layer of the $k$-th scale. Then the degradation-aware multi-scale features will modulate the features in the U-Net with the operation of AdaIN~\cite{huang2017arbitrary},  formulated as:
+\begin{equation}
+    f_{out} =\gamma (f_{vae})\odot \mathrm{Norm}(f_{in})+\beta(f_{vae}),
+\end{equation}
+where $\odot$ denotes the element-wise multiplication, $f_{in}$ is the original feature in the U-Net, $f_{out}$ is the feature after modulation, $\gamma(\cdot)$ and $\beta(\cdot)$ are implemented by two convolutional layers. The dual-branch module is optimized directly using the latent diffusion loss in Eq.~(\ref{eq:ldm}). 
+
+Note that the dynamic integration mechanisms in Eq.~(\ref{eq:cm-adapter}) and Eq.~(\ref{eq:ir-adapter}) significantly augment the adaptiveness and generalizability of MPerceiver when confronting diverse degradations. In the case of degradations present during training, the model can discern their types and select corresponding textual and visual prompts for Stable Diffusion (SD). For those unseen during training (especially for mixed ones that often occur in real-world scenarios), it treats them as a probabilistic combination of known training degradations.
+
+\subsection{Detail Refinement Module}
+\label{sec:drm}
+While the proposed dual-branch module empowers Stable Diffusion (SD) with a robust ability to identify and eliminate degradations in images, the generated images may exhibit a tendency to lose details of small objects. This effect is attributed to the high compression rate of the autoencoder employed by SD, as discussed in previous works~\cite{dai2023emu,zhu2023designing}. For instance, in Fig.~\ref{fig:drm_ab} (b), although the degradations in the images have been largely addressed, noticeable artifacts become apparent, particularly affecting small text.
+
+To address this concern, we introduce a Detail Refinement Module (DRM) aimed at providing supplementary information to assist the SD VAE decoder in the image reconstruction process. As depicted in Fig.~\ref{fig:drm}, DRM functions as a plug-in module, enabling direct encoder-to-decoder information transformation through a skip connection. Following modulation by the visual prompt (VP) modulator, Low-Quality (LQ) features $f_{lq}$ are concatenated with the original decoder features $f_{in}$. Subsequently, a sequence of ResBlocks~\cite{nafnet} and SwinBlocks~\cite{swinir} is employed to extract auxiliary features, enhancing detail reconstruction before the residual connection.
+The training of  DRM involves a combination of reconstruction (L1) loss, color loss~\cite{wang2019underexposed}, perceptual loss~\cite{johnson2016perceptual}, and adversarial loss~\cite{goodfellow2014generative}. %The respective weights assigned to each loss are 1, 0.1, 0.1, and 0.005.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/DRM.pdf}
+    \caption{Illustration of the detail refinement module (DRM). For simplicity, visual prompts and degradation predictions are omitted as input to the visual prompt (VP) modulator. Apart from the DRM which is trainable, the other modules are all frozen.}
+    \label{fig:drm}
+\end{figure}
+\begin{figure}[t]
+\centering
+\hspace{-1.7mm}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/rd_in.png}
+\end{subfigure}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/rd_wo.png}
+\end{subfigure}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/rd_w.png}
+\end{subfigure}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/mo_in.png}
+   \caption{Input}
+\end{subfigure}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/mo_wo.png}
+   \caption{w/o DRM}
+\end{subfigure}
+\begin{subfigure}[b]{0.32\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/compare_drm/mo_w.png}
+   \caption{w/ DRM}
+\end{subfigure}
+\caption{Effect of the DRM on raindrop removal (top row from~\cite{raindrop}) and motion deblurring (bottom row from~\cite{gopro}). The proposed DRM significantly improves the fidelity of the results.}
+\label{fig:drm_ab}
+\end{figure}
+
+
+Experiments
+\input{tables/table_9task}
+\input{tables/table_mid}
+\input{tables/table_real}
+\input{tables/table_zs_udc}
+\input{tables/table_zs_uir}
+\input{tables/table_fs_jpeg}
+\input{tables/table_fs_mosaick}
+\input{tables/table_fs_demoire}
+\subsection{Experimental Setup}
+\textbf{Settings.}
+\textbf{(1) All-in-one:} We train a unified model to solve 10 IR tasks, including deraining, dehazing, desnowing, raindrop removal, low-light enhancement, motion deblurring, defocus deblurring, gaussian denoising, real denoising and challenging mixed degradations removal.  \textbf{(2) Zero-shot:} We use the all-in-one pre-trained model to directly solve training-unseen tasks, including under-display camera IR (POLED/TOLED), underwater IR. \textbf{(3) Few-shot:} We fine-tune the all-in-one pre-trained model using a small amount of data (about 3\%-5\% of the data used by task-specific methods) and adapt it to new tasks, including JPEG compression artifact removal, demosaicking, demoireing.
+
+\noindent \textbf{Datasets and Metrics.}
+For \textbf{setting(1)}, a combination of various image degradation datasets is used to evaluate our method, \ie, Rain1400~\cite{rain1400}, Outdoor-Rain~\cite{outdoor}, SSID~\cite{ssid} and LHP~\cite{lhp} for deraining; RESIDE~\cite{reside}, NH-HAZE~\cite{nh} and Dense-Haze~\cite{dense} for dehazing; Snow100K~\cite{snow100k} and RealSnow~\cite{zhu2023learning} for desnowing; RainDrop~\cite{raindrop} and RainDS~\cite{rainds} for raindrop removal; LOL-v2~\cite{lolv2} for low-light enhancement; CBSD68, CBSD400~\cite{bsd}, Urban100~\cite{urban100}, Kodak24~\cite{franzen1999kodak}, McMaster~\cite{zhang2011McMaster}, WED~\cite{wed} and DF2K for gaussian denoising; SIDD~\cite{sidd} for real image denoising; GoPro~\cite{gopro} and RealBlur~\cite{realblur} for motion deblurring; and DPDD~\cite{dpdd} for defocus deblurring. Considering real-world LQ images may contain more than just a single degradation, we construct a challenging mixed degradation benchmark named MID6, in which the LQ images contain mixed degradations (\eg, low-light\&noise\&blur, rain\&raindrop\&noise; See Fig.~\ref{fig:visual_result_mid}). For \textbf{setting(2)}, we utilize TOLED~\cite{udc} and POLED~\cite{udc} for under-display camera (UDC) IR. Following~\cite{huang2023contrastive}, 90 pairs from UIEB~\cite{uieb} and 110 pairs from UWCNN~\cite{Anwar2019UWCNN} are used for underwater IR. For \textbf{setting(3)}, we use the first 100 images of DIV2K~\cite{DIV2K} to fine-tune our method for JPEG compression artifact removal and demosaicking. 5\% of the data in TIP2018~\cite{tip18} training set is used to fine-tune our method for demoireing.
+
+We adopt PSNR and SSIM as the distortion metrics, LPIPS~\cite{lpips} and FID~\cite{fid} as the perceptual metrics, NIQE~\cite{niqe} and BRISQUE~\cite{brisque} as no-reference metrics.
+
+\noindent\textbf{Implementation Details.} 
+We use the AdamW optimizer ($\beta_1=0.9$, $\beta_2=0.999$) with the initial learning rate $1e^{-4}$ gradually reduced to $1e^{-6}$ with the cosine annealing~\cite{loshchilov2016sgdr} schedule to train our model. The training runs for 500 epochs on 8 NVIDIA A100 GPUs. We adopt DDIM~\cite{ddim} as our sampling strategy (50 steps). Our model is based on SD 2.1.
+
+\subsection{Comparison with state-of-the-art methods}
+\textbf{All-in-one.} We conduct comparisons between our method and SOTA all-in-one methods as well as task-specific methods. To ensure a fair evaluation, we train all-in-one models from scratch employing our training strategy. Given that Restormer~\cite{restormer} and NAFNet~\cite{nafnet} serve as strong general IR baselines, we additionally train both a Restormer and a NAFNet model within the all-in-one setting.
+Table~\ref{tab:compare_9task} illustrates comprehensive performance comparisons with SOTA methods across 9 tasks. Our method consistently outperforms the compared all-in-one methods on all datasets. Notably, as an all-in-one approach, our method even achieves superior results compared to other task-specific methods in many tasks. Additionally, Table~\ref{tab:compare_mid} presents a comparison on the proposed MID6 benchmark, where our method demonstrates significant advantages in addressing challenging mixed-degraded images. Visual results of some intricate cases from MID6 are presented in Fig.~\ref{fig:visual_result_mid}, showcasing the enhanced effectiveness of our method in handling mixed degradations. Recognizing the significance of real-world IR challenges,  we present more results on real-world datasets in Table~\ref{tab:compare_real}. Fig.~\ref{fig:visual_result} offers visual comparisons across various tasks in real-world scenarios, showcasing the superiority of our method in addressing complex authentic degradations.
+\input{figs/visual_results/visual}
+\input{figs/visual_results/visual_mid6}
+\begin{figure}[t]
+\centering
+\begin{subfigure}[b]{0.48\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/tsne_vp.pdf}
+   \captionsetup{font=tiny}
+      \caption{t-SNE from visual prompt}
+\end{subfigure}
+\begin{subfigure}[b]{0.48\linewidth}
+\centering
+   \includegraphics[width=1\linewidth]{figs/tsne_tp.pdf}
+   \captionsetup{font=tiny}
+    \caption{t-SNE from CLIP textual embeddings}
+
+\end{subfigure}
+\caption{t-SNE visualizations of visual prompt $V^1$ and CLIP textual embeddings $\mathcal{E}_{clip}^{txt}(T)$.}
+\label{fig:tsne}
+\end{figure}
+
+\input{tables/table_ablation}
+
+\noindent\textbf{Zero-shot.} 
+As shown in Tables~\ref{tab:zs_udc}\&\ref{tab:zs_uir}, we evaluate the performance of each all-in-one method on training-unseen tasks. MPerceiver outperforms compared methods in all metrics, demonstrating the generalizability of our approach.
+\noindent\textbf{Few-shot.} 
+As depicted in Tables~\ref{tab:compare_fs_jpeg}\&\ref{table:fs_mosaick}\&\ref{tab:compare_fs_moire}, we fine-tune the all-in-one methods with limited data to tailor them for new tasks. Notably, our method achieves comparable or superior results compared to task-specific methods trained with substantial amounts of data. This underscores the efficacy of MPerceiver, demonstrating that, post multitask pretraining, it has acquired general representations in low-level vision, allowing for cost-effective adaptation to new tasks.
+
+\subsection{Ablation Study}
+We perform ablation studies to examine the role of each component in MPerceiver. In Table~\ref{tab:ablation}, we initiate with SD and systematically incorporate or exclude the remaining modules of MPerceiver, including the visual branch, visual prompt (VP) pool, textual branch, textual prompt (TP) pool, and detail refinement module (DRM). The results exhibit a gradual improvement upon the addition of each component and a corresponding decline upon its removal, underscoring the effectiveness of each module.
+Besides, Fig.~\ref{fig:tsne} visualizes the t-SNE statistics of visual prompt $V^1$ and CLIP textual embeddings $\mathcal{E}_{clip}^{txt}(T)$. It demonstrates that our multimodal prompt learning can effectively enable the network to distinguish different degradations.
+
+
+Conclusion
+This paper introduces MPerceiver, a multimodal prompt learning approach utilizing Stable Diffusion priors for enhanced adaptiveness, generalizability, and fidelity in all-in-one image restoration. The novel dual-branch module, comprising the cross-modal adapter and image restoration adapter, learns holistic and multiscale detail representations. The adaptability of textual and visual prompts is dynamically tuned based on degradation predictions, enabling effective adaptation to diverse unknown degradations. Additionally, a plug-in detail refinement module enhances restoration fidelity through direct encoder-to-decoder information transformation. Across 16 image restoration tasks, including all-in-one, zero-shot, and few-shot scenarios, MPerceiver demonstrates superior adaptiveness, generalizability, and fidelity.
+
+
+\noindent\textbf{Acknowledgements:} This research is partially funded by Youth Innovation Promotion Association CAS (Grant No. 2022132), Beijing Nova Program (20230484276), National Natural Science Foundation of China (Grant No. U21B2045, U20A20223) and CAAI Huawei MindSpore Open Fund.
+
+{    \small
+    
+
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,282 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Recent years have witness the boosting of convolutional neural networks (CNNs) on several computer vision (CV) applications, \textit{e.g.}, image recognition~\cite{krizhevsky2012imagenet,simonyan2014very,he2016deep,guo2022cmt,han2020ghostnet}, object detection~\cite{ren2015faster,redmon2016you}, semantic segmentation~\cite{noh2015learning} and low-level vision~\cite{li2019feedback}. However, the success of CNN models highly depends on their huge computational cost and massive parameters, which are not suitable to be directly applied to edge devices that have limited computational resources such as mobile phones, smart watches.
+
+There are several model compression and acceleration methods to reduce the number of parameters and FLOPs of the original CNNs and derive a portable model. For instance, knowledge distillation~\cite{hinton2015distilling,xu2019positive,xu2020kernel} aims to train a small student network with the help of a cumbersome teacher network. Filter pruning~\cite{luo2017thinet,he2018soft,tang2020scop,tang2021manifold} methods sort the weights of the network based on their importance and throw away those who have negligible influence on the final performance. Model quantization~\cite{chmiel2020robust,zhou2018adaptive,niemulti} methods reduce the original 32-bit floating point weights and activations into lower bits and tensor decomposition~\cite{bacciu2020tensor,wang2022tensor} methods express a large weight tensor as a sequence of elementary operations on a series of simpler tensors.
+Among them, binary CNN~\cite{zhou2016dorefa,rastegari2016xnor,han2020training,tu2022adabin} is an extreme case of model quantization that uses only 1-bit for weights and activations. Compared to the original convolutional operation, binarized one has 64$\times$ less FLOPs and 32$\times$ less memory consumption.
+
+Note that all of the existing binarization methods are applied on the convolutional operations in CNN models. However, multi-layer perceptron (MLP) model also shows its potential on CV tasks~\cite{tolstikhin2021mlp,chen2021cyclemlp,guo2022hire} and matrix multiplication is computational friendly to GPUs and has advantage on inference time in reality. Compared to traditional CNNs that utilize convolutional operation with various kernel sizes, FC layers in MLP models can be treated as convolutions with kernel size $1\times1$, which suffer more from limited representation ability compared to the convolutional operations with larger kernel size when being binarized. In fact, directly binarizing MLP models with the existing methods show more severe performance degradation compared to the CNN models. For example, the Top-1 classification accuracy on ImageNet will drop by more than 23\% when binarizing CycleMLP~\cite{chen2021cyclemlp} and Wave-MLP~\cite{tang2021image} with the method proposed in Dorefa-Net~\cite{zhou2016dorefa} while the performance drop is only 17\% for ResNet-18~\cite{he2016deep} using $3\times3$ kernel size for most of the convolutional layers and 13\% for AlexNet~\cite{krizhevsky2012imagenet} with larger kernel size ($11\times11$ and $5\times5$).
+
+\begin{wrapfigure}{r}{0.55\textwidth}
+	\begin{minipage}{0.55\textwidth}
+		\centering
+		\includegraphics[width=1\columnwidth]{figv2/acc_ops.pdf}%
+		\caption{Accuracy vs. OPs of different binary models on ImageNet-1k dataset.}
+		\label{fig:acc}
+	\end{minipage}
+\end{wrapfigure}
+
+Thus, in order to alleviate the problem mentioned above, we introduce a novel binary block for MLP model that contains multiple branches to merge a series of outputs from the same stage of the network. Besides, a universal shortcut connection (Uni-shortcut) is designed to better transfer the knowledge from previous layers to the current layer. Compared to the original shortcut connection, the proposed Uni-shortcut can merge two features with different shapes. By fusing the outputs of multiple layers derived from the same or different stages of the network, we show that the representation power of the binary MLP is drastically increased. The downsampling layers are also modified to reduce the computational complexity while maintaining the classification performance. Experimental results on ImageNet-1k dataset demonstrate that by using the proposed method, we achieve state-of-the-art performance compared to other binary CNN models, as shown in Fig.~\ref{fig:acc}.
+
+We summarize our contributions for learning 1-bit vision MLPs as follows:
+
+\begin{itemize}
+\item{This paper points out the main difficulty of binarizing MLP models is that the representation ability of FC layers is worse than the convolutional layers in CNN models with kernel size larger than $1\times1$.}
+\item{We introduce a mulit-branch binary MLP block (MBB block) with Uni-shortcut operation to unlock the representation power of binary MLP models and also modify the architecture of downsampling layer to reduce the computational complexity.} 
+\item{The experimental results on ImageNet-1k dataset show that the proposed BiMLP improves the top-1 accuracy by 1.3\% with 12.1\% less OPs compared to the state-of-the-art ReActNet, which indicates the effectiveness of the proposed BiMLP models.}
+\end{itemize}
+
+
+
+Preliminaries
+\subsection{Binarization in CNN models}
+Given the weights $W\in \mathbb R^{c_o\times c_i \times k\times k}$ where $c_i$ and $c_o$ are the number of input and output channels and $k$ is the kernel size, and also the activation $A\in \mathbb R^{c_i \times h\times w}$ where $h$ and $w$ are the height and width of the input feature, a common way of binarizing the weights and activations in CNN models is to apply sign function on the 32-bit floating point inputs, \textit{i.e.},
+\begin{align}
+W_b = sign(W), ~~~ A_b = sign(A),
+\label{eq:bi}
+\end{align}
+in which $sign(\cdot)$ is an element-wise operation that outputs +1 when the input is positive and -1 otherwise. Given the binarized weights and activations, the convolutional operation can be realized with binary operations only, ~\textit{i.e.}:
+\begin{equation}
+Y = W_b \odot A_b,
+\end{equation}
+in which $\odot$ represents binary convolutional operation that can be implemented with XNOR and POPCOUNT. 
+
+Note that the gradient of aforementioned sign function is zero almost everywhere and backward propagation is unable to be applied during training. Thus, the back-propagation of sign function follows the straight through estimator (STE) rule:
+\begin{equation}
+\frac{\partial \mathcal L}{\partial W} = {Clip}(\frac{\partial \mathcal L}{\partial W_b},-1,1),
+\label{eq:ste}
+\end{equation}
+where $\mathcal L$ is the loss function corresponding to the specific task, \textit{e.g.}, cross-entropy loss for image classification. The $Clip(\cdot, -1, 1)$ function clips the elements of the gradient into range $[-1, 1]$.
+
+Most of the existing binary CNN methods focus on improving the forward sign function and backward STE rule. For example, XNOR-Net~\cite{rastegari2016xnor} introduces channel-wise scale factors on the pure sign function and improves the performance of binary CNN. Dorefa-Net~\cite{zhou2016dorefa} uses only a single scale factor to achieve similar performance. ReActNet~\cite{liu2020reactnet} proposes RSign and RPreLU function for binary CNNs. DSQ~\cite{gong2019differentiable} replaces the STE rule and uses the gradient of tanh function to replace the gradient of sign function while BNN+~\cite{darabi2018bnn} introduces SignSwish function. Methods mentioned above are all applied on CNN models and directly transfer them to MLP models results in severe performance degradation.
+
+\subsection{Vision MLP Models}
+Vision MLP models take patches of image (tokens) as input, and stack a sequence of channel-FC layers and spatial-FC layers for image recognition. Specifically, given the input $X\in\mathbb R^{n\times d}$ in which $n$ is the number of tokens and $d$ is the number of channels in each token, the channel-FC layer fuses the channels in a single token and generate $d'$ channels, \textit{i.e.},
+\begin{equation}
+\text{channel-FC}(X, W_c) = X\cdot W_c,
+\end{equation}
+where $W_c\in\mathbb R^{d\times d'}$ is the parameter matrix of the channel-FC layer, and $\cdot$ represents the matrix multiplication operation. Channel-FC layer only aggregates information from different input channels, while lacking the communications between tokens. Thus, the spatial-FC layer is also introduced in MLP models~\cite{tolstikhin2021mlp}, \textit{i.e.},
+\begin{equation}
+\text{spatial-FC}(X, W_s) = W_s^\top\cdot X,
+\end{equation}
+where $W_s\in\mathbb R^{n\times n'}$ is the parameter of spatial-FC layer. In general, MLP models usually set $d=d'$ and $n=n'$ to pursuit efficiency on both feature representation and computation of the entire network. 
+
+The spatial-FC layer mentioned above cannot deal with images with diverse shapes, thus is unable to be applied on downstream tasks such as image detection and image segmentation. In order to solve the problem, Cycle-MLP~\cite{chen2021cyclemlp} retains the position of each token and introduces Cycle-FC layer to enlarge the receptive field of MLP to cope with downstream tasks while maintaining the computational complexity. Specifically, given the input feature $Z\in\mathbb R^{H\times W\times C_{in}}$, the output of Cycle-FC layer is:
+\begin{equation}
+\text{Cycle-FC}(Z)_{i,j,:} = \sum_{c=0}^{C_in} Z_{i+\delta_i(c),j+\delta_j(c),c}\cdot W_{c,:}^{cycle};
+\end{equation}
+in which $W^{cycle}\in\mathbb R^{C_{in}\times C_{out}}$ is the parameter matrix of the Cycle-FC layer, and $\delta_i(c)$ and $\delta_j(c)$ are defined as:
+\begin{equation}
+\delta_i(c) = (c \mod S_H)-1, ~~~~~~ \delta_j(c) = (\lfloor \frac{c}{S_H} \rfloor \mod S_W)-1,
+\end{equation}
+where $S_H$ and $S_W$ are predefined receptive fields. Besides Cycle-MLP, Wave-MLP~\cite{tang2021image} represents token as a wave function with amplitude and phase and proposes Wave-FC layer to solve the above problem. AS-MLP~\cite{lian2021mlp} avoids the restriction of fixed input size by axially shifting channels of the feature map, and is able to obtain information flow from different axial directions.
+
+Compared to the convolutional operation in CNN and self-attention operation in Transformer, matrix multiplication in MLP is computational friendly to GPUs and has specific advantage on inference time in reality. Benefits from its simple architecture, MLP models can be generalized to various hardware. 
+However, the cumbersome MLP model with a large number of parameters and FLOPs limits its ability to apply to portable devices, which means it is essential to derive a compact MLP model, \textit{e.g.} binary vision MLPs. 
+
+
+
+Binary Vision MLPs
+In this section, we first analyze the difficulty of binarizing vision MLP through comparing the representation ability of binary features in FC layers and convolutional layers. We then propose a novel binary architecture for vision MLP, which fuses the outputs from the same layer with multi-branch MLP block and those from different layers with a universal shortcut connection to strengthen the representation ability of MLP. 
+
+\subsection{Difficulty of Binarizing Vision MLP}
+Given the input feature $F\in\mathbb R^{C_{in}\times H\times W}$ and the convolutional kernel $K\in\mathbb R^{C_{out}\times C_{in}\times K_h\times K_w}$ in which $K_h$ and $K_w$ are the height and width of the kernel, respectively. The \textbf{computational complexity} of the convolutional operation is:
+\begin{equation}
+\mathcal O(C_{in}\times C_{out}\times K_h\times K_w\times H\times W).
+\end{equation}
+
+After binarizing the weights and activations, the elements of the output feature map $Y$ is derived from the following equation:
+\begin{equation}
+Y(o, i, j) = \sum_{c=1}^{C_{in}}\sum_{d_x=-\lfloor\frac{K_w}{2}\rfloor}^{\lfloor\frac{K_w}{2}\rfloor}\sum_{d_y=-\lfloor\frac{K_h}{2}\rfloor}^{\lfloor\frac{K_h}{2}\rfloor} F^b(c, i+d_y, j+d_x) \times K^b(o, c, d_y+\frac{K_h}{2}, d_x+\frac{K_w}{2}),
+\label{eq:conv}
+\end{equation}
+in which $K^b$ and $F^b$ are binarized kernel and input feature using Eq.~\ref{eq:bi} whose elements are selected from $\{+1, -1\}$. According to Eq.~\ref{eq:conv}, we can easily conclude that each element in $Y$ is chosen from $N+1$ different values from the set $S_b=\{-N, -N+2, ... , N-2, N\}$, in which $N=C_{in}\cdot K_h\cdot K_w$. Specifically, we denote the number $N$ as the \textbf{representation ability} of the binary FC layer.
+
+In traditional CNN models such as ResNet~\cite{he2016deep} and VGGNet~\cite{simonyan2014very}, convolutional operation with kernel size $3\times3$ occupies the network. Efficient-Net~\cite{tan2019efficientnet} uses convolution with kernel size $3\times3$ and $5\times5$, while the recently proposed RepLKNet~\cite{ding2022scaling} expands the kernel size to $31\times31$. Different from the CNN models mentioned above, FC layers in MLP model can be treated as convolutional operation with kernel size $1\times1$. 
+
+Therefore, compared to the convolutional layer with kernel size $k\times k$, FC layer with the same number of input channels and output channels has $1/k^2$ computational complexity and $1/k^2$ representation ability after being binarized. Note that assuming CNN models and MLP models have the same number of input channels and output channels is reasonable. For example, Wave-MLP-S~\cite{tang2021image} with $30M$ parameters and $4.5G$ FLOPs has four stages with base channel 64-128-320-512, while ResNet-50 with $25.5M$ parameters and $4.1G$ FLOPs has four stages with base channel 64-128-256-512 which are roughly the same.
+
+In order to achieve the same representation ability as convolutional layer, the number of input channels of FC layer must be multiplied by $k^2$. Similarly, the number of output channels should also be scaled up in order to maintain the representation ability of the next FC layer. Hence, the computational complexity is $k^2$ times compared to the convolutional layer with kernel size $k\times k$, which drastically reduce the advantage of binary neural network. To this end, we design a novel binary architecture for vision models (BiMLP) to enhance the representation ability while maintaining compact model complexity. A series of specific design are proposed to achieve this goal, which will be elaborated in the following sections.
+
+\subsection{BiMLP Architecture}
+
+To deal with the above problem, we introduce a mulit-branch binary MLP block (MBB block) with Uni-shortcut operation to enhance the representation capacity of binary MLP models. We also design a novel architecture of downsampling layer for binary MLPs to further reduce the computational complexity while maintaining the accuracy. 
+
+\textbf{Multi-branch binary MLP block.} 
+To enhance the representation ability of binary vision MLPs with compact complexity, we propose a new binary MLP block containing multiple branches. Note that in MLP-Mixer~\cite{tolstikhin2021mlp}, ResMLP~\cite{touvron2021resmlp} and gMLP~\cite{liu2021pay}, an MLP block mainly consists of two parts including the spatial projection part and the channel projection part. For CycleMLP~\cite{chen2021cyclemlp} and Wave-MLP~\cite{tang2021image}, the spatial projection is achieved by introducing some \textbf{local FC} operations (\textit{e.g.} Cycle-FC, Wave-FC) which are applied on the adjacent tokens to cope with input images with different shapes. Meanwhile, the \textbf{global FC} layer (ordinary FC layer) is used for channel mixing. Different from them, we simultaneously introduce spatial projection and channel projection into a single part, and form two different multi-branch binary MLP blocks (MBB blocks) as shown in Fig.~\ref{fig:arch}.
+
+There are four different elements in the MBB blocks, \textit{i.e.}, the Spatial Binary FC, the Spatial Binary MLP, the Channel Binary FC and the Channel Binary MLP. Given the binarized input feature $X^b$, the output of Spatial Binary FC is:
+\begin{equation}
+Y_{SB\_FC} = \text{RPReLU}(\text{LFC}(\text{BN}(X^b)) + {U}(X^b)),
+\label{eq:sbfc}
+\end{equation}
+in which RPReLU($\cdot$) is the activation function introduced in ReActNet~\cite{liu2020reactnet}. LFC($\cdot$) is the local FC that fuses the spatial information which is realized with different form in previous works. BN($\cdot$) is the ordinary batch normalization, and U($\cdot$) is the proposed Uni-shortcut which will be introduced below in Eq.~\ref{eq:uni}. For Spatial Binary MLP, we utilize the PATM architecture introduced in Wave-MLP~\cite{tang2021image}. Other forms such as CycleMLP architecture in~\cite{chen2021cyclemlp}, and axially shifting architecture in AS-MLP~\cite{lian2021mlp} can be used as a replacement.
+
+The Channel Binary FC is defined as:
+\begin{equation}
+Y_{CB\_FC} = \text{RPReLU}(\text{GFC}(\text{BN}(X^b)) + {U}(X^b)),
+\label{eq:cbfc}
+\end{equation}
+in which GFC($\cdot$) is the original global FC layer that mixes the information between different channels. Finally, the Channel Binary MLP is the stack of multiple Channel Binary FCs to strengthen the ability of channel mixing.
+
+Given the four different elements introduced above, the first MBB block uses two Spatial Binary MLPs focusing on the height and width of the spatial dimension, and a Channel Binary FC. The second MBB block uses two Spatial Binary FC and a Channel Binary MLP. In this way, the channel projection and spatial projection are used multiple times, while at the same time the first block has a stronger ability for spatial mixing and the second block is good at mixing the channel information. Finally, all the layer normalizations are replaced with batch normalizations, as shown in the ablation study in Tab.~\ref{tab:normact}.
+
+\begin{figure*}[t] 
+	\centering
+	\includegraphics[width=1\columnwidth]{figv2/architecture_v2}%
+	\hspace{-0em}
+	\caption{(a) Details of vision MLP blocks, ~\textit{e.g.}, Wave-MLP~\cite{tang2021image}. (b) The proposed Multi-branch binary MLP (MBB) blocks for BiMLP. }
+	\label{fig:arch}
+\end{figure*}
+
+With the above architectures, the representation ability can be recovered with less computational complexity by using multiple branches compared with directly expanding the input and output channels. Generally, $k^2$ branches are needed to get the same representation ability, and the computational complexity is the same compared to the convolutional layer with kernel size $k\times k$. Note that as the number of branches increases, both the representation ability and the computational complexity will increase. Thus, we seek for a balance between the effectiveness and the efficiency. In the following experiments, we use only $3$ branches as mentioned above and show that it is enough to obtain competitive results in Tab.~\ref{tab:branch}.
+
+\textbf{Uni-shortcut.}
+Recall that the proposed MBB blocks fuse the information from the same layer. The previous works of binary CNNs show that combining the outputs from different layers is important for the information flow. However, the number of output channels and input channels are usually different in MLP models and the original shortcut connection cannot be directly applied. Since the input channels $c_{in}$ are usually multiple times of the output channels $c_{out}$ (or vise versa), \textit{i.e.} $c_{in}=nc_{out}$ (or $c_{out}=nc_{in}$), $n\in N^+$. Therefore, we propose a universal shortcut (Uni-shortcut) to cope with the following two different situations. 
+
+Given the input feature $X^b\in\mathbb R^{C_{in}\times H\times W}$ and a FC layer with $c_{in}$ and $c_{out}$ input and output channels, we have:
+\begin{equation}
+\small
+U(X^b) = \left\{
+\begin{aligned}
+\frac{1}{n}\sum_{i=1}^{n}X^b(:,:,\frac{i-1}{n}c_{in}:\frac{i}{n}c_{in}) &, & c_{in}=nc_{out},\\
+concat(\sum_{i=1}^{n}X^b, ~~dim=2) &, & c_{out}=nc_{in},
+\end{aligned}
+\right.
+\label{eq:uni}
+\end{equation}
+where the input is averaged based on the channel dimension when $c_{in}=nc_{out}$, and the input is repeated $n$ times and concatenated together to fit the output dimension when $c_{out}=nc_{in}$.
+
+\textbf{Downsampling block.} The downsampling layers are not binarized during training and inference for MLP models, otherwise the performance will drastically decrease, as also discussed in prior binary CNNs~\cite{liu2018bi,liu2020reactnet,rastegari2016xnor}. This brings the problem that the FLOPs of downsampling layers occupy the whole network since the $3\times 3$ convolution with stride $2$ is a common way of simultaneously reducing the spatial size and changing the number of channels of the feature maps. Thus, similar to ~\cite{he2015spatial}, we separately handle the spatial and channel dimension by using $1\times1$ convolution with stride $1$ (FC layer), and maxpooling with diverse kernel size to replace the original convolution, as shown in Fig.~\ref{fig:down}. By this way, the computational complexity is significantly reduced while the classification performance is maintained.
+
+\begin{figure*}[t] 
+	\centering
+	\includegraphics[width=0.95\columnwidth]{figv2/downsample}%
+	\hspace{-0em}
+	\caption{Left: The original downsampling layer used in 32-bit floating point MLP models. Right: The proposed downsampling block for BiMLP.}
+	\label{fig:down}
+\end{figure*}
+
+
+
+Experiments
+In this section, we first evaluate the effectiveness of the proposed method on ImageNet dataset. The experimental settings include the dataset statistics, details of the network architectures and the training strategy is introduced in Sec.~\ref{sec:e1}. In Sec.~\ref{sec:e2}, we compare our method with a series of state-of-the-art binary CNN models in terms of accuracy and FLOPs. The ablation study on each part of the proposed method is conducted in Sec.~\ref{sec:e3}.
+\subsection{Experimental Settings}\label{sec:e1}
+\textbf{ImageNet dataset.} The benchmark dataset ImageNet-1k~\cite{russakovsky2015imagenet} contains over $1.2M$ training images and $50k$ validation images from 1,000 different categories. This is the most commonly used image classification dataset in other binary CNN methods.
+
+\begin{table*}[t]
+	\small
+	\centering
+	\renewcommand{\arraystretch}{1.} 
+	\caption{Details of different architectures of BiMLP. The parameter `dim' indicates the dimension of features, and `ratio' is the expand ratio of the mid layer of MLP. FLOPs is calculated on the layers that are not binarized, BOPs is calculated on binarized layer and OPs = BOPs / 64 + FLOPs. The computational complexity is calculated based on the input shape $224\times224$.}
+	\setlength{\tabcolsep}{6pt}{
+		\begin{tabular}{c|c|c|c} 
+			\toprule[1.5pt]
+			& Output size & BiMLP-S & BiMLP-M \\
+			\midrule
+			
+			\multirow{1}{*}{Stage 1} & \multirow{1}{*}{$\frac{H}{4}\times \frac{W}{4}$} 
+			& $\begin{bmatrix}\text{dim = 64}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 2   & $\begin{bmatrix}\text{dim = 64}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 2    \\
+			\hline
+			\multirow{1}{*}{Stage 2}  & \multirow{1}{*}{$\frac{H}{8}\times \frac{W}{8}$} &
+			$\begin{bmatrix}\text{dim = 128}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 2  & $\begin{bmatrix}\text{dim = 128}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 3  \\
+			\hline
+			\multirow{1}{*}{Stage 3}  & $\frac{H}{16}\times \frac{W}{16}$ & $\begin{bmatrix}\text{dim = 320}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 4 & $\begin{bmatrix}\text{dim = 320}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 10  \\
+			\hline 
+			\multirow{1}{*}{Stage 4}  & $\frac{H}{32}\times \frac{W}{32}$& $\begin{bmatrix}\text{dim = 512}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 2 & $\begin{bmatrix}\text{dim = 512}\\\text{ratio = 4}\end{bmatrix}$ $\times$ 3  \\ 
+			\midrule
+			\multicolumn{2}{c|}{FLOPs ($\times10^8$)}& 1.21&1.21\\ \midrule
+			\multicolumn{2}{c|}{BOPs ($\times10^9$)}& 2.25 &4.32\\ \midrule
+			\multicolumn{2}{c|}{OPs ($\times10^8$)}& 1.56&1.88\\ 
+			\bottomrule[1.5pt]
+		\end{tabular}
+	}
+	\label{tab:arch}
+\end{table*}
+
+\begin{table*}[t]
+	\small
+	\centering
+	\renewcommand{\arraystretch}{1.} 
+	\caption{Experimental results on ImageNet-1k using different binary CNN models and the proposed BiMLP. Bit-width (W/A) indicates the bit length of weights and activations. FLOPs is calculated on the full-precision layers, BOPs is calculated on binarized layers and OPs = BOPs / 64 + FLOPs. }
+	\setlength{\tabcolsep}{6pt}{
+		\begin{tabular}{l|c|c|c|c|c|c} 
+			\toprule[1.5pt]
+			\multirow{2}{*}{Methods} & Bit-width  & FLOPs  & BOPs  & OPs  & Top-1 Acc & Top-5 Acc \\
+			& (W/A) &($\times10^8$) & ($\times10^9$)& ($\times10^8$)& (\%)& (\%)\\
+			\midrule
+			XNOR-Net~\cite{rastegari2016xnor} & 1/1 & 1.41 & 1.70 & 1.67 & 51.2& 73.2\\
+			Dorefa-Net~\cite{zhou2016dorefa} & 1/1 &- &- &- &52.5& 67.7\\
+			ABCNet~\cite{lin2017towards} & 1/1 & -&- &- &42.7& 67.6\\
+			Bireal-Net-18~\cite{liu2018bi} & 1/1 &1.39 &1.68 &1.63 &56.4& 79.5\\
+			Bireal-Net-34~\cite{liu2018bi} & 1/1 &1.39 &3.53 &1.93 &62.2& 83.9\\
+			UAD-BNN-18~\cite{kim2021improving} & 1/1 & - & - & - & 57.2& 80.2\\
+			UAD-BNN-34~\cite{kim2021improving} & 1/1 & - & - & - & 62.8& 84.5\\
+			RBNN-18~\cite{lin2020rotated} & 1/1& -& -&-&59.9& 81.9\\
+			RBNN-34~\cite{lin2020rotated} & 1/1& -& -&-&63.1& 84.4\\
+			Real2bin~\cite{martinez2020training} & 1/1 &1.56 &1.68 &1.83 &65.4& 86.2\\
+			ReCU~\cite{xu2021recu} & 1/1 & - & - & - &66.4 & 86.5\\
+			FDA-BNN~\cite{xu2021learning} & 1/1 & - & - & - &66.0 &86.4 \\
+			LCR-BNN-18~\cite{shang2022lipschitz} & 1/1 & - & - & - & 59.6& 81.6\\
+			LCR-BNN-34~\cite{shang2022lipschitz} & 1/1 & - & - & - & 63.5& 84.6\\
+			LCR-BNN-ReAct~\cite{shang2022lipschitz} & 1/1 & - & - & - & 69.8& 85.7\\
+			Bi-half-18~\cite{li2022equal} & 1/1 & - & - & - &60.4 &82.9 \\
+			Bi-half-34~\cite{li2022equal} & 1/1 & - & - & - &64.2 &85.4 \\
+			AdaBin-18~\cite{tu2022adabin} & 1/1 & 1.41 & 1.69 & 1.67 &66.4 &86.5 \\
+			AdaBin-ReAct~\cite{tu2022adabin} & 1/1 & - & - & 0.88  & 70.4 &- \\			AdaBin-Melius59~\cite{tu2022adabin} & 1/1 & - & - & 5.27 &71.6 &- \\			MeliusNet-22~\cite{bethge2020meliusnet} & 1/1 & 1.35& 4.62& 2.08&63.6& 84.7\\
+			MeliusNet-29~\cite{bethge2020meliusnet} & 1/1 & 1.29& 5.47& 2.14&65.8& 86.2\\
+			MeliusNet-42~\cite{bethge2020meliusnet} & 1/1 & 1.74& 9.69& 3.25&69.2& 88.3\\
+			MeliusNet-59~\cite{bethge2020meliusnet} & 1/1 & 2.45& 18.3& 5.25&71.0& 89.7\\
+			ReActNet-B~\cite{liu2020reactnet} & 1/1 & 0.44& 4.69& 1.63&70.1& -\\
+			ReActNet-C~\cite{liu2020reactnet} & 1/1 & 1.40& 4.69& 2.14&71.4& -\\
+			\midrule
+			\bf BiMLP-S (Ours)& 1/1 &1.21 &2.25 &\bf 1.56 &\bf 70.0 &\bf 89.6\\
+			\bf BiMLP-M (Ours)& 1/1 &1.21 &4.32 &\bf 1.88 &\bf  72.7&\bf 91.1 \\
+			\bottomrule[1.5pt]
+		\end{tabular}
+	}
+	\label{tab:imgnet}
+\end{table*}
+
+\begin{table*}[t]
+	\small
+	\centering
+	\renewcommand{\arraystretch}{1.} 
+	\caption{Experimental results of using different branches in MBB blocks. The experiments are conducted using BiMLP-S model on ImageNet-1k dataset, and setting 3 is used as the baseline architecture which is the same as Fig.~\ref{fig:arch}(b).}
+	\setlength{\tabcolsep}{10pt}{
+		\begin{tabular}{c|c|c|c|c|c|c} 
+			\toprule[1.5pt]
+			\multirow{2}{*}{Setting} & \multicolumn{2}{c|}{MBB Block 1} & \multicolumn{2}{c|}{MBB Block 2} & OPs &  Top-1 Acc\\
+			\cline{2-5}
+			&$\text{\#}S_1$& $\text{\#}C_1$& $\text{\#}S_2$ & $\text{\#}C_2$ &($\times10^8$) & (\%)\\
+			\midrule
+			1&4 & 0 & 0 & 2 &1.60 & 69.2\\
+			2&0 & 2 & 4 & 0 &1.53 & 68.9\\
+			3&2 & 1 & 2 & 1 & 1.56&70.0 \\
+			4&4 & 1 & 2 & 2 & 1.86&70.8 \\
+			5&2 & 2 & 4 & 1 & 1.78&70.5 \\
+			\bottomrule[1.5pt]
+		\end{tabular}
+	}
+	\label{tab:branch}
+\end{table*}
+
+\textbf{Network architecture.} We utilize the architecture proposed in ~\cite{tang2021image} and replace the MLP block with the proposed MBB block with Uni-shortcut (Fig.~\ref{fig:arch}(b)) as well as the replacement of downsampling blocks (Fig.~\ref{fig:down}). Details of the architectures of BiMLP models are specified in Tab.~\ref{tab:arch}.
+
+\textbf{Training details.} Following prior methods~\cite{liu2018bi,liu2020reactnet,martinez2020training}, we use a two step training strategy. In the first training step, we use the full precision MLP model as the teacher model and the network with the same architecture but binary activations as the student model. A knowledge distillation loss is used to facilitate the training of student network:
+\begin{equation}\small
+L = \alpha\sum_{i=1}^{n}L_{kl}({\bf y}_s, {\bf y}_t) + (1-\alpha)\sum_{i=1}^{n}L_{ce}({\bf y}_s, {\bf y}_{gt}),
+\label{eq:kd}
+\end{equation}
+in which $L_{kl}(\cdot)$ and $L_{ce}(\cdot)$ are the KL divergence and cross-entropy loss, ${\bf y}_s$ and ${\bf y}_t$ are the output probability of the student and teacher model, ${\bf y}_{gt}$ is the one-hot ground-truth probability and $\alpha$ is the trade-off hyper-parameter ($\alpha=0.9$ in the following experiments). For the second training step, the full precision ResNet-34 is used as the teacher network. The binarized MLP model (both weights and activations) is used as the student model and the corresponding weights are initialized by the training results from the first step.
+
+In both steps, the student models are trained for $300$ epochs using AdamW~\cite{loshchilov2017decoupled} optimizer with momentum of 0.9 and weight decay of 0.05. We start with the learning rate of $1\times10^{-3}$ and a cosine learning rate decay scheduler is used during training. We use NVIDIA V100 GPUs with a total batchsize of 1024 to train the model with Mindspore~\cite{mindspore}. The commonly used data-augmentation strategies such as Cut-Mix~\cite{yun2019cutmix}, Mixup~\cite{zhang2017mixup} and Rand-Augment~\cite{cubuk2020randaugment} are used. The first layer, the last layer and the downsampling layers are not binarized during training and inference.
+
+\subsection{Experimental Results on ImageNet}\label{sec:e2}
+In this section, we compare the proposed model with the binary CNN models derived from other state-of-the-art methods on the ImageNet-1k dataset, including Dorefa-Net~\cite{zhou2016dorefa}, XNOR-Net~\cite{rastegari2016xnor}, ABCNet~\cite{lin2017towards}, Bireal-Net~\cite{liu2018bi}, Real2bin~\cite{martinez2020training}, MeliusNet~\cite{bethge2020meliusnet}, ReActNet~\cite{
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

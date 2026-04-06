@@ -1,0 +1,225 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/teaser.pdf}
+    \caption{{\bf Our proposed Multi-Teacher Progressive Distillation (MTPD) leads to state-of-the-art student detection performance.} When switching the teacher model from a convolution-based detector to a Transformer-based one with stronger detection performance, the student does not become more accurate, due to the architectural difference between the teacher-student pair. \emph{Progressively distilling knowledge from multiple teacher detectors} can mitigate the capacity gap and result in the best student detection performance.}
+    \label{fig:teaser}
+\end{figure}
+
+Deploying deep neural models in safety-critical real-time applications is challenging, especially on devices with limited resources such as self-driving cars or virtual/augmented reality headsets. This is mainly due to the huge computational complexity and massive memory/storage demands. One effective strategy is to train lightweight architectures that have already been carefully engineered for efficient memory access, via knowledge distillation~\citep{bucilua2006model,hinton2015distilling} which is able to compress learned information from a large model into a small one.
+
+Implementing knowledge distillation in the realm of object detection, despite existing efforts, presents its unique challenges stemming from the complex task outputs~\citep{chen2017learning}: Detectors operate with multi-task heads (for classification and box/mask regression) producing variable-length outputs, which differentiates detection from the single-output classification task.
+Recent work~\citep{zhang2020improve,shu2021channel,yang2022masked} on detector distillation mainly considers designing advanced distillation loss functions for transferring features from teachers to students. However, there are two unsolved challenges: 1) The \emph{capacity gap}~\citep{cho2019efficacy,mirzadeh2020improved} between models can result in a sub-optimal distilled student even if the strongest teacher has been employed, which is undesired when optimizing the accuracy-efficiency trade-off of the student. Moreover, when distilling knowledge from Transformer-based teachers~\citep{dosovitskiy2020image, liu2021swin} to classical convolution-based students, this \emph{architectural difference} can enlarge the teacher-student gap (Figure~\ref{fig:teaser}). 2) Current methods assume that one target teacher has been selected. However, this meta-level optimization of \emph{teacher selection} is neglected in the existing literature of detector distillation. In fact, finding a pool of strong teacher candidates is easy, but trial-and-error may be necessary before determining the most compatible teacher for a specific student.
+
+To address these challenges, we propose a framework that learns a lightweight detector via \textbf{Multi-Teacher Progressive Distillation (MTPD)}:
+1) We find sequential distillation from \emph{multiple teachers arranged into a curriculum} significantly improves knowledge distillation and bridges the teacher-student capacity gap caused by different architectures. As shown in Figure~\ref{fig:teaser}, even with huge architectural difference, MTPD can effectively transfer knowledge from Transformer-based teachers to convolution-based students, while previous methods cannot.
+2) For the teacher selection problem, we design a heuristic algorithm for a given student and a pool of teacher candidates, to \emph{automatically determine the order of teachers} to use in the distillation procedure. This algorithm is based on the analysis of the representation similarity between models, which does not require prior knowledge of the specific distillation mechanism.
+
+To summarize,  our \textbf{main contributions} are:
+\begin{itemize}[leftmargin=*, noitemsep, nolistsep]
+    \item We propose a framework for learning lightweight detectors through Multi-Teacher Progressive Distillation (MTPD), which is simple yet effective and general. We develop a principled method to automatically design a sequence of teachers appropriate for a given student and progressively distill it.
+    \item MTPD is a {\em meta-level} strategy that can be easily combined with previous efforts in detection distillation. We perform comprehensive empirical evaluation on the challenging MS COCO dataset and observe consistent gains, regardless of the distillation loss complexity (from a simple feature-matching loss in Table~\ref{tab:homogenous} to the most advanced, sophisticated losses in Figure~\ref{fig:comb}).
+    \item MTPD learns lightweight RetinaNet and Mask R-CNN with state-of-the-art accuracy, even in {\em heterogeneous backbone and input resolution} settings. Perhaps most impressively, for the first time, we investigate heterogeneous distillation from Transformer-based teacher detectors to a convolution-based student, and find progressive distillation is the key to bridge their gap (Figure~\ref{fig:teaser}, Table~\ref{tab:swin}).
+    \item We empirically show that the improvement comes from better generalization rather than better optimization. The knowledge transferred from multiple teachers leads the student to a more flat minimum, and thus help the student {\em generalize} better (Figure~\ref{fig:loss}).
+\end{itemize}
+
+
+Related Work
+\label{sec:related}
+\noindent {\bf Knowledge distillation for classification:} The idea of training a shallow student network with supervision from a deep teacher was originally proposed by \citet{bucilua2006model}, and later formally popularized by \citet{hinton2015distilling}.
+Different knowledge can be used, such as response-based knowledge~\citep{hinton2015distilling}, and feature-based knowledge~\citep{romero2014fitnets,ahn2019variational}.
+Several multi-teacher knowledge distillation methods have been proposed~\citep{vongkulbhisal2019unifying,sau2016deep}, which usually use the average of logits and feature representations as the knowledge~\citep{you2017learning,fukuda2017efficient}.
+\citet{mirzadeh2020improved} show that an intermediate teacher assistant, decided by architectural similarities, can bridge the gap between the student and the teacher.
+We find: 1) Extending~\citet{mirzadeh2020improved} to detection where teacher architectures are diverse is challenging. 2) Classification-oriented distillation~\citep{romero2014fitnets, ahn2019variational} is not directly applicable to detection. 3) Using a sequence of teachers, instead of their ensemble~\citep{you2017learning,fukuda2017efficient}, is more effective.
+\noindent{\bf Object detection and instance segmentation:} A variety of convolutional neural network (CNN) based object detection frameworks have been proposed, and can be generally divided into single-stage and two-stage detectors. Typical single-stage methods include YOLO~\citep{redmon2016you,redmon2018yolov3} and RetinaNet~\citep{lin2017focal}, and two-stage methods include Faster R-CNN~\citep{ren2015faster} and Mask R-CNN~\citep{he2017mask}. Recently, several multi-stage models are proposed, such as HTC~\citep{chen2019hybrid} and DetectoRS~\citep{qiao2020detectors}. These detection frameworks achieve better detection accuracy with better feature extraction backbones and more complicated heads, which are more computationally expensive.
+
+\noindent{\bf Knowledge distillation for detection and segmentation:}
+Dedicated distillation methods are proposed to train efficient object detectors for this task different from classification.
+\citet{chen2017learning} first use knowledge distillation to enforce the student detector to mimic the teacher's predictions. More recent efforts usually focus on learning from the teacher's features, rather than final predictions. Various distillation mechanisms have been proposed to leverage the impact of foreground and background objects~\citep{wang2019distilling,guo2021distilling}, relation between individual objects~\citep{zhang2020improve,dai2021general}, or relation between local and global information~\citep{yang2022focal,yang2022masked}.
+Different from the methods that distill from a single teacher, we study multi-teacher distillation where an ordered sequence of teachers is required, and we find that a simple feature-matching loss is adequate to significantly boost student accuracy.
+
+
+Approach
+\label{sec:method}
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=\linewidth]{figures/main.pdf}
+    \caption{{\bf Multi-Teacher Progressive Distillation (MTPD) for object detectors.} {\bf Left}: For each teacher-student pair, the training target consists of two parts: $L_\text{distill}$ minimizes the discrepancy between the neck feature maps of the student and the current teacher, and $L_\text{detect}$ is the original detection loss based on the ground truth. {\bf Right}: We use a {\em sequence} of teacher models to distill the lightweight student detector. The sequence of teachers forms a curriculum. Using a suitable sequence of teachers can significantly boost the student model's performance. The representative performance curve illustrates that MTPD improves the COCO validation AP of ResNet-50 backboned \textcolor{YellowOrange}{RetinaNet} student first from 36.5\% to 37.9\% using \textcolor{PineGreen}{HTC} ({Teacher 1}), and then from 37.9\% to 39.9\% using \textcolor{NavyBlue}{DetectoRS} ({Teacher 2}).}
+    \label{fig:fc}
+\end{figure*}
+
+In \textbf{Multi-Teacher Progressive Distillation (MTPD)}, we propose to progressively distill a student model $S$ with a pool of $N$ teachers $\mathcal{P}=\{T_i\}_{i=1}^N$.
+Typical object detectors consist of four modules: (1) backbone, which extracts visual features, such as ResNet~\citep{he2016deep} and ResNeXt~\citep{xie2017aggregated}; (2) neck, which extracts multi-level feature maps from various stages of the backbone, such as FPN~\citep{lin2017feature} and Bi-FPN~\citep{tan2020efficientdet}; (3) optional region proposal network (RPN) used in two-stage detectors; and (4) head, which generates final predictions for object detection and segmentation. We denote the output feature maps of the {\em neck} as $F^{\text{Net}}$, where $\text{Net}$ can be either the student model $S$ or one of the teachers $T_i\in \mathcal{P}$. With neck modules like FPN, the feature maps can be multi-level.
+
+MTPD is a \emph{general meta-strategy} for detector distillation that progressively learns a student using a sequence of teachers. Here, to examine this meta-strategy without involving sophisticated distillation mechanisms, we introduce a simple feature-matching distillation for a single teacher $T_i$ in Section~\ref{subsec:single}. Then we discuss progressive distillation with multiple teachers from $\mathcal{P}$ in Section~\ref{subsec:multiple}.
+
+\subsection{Preliminary: Single Teacher Distillation via Simple Feature Matching}
+\label{subsec:single}
+In order to learn an efficient student detector $S$ through distillation, we encourage the feature representation of a student to be similar to that of the teacher~\citep{chen2017learning,yang2021knowledge}.   
+To this end, we minimize the discrepancy between the feature representations of the teacher and the student. Without bells and whistles, we simply minimize the L2 distance between $F^{T_i}$ and $F^S$:
+\begin{equation}
+    L_\text{distill} = \left\| F^{T_i} - r(F^S) \right\|_2^2,
+    \label{eq:lf}
+\end{equation}
+where $r(\cdot)$ is a function used to match the feature map dimensions of the teacher and the student. 
+
+We define $r(\cdot)$ as follows:
+\begin{itemize}[leftmargin=*, noitemsep, nolistsep]
+    \item{(Homogeneous case) If the numbers of channels and the spatial resolutions are both the same between $T_i$ and $S$, $r(\cdot)$ is an identity function.} 
+    \item {(Heterogeneous case) If the numbers of channels are different but the spatial resolutions are the same, we use $1\times 1$ convolutional filters as $r(\cdot)$. If the spatial resolutions are different but the numbers of channels are the same, we use an upsampling layer as $r(\cdot)$. If both the numbers of channels and spatial resolutions are different, we compose the convolutional and upsampling layers as $r(\cdot)$.}
+\end{itemize}
+
+Note that the mapping $r(\cdot)$ is only required at training time and thus {\em does not add any overhead} to the inference. Overall, our loss function can be written as:
+\begin{equation}
+    L = \lambda L_\text{distill} + L_\text{detect},
+    \label{eq:losses}
+\end{equation}
+where $\lambda$ is a balancing hyper-parameter and $L_\text{detect}$ is the detection loss based on the ground truth labels. Compared with state-of-the-art detection distillation approaches~\citep{zhang2020improve,shu2021channel,yang2022focal,yang2022masked}, which introduce more complex designs of the distillation loss, this feature-matching distillation is simpler and does not require running the heads of the teacher model. 
+Our distillation loss is illustrated in Figure~\ref{fig:fc}-{\bf Left}.
+
+\subsection{Progressive Distillation with Multiple Teachers}
+\label{subsec:multiple}
+The overall aim of knowledge distillation is to make a student mimic a teacher's output, so that the student is able to obtain similar performance to teacher's.\
+However, the capacity of the student model is limited, making it hard for the student to learn from a highly complex teacher~\citep{cho2019efficacy}.
+To address this issue, multiple teacher networks are used to provide more supervision to a student~\citep{sau2016deep,you2017learning}. Unlike previous methods which distill knowledge from the ensemble of logits or features simultaneously, we propose to distill feature-based knowledge from multiple teachers {\em sequentially}. Our key insight is that instead of mimicking the ensemble of all feature information together, the student can be distilled more effectively by the knowledge provided by one teacher each time. This progressive knowledge distillation approach can be considered as designing a curriculum~\citep{bengio2009curriculum} offered by a sequence of teachers, as illustrated in Figure~\ref{fig:fc}-{\bf Right}.
+
+The crucial question is: {\em What is the optimal order $\mathcal{O}$ of the teachers when distilling the student?}
+A brute-force approach might search over all orders and pick the best (that produces a distilled student with the highest validation accuracy). However, the space of permutation orders grows exponentially with the number of teachers, making this impractical to scale.
+Therefore, we propose a principled and efficient approach based on a correlation analysis of each model's learned feature representation.
+
+First, we quantify the dissimilarity between each pair of models' representations, as a proxy for their capacity gap. Representation (dis)similarity~\citep{raghu2017svcca,wang2018towards,kornblith2019similarity} has been studied to understand the learning capacity of neural models. In our setting, we find a linear regression model is adequate for measuring the representation dissimilarity. Given two trained detectors A and B, we freeze their parameters, and thus fixing the feature representations. Then we learn a linear mapping $r(\cdot)$, implemented by a $1\times 1$ convolutional layer at each feature level, as specified in the heterogeneous case in Section~\ref{subsec:single}. $r(\cdot)$ is trained to minimize $L_\text{distill}$, so it can transform A's features to approximate B's features. After training $r(\cdot)$, we evaluate it by $L_\text{distill}$ on the validation set, and denote the validation loss as the \emph{adaptation cost} $\mathcal{C}(A,B)$. This metric can be a proxy of the capacity gap between two models: When $\mathcal{C}(A,B)$ is zero, a linear mapping can transform A’s features to B’s, and there is no additional knowledge from B. When $\mathcal{C}(A,B)$ is large, it is more difficult to adapt A's representation to B's. Note that the adaptation cost is non-symmetric -- it is relatively easier to adapt a high-capacity model's representations to a low-capacity model's representations, than the other way around.
+
+We design a heuristic algorithm, \textbf{Backward Greedy Selection (BGS)}, to acquire a near-optimal distillation order $\mathcal{O}$ automatically (see pseudo-code in Algorithm~\ref{alg:teacher-order} and illustration in Figure~\ref{fig:dist}). Suppose the maximum number of teachers to be selected is limited by $k$ (which can be arbitrarily decided according to desired training time), and we aim to find a teacher index sequence $\alpha$ no longer than $k$. We construct the teacher order \emph{backwards}: The best performing teacher is set as the final target $T_{\alpha_k}$; before the final teacher, we use another teacher, which has the smallest adaptation cost $\mathcal{C}(\cdot,T_{\alpha_k})$ to that final teacher, as the penultimate teacher $T_{\alpha_{k-1}}$. We repeat this procedure to find preceding teachers, until: 1) when trying to select $T_{\alpha_j}$, we find the transfer costs from remaining teachers to the next teacher $\mathcal{C}(\cdot,T_{\alpha_{j+1}})$ are all larger than the transfer cost from the trained student to the next teacher $\mathcal{C}(S,T_{\alpha_{j+1}})$; or 2) we reach the given maximum step limit $k$. Intuitively, the resulting sequence of teachers bridges the gap between the student model and the teacher, with an increasingly difficult curriculum.
+
+Our teacher order design approach is efficient and scalable. In fact, the main computation overhead is the optimization of a set of tiny linear mappings ($\mathbb{R}^{256}\mapsto\mathbb{R}^{256}$ for FPN-based detectors). In our setting, this process requires about 3 GPU hours per student model, \emph{a fraction of the hundreds of GPU hours needed for distillation}. If more teacher candidates are added, we can first generate feature maps only once for each teacher. Then we optimize pair-wise linear mappings using only 10\%-20\% GPU hours, ensuring a near-linear time consumption increase relative to the number of teachers.
+
+Since MTPD is a meta-level strategy, it can be integrated with previous designs of distillation mechanisms, without much efforts. Starting with a student detector and a pool of candidate teachers, we can first select a subset of teachers and design their distillation order. In place of the simple feature matching loss, we then apply a more advanced distillation mechanism with each teacher sequentially to train the student detector.
+
+
+Experiments
+\label{sec:experiments}
+We study the efficacy and generalizability of our proposed MTPD from multiple perspectives. First of all in Section~\ref{subsec:teacher-order}, we use a controlled experiment to demonstrate that BGS consistently produces teacher orders that are near-optimal compared with all possibilities. Then in Sections~\ref{subsec:res50} and \ref{subsec:res18}, we apply MTPD along with the simple feature-matching loss (Section~\ref{subsec:single}) to show that this strategy alone brings significant gains to knowledge distillation. Since our contribution of progressive distillation is orthogonal to previous efforts in designing distillation mechanisms, in Section~\ref{subsec:combination} we then combine MTPD with state-of-the-art distillation mechanisms to maximize the student performance, and we show that MTPD is the key to the success of distillation from Transformer-based teachers to convolution-based students. Finally in Section~\ref{subsec:generalization}, we understand the performance gain of MTPD by analyzing the training loss dynamics.
+
+\begin{table}[t!]
+\centering
+\caption{{\bf Configuration and COCO performance of the teacher and student detectors.} We investigate a variety of models with heterogeneous input resolutions, backbones, necks, and head structures. `$1\times$' input resolution refers to the standard $1333\times 800$ resolution, and `$0.25\times$' means $333\times 200$ resolution. `R-' backbones are ResNets with different number of layers.}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{@{} l | l l l l | c c c @{}}
+\toprule
+\multirow{2}{*}{Model} & Input & \multirow{2}{*}{Backbone} & \multirow{2}{*}{Neck} & \multirow{2}{*}{Head} & \multicolumn{2}{c}{AP} & Runtime \\
+& Res. & & & & Box & Mask & (ms) \\
+\midrule
+\multicolumn{2}{@{} l}{Teachers} \\
+\midrule
+I & $1\times$ & R50 & FPN & Mask R-CNN & 38.2 & 34.7 & 51 \\
+II & $1\times$ & R50 & FPN & FCOS & 38.7 & - & 36 \\
+III & $1\times$ & R50 & FPN & HTC & 42.3 & 37.4 & 181 \\
+IV & $1\times$ & R50+SAC & RFP & HTC (DetectoRS) & 49.1 & 42.6 & 223 \\
+V & $1\times$ & R50+SAC & RFP & Mask R-CNN & 45.1 & 40.1 & 142 \\
+\midrule
+\multicolumn{2}{@{} l}{Students} \\
+\midrule
+I & $1\times$ & R50 & FPN & RetinaNet & 36.5 & - & 43 \\
+II & $1\times$ & R50 & FPN & Mask R-CNN & 38.2 & 34.7 & 51 \\
+III & $1\times$ & R18 & FPN & Mask R-CNN & 33.3 & 30.5 & 29 \\
+IV & $0.25\times$ & R50 & FPN & Mask R-CNN & 25.8 & 23.0 & 17 \\
+\bottomrule
+\end{tabular}
+}
+\label{tab:stu-tea}
+\end{table}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\columnwidth]{figures/dist_graph.pdf}
+\caption{{\bf Adaptation costs among models.} The number on each directed edge is the adaptation cost metric described in Section~\ref{subsec:multiple}. Some edges are not shown for visual clarity. The red path is suggested by BGS when $k=3$ teachers are selected: 1) We use the best performing Teacher IV as the final teacher in the sequence; 2) use the teacher closest to Teacher IV, which is Teacher III, as the second teacher; and 3) use the teacher closest to Teacher III, which is Teacher I, as the first teacher.}
+\label{fig:dist}
+\end{figure}
+
+\noindent{\bf Student and teacher models:}
+To investigate the impact of different teacher models and their combinations, as shown in Table~\ref{tab:stu-tea}, we construct a variety of teacher-student pairs from a set of widely-used object detection and instance segmentation networks, including RetinaNet~\citep{lin2017focal}, Mask R-CNN~\citep{he2017mask}, FCOS~\citep{tian2019fcos}, HTC~\citep{chen2019hybrid}, and DetectoRS~\citep{qiao2020detectors}.
+They have a wide range of runtime and detection performance.
+We select ResNet-50 backboned RetinaNet and Mask R-CNN as the student models (Students I \& II), due to their low latency, simple structure, and wide application, for single-stage and two-stage object detection respectively. More advanced models such as DetectoRS have better detection performance, but require much more training/inference time, so we use them as teachers.
+We also consider lightweight variants of Mask R-CNN as students, which have a smaller backbone (Student III) or a reduced input resolution (Student IV).
+
+\noindent{\bf Datasets and evaluation metrics:} We mainly evaluate on the challenging object detection dataset MS COCO 2017~\citep{lin2014microsoft}, which contains bounding boxes and segmentation masks for 80 common object categories. We train our models on the split of {\tt train2017} (118k images) and report results on {\tt val2017} (5k images).
+We report the standard COCO-style Average Precision (AP) metric and end-to-end latency (from images to predictions) as the runtime.
+We also evaluate on another object detection dataset Argoverse-HD~\citep{chang2019argoverse}, and a more challenging evaluation protocol in streaming perception~\citep{li2020towards}.
+
+\noindent{\bf Baselines:}
+Our main contribution is \emph{orthogonal} to previous methods: We leverage a sequence of teachers to distill the student, instead of designing a sophisticated distillation loss to better transfer knowledge from one single teacher.
+Since we are studying a new setting where multiple teachers are available, which is missing in previous literature,
+we mainly focus on the \emph{absolute improvements} -- the performance of our distilled student models compared with the original student models and with the performance upper-bound of the teacher models.
+
+\begin{table}[t!]
+\centering
+\caption{{\bf Comparison of the teacher order suggested by BGS with all other orders under limited training budgets~\citep{li2019budgeted}.} $k$ denotes the maximum number of used teachers. {\bf Top}: We show some statistics of all possible student AP performance and the ranking of the student using our distillation order. {\bf Bottom}: We visualize the comparative advantage of our teacher orders (\textcolor{BrickRed}{red dots}) over all other orders (black dots). Some black scatter points overlap due to the same student AP. BGS consistently produces highly competitive distillation orders of teachers.}
+    \resizebox{0.9\linewidth}{!}{
+    \begin{tabular}{c|c c|c c}
+        \toprule
+        \multirow{2}{*}{$k$} & Suggested & Student & All student & Ranking in \\
+        & teacher order & AP & AP range & all orders \\
+        \midrule
+        1 & IV & 36.7 & [36.2, 36.8] & 2 / 4 \\
+        2 & III$\rightarrow$IV & 37.6 & [36.2, 37.6] & 1 / 16 \\
+        3 & I$\rightarrow$III$\rightarrow$IV & 37.9 & [36.2, 38.0] & 2 / 40 \\
+        4 & I$\rightarrow$III$\rightarrow$IV & 37.9 & [36.2, 38.2] & 7 / 64 \\
+        \bottomrule
+    \end{tabular}
+    }
+    \begin{minipage}[c]{\linewidth}
+        \centering
+        \includegraphics[trim={0cm, .3cm, 0cm, 0cm}, clip, width=\linewidth]{figures/mini_budget.pdf}
+    \end{minipage}
+\label{tab:teacher-order}
+\end{table}
+
+\begin{table*}[t!]
+\centering
+\caption{{\bf Homogeneous distillation of COCO detectors,} where students with ResNet-50 backbones are distilled from teachers with ResNet-50 backbones. We report the detection (`Box') and segmentation (`Mask') APs, and we compare our student produced by MTPD with the off-the-shelf (`OTS') student and the student trained longer. MTPD significantly improves the detection AP over the `OTS' student by $\mathbf{3.4\%}$ for RetinaNet and $\mathbf{3.2\%}$ for Mask R-CNN, and outperforms the baselines.}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{ @{}c|l|l|c c c c c c|c c c c c c @{} }
+\toprule
+\multirow{2}{*}{ID}& \multirow{2}{*}{Model} & \multirow{2}{*}{Method} & \multicolumn{6}{c|}{Box} & \multicolumn{6}{c}{Mask} \\
+& & & AP & AP$_{50}$ & AP$_{75}$ & AP$_S$ & AP$_M$ & AP$_L$ & AP & AP$_{50}$ & AP$_{75}$ & AP$_S$ & AP$_M$ & AP$_L$ \\
+\midrule
+1 & \multirow{4}{60pt}{RetinaNet (Student I)} & OTS & 36.5 & 55.4 & 39.1 & 20.4 & 40.3 & 48.1 & - & - & - & - & - & - \\
+2 & & Longer $3\times$ training schedule & 39.5 & 58.8 & 42.2 & \bf{23.8} & 43.2 & 50.3 & - & - & - & - & - & - \\
+3 & & Directly distilled by Teacher IV & 39.5 & 58.6 & 41.9 & 21.0 & 42.8 & 54.0 & - & - & - & - & - & - \\
+4 & & {\bf MTPD: Teachers III$\rightarrow$IV} & \bf{39.9} & \bf{59.2} & \bf{42.7} & 21.7 & \bf{43.3} & \bf{54.1} & - & - & - & - & - & - \\
+\midrule
+5 & \multirow{5}{60pt}{Mask R-CNN (Student II)} & OTS & 38.2 & 58.8 & 41.4 & 21.9 & 40.9 & 49.5 & 34.7 & 55.7 & 37.2 & 18.3 & 37.4 & 47.2 \\
+6 & & Longer $3\times$ training schedule & 40.9 & 61.3 & 44.8 & \bf{24.4} & 44.6 & 52.3 & 37.1 & 58.3 & \bf{39.9} & 18.4 & 39.8 & 51.9 \\
+7 & & Directly distilled by Teacher IV & 41.0 & 61.6 & 45.0 & 23.5 & 44.5 & 54.0 & 37.0 & 58.5 & 39.8 & 17.5 & 39.9 & 51.3 \\
+8 & & Distilled by ensemble V+IV & 39.8 & 60.3 & 43.4 & 22.1 & 43.3 & 52.9 & 35.9 & 57.1 & 38.1 & 18.3 & 39.0 & 49.8 \\
+9 & & {\bf MTPD: Teachers V$\rightarrow$IV} & \bf{41.4} & \bf{61.9} & \bf{45.1} & 23.3 & \bf{45.0} & \bf{55.4} & \bf{37.3} & \bf{58.8} & 39.8 & \bf{19.4} & \bf{40.4} & \bf{52.1} \\
+\bottomrule
+\end{tabular}}
+\label{tab:homogenous}
+\end{table*}
+
+\subsection{Searching for Near-Optimal Teacher Orders}
+\label{subsec:teacher-order}
+As we have discussed in Section~\ref{subsec:multiple}, finding the optimal order of teachers for MTPD takes factorial time complexity. To acquire a near-optimal teacher order, we propose the heuristic algorithm Backward Greedy Selection (BGS, pseudo-code shown in Algorithm~\ref{alg:teacher-order}). In this section, we validate that BGS is near-optimal. To achieve this comprehensive comparison, we distill Student I with \emph{all orders} of teachers from the pool of Teachers {I-IV}. We use a reduced training budget: For each teacher, we only train the student for $3$ epochs on MS COCO. We use the linear learning rate schedule, which has been shown comparably effective in a limited budget setting by \citet{li2019budgeted}.
+
+We first measure the adaptation costs among the student and teacher models. A visualization of the cost graph is shown in Figure~\ref{fig:dist}. Following BGS, we can construct a sequence of teachers. We compare the teacher orders given by BGS against \emph{all other} orders, via the distilled students' performance. As shown in Table~\ref{tab:teacher-order}, teacher orders suggested by BGS are consistently near-optimal in this setting. In the following sections, we use the order provided by BGS, without brute-force iterating over all possible orders.
+One might argue that the greedy path selection of BGS, as shown in Figure~\ref{fig:dist}, is inferior to a global optimization algorithm.
+ In fact, the later teachers impact the student performance more profoundly, so we need to greedily select teachers from the sequence tail.
+
+\subsection{Distillation with Homogeneous Teachers}
+\label{subsec:res50}
+
+We start by distilling RetinaNet and Mask R-CNN with a ResNet-50 backbone (Students I \& II). Here we consider {\em homogeneous} teachers where the numbers of channels and the spatial resolutions of feature maps are {\em consistent} between the student and teacher.
+For the RetinaNet student, we still consider the pool of Teachers I-IV, the same as Section~\ref{subsec:teacher-order}. For the Mask R-CNN student, we should no longer use Teacher I (the student itself) or Teacher II (the single-stage teacher does not outperform the student by a large margin). To compensate for that, we include Teacher V, which can be considered as a hybrid model of the DetectoRS backbone/neck and Mask R-CNN head. Thus, the teacher pool for Mask R-CNN includes Teachers III-V.
+To control the total training time, we limit the number of teac
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

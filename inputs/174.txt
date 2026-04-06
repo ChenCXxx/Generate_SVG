@@ -1,0 +1,303 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Image matching is the cornerstone of many 3D computer vision tasks, which aim to find a set of highly accurate correspondences given an image pair.
+The established matches between images have broad usages such as reconstructing the 3D world by structure from motion~(SfM)~\cite{Agarwal2009BuildingRI,schonbergerStructurefromMotionRevisited2016,Lindenberger2021PixelPerfectSW,he2023detectorfree} or SLAM system~\cite{MurArtal2015ORBSLAMAV,MurArtal2016ORBSLAM2AO}, and visual localization~\cite{Sarlin2018FromCT,sarlin21pixloc}, etc.
+Previous methods typically follow a two-stage pipeline: they first detect~\cite{rosten2006machine} and describe~\cite{tian2017l2} a set of keypoints on each image, and then establish keypoint correspondences by handcrafted~\cite{LoweDavid2004DistinctiveIF} or learning-based matchers~\cite{sarlin20superglue,lindenberger2023lightglue}.
+These detector-based methods are efficient but suffer from robustly detecting repeatable keypoints across challenging pairs, such as extreme viewpoint changes and texture-poor regions.
+
+\input{figs/teaser.tex}
+Recently, LoFTR~\cite{sun2021loftr} introduces a detector-free matching paradigm with transformer to directly establish semi-dense correspondences between two images without detecting keypoints.
+With the help of the transformer mechanism to capture the global image context and the detector-free design, LoFTR shows a strong capability of matching challenging pairs, especially in texture-poor scenarios.
+To reduce the computation burden, LoFTR adopts a coarse-to-fine pipeline by first performing dense matching on downsampled coarse features maps, where transformer is applied.
+Then, the feature locations of coarse matches on one image are fixed, while their subpixel correspondences are searched on the other image by cropping feature patches based on coarse match, performing the feature correlation, and calculating expectation over the correlation patch.
+
+Despite its impressive matching performance, LoFTR suffers from limited efficiency due to the large token size of performing transformer on the entire coarse feature map, which significantly barricades practical large-scale usages such as image retrieval~\cite{Hausler2021PatchNetVLADMF} and SfM~\cite{schonbergerStructurefromMotionRevisited2016}.
+A large bunch of LoFTR's follow-up works~\cite{wang2022matchformer,chen2022aspanformer,tang2022quadtree,giang2022topicfm,Ni2023PATSPA} have attempted to improve its matching accuracy.
+However, there are rare methods that focus on matching efficiency of detector-free matching.
+QuadTree Attention~\cite{tang2022quadtree} incorporates multi-scale transformation with a gradually narrowed attention span to avoid performing attention on large feature maps.
+This strategy can reduce the computation cost, but it also divides a single coarse attention process into multiple steps, leading to increased latency.
+In this paper, we revisit the design decisions of the detector-free matcher LoFTR, and propose a new matching algorithm that squeezes out redundant computations for significantly better efficiency while further improving the accuracy.
+As shown in Fig.~\ref{fig:teaser}, our approach achieves the best inference speed compared with recent image matching methods while being competitive in terms of accuracy.
+Our key innovations lie in introducing a token aggregation mechanism for efficient feature transformation and a two-stage correlation layer for correspondence refinement.
+Specifically, we find that densely performing global attention over the entire coarse feature map as in LoFTR is unnecessary, as the attention information is similar and shared in the local region.
+Therefore, we devise an aggregated attention mechanism to perform feature transformation on adaptively selected tokens, which is significantly compact and effectively reduces the cost of local feature transformation.
+
+In addition, we observe that there can be spatial variance in the matching refinement phase of LoFTR, which is caused by the expectation over the entire correlation patch when noisy feature correlation exists.
+To solve this issue, our approach designs a two-stage correlation layer that first locates pixel-level matches with the accurate mutual-nearest-neighbor matching on fine feature patches, and then further refines matches for subpixel-level by performing the correlation and expectation locally within tiny patches.
+
+Extensive experiments are conducted on multiple tasks, including homography estimation, relative pose recovery, as well as visual localization, to show the efficacy of our method.
+Our pipeline pushes detector-free matching to unprecedented efficiency, which is $\sim2.5$ times faster than LoFTR and can even surpass the current state-of-the-art efficient sparse matcher LightGlue~\cite{lindenberger2023lightglue}.
+Moreover, our framework can achieve comparable or even better matching accuracy compared with competitive detector-free baselines~\cite{chen2022aspanformer,edstedt2023dkm,edstedt2023roma} with considerably higher efficiency.
+In summary, this paper has the following contributions:
+\begin{itemize}
+\item A new detector-free matching pipeline with multiple improvements based on the comprehensive revisiting of LoFTR, which is significantly more efficient and with better accuracy.
+\item A novel aggregated attention network for efficient local feature transformation.
+\item A novel two-stage correlation refinement layer for accurate and subpixel-level refined correspondences.
+\end{itemize}
+
+
+
+Related Work
+
+\paragraph{Detector-Based Image Matching.}
+Classical image matching methods~\cite{LoweDavid2004DistinctiveIF, rosten2006machine, bay2008speeded} adopt handcrafted critics for detecting keypoints, describing and then matching them.
+Recent methods draw benefits from deep neural networks for both detection~\cite{rosten2006machine,savinov2017quad,barroso2019key} and description~\cite{tian2017l2,mishchuk2017working,tian2019sosnet,ebel2019beyond}, where the robustness and discriminativeness of local descriptors are significantly improved.
+Besides, some methods ~\cite{dusmanu2019d2,DeTone2017SuperPointSI,revaud2019r2d2,luo2020aslfeat,tian2020d2d} managed to learn the detector and descriptor together. 
+SuperGlue~\cite{sarlin20superglue} is a pioneering method that first introduces the transformer mechanism into matching, which has shown notable improvements over classical handcrafted matchers.
+As a side effect, it also costs more time, especially with many keypoints to match.
+To improve the efficiency, some subsequent works, such as ~\cite{chen2021learning,shi2022clustergnn}, endeavor to reduce the size of the attention mechanism, albeit at the cost of sacrificing performance.
+LightGlue~\cite{lindenberger2023lightglue} introduces a new scheme for efficient sparse matching that is adaptive to the matching difficulty, where the attention process can be stopped earlier for easy pairs.
+It is faster than SuperGlue and can achieve competitive performance.
+However, robustly detecting keypoints across images is still challenging, especially for texture-poor regions.
+Unlike them, our method focuses on the efficiency of the detector-free method, which eliminates the restriction of keypoint detection and shows superior performance for challenging pairs.
+
+\PAR{Detector-Free Image Matching.} 
+Detector-free methods directly match images instead of relying on a set of detected keypoints, producing semi-dense or dense matches.
+NC-Net~\cite{rocco2018neighbourhood} represents all features and possible matches as a 4D correlation volume. 
+Sparse NC-Net~\cite{rocco2020efficient} utilizes sparse correlation layers to ease resolution limitations.
+Subsequently, DRC-Net~\cite{li20dualrc} improves efficiency and further improves performance in a coarse-to-fine manner.
+
+LoFTR~\cite{sun2021loftr} first employs the Transformer in detector-free matching to model the long-range dependencies.
+It shows remarkable matching capabilities, however, suffers from low efficiency due to the huge computation of densely transforming entire coarse feature maps.
+Many follow-up works further improve the matching accuracy.
+Matchformer~\cite{wang2022matchformer} and AspanFormer~\cite{chen2022aspanformer} perform attention on multi-scale features, where local attention regions of \cite{chen2022aspanformer} are found with the help of estimated flow.
+QuadTree~\cite{tang2022quadtree} gradually restricts the attention span during hierarchical attention to relevant areas, which can reduce overall computation.
+However, these designs contribute marginally or even decrease efficiency, since the hierarchical nature of multi-scale attention will further introduce latencies.
+TopicFM~\cite{giang2022topicfm} first assigns features with similar semantic meanings to the same topic, where attention is conducted within each topic for efficiency.
+Since it needs to sequentially process each token's features for transformation, the efficiency improvement is limited.
+Moreover, performing local attention within topics can potentially restrict the capability of modeling long-range dependencies.
+Compared with them, the proposed aggregated attention module in our method significantly improves efficiency while achieving better accuracy.
+
+Dense matching methods~\cite{truong2021learning,edstedt2023dkm,edstedt2023roma} are designed to estimate all possible correspondences between two images, which show strong robustness.
+However, they are generally much slower compared with sparse and semi-dense methods.
+Unlike them, our method produces semi-dense matches with competitive performance and considerably better efficiency.
+\PAR{Transformer} has been broadly used in multiple vision tasks, including feature matching.
+The efficiency and memory footprint of handling large token sizes are the main limitations of transformer~\cite{Vaswani2017AttentionIA}, where some methods~\cite{Wang2020LinformerSW,Katharopoulos2020TransformersAR,Kitaev2020ReformerTE} attempt to reduce the complexity to a linear scale to alleviate these problems. 
+Some methods~\cite{xFormers2022,dao2022flashattention} propose optimizing transformer models for specific hardware architectures for memory and running-time efficiency.
+They are orthogonal to our method and can be naturally adapted into the pipeline for further efficiency improvement.
+
+\input{figs/main_pipeline.tex}
+
+
+Method
+
+Given a pair of images $\*I_A, \*I_B$, our objective is to establish a set of reliable correspondences between them. 
+We achieve this by a coarse-to-fine matching pipeline, which first establishes coarse matches on downsampled feature maps and then refines them for high accuracy.
+An overview of our pipeline is shown in Fig.~\ref{fig:allpipeline}.
+
+\subsection{Local Feature Extraction}
+
+Image feature maps are first extracted by a lightweight backbone for later transformation and matching.
+Unlike LoFTR and many other detector-free matchers that use a heavy multi-branch ResNet~\cite{He2015DeepRL} network for feature extraction, we alternate to a lightweight single-branch network with reparameterization~\cite{ding2021repvgg} to achieve better inference efficiency while preserving the model performance.
+
+In particular, a multi-branch CNN network with residual connections is applied during training for maximum representational power.
+At inference time, we losslessly convert the feature backbone into an efficient single-branch network by adopting the reparameterization technique~\cite{ding2021repvgg}, which is achieved by fusing parallel convolution kernels into a single one.
+Then, the intermediate $\nicefrac{1}{8}$ down-sampled coarse features $\tilde{\textbf{F}}_A$, $\tilde{\textbf{F}}_B$ and fine features in $\nicefrac{1}{4}$ and $\nicefrac{1}{2}$ resolutions are extracted efficiently for later coarse-to-fine matching.
+
+\subsection{Efficient Local Feature Transformation}
+
+After the feature extraction, the coarse-level feature maps $\tilde{\textbf{F}}_A$ and $\tilde{\textbf{F}}_B$ are transformed by interleaving self- and cross-attention \footnote{We feed feature of one image as query and feature of the other image as key and value into cross-attention, similar to SG~\cite{sarlin20superglue} and LoFTR~\cite{sun2021loftr}.}
+$n$ times to improve discriminativeness.
+The transformed features are denoted as $\tilde{\textbf{F}}_A^t$, $\tilde{\textbf{F}}_B^t$.
+
+Previous methods often perform attention on the entire coarse-level feature maps, where linear attention instead of vanilla attention is applied to ensure a manageable computation cost.
+However, the efficiency is still limited due to the large token size of coarse features.
+Moreover, the usage of linear attention leads to sub-optimal model capability.
+Unlike them, we propose efficient aggregated attention for both efficiency and performance.
+
+\paragraph{Preliminaries.}
+First, we provide a brief overview of the commonly used vanilla attention and linear attention.
+Vanilla attention is a core mechanism in transformer encoder layer, relying on three inputs: query Q, key K, and value V. 
+The resultant output is a weighted sum of the value, where the weighted matrix is determined by the query and its corresponding key. 
+Formally, the attention function is defined as follows:
+\begin{equation}
+    \operatorname{VanillaAttention}(Q,K,V)=\operatorname{softmax}({QK^T})V \enspace.
+\end{equation}
+However, applying the vanilla attention directly to dense local features is impractical due to the significant token size.
+To address this issue, previous methods use linear attention to reduce the computational complexity from quadratic to linear:
+\begin{equation}
+    \operatorname{LinearAttention}(Q,K,V)=\phi(Q)(\phi(K)^T\phi(V)) \enspace.
+\end{equation}
+where $\phi(\cdot)=elu(\cdot)+1$. 
+However, it comes at the cost of reduced representational power, which is also observed by~\cite{cai2022efficientvit}.
+        
+        
+\input{figs/network_comparison.tex}
+
+\paragraph{Aggragated Attention Module.}
+After comprehensively investigating the mechanism of the transformer on coarse feature maps, we have two observations that motivate us to devise a new efficient aggregated attention.
+First, the attention regions of neighboring query tokens are similar, thus we can aggregate the neighboring tokens of $f_i$ to prevent the redundant computation.
+Second, most of the attention weights of each query token are concentrated on a small number of key tokens, hence we can select the salient tokens of $f_j$ before attention to reduce the computation.
+
+Therefore, we propose to first aggregate the $f_i$ token utilizing a depth-wise convolution network, and $f_j$ is aggregated by a max pooling layer to get reduced salient tokens:
+\begin{equation}
+    f'_i=\operatorname{Conv2D}(f_i),\enspace f'_j=\operatorname{MaxPool}(f_j) \enspace,
+\end{equation}
+where $\operatorname{Conv2D}$ is implemented by a strided depthwise convolution with a kernel size of $s \times s$, identical to that of the max-pooling layer.
+Then positional encoding and vanilla attention are followed to process reduced tokens.
+Positional encoding~(PE) can help to model the spatial location contexts, 
+where RoPE~\cite{Su2021RoFormerET} is adopted in practice to account for more robust relative positions, inspired by~\cite{lindenberger2023lightglue}.
+Note that the PE layer is enabled exclusively for self-attention and skipped during cross-attention.
+The transformed feature map is then upsampled and fused with $f_i$ for the final feature map.
+Due to the aggregation and selection, the number of tokens in $f'_i$ and $f'_j$ is reduced by $s^2$, which contributes to the efficiency of the attention phase.
+
+\subsection{Coarse-level Matching Module}
+
+We establish coarse-level matches based on the previously transformed coarse feature maps $\tilde{\textbf{F}}_A^t$, $\tilde{\textbf{F}}_B^t$.
+Coarse correspondences indicate rough match regions for later subpixel-level matching in the refinement phase.
+To achieve this, $\tilde{\textbf{F}}_A^t$ and $\tilde{\textbf{F}}_B^t$ are densely correlated to build a score matrix $\mathcal{S}$.
+The softmax operator on both $\mathcal{S}$ dimensions (referred to as dual-softmax) is then applied to obtain the probability of mutual nearest matching, which is commonly used in ~\cite{rocco2018neighbourhood, tyszkiewicz2020disk, sun2021loftr}.
+The coarse correspondences $\{\mathcal{M}_c\}$ are established by selecting matches above the score threshold $\tau$ while satisfying the mutual-nearest-neighbor (MNN) constraint.
+
+\paragraph{Efficient Inference Strategy.}
+We observe that the dual-softmax operator in the coarse matching can significantly restrict the efficiency in inference due to the large token size, especially for high-resolution images.
+Moreover, we find that the dual-softmax operator is crucial for training, dropping it at inference time while directly using the score matrix $\mathcal{S}$ for MNN matching can also work well with better efficiency.
+
+The reason for using the dual-softmax operator in training is that it can help to train discriminative features.
+Intuitively, with the softmax operation, the matching score between two pixels can also conditioned on other pixels.
+This mechanism forces the network to improve feature similarity of true correspondences while suppressing similarity with irrelevant points.
+With trained discriminative features, the softmax operation can be potentially eliminated during inference.
+
+We denote the model skipping dual-softmax layer in inference as \emph{efficiency optimized model}.
+Results in Tab.~\ref{tab:exp relativepose} demonstrate the effectiveness of this design.
+
+\subsection{Subpixel-Level Refinement Module}
+As overviewed in Fig.~\ref{fig:allpipeline}~(4), with established coarse matches ${\{\mathcal{M}_c\}}$, we refine them for sub-pixel accuracy with our refinement module.
+It is composed of an efficient feature patch extractor for discriminative fine features, followed by a two-stage feature correlation layer for final matches ${\{\mathcal{M}_f\}}$.
+
+\paragraph{Efficient Fine Feature Extraction.}
+We first extract discriminative fine feature patches centered at each coarse match $\mathcal{M}_c$ by an efficient fusion network for later match refinement.
+For efficiency, our key idea here is to re-leverage the previously transformed coarse features $\tilde{\textbf{F}}_A^t$, $\tilde{\textbf{F}}_B^t$ to obtain cross-view attended discriminative fine features, instead of introducing additional feature transform networks as in LoFTR~\cite{sun2021loftr}.
+
+To be specific, $\tilde{\textbf{F}}_A^t$ and $\tilde{\textbf{F}}_B^t$ are adaptively fused with $\nicefrac{1}{4}$ and $\nicefrac{1}{2}$ resolution backbone features by convolution and upsampling to obtain fine feature maps $\hat{\textbf{F}}_A^t$, $\hat{\textbf{F}}_B^t$ in the original image resolution.
+Then local feature patches are cropped on fine feature maps centered at each coarse match.
+Since only shallow feed-forward networks are included, our fine feature fusion network is remarkably efficient.
+
+\paragraph{Two-Stage Correlation for Refinement.}
+Based on the extracted fine local feature patches of coarse matches, we search for high-accurate sub-pixel matches.
+To refine a coarse match, a commonly used strategy~\cite{sun2021loftr,chen2022aspanformer,giang2022topicfm} is to select the center-patch feature of $\*I_A$ as a fixed reference point, and perform feature correlation and expectation on the entire corresponding feature patch for its fine match.
+However, this refinement-by-expectations will introduce location variance to the final match, because irrelevant regions also have weights and can affect results.
+Therefore, we propose a novel two-stage correlation module to solve this problem.
+
+Our idea is to utilize a mutual-nearest-neighbor~(MNN) matching to get intermediate pixel-level refined matches in the first stage, and then refine them for subpixel accuracy by correlation and expectation.
+Motivations are that MNN matching don't have spatial variance since matches are selected by directly indexing pixels with maximum scores, but cannot achieve sub-pixel accuracy.
+Conversely, refinement-by-expectation can achieve sub-pixel accuracy but variance exists.
+The proposed two-stage refinement can draw benefits by combining the best of both worlds.
+Specifically, to refine a coarse-level correspondence $\mathcal{M}_c$, the first-stage refinement phase densely correlates their fine feature patches to obtain the local patch score matrix $\mathcal{S}_l$.
+MNN searching is then applied on $\mathcal{S}_l$ to get intermediate pixel-level fine matches.
+To limit the overall match number, we select the top-$1$ fine match for one coarse match by sorting the correlation scores.
+
+Then, we further refine these pixel-level matches for subpixel accuracy by our second-stage refinement.
+Since the matching accuracy has already significantly improved in first-stage refinement, now we can use a tiny local window for correlation and expectation with a maximum suppression of location variance.
+In practice, we correlate the feature of each point in $\textbf{I}_A$ with a $3\times3$ feature patch centered at its fine match in $\textbf{I}_B$.
+The softmax operator is then applied to get a match distribution matrix and the final refined match is obtained by calculating expectations.
+
+\subsection{Supervision}
+The entire pipeline is trained end-to-end by supervising the coarse and refinement matching modules separately.
+
+\paragraph{Coarse-Level Matching Supervision.}
+The coarse ground truth matches $\{\mathcal{M}_c\}_{gt}$ with a total number of $N$ are built by warping grid-level points from $\textbf{I}_A$ to $\textbf{I}_B$ via depth maps and image poses following previous methods~\cite{sarlin20superglue,sun2021loftr}.
+The produced correlation score matrix $\mathcal{S}$ in coarse matching is supervised by minimizing the log-likelihood loss over locations of $\{\mathcal{M}_c\}_{gt}$: %
+\begin{equation}
+\resizebox{0.75\columnwidth}{!}{
+    $
+    \mathcal{L}_{c} = - \frac{1}{N}
+    \sum_{(\tilde{i}, \tilde{j}) \in \{\mathcal{M}_{c}\}_{gt}} \log \mathcal{S}\left(\tilde{i}, \tilde{j}\right) \enspace.
+    $
+}
+    \label{eq:loss_coarse}
+\end{equation}
+
+\paragraph{Fine-Level Matching Supervision.}
+We train the proposed two-stage fine-level matching module by separately supervising the two phases.
+The first stage fine loss $\mathcal{L}_{f1}$ is to minimize the log-likelihood loss of each fine local score matrix $\mathcal{S}_l$ based on the pixel-level ground truth fine matches, similar to coarse loss.
+The second stage is trained by $\mathcal{L}_{f2}$ that calculates the $\ell_2$ loss between the final subpixel matches $\{\mathcal{M}_f\}$ and ground truth fine matches $\{\mathcal{M}_f\}_{gt}$.
+
+The total loss is the weighted sum of all supervisions: $\mathcal{L} = \mathcal{L}_c + \alpha \mathcal{L}_{f1} + \beta \mathcal{L}_{f2}$.
+
+
+Experiments
+In this section, we evaluate the performance of our method on several downstream tasks, including homography estimation, pairwise pose estimation and visual localization. Furthermore, we evaluate the effectiveness of our design by conducting detailed ablation studies.
+\input{tab/relative_pose.tex}
+
+\subsection{Implementation Details}
+We adopt RepVGG~\cite{ding2021repvgg} as our feature backbone, and self- and cross-attention are interleaved for $N=4$ times to transform coarse features.
+For each attention, we aggregate features by a depth-wise convolution layer and a max-pooling layer, both with a kernel size of $4\times4$.
+Our model is trained on the MegaDepth dataset~\cite{li2018megadepth}, which is a large-scale outdoor dataset.
+The test scenes are separated from training data following~\cite{sun2021loftr}. %
+The loss function's weights $\alpha$ and $\beta$ are set to $1.0$ and $0.25$, respectively.
+We use the AdamW optimizer with an initial learning rate of $4\times10^{-3}$.
+The network training takes about 15 hours with a batch size of 16 on $8$ NVIDIA V100 GPUs.
+And the coarse and fine stages are trained together from scratch.
+The trained model on MegaDepth is used to evaluate all datasets and tasks in our experiments to demonstrate the generalization ability.
+
+\subsection{Relative Pose Estimation}
+\PAR{Datasets.} 
+We use the outdoor MegaDepth~\cite{li2018megadepth} dataset and indoor ScanNet~\cite{dai2017scannet} dataset for the evaluation of relative pose estimation to demonstrate the efficacy of our method.
+
+MegaDepth dataset is a large-scale dataset containing sparse 3D reconstructions from 196 scenes.
+The key challenges on this dataset are large viewpoints and illumination changes, as well as repetitive patterns.
+We follow the test split of the previous method~\cite{sun2021loftr} that uses 1500 sampled pairs from scenes ``Sacre Coeur'' and ``St. Peter’s Square'' for evaluation.
+Images are resized so that the longest edge equals 1200 for all semi-dense and dense methods.
+Following~\cite{lindenberger2023lightglue}, sparse methods are provided resized images with longest edge equals 1600.
+
+ScanNet dataset contains 1613 sequences with ground-truth depth maps and camera poses.
+They depict indoor scenes with viewpoint changes and texture-less regions.
+We use the sampled test pairs from~\cite{sarlin20superglue} for the evaluation, where images are resized to $640\times480$ for all methods.
+
+\PAR{Baselines.} 
+We compare the proposed method with three categories of methods: 1) sparse keypoint detection and matching methods, including SuperPoint~\cite{DeTone2017SuperPointSI} with Nearest-Neighbor~(NN), SuperGlue~(SG)~\cite{sarlin20superglue}, LightGlue~(LG)~\cite{lindenberger2023lightglue} matchers, 2) semi-dense matchers, including DRC-Net~\cite{li20dualrc}, LoFTR~\cite{sun2021loftr}, QuadTree Attention~\cite{tang2022quadtree}, MatchFormer~\cite{wang2022matchformer}, AspanFormer~\cite{chen2022aspanformer}, TopicFM~\cite{giang2022topicfm}, and 3) state-of-the-art dense matcher ROMA~\cite{edstedt2023roma} that predict matches for each pixel.
+
+\PAR{Evaluation protocol.}
+Following previous methods, the recovered relative poses by matches are evaluated for reflecting matching accuracy. 
+The pose error is defined as the maximum of angular errors in rotation and translation. %
+We report the AUC of the pose error at thresholds~(5\degree, 10\degree, and 20\degree).
+Moreover, the running time of matching each image pair in the ScanNet dataset is reported for comprehensively understanding the matching accuracy and efficiency balance.
+We use a single NVIDIA 3090 to evaluate the running time of all methods.
+
+\PAR{Results.}
+As shown in Tab.~\ref{tab:exp relativepose}, the proposed method achieves competitive performances compared with sparse and semi-dense methods on both datasets.
+Qualitative comparisons are shown in Fig.~\ref{fig:qualitative}.
+Specifically, our method outperforms the best semi-dense baseline AspanFormer on all metrics of the MegaDepth dataset and has lower but comparable performance on the ScanNet dataset, with $\sim 2$ times faster.
+Our optimized model that eliminates the dual-softmax operator in coarse-level matching further brings efficiency improvements, with slight performance decreases.
+Using this strategy, our method can outperform the efficient and robust sparse method SP + LG in efficiency with significantly higher accuracy.
+Dense matcher ROMA shows remarkable matching capability but is slow for applications in practice.
+Moreover, since ROMA utilizes the pre-trained DINOv2~\cite{oquab2023dinov2} backbone, its strong generalizability on ScanNet may be attributed to the similar indoor training data in DINOv2, where other methods are trained on outdoor MegaDepth only.
+Compared with it, our method is $\sim 7.5$ times faster, which has a good balance between accuracy and efficiency.
+
+\input{tab/hpatches.tex}
+\subsection{Homography Estimation}
+\PAR{Dataset.} We evaluate our method on HPatches dataset~\cite{balntas2017hpatches}.
+HPatches dataset depicts planar scenes divided into sequences. 
+Images are taken under different viewpoints or illumination changes.
+
+\PAR{Baselines.}
+We compare our method with sparse methods including D2Net~\cite{dusmanu2019d2}, R2D2~\cite{revaud2019r2d2}, DISK~\cite{tyszkiewicz2020disk} detectors with NN matcher, and SuperPoint~\cite{DeTone2017SuperPointSI} + SuperGlue~\cite{sarlin20superglue}.
+As for semi-dense methods, we compare with Sparse-NCNet~\cite{rocco2020efficient}, DRC-Net~\cite{li20dualrc}, and LoFTR~\cite{sun2021loftr}.
+For SuperGlue and all semi-dense methods, we use their models trained on MegaDepth dataset for evaluation.
+
+\PAR{Evaluation Protocol.} Following SuperGlue~\cite{sarlin20superglue} and LoFTR~\cite{sun2021loftr}, we resize all images for matching so that their smallest edge equals 480 pixels. 
+We collect the mean reprojection error of corner points, and report the area under the cumulative curve (AUC) under 3 different thresholds, including $3$~px, $5$~px, and $10$~px.
+For all baselines, we employ the same RANSAC method as a robust homography estimator for a fair comparison.
+Following LoFTR, we select only the top 1000 predicted matches of semi-dense methods for the sake of fairness.
+
+\PAR{Results.}
+As shown in Tab.~\ref{tab:exp hpatches}, even though the number of matches is restricted, our method can also work remarkably well and outperform sparse methods significantly.
+Compared with semi-dense, our method can surpass them with significantly higher efficiency.
+We attribute this to the effectiveness of two-stage refinement for accuracy improvement and proposed aggregation module for efficiency.
+
+\input{tab/inloc.tex}
+\input{tab/aachen.tex}
+
+\subsection{Visual Localization}
+\PAR{Datasets and Evaluation Protocols.}
+Visual localization is an important downstream task of image matching, which aims to estimate the 6-DoF poses of query images based on the 3D scene model.
+We conduct experiments on two commonly used benchmarks, including InLoc~\cite{taira2018inlo
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,256 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{submission}
+
+State-of-the-art object detectors \cite{redmon2018yolov3,ren2015faster,tian2019fcos} have demonstrated impressive performance when the training and testing data exhibit consistent distributions.
+However, their performance diminishes drastically when applied to novel domains, primarily due to domain shift \cite{chen2018domain}, which impedes the generalization and transferability of the detectors across different scenes. 
+The inability of object detectors to adapt to novel domains hampers their practical applicability in real-world scenarios. 
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.00\columnwidth]{figures/source_bias.pdf} % Reduce the figure size so that it is slightly narrower than the column. Don't use precise values for figure width.This setup will avoid overfull boxes.
+\caption{
+In (a) traditional alignment approaches, the detector tends to learn more source-specific knowledge due to the supervised detection loss $L_{det}$, rather than domain-agnostic knowledge (b). In (c) our proposed DSD framework, by introducing a distillation loss to the source data, the model can acquire more domain-agnostic knowledge than (a). The red and green dotted arrows represent the impact of source or target-related losses on knowledge transfer, respectively.
+}
+\label{fig1}
+\end{figure}
+
+Extensive researches have been dedicated to address the challenge via Unsupervised Domain Adaption (UDA) methods, which aim to adapt to unlabeled target domain using the annotated source domains. One of the fashionable frameworks of UDA  
+is to align the feature distributions between the source and target domains toward a cross-domain feature space. Early researches \cite{chen2018domain,saito2019strong,hsu2020every,jiang2021decoupled} aim to align image-level and instance-level features and achieve great margins over plain detectors. Recent works \cite{tian2021knowledge,zhang2021rpn,li2022sigma} devote to aligning class-conditional distribution across different domains, and have achieved fine-grained adaption in a category-wise manner. These approaches expect the model supervised by the labeled source domain to infer on the target domain effectively.
+
+Despite of great success, there are still two challenges in existing alignment-based methods \cite{chen2018domain,zheng2020cross,li2022cross}. 
+On one hand, as illustrated in Fig.~\ref{fig1}(a), the supervision of the model originates from two aspects: 1) supervised detection loss $L_{det}$ from source; 2) adversarial loss $L_{adv}$ from both source and target. Compared with $L_{adv}$, $L_{det}$ provides more explicit supervision signal and enforce the model to fit the source distribution. Thus, in this process, it is inevitable that detector will acquire more source-specific knowledge than target-specific knowledge. Simultaneously, the detector also gain domain-agnostic knowledge in the adversarial training process. As a result, the knowledge acquired by the detector is source-biased (\textit{i.e.,} more source-specific knowledge) rather than ideal (Fig.~\ref{fig1}(b)), hindering the model's generalization in the target domain.
+These observations motivate us to design a new paradigm that enables the model to learn more domain-agnostic knowledge compared to traditional methods.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.00\columnwidth]{figures/inconsistent.pdf} % Reduce the figure size so that it is slightly narrower than the column. Don't use precise values for figure width.This setup will avoid overfull boxes.
+\caption{
+Demonstrative cases of the \textbf{exacerbated inconsistency} between classification and localization based on alignment-based detector DA-Faster \cite{chen2018domain}. The upper row figures (a) and (b) show DA-Faster's detection results on \textit{Cityscapes} and \textit{FoggyCityscapes}, respectively. 
+The lower row figures (c) and (d) display the correlation between localization ground-truth ($x$-axis, represented by the the IoU between the bounding box and its matched ground-truth) and classification scores ($y$-axis) for 500 randomly sampled DA-Faster's detected boxes in \textit{Cityscapes} and \textit{FoggyCityscapes}, respectively. The bounding boxes are filtered based on an IoU ($\ge 0.5$) with the corresponding ground-truth.}
+\label{fig2}
+\end{figure}
+
+On the other hand, we observed that the alignment-based detectors (e.g. DA-Faster \cite{chen2018domain}) face \textbf{exacerbated inconsistency} between classification and localization. Firstly, as shown in Fig.~\ref{fig2}(a), inconsistency means the phenomenon \cite{jiang2018acquisition} that compared with the detected bounding box (blue), another detected bounding box (red) with higher classification scores could have lower IoU with ground truth boxes (green). \textbf{Exacerbated inconsistency} in this paper means that existing alignment-based detectors encounter more severe inconsistency issues on the target domain than that of source domain. 
+From the perspective of detection visualization, the exacerbated inconsistency is reflected in that detection boxes (blue and red) in \textit{FoggyCityscapes} (Fig.~\ref{fig2}(b)) often exhibit larger differences in classification scores compared with ones located in the same position in \textit{Cityscapes} (Fig.~\ref{fig2}(a)). 
+From the perspective of correlation metric, the exacerbated inconsistency means Spearman Rank Correlation Coefficient $\rho$ and Kendall Rank Correlation Coefficient $\tau$ in the \textit{FoggyCityscapes} (Fig.~\ref{fig2}(d)) are lower than ones in \textit{Cityscapes} (Fig.~\ref{fig2}(c)). $\rho$ and $\tau$ are the measures of rank correlation: the similarity of the ordings of the data when ranked by each of the quantities. 
+As shown in Fig.~\ref{fig2}(c) (d), the $\rho$ and $\tau$ in the \textit{FoggyCityscapes} are relatively lower (-0.15 and -0.11) compared to \textit{Cityscapes}, indicating that the detector faces a more pronounced inconsistency issue in the target domain.
+In general detection pipelines, the classification scores are commonly employed as the metric for ranking the detected boxes, which can result in the suppression of accurate bounding boxes by less accurate ones during NMS procedure. In the cross-domain detection, this issue is amplified due to more severe inconsistency.
+In this paper, to overcome the aforementioned constraints, we present a DSD-DA method that contains a novel Distillation-based Source Debiasing (DSD) framework and a Domain-aware Consistency Enhancing (DCE) strategy. 
+Firstly, considering that current alignment-based DAOD methods tends to acquire more source-specific knowledge, we propose to perform knowledge distillation to guide detector to acquire more domain-agnostic knowledge and thus restrain the potential source bias issue. Specifically, as shown in Fig.~\ref{fig1}(c), we first utilize CycleGAN \cite{zhu2017unpaired} to transform the source images into the target domain style, named source2target domain ${T'}$ (light blue). Then, we train a classification-teacher via a supervised and adversarial loss, which is able to learn domain-agnostic knowledge from $S$ and $T'$ mix-style data. Finally, these knowledge is utilized to guide the detector's training, improving the performance of detector on both domains.
+Secondly, to mitigate exacerbated inconsistency on target data, we design a Target-Relevant Object Localization Network (TROLN), in which pixel and instance-level target affinity weights are proposed and incorporated into the loss function. TROLN is also trained on $S$ and $T'$ mix-style data, which is utilized to mine target relevant localization information. Then, in the testing stage, we conduct the DCE strategy, \textit{i.e.,} formulating the output of TROLN into a new localization representation. And we use this representation to adjust the classification scores of the detected boxes, enhancing the consistency and making sure that more accurate detected boxes are retained in NMS process.
+
+In summary, our contributions are as follows:
+
+\begin{itemize}
+  \item We propose a novel DSD framework for DAOD, which utilizes an unbiased classification-teacher to guide the detector to learn more domain-agnostic feature representations. To the best of our knowledge, this is the first study to analyze and solve source bias issue in alignment-based methods.
+  \item We reveal the \textbf{exacerbated inconsistency} issue between the classification and localization existing in traditional alignment-based method. We design TROLN and conduct DCE strategy to refine classification scores in the testing stage, which enhances the consistency between the classification and localization.
+  \item Extensive experiments demonstrate that our method consistently outperforms the strong baseline by significant margins, highlighting its superiority compared to existing alignment-based methods.
+\end{itemize}
+
+
+
+Related Work
+
+\textbf{Domain adaptation for object detection.} 
+Several approaches have been proposed for DAOD, which can be categorized into alignment-based \cite{chen2018domain, saito2019strong, li2022sigma,li2022scan, xu2022h2fa} and self-training \cite{deng2021unbiased, ramamonjison2021simrod,deng2023harmonious} methods. 
+However, regardless of various technological approaches, the source bias issue persists. Self-training methods alleviate the detector's bias towards the source domain by continuously improving the quality of pseudo-labels during training stage. The development of alignment-based methods often involves modeling features from coarse to fine. DA-Faster \cite{chen2018domain} implements feature alignment at both the image-level and instance-level. 
+$H^2FA$ \cite{xu2022h2fa} enforces two image-level alignments for the backbone features, as well as two instance-level alignments for the RPN
+and detection head.
+SIGMA \cite{li2022sigma}  constructs the feature distributions of the source and target domains as graphs and reformulates the adaption with graph matching. However, regardless of the granularity of modeling, it is unable to change the asymmetry in the losses in the alignment stage and thus cannot effectively address the source bias problem. 
+In this paper, we propose a novel distillation-based alignment (DSD) framework, where a distillation loss is constructed to guide the learning process of detector. To the best of our knowledge, this is the first method directly optimizing source bias in alignment-based approaches.
+
+\textbf{Representation of localization quality.} The conflict between classification and localization tasks is a well-known problem \cite{jiang2018acquisition,tychsen2018improving,li2020generalized,zhang2021varifocalnet,pu2023rank,zhang2023decoupled, feng2021tood} in the object detection field. 
+Existing works have focused on finding more accurate localization representation to guide the learning of the classification head, addressing the inconsistency issue.
+IoU-Net \cite{jiang2018acquisition} introduces an extra head to predict IoU and use it to rank bounding boxes in NMS. Fitness NMS \cite{tychsen2018improving} and  IoU-aware RetinaNet \cite{wu2020iou} multiply the predicted IoU or IoU-based ranking scores by the classification score as the ranking basis. Instead of predicting the IoU-based score, FCOS \cite{tian2019fcos} predicts centerness scores to suppress the low-quality detections.
+However, for exacerbated inconsistency in cross-domain scenarios, how to incorporate target-relevant information into localization representation designing has become a new challenge. 
+Unfortunately, few methods explore and solve this challenge.
+Therefore, we first propose a target-relevant OLN to mine target-related localization information from style-mixed data. Then we integrate these target relevant information into a novel localization representation to refine the classification scores, enhancing the consistency.
+\begin{figure*}[t]
+\centering
+\includegraphics[width=1.00\textwidth]{figures/overall.pdf} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{Overview of the proposed distillation-based source debiasing framework for DAOD.
+Part \Rmnum{1} shows the teacher models training stage, which includes a mix-style classifier and a Target-Relevant object localization network (TROLN) training. Part \Rmnum{2} demonstrates distillation-based source debiasing (DSD) training, in which the cross-domain detector is trained. In Part \Rmnum{3}, the Domain-aware Consistency Enhancement (DCE) strategy is introduced to refine the detector's classification scores in the testing phase, enhancing the consistency between classification and localization.}
+\label{fig3}
+\end{figure*}
+
+
+
+Method
+
+\subsection{Problem Formulation}
+In the cross-domain object detection, we have a labeled source domain $\mathcal{D}_S = \{ (x_i^s, y_i^s) \}_{i=1}^{N_s}$, where $x_i^s$ and $y_i^s=(b_i^s, c_i^s)$ denote the $i_{th}$ image and its corresponding labels, \textit{i.e.}, the coordinates of the bounding box $b$ and its associated category $c$, respectively. In addition, we have access to an unlabeled target domain $\mathcal{D}_T = \{ x_i^t \}_{i=1}^{N_t}$. 
+In this work, we employ CycleGAN \cite{zhu2017unpaired} to convert the source images into the target domain style, creating a new domain named source2target domain $\mathcal{D}_{T'} = \{ (x_i^{t'}, y_i^{t'}) \}_{i=1}^{N_s}$, which shares labels with the source domain data. 
+We assume that the source and target samples come from different distributions (\textit{i.e.}, $\mathcal{D}_S \neq \mathcal{D}_T$) but the categories are exactly the same. The objective is to enhance the performance of the detector in $\mathcal{D}_T$ using the knowledge in $\mathcal{D}_S$. 
+
+\subsection{Framework Overview}
+
+As shown in Fig.~\ref{fig3}, our method involves two training stages, a teacher models training stage and a detector training stage. In the teacher models training stage (Sec~\ref{pretraining}), we train a classification and a localization models as teachers using the labeled data $\mathcal{D}_S$ and $\mathcal{D}_{T'}$. In the second training stages (Sec~\ref{distillation}), the features of the positive proposals are expected to derive domain-agnostic representation from the classification-teacher model. During the testing stage (Sec~\ref{localizaion}), we design the localization scores based on the output of TROLN and use it to refine the classification scores, thereby alleviating the inconsistent issue. 
+
+\subsection{Detection Baseline}
+We use DA-Faster \cite{chen2018domain} as our base detector. DA-Faster is a two-stage cross-domain detector that consists of two major components: a standard Faster-RCNN detector and a domain adaption component that includes image-level and instance-level domain discriminators $D$. When the training process gradually converges, the detector tends to extract domain-invariant feature representations. 
+Formally, the image-level adaption loss can be written as:
+\begin{equation}
+   \begin{split}
+      \mathcal{L}_{img} = \min \limits_{\theta_{G}} \max \limits_{\theta_{D}} \ & \mathbb{E}_{x_s \sim \mathcal{D}_S} \log D_{img}(G(x_s)) \\ 
+       + \ & \mathbb{E}_{x_t \sim \mathcal{D}_T} \log (1 - D_{img}(G(x_t)))
+   \end{split}
+\end{equation}
+where $\theta_{G}$ and $\theta_{D}$ are the parameters of backbone $G$ and $D_{img}$, $x_s$, $x_t$ represent images from ${\mathcal{D}_S}$ and ${\mathcal{D}_T}$, respectively. Similarly, the instance-level adaption loss is defined as:
+\begin{equation}
+   \begin{split}
+      \mathcal{L}_{ins} = \min \limits_{\theta_{Det}} \max \limits_{\theta_{D}} \ & \mathbb{E}_{f_s \sim {ROI}_S} \log D_{ins}(f_s) \\ 
+       + \ & \mathbb{E}_{f_t \sim {ROI}_T} \log (1 - D_{ins}(f_t))
+   \end{split}
+\end{equation}
+where $\theta_{Det}$ and $\theta_{D}$ are the parameters of detector and $D_{ins}$, $f_s$, $f_t$ represent the ROI features of $x_s$ and $x_t$, respectively.
+The training loss of DA-Faster is a summation of each individual part, which can be written as:
+\begin{equation}
+    \mathcal{L}_{DA} = {L}_{det} + \lambda ({L}_{img} + {L}_{ins}) 
+\end{equation}
+where $\mathcal{L}_{det}$ is the loss of Faster-RCNN and $\lambda$ is a trade-off parameter to balance the Faster-RCNN loss and domain adaption loss.
+
+\subsection{Teacher Models Training}
+\label{pretraining}
+
+\textbf{Classification Teacher}.
+We first construct an instance-level image dataset $\mathcal{D}$ as image corpus by extracting all class objects from the detection dataset $\mathcal{D}_S$ and $\mathcal{D}_{T'}$ according to their ground-truth bounding boxes and labels. 
+Formally, for an input image, we first perform typical data augmentations (random cropping, color distortion, \textit{etc.}). Then we feed the augmented image into a ResNet \cite{he2016deep} classification network for supervised learning. Simultaneously, we adopt domain discriminator to align the feature distribution of $S$ and $T'$.
+
+The classifier's ability to acquire domain-agnostic knowledge can be attributed to three aspects:
+1) Strong supervision signal. Since $\mathcal{D}$ contains labeled images with two different styles, classifier is enforced to fit the data distribution of different domain via the supervised loss during the training. In this process, classifier tends to acquire domain-agnostic knowledge.
+2) Adversarial learning. Domain discriminator with Gradient Reverse Layer (GRL) \cite{ganin2015unsupervised} layer is powerful tool that can align feature distributions between two domains. It is beneficial for feature extractor to produce domain-invariant features that cannot be discriminated by the discriminator.
+3) Enriched data. Compared with sole source data, the mixed data doubles the scale and greatly enriches the training data with various data augmentations. It facilitates the classifier to learn domain-invariant representations.
+Our classification-teacher model is optimized in a completely independent way from the object detection. And its domain-agnostic knowledge can be transferred to object detection to suppress potential source bias.
+\textbf{TROLN Teacher}.
+To solve the challenge of exacerbated inconsistency on the target data, we attempt to use localization indicators (IoU, centerness) from OLN \cite{kim2022learning} to calibrate the classification scores. The original OLN estimates the objectness of each region by centerness-head and IoU-head. The comprehensive loss function of OLN can be written as:
+\begin{equation}
+\label{oln}
+\begin{gathered}
+    \mathcal{L}_{OLN} = \mathcal{L}_{RPN}^{Cent} + \mathcal{L}_{RPN}^{reg} + \mathcal{L}_{RCNN}^{IoU} + \mathcal{L}_{RCNN}^{reg} \\
+    \mathcal{L}_{RPN}^{Cent} = \frac{1}{N_{pix}} \sum_{x=1}^{W} \sum_{y=1}^{H} \mathbb{1}_{for}^{pix} {L}_{1}(c_{x,y}, \hat{c}_{x,y}) \\
+    \mathcal{L}_{RCNN}^{IoU} = \frac{1}{N_{pos}} \sum_{r=1}^{N_{pos}} \mathbb{1}_{for}^{pro} {L}_{1}(b_r, \hat{b}_r)
+\end{gathered}
+\end{equation}
+where $\mathbb{1}_{for}^{pix}$ and $\mathbb{1}_{for}^{pro}$ denote the positive pixels and positive proposals set. $c_{x,y}$, $b_r$, $\hat{c}_{x,y}$, $\hat{b}_r$ are the predicted centerness, predicted IoU, groundtruth centerness and groundtruth IoU, respectively.  
+
+However, when using directly $S$ and $T'$ mixed data to train original OLN, the lack of guidance from the target domain results in less target-relevant images being given the same importance as more relevant ones, leading to a deterioration in knowledge learning and mining from the target domain. 
+To effectively mine target relevant localization information in the training, Target-Relevant Object Localization Network (TROLN) has been developed to ensure that target-relevant information are encoded at the pixel and instance level. Specifically, a pixel-level domain discriminator $D$ is placed after the feature encoder $E$ (shown in Fig.~\ref{fig3} \Rmnum{1}) in the TROLN.  
+The probability of each pixel belonging to the target domain is defined as $D(E(X)) \in \mathbb{R}^{H \times W \times 1}$ and $1 - D(E(X)) \in \mathbb{R}^{H \times W \times 1}$ represents the probability of it belonging to the source domain. The domain discriminator $D$ is updated using binary cross-entropy loss based on the domain label $d$ for each input image, where images from the source domain are labeled as $d=0$ and images from target domain are labeled as $d=1$. The discriminator loss  $\mathcal{L}_{dis}$ can be expressed as:
+
+\begin{equation}
+\begin{split}
+\mathcal{L}_{dis} = - d \log D(E(X)) 
+- (1-d) \log (1-D(E(X))) 
+\end{split}
+\end{equation} 
+
+The large value within $D(E(X))$ indicates that the distribution of current pixel and target pixels are more similar. Based on the important cues, we denote $D(E(X))$ as target affinity score map $M$ and adopt dynamic target-related weight to adjust the ${L}_{RPN}^{Cent}$ and ${L}_{RCNN}^{IoU}$. 
+The pixel-level and instance-level target affinity weight $\tau_{1}$, $\tau_{2}$ are defined as the following:
+\begin{equation}
+\label{oln-t}
+\begin{gathered}
+    \tau_{1} = M(x, y) \\
+    \tau_{2} = \text{Average}(\text{ROI}\text{Align}(M, p))
+\end{gathered}
+\end{equation}
+where $(x,y)$ represents the pixel coordinates of $M$ and $p$ denotes one proposal from RPN.
+
+Subsequently, we can reweight the importance of loss items from pixel and instance level as illustrated in Fig.~\ref{fig3} \Rmnum{1}, and apply it to train a localization-teacher (TROLN) by reformulating the loss function in Eq.~\ref{oln} as the following:
+\begin{equation}
+\label{myoln}
+\begin{gathered}
+    \mathcal{L}_{TROLN} = \mathcal{L}_{RPN}^{Cent} + \mathcal{L}_{RPN}^{reg} + \mathcal{L}_{RCNN}^{IoU} + \mathcal{L}_{RCNN}^{reg} + \mathcal{L}_{dis} \\
+    \mathcal{L}_{RPN}^{Cent} = \frac{1}{N_{pix}} \sum_{x=1}^{W} \sum_{y=1}^{H} \mathbb{1}_{for}^{pix} (\tau_{1}+1){L}_{1}(c_{x,y}, \hat{c}_{x,y}) \\
+    \mathcal{L}_{RCNN}^{IoU} = \frac{1}{N_{pos}} \sum_{r=1}^{N_{pos}} \mathbb{1}_{for}^{pro} (\tau_{2}+1){L}_{1}(b_r, \hat{b}_r)
+\end{gathered}
+\end{equation}
+
+Based on Eq.~\ref{myoln}, TROLN is explicitly enforced to learn from target-relevant samples, and thus prevents the interference from the information irrelevant to the target.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.45\textwidth]{figures/scatter.pdf} % Reduce the figure size so that it is slightly narrower than the column. Don't use precise values for figure width.This setup will avoid overfull boxes.
+\caption{The correlation between localization ground-truth and centerness/IoU/localization scores of the bounding boxes on the target test dataset. The bounding boxes are filtered based on an IoU ($\ge 0.5$) with the corresponding ground-truth.}
+\label{fig4}
+\end{figure}
+
+\subsection{Distillation-based Source Debiasing}
+\label{distillation}
+
+After Teacher Models Training stage, we start the training of cross-domain detector.
+Here, we take DA-Faster \cite{chen2018domain} as the base detector to describe the DSD framework.
+As shown in Fig.~\ref{fig3} \Rmnum{2}, in the DSD training stage, given source proposals $R$ generated by RPN, we initially select $R$ by assessing IoU with ground truth higher than threshold $T$. We crop these proposals from the source image and resize them to a fixed size using bilinear interpolation, then feed them into our classification-teacher model to obtain classification logit $\mathbf{P}(r)\in \mathbb{R}^{K\times 1}$. Here, $K$ represents the number of classes in the object detection task, $r$ represents one of filtered proposals.
+Meanwhile, we obtain the ROI features $\mathbf{F}(r)$ for $r$ from the RoI Align layer. Note that $\mathbf{F}(r)$ and $\mathbf{P}(r)$ are learned in the different feature space, thus we first project $\mathbf{F}(r)$ into the same feature space as $\mathbf{P}(r)$ and then obtain the classification logit of the projected feature:
+\begin{equation}
+\begin{split}
+   \mathbf{Q}(r) = \phi(g(\mathbf{F}(r))
+  \label{eq:student}
+  \end{split}
+\end{equation}
+Here, $g(\cdot)$ denotes the project function for features $\mathbf{F}(r)$, which is implemented with a $1\times1$ convolutional layer, while $\phi(\cdot)$ is the classification branch in the detection head.
+Then we minimize the L1-norm between these two logit representations to guide the learning process of the detector:
+\begin{equation}
+  L_\text{dist} = \frac{1}{{R}_{f}K}\sum^{{R}_{f}}_{r=1}\sum^{K}_{k=1}\left\| \mathbf{P}_{k}(r)-\mathbf{Q}_{k}(r) \right\|_1
+  \label{eq:distillation}
+\end{equation}
+where ${R}_{f}$ is the number of filtered proposals. 
+The obtained logit representation $\mathbf{Q}(r)$ can also be utilized for classification of the region proposal $r$. Thus, we conduct an auxiliary classification task on the logit $\mathbf{Q}(r)$.
+\begin{equation}
+\begin{split}
+  & p^{\prime} = \mathcal{F}_{\text{softmax}}(\mathbf{Q}(r)) \\
+  & \mathcal{L}_\text{cls-aux} = \text{CE}(y, p^{\prime}),
+  \end{split}
+  \label{eq:score}
+\end{equation}
+where $p^{\prime}$ is the predicted scores based on $\mathbf{Q}(r)$, $y$ is the groundtruth label for the region proposal $r$. Note that the whole distillation process is only conducted on the source images. 
+
+Consequently, the object detector is trained under the supervision of the three losses jointly:
+\begin{equation}
+   \mathcal{L}_\text{obj} = \mathcal{L}_\text{DA} + \mathcal{L}_\text{dist} + \mathcal{L}_\text{cls-aux},
+  \label{eq:loss_student}
+\end{equation}
+where $\mathcal{L}_\text{DA}$ denotes the loss of DA-Faster.
+
+\subsection{Domain-aware Consistency Enhancing}
+\label{localizaion}
+To address more severe inconsistency between classification and localization, 
+we design a novel localization representation to refine classification scores, enhancing the consistency in the testing stage. Since the objective of DAOD is to enhance the performance of the detector in target domain and TROLN has already explored the target-relevant localization information, we first investigate the relation between localization ground-truths and two localization indicators (IoU and centerness) derived from TROLN.
+
+In the TROLN framework, each detected bounding box originates from two refinements of the corresponding anchor, \textit{i.e.,} anchor ${\rightarrow}$ proposal ${\rightarrow}$ detected box. Here, we assume that these three share the same centerness and IoU.
+Similar to Fig.~\ref{fig2}, we evaluate the trained TROLN on the \textit{FoggyCityscapes} test datasets and visualize the correlation of two indicators ($y$-axis, centerness and IoU) and localization ground-truth ($x$-axis), as shown in Fig.~\ref{fig4}(a) and (b).
+It is evident that compared to the classification score in Fig.~\ref{fig2}(b), both IoU and centerness exhibit a higher consistency with the localization ground-truths. 
+This indicates that these two indicators have the potential to serve as localization representation for refining the classification scores.
+
+However, on one hand, using the highest consistency indicator (IoU) to weight the classification scores could cause an extra class confusion issue. For example, if two detected boxes simultaneously match the same ground truth box with the category ``cat", where the detected box \textit{A} predicts a ``cat" confidence of 0.6 and an IoU of 0.5, and detected box \textit{B} predicts a ``tiger" confidence of 0.5 and an IoU of 0.7. In this case, employing IoU would yield a ``cat" confidence of 0.3 ($0.6\times0.5$) for detected box \textit{A} and a "tiger" confidence of 0.35 ($0.5\times0.7$) for detected box \textit{B}, potentially resulting in misclassification.
+On the other hand, refining classification score based on centerness may not sufficiently improve the consistency. 
+In addition, although centerness and IoU have already integrate target-relevant information, they lack the capability to adaptively adjust based on current features. Therefore, we incorporate pixel and instance-level target affinity weights $\tau_{1}$, $\tau_{2}$ into the localization representation and strike a balance between centerness and IoU. Here, we propose a novel localization score $s$ as follow:
+\begin{equation}
+   s = \sqrt{4\times{c}\times{b}\times\tau_{1}\times\tau_{2}},
+\label{eq:s}
+\end{equation}
+
+where $c$ and $b$ denote centerness and IoU, respectively. Due to the effect of the GRL in TROLN, $\tau_{1}$ and $\tau_{2}$ are close to ``0.5'' with the training process gradually converge, the ``4'' in Eq.~\ref{eq:s} is a compensation factor.
+From Fig.~\ref{fig4}(c), we can observe that the consistency of $s$ ($\rho$ and $\tau$) ranges between these of $c$ and $b$.
+The rationale behind Eq.~\ref{eq:s} is to improve the localization scores of target-style detection boxes (with larger $\tau_{1}$, $\tau_{2}$) and suppress source-style ones (with smaller $\tau_{1}$, $\tau_{2}$) during the testing stage. This operation is to adaptively retain more target-style detected boxes.
+
+\begin{table*}
+    \caption{Results from \textbf{\textit{Cityscapes$\rightarrow$FoggyCityscapes}} based on different base detectors with various backbones.}
+        \centering
+         \resizebox{1.0\textwidth}{!}{%
+        \begin{tabular}{>{\raggedright}p{6.7cm}|p{2.0cm}<{\centering}|p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}p{1.2cm}<{\centering}}
+        \hline
+        Method & Backbone & person & rider & car & truck & bus & train & mcycle & bcycle & mAP \\ \hline \hline
+        SWDA \cite{saito2019strong}  & \multirow{14}{*}{VGG16} & 36.2 & 35.3 & 43.5 & 30.0 & 29.9 & 42.3 & 32.6 & 24.5 & 34.3 \\
+        TIA \cite{zhao2022task} &  & 34.8 & 46.3 & 49.7 & 31.1 & 52.1 & 48.6 & 37.7 & 38.1 & 42.3 \\
+        TDD \cite{he2022cross} &  & 39.6 & 47.5 & 55.7 & 33.8 & 47.6 & 42.1 & 37.0 & 41.4 & 43.1 \\
+        MGA \cite{zhou2022multi} &  & 45.7 & 47.5 & 60.6 & 31.0 & 52.9 & 44.5 & 29.0 & 38.0 & 43.6 \\
+        PT \cite{chen2022learning} &  & 40.2 & 48.8 & 59.7 & 30.7 & 51.8 & 30.6 & 35.4 & 44.5 & 42.7 \\
+        SCAN \cite{li2022scan} &  & 41.7 & 43
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

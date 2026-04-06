@@ -1,0 +1,358 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}[!htb]
+	\centering
+	\includegraphics[width=0.48\textwidth]{tradeoff.eps}
+	\caption{Micro-F1 score and the number of trainable parameters of our method and SOTAs with dual encoders on Web Of Science dataset.}
+	\label{fig:tradeoff}
+\end{figure}
+Hierarchical text classification is a sub-task of text multi-label classification, which is commonly applied in scenarios such as news document classification \citep{RCV1, NYT}, academic paper classification \citep{HDLTex}, and so on. Unlike traditional classification tasks, the labels of HTC have parent-child relationships forming a hierarchical structure. Due to the complex structure of label hierarchy and the imbalanced frequency of labels, HTC becomes a challenging task in natural language processing.
+
+Recent studies in HTC typically utilize a dual-encoder framework \citep{HiAGM}, which consists of a text encoder for text representations and a structure encoder to inject the information of labels into text. The text encoder could be a traditional backbone for text classification, for instance, TextRCNN \citep{Lai2015TextRCNN} or BERT \citep{BERT}. The structure encoder is a Graph Neural Network (GNN) that treats the label hierarchy as a Directed Acyclic Graph (DAG) and propagates the information among labels. To maximize the propagation ability of the structure encoder, \citet{HiAGM} learn textual features of labels and count the prior probabilities between parent and child labels. Based on the dual-encoder framework, researchers further complicated the model by adding complementary networks and loss functions from different aspects, such as treating HTC as a matching problem \citep{HiMatch}, introducing mutual information maximization \citep{HTCInfoMax}. However, more complementary components result in more memory consumption, as shown in Figure~\ref{fig:tradeoff}. On the other hand, their structure encoders still rely on the prior statistics \citep{HiAGM, HiMatch} or the representation of labels \cite{HiAGM, HTCInfoMax}. That is, their models require a mass of domain knowledge, which greatly reduces the generalization ability.
+
+To this end, we intend to design a more effective structure encoder with fewer parameters for HTC. Instead of introducing domain knowledge, we try to take full advantage of the structural information embedded in label hierarchies. Inspired by \citet{Li2016StructuralEntropy}, we decode the essential structure of label hierarchies into coding trees with the guidance of structural entropy, which aims to measure the structural complexity of a graph. The coding tree is unweighted and could reflect the hierarchical organization of the original graph, which provides us with another view of the label hierarchy. To construct coding trees, we design an algorithm, termed CodIng tRee Construction Algorithm (CIRCA) by minimizing the structural entropy of label hierarchies. Based on the hierarchical structure of coding trees, we propose Hierarchical-aware Tree Isomorphism Network (HiTIN). The document representations fetched by the text encoder are fed into a structure encoder, in which we iteratively update the node embeddings of the coding tree with a few multi-layer perceptions. Finally, we produce a feature vector of the entire coding tree as the final representation of the document. Compared with SOTA methods of dual encoders on HTC tasks \citep{HiAGM, HiMatch, HTCInfoMax, HGCLR}, HiTIN shows superior performance gains with less memory consumption. Overall, the contributions of our work can be summarized as follows:
+\begin{itemize}
+	\item To improve the generalization capability of dual-encoder models in HTC, we decode the essential structure of label hierarchies with the guidance of structural entropy. 
+	\item We propose HiTIN, which has fewer learnable parameters and requires less domain knowledge, to fuse the structural information of label hierarchies into text representations.
+	\item Numerous experiments are conducted on three benchmark datasets to demonstrate the superiority of our model.
+\end{itemize}
+
+
+Related Work
+\paragraph{Hierarchical Text Classification.}
+Existing works for HTC could be categorized into local and global approaches \citep{HiAGM}. Local approaches build classifiers for a single label or labels at the same level in the hierarchy, while global approaches treat HTC as a flat classification task and build only one classifier for the entire taxonomy. Previous local studies mainly focus on transferring knowledge from models in the upper levels to models in the lower levels. \citet{HDLTex} first feed the whole corpus into the parent model and then input the documents with the same label marked by the parent model into a child model. In the next few years, researchers try different techniques to deliver knowledge from high-level models to low-level models \citep{Shimura2018HFTCNNLH,Huang2019HierarchicalMT,Banerjee2019HierarchicalTL}. 
+
+Global studies in HTC try to improve flat multi-label classification by introducing various information from the hierarchy. \citet{Gopal2013RecursiveRF} propose a recursive regularization function to make the parameters of adjacent categories have similar values. \citet{Peng2018LargeScaleHT} propose a regularized graph-CNN model to capture the non-consecutive semantics from texts. Besides, various deep learning techniques, such as sequence-to-sequence model \citep{Yang2018SGMSG, Rojas2020}, attention mechanism \citep{You2019AttentionXML}, capsule network \citep{Aly2019HierarchicalMC, Peng2021HierarchicalTA}, reinforcement learning \citep{Mao2019HiRL}, and meta-learning \citep{Wu2019Meta} are also applied in global HTC. Recently, \citet{HiAGM} specially design an encoder for label hierarchies which could significantly improve performance. \citet{Chen2020HyperbolicIM} learn the word and label embeddings jointly in the hyperbolic space. \citet{HiMatch} formulate the text-label relationship as a semantic matching problem. \citet{HTCInfoMax} introduce information maximization which can model the interaction between text and label while filtering out irrelevant information. With the development of Pretrained Language Model (PLM), BERT\citep{BERT} based contrastive learning\citep{HGCLR}, prompt tuning\citep{HPT}, and other methods \citep{HBGL} have brought huge performance boost to HTC.
+
+\paragraph{Structural Entropy.}
+Structural entropy \citep{Li2016StructuralEntropy} is a natural extension of Shannon entropy \citep{Shannon} on graphs as structure entropy could measure the structural complexity of a graph. The structural entropy of a graph is defined as the average length of the codewords obtained by a random walk under a specific coding scheme. The coding scheme, termed coding tree \citep{Li2016StructuralEntropy}, is a tree structure that encodes and decodes the essential structure of the graph. In other words, to minimize structural entropy is to remove the noisy information from the graph. In the past few years, structural entropy has been successfully applied in network security \citep{Li2016ResistanceAS}, medicine \citep{Li2016ThreeDimensionalGM}, bioinformatics \citep{Li2018DecodingTA}, graph classification \citep{Wu2022HRN, wu2022structural}, text classification \citep{Zhang2022HINT}, and graph contrastive learning \citep{wu2023sega}.
+\begin{figure*}[!th]
+	\centering
+	\includegraphics[width=\textwidth]{model.pdf}
+	\caption{\label{fig:model}An example of HiTIN with $K=2$. As shown in Section~\ref{sec:text_encoder}, the input document is first fed into the text encoder to generate text representations. Next, the label hierarchy is transformed into a coding tree via Coding Tree Construction Algorithm proposed in Section~\ref{sec:structure_encoder}. The text representations are mapped into the leaf nodes of the coding tree and we iteratively update the non-leaf node embeddings in Section~\ref{sec:structure_encoder}. Finally, we produce a feature vector of the entire coding tree and calculate the classification probabilities in Section~\ref{sec:classification}. Besides, HiTIN is supervised by binary cross-entropy loss and recursive regularization \citep{Gopal2013RecursiveRF}. }
+\end{figure*}
+
+
+Problem Definition
+Given a document $D=\{w_1, w_2, \dots, w_n\}$, where $w_i$ is a word and $n$ denotes the document length, hierarchical text classification aims to predict a subset $\mathcal{Y}$ of the holistic label set $Y$. Besides, every label in $Y$ corresponds to a unique node on a directed acyclic graph, i.e. the label hierarchy. The label hierarchy is predefined and usually simplified as a tree structure. In the groud-truth label set, a non-root label $y_i$ always co-occurs with its parent nodes, that is, for any $y_i \in \mathcal{Y}$, the parent node of $y_i$ is also in $\mathcal{Y}$.
+
+
+Methodology
+Following the dual-encoder scheme in HTC, the architecture of HiTIN that consists of a text encoder and a structure encoder is shown in Figure~\ref{fig:model}. The text encoder aims to capture textual information from the input document while the structure encoder could model the label correlations in the hierarchy and inject the information from labels into text representations.
+\subsection{Text Encoder}
+\label{sec:text_encoder}
+In HTC, text encoder generally has two choices, that is, TextRCNN encoder and BERT encoder. TextRCNN \citep{Lai2015TextRCNN} is a traditional method in text classification, while BERT \citep{BERT} has shown its powerful ability in sequence feature extraction and has been widely applied in natural language processing in the past few years.
+\paragraph{TextRCNN Encoder.}
+The given document $D=\{w_1, w_2, \dots, w_n\}$, which is a sequence of word embeddings, is firstly fed into a bidirectional GRU layer to extract sequential information. Then, multiple CNN blocks along with max pooling over time are adopted to capture n-gram features. Formally,
+\begin{equation}
+	H_{RCNN} = MaxPool(\Phi_{CNN}(\Phi_{GRU}(D))),
+\end{equation}
+where $\Phi_{CNN}(\cdot)$ and $\Phi_{GRU}(\cdot)$ respectively denote a CNN and a GRU layer, while $MaxPool(\cdot)$ denotes the max pooling over time operation. Besides, $H_{RCNN} \in \mathbb{R} ^{n_C \times d_C},$ where $n_C$ denotes the number of CNN kernels and $d_C$ denotes the output channels of each CNN kernel.
+
+The final representation $H\in \mathbb{R} ^ {n_C * d_C}$ of document $D$ is the concatenation of $H_{RCNN}$. That is,
+\begin{equation}
+	H = Concat(H_{RCNN}).
+\end{equation}
+
+\paragraph{BERT Encoder.}
+Recent works in HTC also utilize BERT for learning textual features \citep{HiMatch, HGCLR}. Since there are few changes made to the vanilla BERT, we only introduce the workflow of our model and omit the details of BERT.
+
+Given a input document $D=\{w_1, w_2, \dots, w_n\}$, we pad the document with two specical tokens:
+\begin{equation}
+	\tilde{D} = \{[CLS], w_1, w_2, \dots, w_n, [SEP]\},
+\end{equation}
+where $[CLS]$ and $[SEP]$ respectively denote the beginning and the end of the document. After padding and truncating, document $\tilde{D}$ is fed into BERT. Then BERT generates embeddings for each token in the document: 
+\begin{equation}
+	H_{BERT} = \Phi_{BERT}(\tilde{D}),
+\end{equation}
+where $H_{BERT} \in \mathbb{R}^{(n+2) \times d_B} $, and $\Phi_{BERT}(\cdot)$ denotes the BERT model. We adopt the CLS embedding as the representation of the entire text sequence. Thus, the final representation $H$ of document $D$ is:
+\begin{equation}
+	H = H_{BERT}^0, H \in \mathbb{R}^{d_B},
+\end{equation}
+where $d_B$ is the hidden dimension.
+\subsection{Structure Encoder}
+\label{sec:structure_encoder}
+The semantic information provided by text encoder is then input into the structure encoder. Unlike previous works, we do not utilize the prior statistics or learn representations of the label hierarchy. Instead, we design a suite of methods guided by structural entropy \citep{Li2016StructuralEntropy} to effectively incorporate the information of text and labels.
+\paragraph{Structural Entropy.}
+ Inspired by \citet{Li2016StructuralEntropy}, we try to simplify the original structure of the label hierarchy by minimalizing its structural entropy. The structural entropy of a graph is defined as the average length of the codewords obtained by a random walk under a specific coding pattern named coding tree \citep{Li2016StructuralEntropy}. Given a graph $G=(V_G, E_G)$, the structural entropy of $G$ on coding tree $T$ is defined as:
+\begin{equation}
+	H^{T}(G)=-\sum_{\alpha \in T} \frac{g_{\alpha}}{vol(G)}\log{\frac{vol(\alpha)}{vol(\alpha^-)}},
+\end{equation}
+where $\alpha$ is a non-root node of coding tree $T$ which represents a subset of $V_G$, $\alpha^-$ is the parent node of $\alpha$ on the coding tree. $g_{\alpha}$ represents the number of edges with only one endpoint in $\alpha$ and the other end outside $\alpha$, that is, the out degree of $\alpha$. $vol(G)$ denotes the volume of graph $G$ while $vol(\alpha)$ and $vol(\alpha^-)$ is the sum of the degree of nodes that respectively partitioned by $\alpha$ and $\alpha^-$. 
+
+For a certain coding pattern, the height of the coding tree should be fixed. Therefore, the $K$-dimensional structural entropy of the graph $G$ determined by the coding tree $T$ with a certain height $K$ is defined as:
+\begin{equation}
+	H_{K}(G)=\min_{\{T|height(T) \leq K\}}H^{T}(G).
+\end{equation}
+\paragraph{Coding Tree Construction Algorithm.}
+To minimize the structural entropy of graph $G$, we design a CodIng tRee Construction Algorithm (CIRCA) to heuristically construct a coding tree $T$ with a certain height no greater than $K$. That is, $T = CIRCA(G, K)$, where $T=(V_T, E_T)$, $V_T = (V^0_T,\dots,V^h_T)$. To better illustrate CIRCA, we make some definitions as follows,
+\newtheorem{myDef}{Definition}
+\begin{myDef}
+	\label{def:1}
+	Let $T = (V_T, E_T)$ be a coding tree for graph $G=(V_G,E_G)$, $v_r$ be the root node of\quad$T$. For any $(v_i, v_j) \in T$, if $v_i$ is the direct child node of $v_j$, denote that
+	\begin{equation*}
+		v_i \in v_j.children;
+	\end{equation*}
+	and $v_j$ is equivalent to $v_i.parent$. 
+\end{myDef} 
+\begin{myDef}
+	\label{def:2}
+	Following Definition~\ref{def:1}, given any two nodes $(v_i, v_j) \in T$, in which $v_i \in v_r.children$ and $v_j \in v_r.children$.
+	
+	Define a member function $merge(v_i, v_j)$ of $T$. $T.merge(v_i, v_j)$ could insert a new node $v_{\epsilon}$ bewtween $v_r$ and $(v_i, v_j)$. Formally,
+	\begin{align*}
+		v_{\epsilon}.children &\leftarrow v_i;\\
+		v_{\epsilon}.children &\leftarrow v_j;\\
+		v_r.children &\leftarrow v_{\epsilon};\\
+		V_T^{v_i.height + 1} \leftarrow v_{\epsilon};\quad&E_T \leftarrow (v_{\epsilon}, v_i),(v_{\epsilon}, v_j);
+	\end{align*}
+\end{myDef}
+\begin{myDef}
+	\label{def:3}
+	Following Definition~\ref{def:1}, given a node $v_i$. Define a member function $delete(v_i)$ of $T$. $T.delete(v_i)$ could delete $v_i$ from $T$ and attach the child nodes of $v_i$ to its parent node. Formally,
+	\begin{align*}
+		v_i.&parent.children \leftarrow v_i.children;\\
+		V_T &:= V_T - \{v_i\};\\
+		E_T &:= E_T - \{(v_i.parent, v_i)\};\\
+		E_T &:= E_T - \{(v_i, v) | v \in v_i.children\};\\
+	\end{align*}
+\end{myDef}
+\begin{myDef}
+	\label{def:4}
+	Following Definition~\ref{def:1}, given any two nodes$(v_i, v_j)$, in which $v_i \in v_j.children$. Define a member function $shift(v_i, v_j)$ of $T$. $T.shift(v_i, v_j)$ could insert a new node $v_{\epsilon}$ between $v_i$ and $v_j$:
+	\begin{align*}
+		v_{\epsilon}.children \leftarrow v_i;&\quad v_j.children \leftarrow v_{\epsilon}; \\
+		V_T^{v_i.height + 1} \leftarrow v_{\epsilon};&\quad E_T \leftarrow \{(v_j, v_{\epsilon}), (v_{\epsilon}, v_i)\};
+	\end{align*}
+\end{myDef}
+Based on the above definitions, the pseudocode of CIRCA can be found in Algorithm~\ref{alg:CIRCA}.
+\renewcommand{\thealgorithm}{\arabic{algorithm}}
+\begin{algorithm}[!htb]
+	\caption{Coding Tree Construction Algorithm}
+	\label{alg:CIRCA}
+	\textbf{Input}: A graph $G=(V_G,E_G)$ , a postive integer $K$\\
+	\textbf{Output}: Coding tree $T=(V_T,E_T)$ of the graph $G$ with height $K$ 
+	\begin{algorithmic}[1] %[1] enables line numbers
+		\STATE $V_T^0 := V$;\\
+		\COMMENT {Stage 1: Construct a full-height binary-tree}
+		\label{stg:1}
+		\WHILE{$|v_r.children| > 2$}
+		\label{stg:2}
+		\STATE $(v_i, v_j) = argmax_{(v, v')}\{H^T(G) - H^{T.merge(v, v')}(G)\}$
+		\label{stg:3}
+		\STATE $T.merge(v_i, v_j)$
+		\ENDWHILE
+		
+		\COMMENT {Stage 2: Squeeze $T$ to height $K$}
+		\WHILE{$T.height > K$}
+		\STATE $v_i = argmin_{v}\{H^{T.remove(v)}(G) - H^T(G)\}$
+		\STATE $T.remove(v_i)$
+		\ENDWHILE
+		
+		\COMMENT {Stage 3: Erase cross-layer links}
+		\FOR{$v_i \in T$}
+		\IF {$|v_i.parent.height - v_i.height| > 1$}
+		\STATE $T.shift(v_i, v_i.parent)$
+		\ENDIF
+		\ENDFOR
+		
+		\STATE \textbf{return} $T$
+	\end{algorithmic}
+\end{algorithm}
+\paragraph{Hierarchy-aware Tree Isomorphism Network.}
+For representation learning, we reformulate the label hierarchy as a graph $G_L = (V_{G_L}, E_{G_L}, X_{G_L})$, where $V_{G_L}$, $E_{G_L}$ respectively denotes the node set and the edge set of $G_L$, $V_{G_L} = Y$ while $E_{G_L}$ is predefined in the corpus. In our work, $V_{G_L}$ and $E_{G_L}$ are represented by the unweighted adjacency matrix of $G_L$. $X_{G_L}$ is the node embedding matrix of $G_L$. Instead of learning the concept of labels, we directly broadcast the text representation to the label structure. Specifically, $X_G$ is transformed from the text representation $H$ by duplication and projection. Formally,
+\begin{equation}
+	X_G = W_d H W_p + B_H,
+\end{equation}
+where $W_d \in \mathbb{R} ^ {|Y| \times 1}$ and $W_p \in \mathbb{R} ^ {d_H * d_V}$ are learnable weights for the duplication and projection. $|Y|$ is the volume of the label set. $d_H$ and $d_V$ respectively denote the dimension of text and node. $B_H$ indicates the learnable bias and $B_H \in \mathbb{R}^{|Y| \times d_v}$.
+
+Next, we simplify the structure of the label hierarchy into a coding tree with the guidance of structural entropy. Given a certain height $K$, the coding tree $T_L = (V_{T_L}, E_{T_L}, X_{T_L})$ of the label hierarchy could be constructed by CIRCA,
+\begin{equation}
+	(V_{T_L}, E_{T_L}) = CIRCA(G_L, K),
+\end{equation}
+where $V_{T_L} = \{V_{T_L}^0, V_{T_L}^1,...V_{T_L}^K\}$ are the layer-wise node sets of coding tree $T_L$ while  $X_{T_L} = \{X_{T_L}^0, X_{T_L}^1,...,X_{T_L}^K\}$ represents the node embeddings of $V_{T_L}^i$, $i \in [0, K]$.
+
+The coding tree $T_L$ encodes and decodes the essential structure of $G_L$, which provides multi-granularity partitions for $G_L$. The root node $v_r$ is the roughest partition which represents the whole node set of $G_L$, so $V_{T_L}^K$ = $\{v_r\}$. For every node $v$ and its child nodes $\{v_1, v_2, \dots, v_z\}$, $v_1, v_2, \dots,$ and $v_z$ formulate a partition of $v$. Moreover, the leaf nodes in $T_L$ is an element-wise partition for $G_L$, that is, $V_{T_L}^0 = V_{G_L}$,  $X_{T_L}^0 = X_{G_L}$.
+
+Note that $\{V_{T_L}^i | i \in [1, K]\}$ is given by CIRCA while their node embeddings $\{X_{T_L}^i | i \in [1, K]\}$ remain empty till now. Thus, we intend to update the un-fetched node representation of coding tree $T_L$. Following the message passing mechanism in Graph Isomorphism Network (GIN) \citep{GIN}, we design Hierarchy-aware Tree Isomorphism Network (HiTIN) according to the structure of coding trees.
+For $x_{v}^i \in X_{T_L}^i$ in the $i$-th layer,
+\begin{equation}
+	x_v^i = \Phi_{MLP}^i(\sum\nolimits_{n\in C(v)} x_n^{i-1}),
+\end{equation}
+where $v \in V_T^i$, $x_v^i \in \mathbb{R} ^ {d_V}$ is the feature vector of node $v$, and $C(v)$ represents the child nodes of $v$ in coding tree $T_L$. $\Phi_{MLP}^i(\cdot)$ denotes a two-layer multi-layer perception within BatchNorm \citep{BatchNorm} and ReLU function. 
+The learning stage starts from the leaf node (layer 0) and learns the representation of each node layer by layer until reaching the root node (layer $K$). 
+Finally, a read-out function is applied to compute a representation of the entire coding tree $T_L$:
+\begin{equation}
+	\begin{split}
+		H_T = Concat(Pool(\{x_v^i|v\in V_{T_L}^i\})\\| i \in [0, K])), 
+	\end{split}
+	\label{equ:treerep}
+\end{equation}
+where $Concat(\cdot)$ indicates the concatenation operation. $Pool(\cdot)$ in Eq.~\ref{equ:treerep} can be replaced with a summation, averaging, or maximization function. $H_T \in \mathbb{R} ^ {d_T}$ denotes the final representation of $T_L$.
+\subsection{Classification and Loss Function}
+\label{sec:classification}
+Similar to previous studies \citep{HiAGM, HGCLR}, we flatten the hierarchy by attaching a unique multi-label classifier. $H_T$ is fed into a linear layer along with a sigmoid function to generate classification probability:
+\begin{equation}
+	P = Sigmoid(H_T \cdot W_c + b_c),
+\end{equation}
+where $W_c \in \mathbb{R} ^ {d_T \times |Y|}$ and $b_c \in \mathbb{R} ^ {|Y|}$ are weights and bias of linear layer while $|Y|$ is the volume of the label set. For multi-label classification, we adopt the Binary Cross-Entropy Loss as the classification loss:
+\begin{equation}
+	\small{L^{C} = - \frac{1}{|Y|} \sum_{j}^{|Y|} y_{j}log(p_{j}) + (1 - y_{j})log(1 - p_{j}),}
+\end{equation}
+where $y_j$ is the ground truth of the $j$-th label while $p_j$ is the $j$-th element of $P$. Considering hierarchical classification, we use recursive regularization \citet{Gopal2013RecursiveRF} to constrain the weights of adjacent classes to be in the same distributions as formulated in Eq.~\ref{eq:rr}:
+\begin{equation}
+	L^{R} = \sum_{p \in Y} \sum_{q \in child(p)} \frac{1}{2} ||w_p^{2} - w_q^{2}||,
+\label{eq:rr}
+\end{equation}
+where $p$ is a non-leaf label in $Y$ and $q$ is a child of $p$. $w_p, w_q \in W_c$. We use a hyper-parameter $\lambda$ to control the strength of recursive regularization. Thus, the final loss function can be formulated as:
+\begin{equation}
+	L = L^{C} + \lambda \cdot L^{R}.
+\end{equation}
+\begin{table}[!ht]
+	\centering
+	\resizebox{0.48\textwidth}{!}{
+		\begin{tabular}{ccccccc}
+			\hline
+			Dataset & 
+			$|Y|$ &
+			$Avg(y_i)$ & 
+			Depth & 
+			\# Train & 
+			\# Dev & 
+			\# Test \\ \hline
+			WOS & 
+			141	&	2.0	&	2 &	30,070 &	7,518 &	9,397            \\
+			RCV1-v2 & 
+			103	&	3.24 &	4 & 20,833 & 	2,316 & 781,265          \\
+			NYTimes & 
+			166 &	7.6 &	8 & 23,345 &	5,834 & 7,292            \\ \hline \hline
+	\end{tabular}}
+	\caption{Summary statistics of datasets.}
+	\label{tab:data_stat}
+\end{table}
+\begin{table*}[!th]
+	\centering
+	\resizebox{\textwidth}{!}{
+		\begin{tabular}{lcccccccc}
+			\toprule[1pt]
+			\multicolumn{1}{c}{\multirow{2}{*}{Hierarchy-aware Models}} & \multicolumn{2}{c}{WOS}      & 
+			\multicolumn{2}{c}{RCV1-v2}        & 
+			\multicolumn{2}{c}{NYTimes}         &
+			\multicolumn{2}{c}{Average}        \\ \cline{2-9} 
+			\multicolumn{1}{c}{}                       
+			& Micro-F1       & Macro-F1             
+			& Micro-F1       & Macro-F1             
+			& Micro-F1       & Macro-F1             
+			& Micro-F1       & Macro-F1
+			\\ \hline                                                  
+			TextRCNN \citep{HiAGM}                                   
+			& 83.55          & 76.99
+			& 81.57          & 59.25                
+			& 70.83          & 56.18                
+			& 78.65			 & 64.14
+			\\
+			HiAGM \citep{HiAGM}                                      
+			& 85.82          & 80.28                
+			& 83.96          & 63.35                
+			& 74.97          & 60.83                
+			& 81.58			 & 68.15
+			\\
+			HTCInfoMax \citep{HTCInfoMax}                                 
+			& 85.58          & 80.05                
+			& 83.51          & 62.71                
+			& -              & -                    
+			& -		  	     & -
+			\\
+			HiMatch \citep{HiMatch}                                    
+			& 86.20          & 80.53                
+			& 84.73       	 & 64.11                
+			& -              & -                    
+			& - 		     & -
+			\\ \hline
+			HiTIN                                       
+			& \textbf{86.66} & \textbf{81.11}  
+			& \textbf{84.81} & \textbf{64.37}       
+			& \textbf{75.13} & \textbf{61.09}
+			& \textbf{82.20} &\textbf{68.86}       
+			\\ \bottomrule[1pt]
+	\end{tabular}}
+	\caption{Main Experimental Results with TextRCNN encoders. All baselines above and our method utilize GloVe embeddings \cite{glove} to initialize documents and encode them with TextRCNN \citep{Lai2015TextRCNN}.}
+	\label{tab:main_glove}
+\end{table*}
+\begin{table*}[!th]
+	\centering
+	\resizebox{\textwidth}{!}{
+		\begin{tabular}{lcccccccc}
+			\toprule[1pt]
+			\multicolumn{1}{c}{\multirow{2}{*}{Pretrained Language Models}} & \multicolumn{2}{c}{WOS}      & 
+			\multicolumn{2}{c}{RCV1-v2}        & 
+			\multicolumn{2}{c}{NYTimes}        & 
+			\multicolumn{2}{c}{Average}       \\ \cline{2-9} 
+			\multicolumn{1}{c}{}                       
+			& Micro-F1       & Macro-F1             
+			& Micro-F1       & Macro-F1             
+			& Micro-F1       & Macro-F1
+			& Micro-F1       & Macro-F1             
+			\\ \hline		
+			BERT $\dagger$                               
+			& 85.63          & 79.07                
+			& 85.65          & 67.02                
+			& 78.24          & 65.62                
+			& 83.17			 & 70.57
+			\\
+			BERT+HiAGM$\dagger$                             
+			& 86.04          & 80.19                
+			& 85.58          & 67.93                
+			& 78.64          & 66.76                
+			& 83.42			 & 71.63
+			\\
+			BERT+HTCInfoMax$\dagger$                            
+			& 86.30          & 79.97                
+			& 85.53          & 67.09                
+			& 78.75          & 67.31                
+			& 83.53 		 & 71.46 
+			\\
+			BERT+HiMatch \citep{HiMatch}                               
+			& 86.70          & 81.06                
+			& 86.33          & 68.66                
+			& -              & -                    
+			& -				 & -
+			\\
+			HGCLR \citep{HGCLR}                                      
+			& 87.11 		 & 81.20       
+			& 86.49          & 68.31                
+			& 78.86          & 67.96                
+			& 84.15			 & 72.49
+			\\ \hline
+			HiTIN                                       
+			& \textbf{87.19} & \textbf{81.57}                
+			& \textbf{86.71} & \textbf{69.95}       
+			& \textbf{79.65} & \textbf{69.31}       
+			& \textbf{84.52} & \textbf{73.61}
+			\\ \bottomrule[1pt]
+	\end{tabular}}
+	\caption{Main Experimental Results with BERT encoder. All baselines above and our method adopt BERT\cite{BERT} as the text encoder. $\dagger$ denotes the results are reported by \citet{HGCLR}.}
+	\label{tab:main_bert}
+\end{table*}
+
+
+Experiments
+\subsection{Experiment Setup}
+\paragraph{Datasets and Evaluation Metrics.}
+We conduct experiments on three benchmark datasets in HTC. RCV1-v2 \citep{RCV1} and NYT \citep{NYT} respectively consist of news articles published by Reuters, Ltd. and New York Times, while WOS \citep{HDLTex} includes abstracts of academic papers from Web of Science. Each of these datasets is annotated with ground-truth labels in a given hierarchy. We split and preprocess these datasets following \citet{HiAGM}. The statistics of these datasets are shown in Table~\ref{tab:data_stat}. The experimental results are measured with Micro-F1 and Macro-F1 \citep{Gopal2013RecursiveRF}. Micro-F1 is the harmonic mean of the overall precision and recall of all the test instances, while Macro-F1 is the average F1-score of each category. Thus, Micro-F1 reflects the performance on more frequent labels, while Macro-F1 treats labels equally.
+\paragraph{Implementation Details.}
+The text embeddings fed into the TextRCNN encoder are initialized with GloVe \citep{glove}. The TextRCNN encoder consists of a two-layer BiGRU with hidden dimension 128 and CNN layers with kernel size=[2, 3, 4] and $d_C$=100. Thus, the hidden dimension of the final text representation is $d_H = r_C * d_C = 3 * 100 = 300$. The height $K$ of the coding tree is 2 for all three datasets. The hidden dimension $d_V$ of node embedding $X_G$ is set to 512 for RCV1-v2 while 300 for WOS and NYTimes. $Pool(\cdot)$ in Eq.~\ref{equ:treerep} is summation for all the datasets. The balance factor $\lambda$ for $L^R$ is set to 1e-6. The batch size is set to 16 for RCV1-v2 and 64 for WOS and NYTimes. The model is optimized by Adam \citep{Adam} with a learning rate of 1e-4.
+
+For BERT text encoder, we use the BertModel of \texttt{bert-base-uncased} and there are some negligible changes to make it compatible with our method. $d_B = d_H = d_V = 768$. The height $K$ of the coding tree is 2 and the $Pool(\cdot)$ in Eq.~\ref{equ:treerep} is averaging. The batch size is set to 12, and the BertModel is fine-tuned by Adam \citep{Adam} with a learning rate of 2e-5.
+
+\paragraph{Baselines.}
+We compare HiTIN with SOTAs including HiAGM\citep{HiAGM}, HTCInfoMax \citep{HTCInfoMax}, HiMatch \citep{HiMatch}, and HGCLR \citep{HGCLR}. HiAGM, HTCInfoMax, and HiMatch use different fusion strategies to model text-hierarchy correlations. Specifically, HiAGM proposes a multi-label attention and a text feature propagation technique to get hierarchy-aware representations. HTCInfoMax enhances HiAGM-LA with information maximization to model the interaction between text and hierarchy. HiMatch treats HTC as a matching problem by mapping text and labels into a joint embedding space. HGCLR directly incorporates hierarchy into BERT with contrastive learning. 
+
+\subsection{Experimental Results}
+The experimental results with different types of text encoders are shown in Table~\ref{tab:main_glove} and Table~\ref{tab:main_bert}. HiAGM is the first method to apply the dual-encoder framework and outperforms TextRCNN on all the datasets. HTCInfoMax improves HiAGM-LA \citep{HiAGM} by introducing mutual information maximization but is still weaker than HiAGM-TP. HiMatch treats HTC as a matching problem and surpasses HiAGM-TP\citep{HiAGM} on WOS and RCV1-v2. Different from these methods, HiTIN could further extract the information in the text without counting the prior probabilities between parent and child labels or building feature vectors for labels. As shown in Table~\ref{tab:main_glove}, when usi
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

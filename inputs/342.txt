@@ -1,0 +1,226 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Graph-structured data are useful and widely applicable in the real-world, thanks to their capability of modeling complex relationships between objects such as user-user relationships in social networks and product networks, etc. To handle tasks such as node classification on graph-structured data, Graph Neural Networks (GNNs) are widely used and have shown remarkable performance~\cite{gcn, gat}. 
+However, it is well known that GNNs suffer from poor generalization when only a small number of labeled samples are provided~\cite{metagnn, gpn, tent}.
+
+To mitigate such issues inherent in the ordinary deep neural networks, few-shot learning methods have emerged, and the dominant paradigm was applying meta-learning algorithms such as MAML~\cite{maml} and ProtoNet~\cite{protonet}, which are based on the episodic learning framework~\cite{vinyals2016matching}. Inspired by these methods, recent studies proposed graph meta-learning methods~\cite{metagnn, gpn, gmeta, tent} to solve the Few-Shot Node Classification (FSNC) task on graphs by also leveraging the episodic learning framework, which is the main focus of this study.
+
+Despite their effectiveness, existing supervised graph meta-learning methods require \textit{abundant} labeled samples from \textit{diverse} base classes for the training.
+As shown in Figure~\ref{intro:sup_label}, such label-scarcity causes a severe performance drop of representative methods (i.e., TENT~\cite{tent}, G-Meta~\cite{gmeta}, ProtoNet~\cite{protonet}, and MAML~\cite{maml}) in FSNC.
+However, gathering enough labeled data and diverse classes may not be possible, and is costly in reality.
+More importantly, as these methods depend on a few labeled nodes from base classes, while not fully utilizing all nodes in the graph, they are also vulnerable to noisy labels in base classes (Figure~\ref{intro:label_noise}).
+In this respect, \textit{unsupervised methods are indispensable to fundamentally address the label-dependence problem} of existing supervised graph meta-learning methods.
+\begin{figure*} [t]
+    \centering
+    \subfigure[Impact of the label-scarcity]{
+        \includegraphics[width=0.25\textwidth]{Sup_label_limited_AE.pdf}
+        \label{intro:sup_label}
+    }
+    \hspace{2mm}
+    \subfigure[Impact of the label noise]{
+        \includegraphics[width=0.27\textwidth]{Sup_label_noise.pdf}
+        \label{intro:label_noise}
+    }
+    \hspace{2mm}
+    \subfigure[Impact of the class imbalance]{
+        \includegraphics[width=0.26\textwidth]{Class_Imbalance_AE.pdf}
+        \label{intro:class_imbal}
+    }
+    \caption{(a): Impact of the label-scarcity on supervised graph meta-learning methods (`Class\%': a rate of available base classes during training, `Label\%': a rate of available labeled samples for each class). (b): Impact of the (randomly injected) label noise $p$ on supervised graph meta-learning methods. (c): Impact of the class imbalance (`Pareto' setting: we kept nodes for top-20\% head classes, while keeping only 10 nodes for remaining classes; `Extreme' setting: the only difference from the `Pareto' setting is that we kept nodes only for top-5 head classes instead of top-20\% classes). (5-way 1-shot)}
+    \label{intro:fig}
+\end{figure*}
+Most recently, TLP~\cite{tlp} empirically demonstrated that a simple linear probing with node embeddings pre-trained by Graph Contrastive Learning (GCL) methods outperforms existing supervised graph meta-learning methods in FSNC. This is because GCL methods tend to generate generic node embeddings, since all nodes in a graph are involved in the training.
+
+However, despite the effectiveness of generic node embeddings, we argue that \textit{they are vulnerable to class imbalance in the graph}, which might lead to a significant performance drop due to the lack of model generalizability resulting from the discrepancy in the objective between pre-training and fine-tuning (in downstream task) phase~\cite{lu2021learning}.
+If the given graph mainly consists of nodes from the majority classes, GCL methods have difficulty in learning embeddings of nodes from the minority classes, which results in poor FSNC performance on such minority classes.
+On the other hand, as each episode in the episodic learning framework {provides the GNN encoder with the information about the downstream task format (i.e., FSNC), meta-learning methods are rather more robust to the class imbalance that may exist in the given graph\footnote{Please refer to Section~\ref{imbal:discuss} for more detail regarding how the episodic learning allows the model to be robust to class imbalance.}.
+To corroborate our argument, we modified the original graph to simulate two class imbalance settings (i.e., `Pareto' and `Extreme'), and evaluated GCL methods (i.e., BGRL~\cite{bgrl}, SUGRL~\cite{sugrl}, AFGRL~\cite{afgrl}) and meta-learning methods (i.e., ProtoNet and \textsc{NaQ-Feat} (ours)) on the FSNC task (See Figure~\ref{intro:class_imbal}).
+As expected, the performance deterioration of GCL methods was more severe than meta-learning methods under class imbalance settings.
+
+Therefore, we argue that the FSNC performance can be further enhanced by \textbf{unsupervised Graph Meta-learning}, \textit{which can achieve the best of both worlds}: 1) GCL that fully utilizes all nodes in a graph in an unsupervised manner, and 2) Meta-learning whose episodic learning framework is aware of the downstream task format (i.e., \textit{FSNC}).
+
+In this work, we propose a simple yet effective \textit{unsupervised} episode generation method called \textbf{Neighbors as Queries (\textsc{NaQ})}, which enables unsupervised graph meta-learning, to benefit from the generalization ability of meta-learning methods for the FSNC task, while fully utilizing all nodes in a graph. 
+The main idea is to construct a support set by randomly choosing nodes from the entire graph, and generate a corresponding query set via sampling similar nodes based on pre-calculated node-node similarity. 
+It is important to note that our unsupervised episode generation method is \textit{model-agnostic}, i.e., \textsc{NaQ} can be used to train any existing supervised graph meta-learning methods in an unsupervised manner directly or only with minor modifications.
+
+\begin{enumerate}[leftmargin=0.4cm]
+    \item We present an \textit{unsupervised episode generation} method, called \textsc{NaQ}, designed to solve the FSNC task via unsupervised graph meta-learning.
+    \item Extensive experimental results demonstrate the effectiveness of \textsc{NaQ} in the FSNC task and highlight the potential of the \textit{unsupervised} graph meta-learning framework.
+\end{enumerate}
+
+
+Preliminaries
+\subsection{Problem Statement}
+Let $\mathcal{G}=(\mathcal{V}, \mathcal{E}, X)$ be a graph, where $\mathcal{V},\  \mathcal{E}\subset\mathcal{V}\times\mathcal{V},\ X\in\mathbb{R}^{|\mathcal{V}|\times d}$ are a set of nodes, a set of edges, and a $d$-dimensional node feature matrix, respectively. We also use $X$ to denote a set of node features, i.e., $X=\{x_{v}:v\in \mathcal{V}\}$.
+Let $C$ be a set of total node classes. Here, we denote the \textit{base classes}, a set of node classes that can be utilized during training, as $C_b$, and denote the \textit{target classes}, a set of node classes that we aim to predict in downstream tasks given a few labeled samples, as $C_t$. Note that $C_b\cup C_t=C$ and $C_b\cap C_t=\emptyset$, and the target classes $C_t$ are unknown during training.
+In common few-shot learning settings, the number of labeled nodes from classes of $C_b$ is sufficient, while we only have a few labeled nodes from classes of $C_t$ in downstream tasks. 
+Now we formulate the ordinary supervised few-shot node classification (FSNC) problem as follows:
+\begin{definition} [Supervised FSNC]
+    Given a graph $\mathcal{G}=(\mathcal{V}, \mathcal{E}, X)$, labeled data $(X_{C_b}, Y_{C_b})$ and a model $f_{\theta}$ trained on $(X_{C_b}, Y_{C_b})$, the goal of supervised FSNC is making predictions for $x_{q}\in X_{C_t}$ ({i.e. \textit{query set}}) based on a few labeled samples $(x_{s}, y_{s})\in (X_{C_t}, Y_{C_t})$ ({i.e., \textit{support set}}) during the testing phase.
+\end{definition}
+Based on this problem formulation, we can formulate the unsupervised FSNC problem as below.
+The only difference is that labeled nodes are not available during training.
+\begin{definition} [Unsupervised FSNC] 
+    Given a graph $\mathcal{G}=(\mathcal{V}, \mathcal{E}, X)$, \textbf{unlabeled data} $X=X_{C_b}\cup X_{C_t}$, and a model $f_\theta$ trained on $X$, the goal of unsupervised FSNC is making predictions for $x_{q}\in X_{C_t}$ ({i.e., \textit{query set}}) based on a few labeled samples $(x_{s}, y_{s})\in (X_{C_t}, Y_{C_t})$ ({i.e., \textit{support set}}) during the testing phase.
+\end{definition}
+Overall, the goal of FSNC is to adapt well to unseen target classes $C_t$ only using a few labeled samples from $C_t$ after training a model $f_\theta$ on training data.
+In this work, we study how to facilitate \textit{unsupervised Graph Meta-learning} to solve the FSNC task.
+More formally, we consider solving a $N$-way $K$-shot FSNC task~\cite{vinyals2016matching}, where $N$ is the number of distinct target classes and $K$ is the number of labeled samples in a support set. Moreover, there are $Q$ query samples to be classified in each downstream task.
+
+\subsection{Episodic Learning Framework}
+We follow the episodic training framework~\cite{vinyals2016matching} that is formally defined as follows: 
+\begin{definition} [Episodic Learning]
+    Episodic learning is a learning framework that utilizes a bundle of tasks $\{\mathcal{T}_{t}\}_{t=1}^{T}$, where $\mathcal{T}_{t}=(S_{\mathcal{T}_{t}},\  Q_{\mathcal{T}_{t}})$, $S_{\mathcal{T}_{t}}=\{ (x^{spt}_{t,i}, y^{spt}_{t,i}) \}_{i=1}^{N\times K}$ and $Q_{\mathcal{T}_{t}}=\{ (x^{qry}_{t,i}, y^{qry}_{t,i}) \}_{i=1}^{N\times Q}$, instead of commonly used mini-batches in the stochastic optimization.
+\end{definition}
+\noindent By mimicking the `format' of the downstream task ({i.e., \textit{FSNC}), the episodic learning allows the model to be aware of the task to be solved in the testing phase.
+Note that existing supervised meta-learning methods require a large number of labeled samples in the training set $(X_{C_b}, Y_{C_b})$ and a sufficient number of base classes $|C_b|$ ({i.e., \textit{diverse base classes}}) to generate informative training episodes.
+However, gathering enough labeled data and diverse classes may not be possible and is usually costly in the real world.
+As a result, supervised methods fall short of utilizing all nodes in the graph as they rely on a few labeled nodes, and thus lack generalizability.
+
+Therefore, we propose \textit{unsupervised episode generation} methods not only to tackle the label-scarcity problem causing a limited utilization of nodes in the graph, but also to benefit from the episodic learning framework for downstream task-aware learning of node embeddings, thereby being robust to a class imbalance in a graph.
+
+
+
+Proposed Method
+\subsection{Motivation: A Closer Look at Training Episodes} \label{motivation}
+In the episodic learning framework, there are two essential components: 1) support set that provides basic information about the task to be solved, and 2) query set that enables the model to understand about how to solve the given task.
+\textit{For this reason, the query set should share similar semantics with the support set.}
+Motivated by this characteristic of episodic learning, we consider the \textbf{similarity} condition as the key to our proposed query generation process.
+Note that in the ordinary supervised setting, the similarity condition is easily achievable, since labels of the support set and query set are known, and thus can be sampled from the same class. However, as our goal is to generate training episodes in an unsupervised manner, how to sample a query set that shares similar semantics with each support set is non-trivial.
+\begin{figure} [t!]
+  \centering
+  \includegraphics[width=0.99\columnwidth]{NaQ-Feat_Figure.pdf}
+  \caption{Overview of the \textsc{NaQ-Feat}.}
+  \label{naq_feat:overview}
+\end{figure}
+\subsection{\textsc{NaQ}: Neighbors as Queries} \label{naq:explain}
+In this work, we propose a simple yet effective query generation method, called \textbf{Neighbors as Queries (\textsc{NaQ})}, which leverages raw feature-level similar nodes as queries. The overview of \textsc{NaQ} can be found in Figure~\ref{naq_feat:overview}.
+
+\noindent \textbf{Support set generation. }
+{To generate training episodes $\{\mathcal{T}_{t}\}_{t=1}^{T}$, we start by randomly sampling $T$ sets of $N$ nodes from the entire graph for the support set generation. 
+Next, we assign pseudo-labels $y_{t,i}$ to each node $x_{t,i} \in \mathcal{T}_t$, {i.e.}, $S_{\mathcal{T}_t}=\{ (x_{t,i}, y_{t,i}) \ | \ x_{t,i}\in \mathcal{V} \}_{i=1}^{N\times K}$.}
+Note that we only generate 1-shot support set (i.e., $K=1$) regardless of the downstream task setting, to assure that randomly sampled $N$ support set nodes (corresponding to `$N$-way') are as much distinguishable from one another as possible.
+
+\noindent \textbf{Query set generation. }
+Then, we generate a corresponding query set $Q_{\mathcal{T}_t}$ with Top-Q similar nodes of each node $x_{t,i}$ in $S_{\mathcal{T}_t}$ based on a pre-calculated node-node similarity matrix $\mathbf{S}$, and give them the same pseudo-label $y_{t,i}$.
+Formally, we can express this query generation process as follows:
+\begin{equation}
+    Q_{\mathcal{T}_t} = \bigcup\nolimits_{(x_{t,i}, y_{t,i}) \in S_{\mathcal{T}_t}} \mathrm{Top}(\mathbf{S}_{x_{t,i}}, \text{Q})
+\end{equation}
+where $\mathbf{S}_{x_{t,i}}$ denotes a row of the similarity matrix $\mathbf{S}$ corresponding to the node $x_{t,i}$, and $\mathrm{Top}(\mathbf{S}_{x_{t,i}}, \text{Q})$ indicates a set of Q nodes corresponding to Q largest entries in $\mathbf{S}_{x_{t,i}}$ excluding $x_{t,i}$ itself.
+
+\noindent\textbf{Similarity Metric. } For sampling `similar' nodes to be used as queries, we used cosine similarity for node features such as bag-of-words, and Euclidean distance for the features such as word embeddings.
+\subsubsection{An Extension to \textsc{NaQ}: \textsc{NaQ-Diff}} \label{naq_diff:rise}
+Since \textsc{NaQ} described above solely relies on the raw node feature $X$, the structural information that is inherent in graphs is overlooked, which plays an important role depending on the target domain.
+For example, in citation networks, since the citation relationship between papers implies that these papers usually share similar semantics ({i.e., related paper topics}), they have similar features even if their class labels are different.
+Hence, considering structurally similar nodes as queries can be more beneficial than solely relying on the feature-level similar nodes in such cases.
+
+Hence, we present a variant of \textsc{NaQ}, called \textsc{NaQ-Diff}, which utilizes \textit{structurally similar nodes} found by generalized graph diffusion~\cite{gdc} as queries. Specifically,
+\textsc{NaQ-Diff} leverages diffusion matrix $\mathbf{S}=\Sigma^\infty_{k=0}\theta_k\mathbf{T}^k$ as node-node similarity matrix, with weighting coefficients $\theta_k$, and the generalized transition matrix $\mathbf{T}$. As edge weights of the diffusion matrix $\mathbf{S}$ can be interpreted as structural closeness, we can sample similar nodes of each support set node from $\mathbf{S}$. 
+It is important to note that computing the diffusion matrix does not require additional computation during training and can be readily calculated before the model training.
+
+Hereafter, we call the former version of \textsc{NaQ} that is based on the raw features as \textsc{NaQ-Feat}, and the latter version that is based on the graph structural information as \textsc{NaQ-Diff}.
+
+\subsection{Model Training with Episodes from \textsc{NaQ}} \label{sec:training}
+In this section, we explain how to train existing meta-learning models with episodes generated by \textsc{NaQ}.
+Let $\mathcal{T}_t=(S_{\mathcal{T}_t}, Q_{\mathcal{T}_t})$ be a generated episode and $\mathrm{Meta}(\mathcal{T}_t;\theta)$ be any of existing graph meta-learning methods (e.g., MAML, ProtoNet, G-Meta, etc.) with parameter $\theta$. For simplicity of explanation, we used the same notation here even for methods that use meta-batches like MAML. Regardless of whether $\mathcal{T}_t$ is generated from \textsc{NaQ} or an ordinary supervised episode generation, it follows the common format of $\mathcal{T}_t=(S_{\mathcal{T}_t}, Q_{\mathcal{T}_t}), \text{where } S_{\mathcal{T}_t}=\{(x^{spt}_{t,i}, y^{spt}_{t,i})\}_{i=1}^{N\times K} \text{ and } Q_{\mathcal{T}_t}=\{(x^{qry}_{t,i}, y^{qry}_{t,i})\}_{i=1}^{N\times Q}$. That is, the only difference is whether $y^{spt}_{t,i}$ and $y^{qry}_{t,i}$ are annotated based on the ground-truth label (supervised) or a psuedo-label (\textsc{NaQ}).
+Hence, \textit{any of $\mathrm{Meta}(\mathcal{T}_t;\theta)$ can be trained in the same way in an `unsupervised manner with \textsc{NaQ}' as ordinary supervised meta-learning methods.} The details are presented in Algorithm~\ref{alg:naq:train}.
+
+\begin{algorithm} [h!]
+\caption{Training Meta-learner $\mathrm{Meta}( \ \cdot \ ;\theta)$ with \textsc{NaQ}}
+\label{alg:naq:train}
+\begin{algorithmic}
+    \INPUT Bundle of training episodes $\{\mathcal{T}_t\}_{t=1}^{T}$, Graph Meta-learner $\mathrm{Meta}( \ \cdot \ ;\theta)$, learning rate $\eta$.
+    \STATE Randomly initialize the model parameter $\theta$
+    \FOR{$t=1,\cdots,T$}
+    \STATE {\bfseries Step 1:} Calculate loss $\mathcal{L}$ by $\mathrm{Meta}(\mathcal{T}_t;\theta)$
+    \STATE {\bfseries Step 2:} Update $\theta \leftarrow \theta - \eta \nabla_{\theta} \mathcal{L}$
+    \ENDFOR
+    \OUTPUT $\mathrm{Meta}(\mathcal{T}_t;\theta)$
+\end{algorithmic}
+\end{algorithm}
+
+\noindent \textbf{Remark.} Supervised TENT~\cite{tent} additionally computes cross-entropy loss $\mathcal{L}_{CE}$ over the entire labeled data $(X_{C_b}, Y_{C_b})$ in Step 1 of Algorithm~\ref{alg:naq:train}. Therefore, when we train TENT with our \textsc{NaQ}, $\mathcal{L}_{CE}$ is calculated over a single training episode.
+It is important to note that since \textsc{NaQ} generates training episodes based on all nodes in a graph, it enables existing graph meta-learning methods to fully utilize all nodes in a graph, while the supervised episode generation fails to do so as it depends on a few labeled nodes from base classes.
+
+\begin{table*}[t!]
+\centering
+\caption{Overall averaged FSNC accuracy (\%) with 95\% confidence intervals on product networks (Full ver. available at: Table~\ref{main_table:full:acae})}
+\label{main_table:acae}
+\renewcommand{\arraystretch}{1.1}
+\resizebox{0.95\textwidth}{!}{%
+\begin{tabular}{c|ccccc|ccccccc}
+\hline
+Dataset & \multicolumn{5}{c|}{\textbf{Amazon-Clothing}} & \multicolumn{7}{c}{\textbf{Amazon- Electronics}} \\ \hline
+Setting & \multicolumn{2}{c}{5 way} & \multicolumn{2}{c|}{10 way} & \multirow{2}{*}{\begin{tabular}[c]{@{}c@{}}Avg.\\ Rank\end{tabular}} & \multicolumn{2}{c}{5 way} & \multicolumn{2}{c}{10 way} & \multicolumn{2}{c|}{20 way} & \multirow{2}{*}{\begin{tabular}[c]{@{}c@{}}Avg.\\ Rank\end{tabular}} \\ \cline{1-5} \cline{7-12}
+Baselines & 1 shot & 5 shot & 1 shot & \multicolumn{1}{c|}{5 shot} &  & 1 shot & 5 shot & 1 shot & 5 shot & 1 shot & \multicolumn{1}{c|}{5 shot} &  \\ \hline
+MAML (Sup.) & 76.13±\tiny{1.17} & 84.28±\tiny{0.87} & 63.77±\tiny{0.83} & \multicolumn{1}{c|}{76.95±\tiny{0.65}} & 10.25 & 65.58±\tiny{1.26} & 78.55±\tiny{0.96} & 57.31±\tiny{0.87} & 67.56±\tiny{0.73} & 46.37±\tiny{0.61} & \multicolumn{1}{c|}{60.04±\tiny{0.52}} & 9.33 \\
+ProtoNet (Sup.) & 75.52±\tiny{1.12} & 89.76±\tiny{0.70} & 65.50±\tiny{0.82} & \multicolumn{1}{c|}{82.23±\tiny{0.62}} & 7.25 & 69.48±\tiny{1.22} & 84.81±\tiny{0.82} & 57.67±\tiny{0.85} & 75.79±\tiny{0.67} & 48.41±\tiny{0.57} & \multicolumn{1}{c|}{67.31±\tiny{0.47}} & 5.83 \\
+TENT (Sup.) & 79.46±\tiny{1.10} & 89.61±\tiny{0.70} & 69.72±\tiny{0.80} & \multicolumn{1}{c|}{84.74±\tiny{0.59}} & 5.25 & 72.31±\tiny{1.14} & 85.25±\tiny{0.81} & 62.13±\tiny{0.83} & 77.32±\tiny{0.67} & 52.45±\tiny{0.60} & \multicolumn{1}{c|}{69.39±\tiny{0.50}} & 4.00 \\
+G-Meta (Sup.) & 78.67±\tiny{1.05} & 88.79±\tiny{0.76} & 65.30±\tiny{0.79} & \multicolumn{1}{c|}{80.97±\tiny{0.59}} & 7.75 & 72.26±\tiny{1.16} & 84.44±\tiny{0.83} & 61.32±\tiny{0.86} & 74.92±\tiny{0.71} & 50.39±\tiny{0.59} & \multicolumn{1}{c|}{65.73±\tiny{0.48}} & 5.67 \\
+GLITTER (Sup.) & 75.73±\tiny{1.10} & 89.18±\tiny{0.74} & 64.30±\tiny{0.79} & \multicolumn{1}{c|}{77.73±\tiny{0.68}} & 9.00 & 66.91±\tiny{1.22} & 82.59±\tiny{0.83} & 57.12±\tiny{0.88} & 76.26±\tiny{0.67} & 49.23±\tiny{0.57} & \multicolumn{1}{c|}{61.77±\tiny{0.52}} & 7.00 \\
+COSMIC (Sup.) & 82.24±\tiny{0.99} & 91.22±\tiny{0.73} & \underline{74.44±\tiny{0.75}} & \multicolumn{1}{c|}{81.58±\tiny{0.63}} & 3.75 & 72.61±\tiny{1.05} & 86.92±\tiny{0.76} & 65.24±\tiny{0.82} & 78.00±\tiny{0.64} & 58.71±\tiny{0.57} & \multicolumn{1}{c|}{70.29±\tiny{0.44}} & 3.00 \\ \hline
+TLP-BGRL & 81.42±\tiny{1.05} & 90.53±\tiny{0.71} & 72.05±\tiny{0.86} & \multicolumn{1}{c|}{83.64±\tiny{0.63}} & 4.25 & 64.20±\tiny{1.10} & 81.72±\tiny{0.85} & 53.16±\tiny{0.82} & 73.70±\tiny{0.66} & 44.57±\tiny{0.54} & \multicolumn{1}{c|}{65.13±\tiny{0.47}} & 8.67 \\
+TLP-SUGRL & 63.32±\tiny{1.19} & 86.35±\tiny{0.78} & 54.81±\tiny{0.77} & \multicolumn{1}{c|}{73.10±\tiny{0.63}} & 11.50 & 54.76±\tiny{1.06} & 78.12±\tiny{0.92} & 46.51±\tiny{0.80} & 68.41±\tiny{0.71} & 36.08±\tiny{0.52} & \multicolumn{1}{c|}{57.78±\tiny{0.49}} & 11.67 \\
+TLP-AFGRL & 78.12±\tiny{1.13} & 89.82±\tiny{0.73} & 71.12±\tiny{0.81} & \multicolumn{1}{c|}{83.88±\tiny{0.63}} & 5.25 & 59.07±\tiny{1.07} & 81.15±\tiny{0.85} & 50.71±\tiny{0.85} & 73.87±\tiny{0.66} & 43.10±\tiny{0.56} & \multicolumn{1}{c|}{65.44±\tiny{0.48}} & 9.00 \\ \hline
+VNT & 65.09±\tiny{1.23} & 85.86±\tiny{0.76} & 62.43±\tiny{0.81} & \multicolumn{1}{c|}{80.87±\tiny{0.63}} & 10.50 & 56.69±\tiny{1.22} & 78.02±\tiny{0.97} & 49.98±\tiny{0.83} & 70.51±\tiny{0.73} & 42.10±\tiny{0.53} & \multicolumn{1}{c|}{60.99±\tiny{0.50}} & 10.83 \\ \hline
+\textbf{\textsc{NaQ-Feat}-Best (Ours)} & \textbf{86.58±\tiny{0.96}} & \textbf{92.27±\tiny{0.67}} & \textbf{79.55±\tiny{0.78}} & \multicolumn{1}{c|}{\textbf{86.10±\tiny{0.60}}} & \textbf{1.00} & \textbf{76.46±\tiny{1.11}} & \textbf{88.72±\tiny{0.73}} & \textbf{69.59±\tiny{0.86}} & \textbf{81.44±\tiny{0.61}} & \textbf{61.05±\tiny{0.59}} & \multicolumn{1}{c|}{\textbf{74.60±\tiny{0.47}}} & \textbf{1.00} \\
+\textbf{\textsc{NaQ-Diff}-Best (Ours)} & \underline{84.40±\tiny{1.01}} & \underline{91.72±\tiny{0.69}} & 73.39±\tiny{0.79} & \multicolumn{1}{c|}{\underline{84.82±\tiny{0.58}}} & \underline{2.25} & \underline{74.16±\tiny{1.08}} & \underline{87.09±\tiny{0.75}} & \underline{65.95±\tiny{0.81}} & \underline{79.13±\tiny{0.60}} & \underline{60.40±\tiny{0.59}} & \multicolumn{1}{c|}{\underline{73.75±\tiny{0.42}}} & \underline{2.00} \\ \hline
+\end{tabular}%
+}
+\end{table*}
+\subsection{Theoretical Insights} \label{theo:insight}
+In this section, we provide some insights on conditions that 
+enable \textsc{NaQ} to work within the episodic learning framework to justify our motivation of utilizing similar nodes as queries described in Section 3.1.
+Specifically, we investigate the learning behavior of MAML~\cite{maml}, which is one of the most widely adopted meta-learning methods in the perspective of `generalization error' for a single episode during the training phase. Since each of the existing graph meta-learning methods has its own sophisticated architecture, we only consider MAML here.
+The formal definition of the expected generalization error is as follows~\cite{islr2013, esl}.
+\begin{definition} \label{def_generr}
+    Let ${S}, {Q}, f_{{S}}, f$ be a given training set, test set, an encoder trained on ${S}$, and the unknown perfect estimation, respectively. With an error measure $\mathcal{L}$, for a given point $(x',y')\in{Q}$, an \textit{expected generalization error} is defined as $\mathbb{E}[\mathcal{L}\big( y', f_{{S}}(x') \big)]$.
+\end{definition}
+By assuming that $y=f(x)+\epsilon$ holds for an arbitrary input-output pair $(x,y)$ ($\mathbb{E}[\epsilon]=0, \mathrm{Var}(\epsilon)=\sigma^2<\infty$) and an error measure $\mathcal{L}$ is the mean squared error, we can decompose expected generalization error in Def.~\ref{def_generr} as follows~\cite{islr2013, esl}: 
+
+\begin{equation} \label{generr}
+\begin{split}
+    \mathbb{E}[\mathcal{L}\big( y', f_{{S}}(x')& \big)]  = \big( \mathbb{E} [f_{{S}}(x')] -f(x') \big)^{2} \\ 
+    & + \big( \mathbb{E}\big[ f_{{S}}(x')^{2} \big] - \mathbb{E}[f_{{S}}(x')]^{2} \big) + \sigma^{2}.
+\end{split}
+\end{equation}
+Let us consider the training process of MAML with an encoder $f_\theta$ and a training episode $\mathcal{T}=(S_\mathcal{T}, Q_\mathcal{T})$, where $S_\mathcal{T}=\{(x^{spt}_i, y^{spt}_i)\}^{N\times K}_{i=1}~\text{and}~Q_\mathcal{T}$ are the $N$-way $K$-shot support set and the query set, respectively.
+During the inner-loop optimization, MAML produces $f_{\theta'}$, where $\theta'=\mathrm{argmin}_{\theta}\sum_{(x^{spt},y^{spt})\in S_\mathcal{T}} \mathcal{L} \big( y^{spt}, f_{\theta}(x^{spt}) \big)$.
+
+If we regard the inner-loop optimization of MAML as a training process with training set $S=S_\mathcal{T}$, the outer-loop optimization (i.e., meta-optimization) as a testing process with test set $Q=Q_\mathcal{T}$, and the trained encoder $f_{S}=f_{S_\mathcal{T}}=f_{\theta'}$, \textit{we can interpret that the meta-optimization actually reduces the generalization error in Eq.~\ref{generr}} over the query set $Q_\mathcal{T}$ with encoder $f_{\theta'}$~\cite{umtra}. With this interpretation, we can re-write Eq.~\ref{generr} as follows:
+\begin{equation} \label{generr_meta}
+\small
+\begin{split}
+    \mathbb{E}[\mathcal{L}\big( y^{qry}, f_{\theta'}&(x^{qry}) \big)] = \big( \mathbb{E} [f_{\theta'}(x^{qry})] -f_\mathcal{T}(x^{qry}) \big)^{2} \\
+    & + \big( \mathbb{E}\big[ f_{\theta'}(x^{qry})^{2} \big] - \mathbb{E}[f_{\theta'}(x^{qry})]^{2} \big) + \sigma^{2}, 
+\end{split}
+\end{equation}
+where $f_\mathcal{T}$ is the unknown perfect estimation for $\mathcal{T}$. Without loss of generality, we considered a single query $(x^{qry},y^{qry})\in Q_\mathcal{T}$ to derive Eq.~\ref{generr_meta}. \textit{As Eq.~\ref{generr_meta} is used as a loss function, an accurate calculation of Eq.~\ref{generr_meta} is essential for a better model training} on $\mathcal{T}$~\cite{umtra}.
+
+\noindent\textbf{Remark.} Let $s:=(x^{spt},y^{spt})\in S_\mathcal{T}$ be a specific corresponding support set sample of the query $q:=(x^{qry},y^{qry})$ above. Let $\tilde{y}^{spt}$, $\tilde{y}^{qry}$ be the \textit{true labels} of $s, q$, respectively. Note that the \textit{same new labels} (i.e., $y^{spt}$, $y^{qry}$ s.t. $y^{spt}$=$y^{qry}$) are assigned to each of $x^{spt}, x^{qry}$ during the training episode generation (regardless of whether it is supervised or not), to perform classification of $N$ classes instead of classifying $|C|$ classes (i.e., total number of classes in the entire dataset) in the training phase of the episodic learning framework. To get an accurate computation of Eq.~\ref{generr_meta}, \textit{it is essential to assure that $\tilde{y}^{spt}=\tilde{y}^{qry}$ holds}.
+Otherwise, we have $y^{qry} = f_{\mathcal{T}}(x^{qry})+\epsilon + \delta$, where $\delta$ is an error resulting from $\tilde{y}^{spt} \neq \tilde{y}^{qry}$, which may lead to a suboptimal solution when training with loss defined by Eq.~\ref{generr_meta}.
+
+Unlike the ordinary supervised episode generation in which case $\delta=0$ holds as condition that $\tilde{y}^{spt}=\tilde{y}^{qry}$ is naturally satisfied, our \textsc{NaQ} cannot guarantee $\delta=0$ since no label information is given (i.e., $\tilde{y}^{spt}, \tilde{y}^{qry}$ are both unknown) during its episode generation phase.
+Hence, we argue that it is crucial to discover \textbf{class-level similar} query $q_{\textsc{NaQ}}$ for each support set sample $s_{\textsc{NaQ}}=(x_{\textsc{NaQ}}^{spt}, y_{\textsc{NaQ}}^{spt})\in S_\mathcal{T}$\footnote{Here, we use $S_\mathcal{T}$ to denote the support set generated by \textsc{NaQ}. For details, see `Support set generation' process in Section~\ref{naq:explain}.}
+during the query generation process of \textsc{NaQ}. If $s$ and $q$ are class-level similar, i.e., the difference between their corresponding true labels $\tilde{y}_{\textsc{NaQ}}^{spt}, \tilde{y}_{\textsc{NaQ}}^{qry}$ are small enough, we would have $|\delta|<\xi$ for some small enough $\xi>0$ so that we can successfully train encoder $f_\theta$.
+In summary, the above analysis explains that discovering a query that is class-level similar enough to a given support set sample is crucial for minimizing the training loss (i.e., the generalization error defined in Eq.~\ref{generr_meta}), which eventually yields a better $f_\theta$. 
+\textbf{In this regard, \textsc{NaQ} works well within the episodic learning framework}, since \textsc{NaQ} generates class-level similar query nodes using node-node similarity defined based on the raw node feature (i.e., \textsc{NaQ-Feat}) and graph structural information (i.e., \textsc{NaQ-Diff}).
+
+
+\begin{table*}[ht!]
+\centering
+\caption{Overall averaged FSNC accuracy (\%) with 95\% confidence intervals on citation networks (Full ver. available at: Table~\ref{main_table:full:cfdb}, OOT: Out Of Time, which means that the training was not finished in 24 hours, OOM: Out Of Memory on NVIDIA RTX A6000)}
+\label{main_table:cfdb}
+\renewcommand{\arraystretch}{1.2}
+\resizebox{0.95\textwidth}{!}{%
+\begin{tabular}{c|ccccccc|ccccccc}
+\hline
+Dataset & \multicolumn{7}{c|}{\textbf{Cora-full}} & \multicolumn{7}{c}{\textbf{DBLP}} \\ \hline
+Setting & \multicolumn{2}{c}{5 way} & \multicolumn{2}{c}{10 way} & \multicolumn{2}{c|}{20 way} & \multirow{2}{*}{\begin{tabular}[c]{@{}c@{}}Avg.\\ Rank\end{tabular}} & \multicolumn{2}{c}{5 way} & \multicolumn{2}{c}{10 way} & \multicolumn{2}{c|}{20 way} & \multirow
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

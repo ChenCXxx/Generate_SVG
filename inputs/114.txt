@@ -1,0 +1,330 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Supervised learning of deep neural networks has driven significant advances of semantic segmentation for a decade.
+At the same time, however, it has limited practical applications of the task as it demands as supervision pixel-level class labels that are prohibitively expensive in general.
+To address this limitation, label-efficient learning approaches such as weakly supervised learning~\cite{affinitynet,IRNet,Huang_2018_CVPR,sppnet,wang2018weakly,sun2020mining,dong_2020_conta,chen2020weakly, kim2022learning, kang2023distilling}, semi-supervised learning~\cite{lee2019ficklenet,S4gan,Universal_SSL_seg,Naive_student,GCTNet,ECNet,Three_stage_self_training_for_ssl,Semantic_Seg_with_Generative_models,lai2021cac,he2021re,alonso2021semi, kwon2022semi}, self-supervised learning~\cite{ziegler2022self, hamilton2022unsupervised, Van_Gansbeke_2021_ICCV}, and active learning (AL)~\cite{sinha2019variational, yang2017suggestive, casanova2020reinforced, colling2020metabox+, mackowiak2018cereals, golestaneh2020importance, jain2016active, siddiqui2020viewal, cai2021revisiting, kim2023adaptive} have been investigated.
+
+This paper studies AL for semantic segmentation, 
+where a training algorithm selects informative samples from training data and asks an oracle to label them on a limited budget.
+In AL, the design of annotation query, \ie, the granularity of query samples and the annotation format, is of vital importance
+for maximizing the amount and quality of supervision provided by the oracle within a given budget. 
+Early approaches consider an entire image as a sample and ask for its pixel-wise class labels~\cite{sinha2019variational, yang2017suggestive}, or select individual pixels and query the oracle for their class labels~\cite{shin2021all};
+they turned out to be suboptimal since the former lacks the diversity of samples~\cite{mackowiak2018cereals} and the latter is less budget-efficient as a query provides supervision for only a single pixel.
+As a compromise between these two directions, 
+recent AL methods treat non-overlapped local image regions as individual samples~\cite{casanova2020reinforced, colling2020metabox+, mackowiak2018cereals, golestaneh2020importance, jain2016active, siddiqui2020viewal, cai2021revisiting}. 
+These region-based methods guarantee the diversity of samples by selecting local regions from numerous images with diverse contexts.
+Also, their queries are designed to obtain region-wise segmentation labels efficiently. 
+For instance, they ask the oracle to draw segmentation masks in the form of polygons within an image patch~\cite{colling2020metabox+, mackowiak2018cereals}, or to estimate the dominant class label of a superpixel so that the label is assigned to the entire superpixel~\cite{cai2021revisiting}.
+Although the existing region-based methods have achieved great success, we argue that there is still large room for further improvement in their query designs:
+Polygon labeling~\cite{colling2020metabox+, mackowiak2018cereals} still requires a large number of clicks per query,
+and dominant class labeling~\cite{cai2021revisiting} provides wrong supervision
+for part of a multi-class region.
+Note that the latter issue cannot be resolved even using superpixels
+since they frequently violate object boundaries and include multiple classes. %
+
+\input{Teaser}
+In this context, we first introduce a new query design for region-based AL of semantic segmentation. 
+The essence of our proposal is to ask the oracle for a multi-hot vector that indicates all classes existing in the given region.
+This \emph{multi-class labeling} strategy enables to prevent annotation errors for local regions capturing multiple classes, and works the same as dominant class labeling (and thus inherits its advantages) for single-class region queries.
+Moreover, our user study revealed that multi-class labeling demands less annotation time per click and results in more accurate labels compared with dominant class labeling as demonstrated in Fig.~\ref{fig:teaser}.
+However, such region-wise multi-class labels introduce a new challenge in training, known as the \emph{class ambiguity} issue, 
+since they assign \emph{partial labels}~\cite{hullermeier2006learning, cour2011learning} (\ie, a set of candidate classes) to individual pixels of the selected regions. 
+To address the ambiguity issue, we propose a new AL method tailored to learning semantic segmentation with partial labels.
+Fig.~\ref{fig:pipeline} illustrates the overall pipeline of the proposed method.
+Given a set of local regions and their multi-class labels, our method trains a segmentation network in two stages.
+In the first stage, the network is trained directly with the region-wise multi-class labels.
+To this end, we propose two new loss functions for the label disambiguation based on the notions of partial-label learning~\cite{hullermeier2006learning, cour2011learning} and multiple instance learning~\cite{MIL_Dietterich}, respectively.
+In the second stage, our method disambiguates the partial labels through pseudo segmentation labels, which are used to train the segmentation network in the supervised learning fashion.
+To be specific, it finds a set of class prototype features from each local region using the model of the first stage, and employs the prototypes as a region-adaptive classifier to predict pixel-wise pseudo labels within the region.
+In addition, we propose to propagate the pseudo labels to neighboring local regions to increase the amount of supervision given per query; this strategy benefits by multi-class labeling 
+that enables to propagate pseudo labels of multiple classes, leading to larger expansion of pseudo labels.
+
+Last but not least, we introduce an acquisition function designed to maximize the advantage of multi-class labels in the region-based AL.
+Our acquisition function considers both uncertainty~\cite{joshi2009multi, wang2016cost} and class balance~\cite{brust2018active, xie2022towards, wu2022d2ada} of sampled regions so that local regions where the model finds difficult and containing underrepresented classes are chosen more frequently. 
+It shares a similar motivation with an existing acquisition function~\cite{cai2021revisiting}, but different in that it considers multiple classes of a region and thus better aligns with multi-class labeling.
+The proposed framework achieved the state of the art on both Cityscapes~\cite{cityscapes} and PASCAL VOC 2012~\cite{Pascalvoc}.
+Especially, it achieved 95\% of the fully supervised learning performance on Cityscapes with only 4\% of the full labeling cost.
+In addition, we verified the efficacy and efficiency of multi-class labeling through extensive empirical analyses: Its efficacy was demonstrated by experiments with varying datasets, model architectures, acquisition functions, and budgets, while its efficiency was examined in real-world annotation scenarios by measuring actual labeling time across a large number of human annotators. 
+In short, the main contribution of this paper is five-fold:
+\begin{itemize}[leftmargin=5mm]
+\item We introduce a new query design for region-based AL in semantic segmentation, which asks the oracle for a multi-hot vector indicating all classes existing within a particular region.
+\item We propose a novel AL framework that includes two new loss functions effectively utilizing the supervision of multi-class labels and a method for generating pseudo segmentation labels from the multi-class labels, resulting in enhanced supervision.
+\item To maximize the advantage of multi-class labels, we design an acquisition function that 
+considers multiple classes of a local region when examining its uncertainty and class balance.
+\item The effectiveness of multi-class labeling was demonstrated through extensive experiments and user study in real-world annotation scenarios.
+\item The proposed framework achieved the state of the art on both two public benchmarks, Cityscapes and PASCAL VOC 2012, with a significant reduction in annotation cost.
+\end{itemize}
+
+
+Related Work
+\label{sec:relatedwork}
+
+\noindent \textbf{Active learning (AL).}
+In AL, a training algorithm samples informative data and asks an oracle to label them on a limited budget so as to maximize performance of a model trained with the labeled data.
+To this end, AL methods have suggested various sampling criteria such as uncertainty~\cite{asghar2016deep, he2019towards, ostapuk2019activelink}, diversity~\cite{sener2017active, sinha2019variational}, or both~\cite{ash2019deep, wang2015querying, wang2019incorporating, hwang2022combating}.
+Also, since most of existing AL methods for vision tasks have focused on image classification, the granularity of their annotation queries has been an entire image in general.
+However, for structured prediction tasks like semantic segmentation, queries should be more carefully designed to optimize cost-effectiveness of annotation.
+
+\noindent\textbf{Active learning for semantic segmentation.}
+{%
+Most AL methods for semantic segmentation 
+can be categorized into image-based~\cite{yang2017suggestive,sinha2019variational,dai2020suggestive} and region-based methods~\cite{mackowiak2018cereals}.
+The image-based methods consider an entire image as the sampling unit and query an oracle for pixel-wise labels of sampled images.
+These methods have been known to be less cost-effective due to the limited diversity of sampled data; adjacent pixels in an image largely overlap in their receptive fields and thus fail to provide diverse semantics during training.
+On the other hand, the region-based methods divide each image into non-overlapping local regions, which are considered as individual samples to be selected;
+As such local regions, image patches~\cite{mackowiak2018cereals,casanova2020reinforced,colling2020metabox+} and superpixels~\cite{kasarla2019region,cai2021revisiting,siddiqui2020viewal} have been employed.
+Our paper proposes a new cost-effective region query %
+that allows more accurate and faster annotation, and a new training algorithm taking full advantage of the query design.}
+
+\noindent \textbf{Partial label learning.}
+{Partial label learning~\cite{hullermeier2006learning, cour2011learning,lv2020progressive,cabannnes2020structured} is a branch of weakly supervised learning where a set of candidate classes is assigned to each of training data, leading to ambiguous supervision.
+One primitive yet common approach to partial label learning is to train a model while regarding its top-1 prediction as true labels~\cite{lv2020progressive,cabannnes2020structured}.
+However, this approach could be vulnerable to class imbalance~\cite{wang2022solar} and strong correlation between different classes~\cite{qiaodecompositional}.
+In contrast, our two-stage training algorithm addresses these  issues by disambiguating partial labels by pseudo labeling.}
+
+
+
+Proposed Method
+
+\input{overall_framework}
+{We consider an AL process with $R$ rounds.
+At each round, local regions of a batch are selected using an acquisition function, and then a multi-hot vector (\ie, multi-class label) is assigned to each of them by an oracle. 
+Given the labeled regions, our training algorithm operates in two stages as illustrated in~\Fig{pipeline}.
+In the first stage, a segmentation model is trained directly with the region-wise multi-class labels by two loss functions specialized to handle the ambiguity of the labels (\Sec{loss}).
+In the second stage, the ambiguity is mitigated by generating pixel-wise pseudo labels and using them for training the model further (\Sec{pseudo_labeling}).
+The remainder of this section describes details of our framework.
+}
+
+\subsection{Acquisition of region-wise multi-class labels} \label{sec:labeling}
+For an unlabeled image set $\mathcal{I}$, we partition each image $I \in \mathcal{I}$ into 
+a set of non-overlapping regions, denoted by $S(I)$,
+such that a pixel $x \in I$ belongs to only a unique region $s \in S(I)$.
+Such a non-overlapping partition can be obtained by a superpixel algorithm as in \cite{cai2021revisiting}.
+Let $\mathcal{S} := \bigcup_{I \in \mathcal{I}} S(I)$
+be the set of all the partitions for $\mathcal{I}$.
+For each round $t$, we issue a batch of regions, denoted by $\mathcal{B}_t \subset \mathcal{S}$, 
+each of which is queried to acquire 
+a multi-class label $Y \subset \{1,2, \cdots, C\}$,
+where $|Y| \geq 1$ and $C$ is the number of classes.
+Then the model $\theta_t$ is trained using the labeled regions obtained so far, denoted as $\mathcal{D} := \bigcup_{t} \mathcal{D}_t$, where $\mathcal{D}_t$ consists of pairs of region and associated multi-class label, $\mathcal{D}_t := \{(s,Y): s \in \mathcal{B}_t\}$.
+The model $\theta_t$ includes a feature extractor $f_t(\cdot)$ and a classifier with a weight matrix $[\bw_{t,1}, \bw_{t,2}, \cdots, \bw_{t,C}] \in \mathbb{R}^{d \times C}$.
+The predictive probability of pixel $x$
+being class $c$ is computed by
+\begin{equation}
+    P_{\theta_t}(y=c|x) = \text{softmax}\bigg(\frac{f_t(x)^\top \bw_{t,c}}{\tau \| f_t(x)\|\,\|\bw_{t,c}\|}\bigg) \;,
+\end{equation}
+where $\tau$ is a temperature term. %
+
+\noindent\textbf{Acquisition function.} \label{sec:acquisition}
+We introduce an acquisition function for selecting a batch of regions $\mathcal{B}_t \subset \mathcal{S}$ at round $t$ that aims to optimize the benefits of multi-class labels, while adhering to the principles of previous studies~\cite{brust2018active, cai2021revisiting, wu2022d2ada} for uncertain and class-balanced region selection.
+We adopt best-versus-second-best~(BvSB)~\cite{joshi2009multi, wang2016cost} as an uncertainty measure, defined as
+\begin{equation}
+    u_{\theta_t}(x) := \frac{P_{\theta_t}(y=c_\text{sb} | x)}{P_{\theta_t} (y=c_\text{b}|x)} \;,
+    \label{eq:BvSB}
+\end{equation}
+where $c_\text{b}$ and $c_\text{sb}$ are the classes with the largest and second-largest predictive probabilities for $x$ under $\theta_t$, respectively.
+For class-balanced sampling, we first estimate the label distribution $P_{\theta_t}(y)$ as
+\begin{equation}
+    P_{\theta_t} (y=c) = \frac{1}{|X|} \sum_{x\in X} P_{\theta_t} (y=c|x) \;,
+\end{equation}
+where $X\coloneqq \{x\colon \exists s\in\mathcal{S},\ x\in s\}$.
+Our acquisition function, favoring uncertain regions of rare classes, is defined as
+\begin{equation}
+    a(s;\theta_t) := \frac{1}{|s|} \sum_{x\in s} \frac{u_{\theta_t}(x)}{\big(1+\nu \, P_{\theta_t} (c_b)\big)^2} \;,
+    \label{eq:acquisition}
+\end{equation}
+where $\nu$ is a hyperparameter regulating the class balancing effect.
+Distinct from an existing acquisition function~\cite{cai2021revisiting} that considers the dominant class only, our function considers classes of all pixels in a region and thus better aligns with multi-class labeling. For the remainder of this section, we will omit the round index $t$ from $\mathcal{D}_t$ and $\theta_t$ for simplicity.
+\subsection{Stage 1: Learning with region-wise multi-class labels} \label{sec:loss}
+
+During training of the segmentation model, regions labeled with a single class are used for the conventional supervised learning using the pixel-wise cross-entropy (CE) loss.
+The set of local regions equipped with single-class labels is defined as
+\begin{equation}
+    \mathcal{D}_\text{s} := \big\{ (s, \{c\}): \exists (s,Y) \in \mathcal{D}, \, |Y| = 1, \, c \in Y  \big\} \;.
+\end{equation}
+The pixel-wise CE loss is then given by
+\begin{equation}
+    \mathcal{L}_\text{CE} = \hat{\mathbb{E}}_{(s,\{c\}) \sim \mathcal{D}_\text{s}} \bigg[ \frac{1}{|s|} \sum_{x \in s} -\text{log}\;P_{\theta} (y=c|x) \bigg] \;.
+    \label{eq:ce_loss}
+\end{equation}
+On the other hand, regions labeled with multiple classes, denoted as $\mathcal{D}_\text{m} := \mathcal{D} - \mathcal{D}_\text{s}$, cannot be used for training using the pixel-wise CE loss, since a multi-class label lacks precise correspondence between each pixel and class candidates, making it a weak label~\cite{hullermeier2006learning, MIL_Dietterich, cour2011learning}.
+To effectively utilize the supervision of $\mathcal{D}_\text{m}$, we introduce two loss functions.
+
+\noindent\textbf{Merged positive loss.} \label{sec:mp_loss}
+Each pixel in a region is assigned with partial labels~\cite{hullermeier2006learning, cour2011learning}, \ie, a set of candidate classes.
+The per-pixel prediction in each region should be one of these candidate classes.
+This concept is directly incorporated into the merged positive loss, which is defined as
+\begin{equation}
+    \mathcal{L}_\text{MP} := \hat{\mathbb{E}}_{(s,Y) \sim \mathcal{D}_\text{m}} \bigg[ \frac{1}{|s|} \sum_{x \in s} -\text{log} \; \sum_{c \in Y} P_{\theta} (y=c|x) \bigg] \;.
+    \label{eq:loss_mp}
+\end{equation}
+This loss encourages to predict any class from the candidate set since the predictive probability of every candidate class is considered as positive.
+
+\noindent\textbf{Prototypical pixel loss.} \label{sec:pp_loss}
+Learning with regions assigned with multi-class labels can be considered as an example of multiple instance learning (MIL)~\cite{MIL_Dietterich}, where each region is a bag, each pixel in the region is an instance, and at least one pixel in the region must be positive for each candidate class.
+We call such a pixel \textit{prototypical pixel}, and the pixel with the most confident prediction for each candidate class within the region is chosen as a prototypical pixel:
+\begin{equation}
+    x^{*}_{s,c} := \max_{x \in s} P_{\theta} (y=c|x) \;,
+    \label{eq:proto_pxl}
+\end{equation}
+where $c \in Y$ and $(s,Y) \in \mathcal{D}_\text{m}$.
+The segmentation model is trained by applying the CE loss to each prototypical pixel with the assumption that the class associated with it is true. To be specific, the loss is defined as
+\begin{equation}
+    \mathcal{L}_\text{PP} := \hat{\mathbb{E}}_{(s,Y) \sim \mathcal{D}_\text{m}} \bigg[ \frac{1}{|Y|} \sum_{c \in Y} -\text{log} \; P_{\theta} (y=c|x^{*}_{s,c}) \bigg] \;.
+    \label{eq:pp_loss}
+\end{equation}
+As reported in the literature of MIL~\cite{MIL_Dietterich}, although the prototypical pixels may not always match the ground truth, it is expected that training with numerous prototypical pixels from diverse regions enables the model to grasp the underlying concept of each class.
+Moreover, this loss mitigates the class imbalance issue as it ensures that every candidate class equally contributes to training via a single prototypical pixel in a region, leading to a balanced class representation.
+
+In summary, the total training loss of the first stage is given by
+\begin{equation}
+    \mathcal{L} = \lambda_\text{CE} \, \mathcal{L}_\text{CE} + \lambda_\text{MP} \, \mathcal{L}_\text{MP} + \mathcal{L}_\text{PP} \;,
+    \label{eq:loss_all}
+\end{equation}
+where $\lambda_\text{CE}$ and $\lambda_\text{MP}$ are balancing hyperparameters.
+
+\input{second_stage}
+
+\subsection{Stage 2: Learning with pixel-wise pseudo labels} \label{sec:pseudo_labeling}
+In the second stage, we disambiguate the partial labels by generating and exploiting pixel-wise one-hot labels.
+The pseudo label generation process comprises two steps: \emph{intra-region label localization} that assigns pseudo class labels to individual pixels within each labeled region, and \emph{label expansion} that spreads the pseudo labels to unlabeled regions adjacent to the labeled one.
+This process is illustrated in \Fig{second_stage}, and described in detail below.
+
+\noindent\textbf{Intra-region label localization.} \label{sec:localization}
+For each of the labeled regions, we define a \emph{prototype} for each annotated class as the feature vector located at the prototypical pixel of the class, which is estimated by Eq.~\eqref{eq:proto_pxl} using the model of the first stage.
+The set of such prototypes is then used as a region-adaptive classifier, which is dedicated to pixel-level classification within the region.
+To be specific, we assign each pixel the class of its nearest prototype in a feature space; the assigned pseudo label for $x \in s$ where $(s, Y) \in \mathcal{D}$, is estimated by
+\begin{equation}
+    \hat{y}(x) := \argmax_{c \in Y} \text{cos}\big( f_\theta (x), f_\theta (x^*_{s,c}) \big) \;,
+    \label{eq:disambiguation_plbl}
+\end{equation}
+where $x^*_{s,c}$ is the prototypical pixel of class $c$ and $\text{cos}(f, f^\prime) = \frac{f^\top f^\prime}{\| f \| \, \| f^\prime \| }$ is the cosine similarity between two feature vectors $f$ and $f^\prime$.
+
+\noindent\textbf{Label expansion.} \label{sec:expansion}
+The rationale behind the label expansion step is that the class composition $Y$ of a region $(s, Y) \in \mathcal{D}$ may provide clues about classes of its adjacent regions $s^\prime \in \text{N}(s)$, where $\text{N}(\cdot)$ denotes a set of unlabeled regions adjacent to $s$, \ie, $\text{N}(s) \cap {\cal D} = \emptyset$.
+Similar to label localization, the label expansion step aims to assign pixels in $\text{N}(s)$ the class labels of their nearest prototypes.
+However, since $\text{N}(s)$ may contain irrelevant classes, propagating the labels to all pixels in $\text{N}(s)$ could cause incorrect pseudo labels, leading to performance degradation of the final model.
+Hence, the pseudo labels are proposed only to relevant pixels that are sufficiently close to at least one prototype in the feature space.
+More specifically, to compute the relevance in a region- and class-adaptive manner, we propose to use prototype-adaptive thresholds: 
+the prototype-adaptive threshold for class $c \in Y$ in $(s, Y) \in \mathcal{D}$ is defined as
+\begin{equation}
+    \alpha_c(s) = \text{med} \Big(\big\{ \text{cos}\big( f_\theta (x), f_\theta (x^*_{s,c}) \big): x\in s, \, \hat{y}(x) = c \big\} \Big) \;,
+\end{equation}
+where $\text{med}(\cdot)$ yields the median value of a set, $x^*_{s,c}$ is the prototypical pixel of class $c$ (\Eq{proto_pxl}), and $\hat{y}(x)$ is the pseudo label of $x$ (\Eq{disambiguation_plbl}).
+We propagate pseudo labels of the labeled region $s$ in $\mathcal{D}$ to pixels of an adjacent region $\{ x: \exists s^\prime \in \text{N}(s),\ x \in s^\prime \}$ by
+\begin{equation}
+    \hat{y}(x) :=
+      \argmax_{c\in \hat{Y}(x)} \ \text{cos}\big( f_\theta (x), f_\theta (x^*_{s,c}) \big) \quad \text{only if $|\hat{Y}(x)| \geq 1$} \;,
+    \label{eq:expansion}
+\end{equation}
+where $\hat{Y}(x) := \big\{ c: \text{cos}\big( f_\theta (x), f_\theta (x^*_{s,c}) \big) > \alpha_c(s), \, c\in Y \big\}$; $x$ is a relevant pixel if $|\hat{Y}(x)| \geq 1$.
+By using the prototype-adaptive threshold for filtering, we can adjust the amount of label expansion in each region without the need for hand-tuned hyperparameters.
+
+The segmentation model is then further trained using the pixel-wise CE loss with pseudo segmentation labels generated by both of the label localization and expansion steps.
+
+
+
+Experiments
+\label{sec:experiment}
+\subsection{Experimental setup}
+\noindent\textbf{Datasets.}
+Our method is evaluated on two semantic segmentation datasets, Cityscapes~\cite{cityscapes} and PASCAL VOC 2012 (VOC)~\cite{Pascalvoc}.
+The former contains 2975 training, 500 validation, and 1525 test images with 19 semantic classes.
+The latter consists of 1464 training and 1449 validation images with 20 semantic classes.
+We evaluated models on validation splits of these datasets.
+
+\noindent\textbf{Implementation details.}
+We adopt DeepLabv3+~\cite{deeplab_v3} with ResNet-50/101 pretrained on ImageNet~\cite{imagenet} as our segmentation models, AdamW~\cite{loshchilov2017decoupled} for optimization.
+The balancing hyper-parameters $\lambda_\text{CE}$ and $\lambda_\text{MP}$ of Eq.~\eqref{eq:loss_all} are set to 16 and 8, respectively, and the temperature $\tau$ was fixed by 0.1.
+In both datasets we utilize $32\times 32$ superpixel regions given by SEEDS~\cite{van2012seeds}.
+For Cityscapes, initial learning rates are set to $\expnum{2}{3}$ (stage 1) and $\expnum{4}{3}$ (stage 2), and $\nu$ in~\Eq{acquisition} is set to 6.
+The models are trained for 80K iterations with mini-batches of four $769 \times 769$ images.
+We assign an extra \textit{undefined} class for pixels not covered by the original 19 classes.
+For VOC, we configure $\nu$ to 12 and train the models for 30K iterations using a learning rate of $\expnum{1}{3}$ in both stages.
+Each mini-batch consists of twelve $513 \times 513$ images.
+
+\noindent\textbf{Active learning protocol.} %
+Following the previous work~\cite{cai2021revisiting}, we consider the number of clicks as the labeling cost.
+While this protocol assumes a uniform cost per click, it does not hold in reality as shown in \Fig{teaser}.
+It is adopted for comparisons with the prior art using dominant class labeling~\cite{cai2021revisiting}, but is \emph{adverse to} the proposed method since our multi-class labeling takes less cost per click than dominant class labeling.
+We conduct 5 rounds of consecutive data sampling and model updates, with a budget of 100K and 10K clicks per round on Cityscapes and VOC, respectively.
+The models are evaluated for each round in mean Itersection-over-Union~(mIoU)~\cite{Pascalvoc} on the validation sets.
+At the first round, regions are selected at random, and the models are reinitialized with ImageNet pretrained weights per round.
+We conduct all experiments three times and report the average performance.
+
+\noindent\textbf{Baseline methods.}
+We compare our multi-class labeling (\sftype{Mul}) with the dominant class labeling (\sftype{Dom}) in combination with various data selection strategies.
+Following the established strategies in the previous study~\cite{cai2021revisiting}, we employ \sftype{Random}, which randomly selects superpixels, and the uncertainty-based \sftype{BvSB} given in~\Eq{BvSB}.
+\sftype{ClassBal} is \sftype{BvSB} sampling with additional class balancing term proposed in the previous work~\cite{cai2021revisiting}, and \sftype{PixBal} is our sampling method based on~\Eq{acquisition}.
+\subsection{Experimental results}
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1\textwidth]{figs/main_graph_figure_v11.pdf}
+    \caption{
+    Accuracy in mIoU (\%) versus the number of clicks (budget) for dominant class labeling (\sftype{Dom})~\cite{cai2021revisiting} and multi-class labeling (\sftype{Mul}) equipped with four different acquisition functions (\sftype{Random}, \sftype{BvSB}, \sftype{ClassBal}, \sftype{PixBal}).
+    The reported accuracy scores are averaged across three trials.}
+\label{fig:main}
+\end{figure}
+\noindent\textbf{Impact of multi-class labeling.}
+In~\Fig{main}, we evaluate the performance of multi-class and dominant class labeling across varying budgets, using ResNet50 and ResNet101 backbones, on both Cityscapes and VOC with different acquisition functions.
+Multi-class labeling constantly outperforms dominant class labeling in every setting across all the compared architectures and datasets.
+In particular, the multi-class labeling model, with just 200K clicks, outperforms the dominant class labeling counterpart that uses 500K clicks on Cityscapes.
+When using ResNet50, the multi-class labeling model equipped with \sftype{PixBal} sampling, achieves 95\% mIoU of the fully-supervised model using only 200K clicks on Cityscapes and 20K clicks on VOC, respectively.
+
+\noindent\textbf{Impact of the proposed sampling method.}
+\Fig{main} also demonstrates the efficacy of \sftype{PixBal}. %
+On Cityscapes, \sftype{PixBal} consistently outperforms all the other sampling methods regardless of budget size.
+It also enhances the performance of dominant class labeling.
+On VOC, \sftype{PixBal} generally surpasses the baselines, although its improvement over \sftype{BvSB}, which lacks class balancing, is marginal at times since VOC less suffers from class imbalance than Cityscapes.
+
+\noindent\textbf{Comparison with various query designs.}
+In~\Tbl{ratio_eval}, we evaluate multi-class labeling against baseline methods employing different query designs:
+drawing polygon mask within an image patch (Patch+Polygon),
+clicking dominant class within superpixel (Spx+Dominant), and
+clicking all classes within superpixel (Spx+Multi-class).
+Following the prior work~\cite{cai2021revisiting}, in this experiment, we measure the ratio of clicks used, relative to the total number of clicks required to draw polygon masks on all images (\ie, full supervision).
+We then measure the ratio of clicks each method needs to achieve 95\% mIoU of the fully-supervised model.
+As indicated in~\Tbl{ratio_eval}, superpixel-based methods typically outperform the baselines using patch or polygon queries.
+Among these, our multi-class labeling stands out, achieving 95\% mIoU of the fully-supervised model using only 4\% of its required data.
+
+\begin{figure}[t!]
+  \begin{minipage}[t!]{0.49\textwidth}
+    \centering
+    \captionof{table}{
+    The ratio of clicks (\%) needed to reach 95\% mIoU of the fully-supervised model, relative to full supervision.
+    Results with $\dagger$ are from the prior work~\cite{cai2021revisiting} using Xception-65 as backbone.}
+    \scalebox{0.84}{
+      \begin{tabular}{llc}
+        \toprule
+        Query & Sampling & Clicks (\%)\\ 
+        \midrule
+        \multirow{2}{*}{Patch + Polygon} & EntropyBox+$^\dagger$~\cite{colling2020metabox+} & 10.5\\
+        & MetaBox+$^\dagger$~\cite{colling2020metabox+} & 10.3 \\
+        \midrule
+        \multirow{3}{*}{Spx + Dominant} & \sftype{ClassBal}$^\dagger$~\cite{cai2021revisiting} & 7.9 \\
+        & \sftype{ClassBal}~\cite{cai2021revisiting} & 9.8 \\
+        & \sftype{PixBal} & 7.9 \\
+        \cmidrule{1-3}
+        Spx + Multi-class & \sftype{PixBal} (Ours) & \textbf{4.0} \\
+        \bottomrule
+      \end{tabular}
+    }
+    \label{tab:ratio_eval}
+    \end{minipage}
+  \hfill
+  \begin{minipage}[t!]{0.47\textwidth}
+    \centering
+    \includegraphics[width=1\textwidth]{figs/selected_regions_analysis_v7.pdf}
+    \captionof{figure}{Histogram and cumulative distribution function (CDF) for the number of classes in regions selected at round-5 using \sftype{PixBal} sampling on Cityscapes.}
+    \label{fig:my_label}
+  \end{minipage}
+\end{
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

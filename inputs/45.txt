@@ -1,0 +1,197 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+With the growth of multimedia information on the Internet, search engines tend to return multi-modal retrieval results to better satisfy the user information need~\cite{tautkute2019deepstyle,zhu2023large}. The media information provides more vivid retrieval results, such as texts, images, videos, and more, which improves users' experiences and even changes their browsing behaviors.
+
+\input{figure/intro}
+
+Multi-modal retrieval~\cite{bain2021frozen,awad2021trecvid,arni2008overview,chang2022webqa} aims to return fusion results of images and texts to answer user questions. The task can be modeled using a divide-and-conquer pipeline~\cite{chang2022webqa,liu2023univldr} or universal dense retrieval~\cite{liu2023univldr}. UniVL-DR~\cite{liu2023univldr} encodes queries and multi-modal documents into a universal embedding space for multi-modal retrieval. However, this work encodes image features and texts using different encoders from CLIP~\cite{radford2021learning} and the separated text and image encoding leads to a modality gap in representing multi-modal documents. It makes UniVL-DR design an additional image verbalization method to alleviate the modality gap and also limits the text retrieval models~\cite{karpukhin2020dense,xiong2020approximate,zhan2021optimizing,li2021more,yu2021few} to excel their advantages in multi-modal scenarios.
+In this paper, we propose \textbf{M}ulti-mod\textbf{A}l \textbf{R}etrieval model via \textbf{V}isual modul\textbf{E} p\textbf{L}ugin (MARVEL). As shown in Figure~\ref{fig:intro_marvel}, MARVEL is based on the text retriever T5-ANCE~\cite{yu2023openmatch}, regards the visual module as a plugin and pretrains the visual module with image-caption contrastive training for adaption. By incorporating a visual module into well-trained text retriever T5-ANCE, MARVEL seizes the opportunity to extend the benefits of unimodal learning to the multi-modal retrieval task.
+To facilitate the multi-modal retrieval task, we build a large-scale benchmark, ClueWeb22-MM, based on the web page dataset, ClueWeb22~\cite{overwijk2022clueweb22}. Following previous work in text retrieval~\cite{zhang2020selective,xie2023unsupervised}, we regard the anchor text as a query and assume that its linked web page is related to the query. Subsequently, we extract image and text documents from these anchor-linked web pages. After processing, the ClueWeb22-MM encompasses over 90k queries, maintaining a scale comparable to existing benchmark WebQA~\cite{chang2022webqa}. 
+Previous work~\cite{xie2023unsupervised} demonstrates that the high-quality training signals from anchor-document pairs contribute to developing a state-of-the-art dense retrieval model.
+
+Our experiments show that MARVEL outperforms all baseline models, achieving improvements of over 2\% and 7\%, in the main metric MRR, on WebQA~\cite{chang2022webqa} and ClueWeb22-MM, respectively. The evaluation results indicate the effectiveness of MARVEL comes from the visual module plugin architecture, the visual module pretraining method, and the text matching knowledge learned by T5-ANCE. Our further analyses illustrate that the image representations encoded by the visual module can be easily captured by only finetuning the language model parameters. The training strategies guide the language model to assign more appropriate attention weights to image and text features, preventing the visual module from overfitting to the training signals. These encoded image representations not only inhabit the input embedding space for semantics alignment but also function as a kind of prompt.
+
+
+
+Related Work
+Existing dense retrieval models~\cite{karpukhin2020dense,xiong2020approximate,ren2021rocketqav2,xiong2020dense,gao2022unsupervised, luan2020sparse, khattab2020colbert} usually focus on retrieving text documents and modeling the relevance between queries and documents. They usually employ pretrained language models to encode queries and text documents into an embedding space, followed by a KNN search to retrieve candidate documents. 
+
+Unlike the text retrieval task, the multi-modal retrieval task~\cite{chang2022webqa,hannan2020manymodalqa,singh2021mimoqa,talmor2021multimodalqa} aims to provide users with multi-modal documents that satisfy their information needs. Earlier work primarily focuses on building a divide-and-conquer pipeline for multi-modal retrieval~\cite{chang2022webqa,liu2023univldr,escalante2008late,grubinger2008overview}. In these models, retrievers individually search candidates from the document collections of different modalities and then use a reranking model to fuse the retrieval results, such as vision-language models~\cite{zhang2021vinvl}. However, this approach usually struggles to fuse the retrieval results across different modalities~\cite{liu2023univldr}. UniVL-DR~\cite{liu2023univldr} builds a universal multi-modal dense retrieval model. It encodes queries and multi-modal documents as embeddings and conducts retrieval, modality routing, and result fusion within a unified embedding space. 
+
+Representing images is also the core of multi-modal retrieval, aiming to alleviate the modality gap between images and texts. Existing work usually focuses on representing the images using captions and image features~\cite{liu2023univldr} with different encoding methods. BERT-style pretrained visual-language models~\cite{chen2019uniter,lu2019vilbert,tan2019lxmert,su2019vl,li2019visualbert,li2021unimo,cho2021unifying,hu2020vivo,wang2022image} provide an opportunity to model the captions and image features using the same model. However, these visual-language models typically aim to align the semantics between image features and captions instead of learning representations for image documents. Thus they show less effectiveness in learning an embedding space for multi-modal retrieval~\cite{liu2023univldr}.
+
+Another way to facilitate the image document representations is using the visual-language models that focus on representation learning, such as CLIP~\cite{radford2021learning}. It encodes image features and texts using different encoders. However, these approaches often only provide shallow interactions between texts and visual features. Thus, existing models~\cite{liu2023univldr} pay more attention to alleviating the modality gap between texts and images by the image verbalization method, aiming to bridge the modality gap between images and texts in the raw text space.
+
+Recent advancements in multi-modal large language models~\cite{brown2020language,touvron2023llama} have introduced a novel approach to modeling multi-modality features. This approach incorporates a visual encoder module into large language models through a transformation layer~\cite{li2023blip,alayrac2022flamingo,liu2023visual}. These models extract image features using the visual encoder module of CLIP and then optimize the prompt tokens and transformation layer to map the encoded image embeddings to the raw input space of large language models~\cite{merullo2022linearly, lester2021power}. Such a visual encoder plugin method presents a unified modeling approach for handling image and text features. It not only enables the visual comprehension ability of large language models but also preserves their effectiveness by freezing their parameters.
+
+
+Multi-Modal Retrieval Model via Visual Module Plugin (MARVEL)
+In this section, we first describe the multi-modal retrieval (Sec.~\ref{model:mmdr}) and then introduce the model architecture of MARVEL (Sec.~\ref{model:MARVEL}). 
+\input{figure/model}
+
+\subsection{Preliminary of Multi-Modal Retrieval}~\label{model:mmdr}
+Given a query $q$, the retrieval task requires the dense retrieval models to search relevant documents from the document collection $\mathcal{D}$ to meet the information needs of users.
+
+Previous dense retrieval models~\cite{karpukhin2020dense,xiong2020approximate,gao2021condenser,yu2023openmatch} usually focus on the text retrieval task, which aims to model the relevance between user query $q$ and text documents 
+$\mathcal{D} = \{d_\text{Text}^1, ..., d_\text{Text}^m\}$. They encode both query and the $i$-th document $d_\text{Text}^i$ using language models, such as BERT~\cite{devlin2018bert}, RoBERTa~\cite{liu2019roberta} and T5~\cite{raffel2020exploring}:
+\begin{equation}\label{eq:textencode}
+\small
+\vec{q} = \text{TextEncoder}(q); \vec{d}_\text{Text}^i = \text{TextEncoder}(d_\text{Text}^i).
+\end{equation}
+Different from text retrieval~\cite{nguyen2016ms,thakur2021beir}, the multi-modal retrieval task~\cite{chang2022webqa} aims to return a fusion result of documents from the collection $\mathcal{D}$, which are from different modalities. The document collection $\mathcal{D}$ not only contains texts $\mathcal{T} = \{d_\text{Text}^1, ..., d_\text{Text}^m\}$, but also includes images $\mathcal{I} = \{d_\text{Image}^1, ..., d_\text{Image}^n\}$. 
+
+The multi-modal retrieval task requires retrievers to conduct relevance modeling, cross-modal matching, and modality fusion~\cite{liu2023univldr}. Previous work~\cite{liu2023univldr} maps text and image documents in an embedding space for retrieval, encodes texts and images using different encoders, and tries to bridge the modality gap using image verbalization methods. However, this limits the capability of dense retrieval models, hindering the expansion of text matching knowledge for learning representations for multi-modal documents.
+\subsection{Universal Multi-Modal Encoding}~\label{model:MARVEL}
+We show the model architecture in Figure~\ref{fig:model}. Different from previous work~\cite{liu2023univldr}, we can universally encode query $q$ and multi-modal documents $\mathcal{D} = \{d_\text{Text}^1, ..., d_\text{Text}^m, d_\text{Image}^1, ..., d_\text{Image}^n\}$ using one encoder, T5-ANCE-CLIP:
+\begin{equation}
+\small
+  \begin{split}
+    \vec{q} &= \text{T5-ANCE-CLIP}(q); \\
+\vec{d}_\text{Text}^i &= \text{T5-ANCE-CLIP}(d_\text{Text}^i); \\
+\vec{d}_\text{Image}^i &= \text{T5-ANCE-CLIP}(d_\text{Image}^i(I), d_\text{Image}^i(C)),
+\end{split}
+\end{equation}
+where $d_\text{Image}^i(I)$ and $d_\text{Image}^i(C)$ are the image feature and caption of the $i$-th image document $d_\text{Image}^i$.
+
+Then we calculate the relevance score $f(q, d^i)$ between query $q$ and the $i$-th document $d^i$ using cosine similarity:
+\begin{equation}
+\small
+    f(q, d^i) = \cos (\vec{q}, \vec{d}^i).
+\end{equation}
+Following this, we conduct KNN search~\cite{johnson2019billion} to retrieve multi-modal document candidates for the given query $q$.
+
+Subsequently, we first introduce the visual module plugin architecture of our MARVEL model (Sec.~\ref{sec:plugin}). Then we adapt the visual module to T5-ANCE by pretraining the visual understanding module (Sec.~\ref{sec:pretrain}). Finally, we finetune the parameters of T5-ANCE to learn an embedding space for multi-modal retrieval (Sec.~\ref{sec:finetune}).
+\subsubsection{Dense Retrieval with Visual Plugin}\label{sec:plugin}
+MARVEL starts from the T5-ANCE model~\cite{yu2023openmatch}, which is a dense retrieval model that is well-trained using MS MARCO dataset~\cite{nguyen2016ms}. Then we enable T5-ANCE by incorporating the visual module from the vision-language model, CLIP~\cite{radford2021learning}, and conduct the T5-ANCE-CLIP model. We can use a universal encoder, T5-ANCE-CLIP, to encode texts, image features, and image documents. 
+
+Specifically, we encode the image feature $I$ using the visual encoder of CLIP~\cite{radford2021learning} and get its encoded visual representation $\vec{h}^I$:
+\begin{equation}\label{eq:clip}
+\small
+\vec{h}^I = \text{CLIP}(I),
+\end{equation}
+This representation is obtained from the grid features of the last layer of the visual encoder of CLIP, and $\vec{h}^I=\{\vec{h}^I_1, ..., \vec{h}^I_{49}\}$. 
+Here 49 is the number of patches. Then we follow the previous visual-language model~\cite{merullo2022linearly} and use a linear transformation layer to adapt the visual features $\vec{h}^I_{i}$ into the embedding space of the inputs of dense retrieval model:
+\begin{equation}\label{eq:linear}
+\small
+\vec{I}_i = \text{Linear}(\vec{h}^I_{i}).
+\end{equation}
+Finally, we can feed these encoded image features $\vec{I} = \{\vec{I}_1, ..., \vec{I}_{49}\}$ as the ahead input embeddings $\vec{X}$ for T5-ANCE:
+\begin{equation}\label{eq:imagemap}
+\small
+\vec{X} = \vec{e}(\text{<start>}); \vec{I}_1; ... ;\vec{I}_{49}; \vec{e}(\text{<end>}); \vec{e}_1;...; \vec{e}_k,
+\end{equation}
+where $;$ is the concatenation operation. $\vec{e}(\text{<start>})$ and $\vec{e}(\text{<end>})$ are the embeddings of prompt tokens to denote the start and end of encoded image feature representations. $\{\vec{e}_1...; \vec{e}_k\}$ are the word embeddings of the text input sequence $T=\{T_1,...,T_k\}$.
+
+Different from these visual-language models~\cite{alayrac2022flamingo,li2023blip,liu2023visual,tsimpoukelli2021multimodal}, our MARVEL model aims to bring the advance of text retrieval-based pretraining to multi-modal retrieval tasks by using the visual model plugin to bridge the modality gap between images and texts.
+
+\subsubsection{Visual Module Adaption Pretraining}\label{sec:pretrain}
+In MARVEL, we adapt the visual understanding module to T5-ANCE by only pretraining the parameters of the visual module (Eq.~\ref{eq:clip}) and the projection layer (Eq.~\ref{eq:linear}). We follow~\citet{radford2021learning} and leverage the image-caption contrastive training loss $L_{\text{VM}}$ to pretrain the visual understanding module. The training loss utilizes the alignment between image features $I$ and captions $C$:
+\begin{equation}
+\small
+L_{\text{VM}}= L_{\text{IC}} + L_{\text{CI}},
+\end{equation}
+where $L_{\text{IC}}$ and $L_{\text{CI}}$ are the dual direction training losses to regard image and caption as queries and then map them with corresponding caption and image, respectively:
+\begin{equation}
+ \small
+  L_{\text{IC}} = -\log\frac{e^{f(I,C^+)/\tau}}
+    {e^{f(I,C^+)/\tau} + \sum_{C^-\in \mathcal{D}_C^-}{e^{f(I,C^-)/\tau}}},
+\end{equation}
+\begin{equation}
+ \small
+  L_{\text{CI}} = -\log\frac{e^{f(C,I^+)/\tau}}
+    {e^{f(C,I^+)/\tau} + \sum_{I^-\in \mathcal{D}_I^-}{e^{f(C,I^-)/\tau}}},
+\end{equation}
+where $\tau$ is the temperature used to scale the similarity score. $\mathcal{D}_C^-$ and $\mathcal{D}_I^-$ contain negative captions and negative images respectively, which are sampled from in-batch negatives.
+
+\subsubsection{Modality-Balanced Language Model Finetuning}\label{sec:finetune}
+During finetuning, we can freeze the parameters of the visual module (Eq.~\ref{eq:clip}) and optimize other parameters of MARVEL. To enable the MARVEL model to learn a universal embedding space for both queries and multi-modal documents, we follow previous work~\cite{liu2023univldr} and employ modality-balanced hard negative training to alleviate the modality discrimination of retrieval models:
+\begin{equation}
+\small
+  \begin{split}
+\label{eq:ce_train}
+\hspace{-2mm}
+ & L_{\text{LM}} = -\log\frac{e^{f(q,d^+)/\tau}}
+    {e^{f(q,d^+)/\tau} + \sum_{d^-\in \mathcal{D}^-}{e^{f(q,d^-)/\tau}}} \\
+    &\propto - \underbrace{f(q,d^+)/\tau}_{L_\text{Align}} + \log (\sum_{d^-\in \mathcal{D}^-}(\underbrace{e^{f(q,d_{\,\text{Image}}^-)/\tau}}_{L_\text{Image}} + \underbrace {e^{f(q,d_{\,\text{Text}}^-)/\tau}}_{L_\text{Text}})),
+    \end{split}
+\end{equation}
+where $\mathcal{D}^-$ contains the same number of negative documents of image and text. $L_\text{Align}$ teaches models to align the query with related documents. $L_\text{Text}$ and $L_\text{Image}$ guide retrievers to choose the modality and make the embedding space uniform~\cite{liu2023univldr,wang2020understanding,chen2020simple}.
+
+
+Experimental Methodology
+This section describes datasets, evaluation metrics, baselines and implementation details.
+
+\input{table/dateset}
+\textbf{Dataset.}
+During pretraining, we collect the image-caption pairs from ClueWeb22~\cite{overwijk2022clueweb22} to train the visual understanding module. Then two multi-modal retrieval datasets, WebQA and ClueWeb22-MM, are used for finetuning and evaluation. The data statistics are shown in Table~\ref{tab:dataset}.
+
+WebQA is a multi-hop, multi-modal, open-domain question answering benchmark~\citep{chang2022webqa}. The dataset contains images and passage snippets that are crawled from the general Web and Wikipedia. We follow previous work~\cite{liu2023univldr} to keep the same experimental settings to preprocess the dataset. Besides, we build a new multi-modal retrieval dataset, ClueWeb22-MM, based on ClueWeb22~\cite{overwijk2022clueweb22}, which provides 10 billion web pages with rich information. We only retain web pages in English and build the ClueWeb22-MM dataset. We establish query-document relations by pairing anchors with their corresponding document~\cite{xie2023unsupervised,zhang2020selective}. 
+And then we regard the anchor texts as queries and extract image documents and text documents from the linked documents.
+\textbf{Evaluation Metrics.} We use NDCG@10, MRR@10 and Recall@100 as evaluation metrics. Following previous work ~\cite{liu2023univldr,nguyen2016ms}, we regard MRR@10 as our main evaluation.py}}. Statistic significances are tested by permutation test with P$<0.05$.
+
+\textbf{Baselines.} 
+In our experiments, we follow previous work~\cite{liu2023univldr} to conduct baseline models and divide them into three groups: single modality retrieval, divide-and-conquer, and universal dense retrieval models.
+\textit{Single Modality Retrieval.} In our experiments, we represent image documents using captions and use several text retrieval models as baselines. BM25~\cite{robertson2009probabilistic} is widely used in text retrieval work, which conducts exact matches between queries and documents. DPR~\cite{karpukhin2020dense} is trained using NQ dataset~\cite{kwiatkowski2019natural} and uses a dual-encoder to encode queries and documents as dense vectors for retrieval. We start from vanilla BERT~\cite{devlin2018bert} and DPR~\cite{karpukhin2020dense} checkpoints and train the encoders using in-batch negatives to conduct BERT-DPR and NQ-DPR models. NQ-ANCE is also compared, which continuously trains NQ-DPR using hard negatives~\cite{xiong2020approximate}. Besides, T5-ANCE~\cite{yu2023openmatch} and Anchor-DR~\cite{xie2023unsupervised} are dense retrieval models that are trained on MS MARCO and ClueWeb22, respectively.
+
+\textit{Divide-and-Conquer.} The divide-and-conquer models retrieve image documents and text documents individually and then fuse the retrieval results. Following previous work~\cite{liu2023univldr}, we use single modality retrievers, VinVL-DPR, CLIP-DPR and BM25, and fuse the retrieval results according to their unimodal rank reciprocals.
+
+\input{table/overall.tex}
+\textit{Universal Dense Retrieval.} CLIP-DPR and VinVL-DPR employ the visual language models CLIP~\cite{radford2021learning} and VinVL~\cite{zhang2021vinvl} as image and text encoders and then are trained with in-batch negatives. UniVL-DR~\cite{liu2023univldr} is our main baseline model, which further uses modality-balanced hard negative to train text and image encoders and also utilizes the image verbalization method to bridge the modality gap between images and texts.
+
+\textbf{Implementation Details.} In our experiments, we use T5-ANCE~\cite{yu2023openmatch} as our backbone language model, which is well-trained on the MS MARCO dataset~\cite{nguyen2016ms}. Then we implement our MARVEL model by utilizing CLIP as the visual understanding module to empower the image understanding capability of T5-ANCE. For MARVEL, we truncate queries, text documents and image captions to 128 tokens and set the max number of visual tokens to 49. 
+
+During training, we use AdamW~\cite{loshchilov2018decoupled} optimizer and set maximum training epoch=20, batch size=64, learning rate=$5e-6$, and the temperature hyperparameter $\tau=0.01$. We follow UniVL-DR~\cite{liu2023univldr} and conduct MARVEL-ANCE by starting from in-batch negative finetuned MARVEL-DPR, and continuously training MARVEL-DPR with modality-balanced hard negatives. These hard negatives are randomly sampled from the top 100 retrieved negatives using MARVEL-DPR. All models are evaluated per 500 steps and the early stop step is set to 5.
+
+\input{table/ablation.tex}
+
+
+Evaluation Result
+In this section, we first evaluate the performance of MARVEL and conduct ablation studies. Then, we explore the effectiveness of different visual and language model fusion methods and analyze the role of visual module adaption pretraining in MARVEL.
+
+\subsection{Overall Performance}
+The multi-modal retrieval performance of MARVEL and baseline models is shown in Table~\ref{tab:overall}.
+ 
+
+Overall, MARVEL significantly outperforms baseline models on all datasets by achieving more than 2\% improvements on both datasets, demonstrating its advantages in multi-modal retrieval tasks. Compared with text retrieval models, MARVEL improves their performance, showing that the image features are crucial in the multi-modal retrieval task. Furthermore, these universal multi-modal dense retrievers, UniVL-DR and MARVEL, outperform divide-and-conquer models by alleviating the modality fusion problem~\cite{liu2023univldr}. Compared with our main baseline UniVL-DR, MARVEL encodes queries and multi-modal documents using a universal encoder. Experimental results show that MARVEL significantly improves the retrieval effectiveness of UniVL-DR on both datasets, demonstrating its effectiveness in bridging the modality gap between images and texts.
+\subsection{Ablation Study}\label{sec:ablation}
+As shown in Table~\ref{tab:ablation}, we conduct ablation studies to explore the role of different modules of MARVEL in multi-modal retrieval.
+In the comparison between MARVEL and MARVEL w/o CLIP Pretraining, pretraining the visual understanding module shows its effectiveness by improving the performance on single/multi-modal retrieval tasks. It shows that the image-caption alignment relations provide some opportunities to adapt the visual module to the language model via pretraining. Subsequently, MARVEL also outperforms MARVEL w/o MS MARCO Pretraining, especially on the text retrieval task. It demonstrates that MARVEL can broaden the advantage of text relevance modeling to the multi-modal retrieval task. To unify the multi-modal encoding, MARVEL follows previous work~\cite{hannan2020manymodalqa} uses prompt tokens to indicate the start and end positions of encoded image features (Eq.~\ref{eq:imagemap}), aiming to distinguish the image features from text token embeddings. These image prompt tokens bring light improvements, illustrating their roles in multi-modal document representation.
+\subsection{Retrieval Effectiveness of Different Visual-Language Fusion Methods}\label{sec:fusion}
+In this experiment, we show the retrieval effectiveness of MARVEL on the WebQA dataset by using different modality fusion and finetuning methods.
+
+\input{table/fusion.tex}
+\textbf{Modality Fusion.} Three kinds of visual-language fusion methods are compared in our experiments, including Sum, Concat and Plugin. For Sum and Concat methods, we encode the captions and image features separately as embeddings, then sum or concatenate these embeddings, followed by joint training of T5-ANCE and CLIP models with in-batch negatives. We show the experimental results in Table~\ref{tab:fusion}. MARVEL's visual module plugin method outperforms other fusion methods. This highlights the effectiveness of utilizing pretrained attention heads of language models for extracting image semantics and fostering deeper interactions between image and text inputs. Our plugin method proves instrumental in mitigating the modality gap between texts and images, enabling MARVEL to better represent image documents by jointly modeling image captions and features.
+
+Different from~\citet{liu2023univldr}, we use T5-ANCE and CLIP as the text and image encoders, respectively. These models have different architectures and are pretrained on text retrieval and image-caption matching tasks. 
+The multi-modal retrieval performance of CLIP-Sum decreases when we encode the image caption with a stronger retrieval model T5-ANCE (T5-CLIP-Sum) instead of CLIP. It demonstrates that incorporating an additional visual module into a well-trained dense retrieval model is still challenging for multi-modal retrieval. Notably, MARVEL provides a promising way to enable the image understanding ability of dense retrieval models by using the visual module plugin modeling method.
+
+\input{figure/attention_fronze}
+\textbf{Finetuning Strategies.} We then show the effectiveness of different finetuning strategies. In this experiment, we individually finetune the language model (T5) and visual module (CLIP) to show the changes of attention distributions and analyze the behaviors of different finetuning strategies.
+
+As shown in Figure~\ref{fig:embed}. The attention scores are calculated by cross attentions from the decoder to the encoder module of T5. We first show the attention weight distribution of image features in Figure~\ref{fig:embed:weight}. 
+When we only finetune the language model, the attention heads tend to allocate more balanced attention weights between image features and captions, helping to adapt the visual module in the language model. 
+On the other hand, the image features win more attention weights when the CLIP module is finetuned. However, as shown in Figure~\ref{fig:embed:entropy}, only finetuning the CLIP module shows a scattered attention weight mechanism than other models, which misleads the T5-ANCE to capture more important information from encoded representations of documents. All these phenomena demonstrate the necessity of the training strategies of MARVEL, which pretrain visual module for adaption and only finetune the language model for multi-modal retrieval. 
+ 
+\input{table/case}
+\subsection{Effectiveness of Visual Module Adaption Pretraining}\label{sec:image_prompt}
+We show some cases in Table~\ref{tab:image_nearest_token_cases} to show the effectiveness of the visual understanding module by verbalizing encoded image features. 
+ 
+
+We randomly select four image documents of different topics and represent the encoded image feature with some tokens to verbalize the image semantics. Specifically, we first use the visual plugin modules of MARVEL and MARVEL w/o CLIP Pretraining to encode the image features. Then, to show the semantics of the encoded image features, we utilize cosine similarity to find the $k$-NN tokens for each encoded image feature. Finally, the tokens with the highest score are used to represent the semantics of the encoded image features.
+
+For the first two examples, MARVEL w/o CLIP Pretraing learns more similar representations for both image documents. The related word tokens of these image documents contain lots of same tokens, such as ``7,000'', ``Hi'', and ``RAM'', which are unrelated to the semantics of the image documents. On the contrary, our MARVEL model can learn more similar semantics to both image documents. Specifically, MARVEL verbalizes the first image document using the words ``brightness'', ``resident'' and ``store'', which are related to the image description of ``Bourbon Street''. Additionally, MARVEL captures the semantics of ``animals'', ``wildlife'' and ``creatures'' in the second image document. 
+The next two instances show the effectiveness of MARVEL in learning more fine-grained semantics of the image documents by verbalizing the image documents with more related words, such as ``militari'', ``vehicle'', ``flag'', ``legislatur'', and ``government''. 
+Overall, compared with the MARVEL w/o CLIP Pretraining model, MARVEL has the ability to learn more effective representations that are closer to the semantics of the images, demonstrating the important role of MARVEL's visual module pretraining strategy in adapting the visual understanding module for dense retrievals.
+
+
+
+
+Conclusion
+This paper proposes \textbf{M}ulti-mod\textbf{A}l \textbf{R}etrieval via \textbf{V}isual modul\textbf{E} p\textbf{L}ugin (MARVEL). MARVEL integrates a visual plugin module with a well-trained dense retriever and pretrains the visual module with image-caption contrastive training for adaption. Our MARVEL model achieves state-of-the-art on all benchmarks by unifying the multi-modal document encoding and alleviating the modality gap between images and texts. 
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

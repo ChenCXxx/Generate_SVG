@@ -1,0 +1,289 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Inspired by the success of natural language processing (NLP), object detection with transformers (DETR) has been introduced to train an end-to-end detector via a transformer encoder-decoder~\cite{carion2020end}. Unlike early works~\cite{ren2016faster,liu2016ssd} that often employ convolutional neural networks (CNNs) and require post-processing procedures, {\em e.g.}, non-maximum suppression (NMS), and hand-designed sample selection, DETR treats object detection as a direct set prediction problem.% {\color{blue} DETR constructs the spatial dependencies between $N$ object queries and encoded features. Then the co-attended objected queries are fed into box coordinates and class labels, resulting $N$ final predictions.}
+
+Despite this attractiveness, DETR usually has a tremendous number of parameters and float-pointing operations (FLOPs). 
+For instance, there are 39.8M parameters taking up 159MB memory usage and 86G FLOPs in the DETR model with ResNet-50 backbone~\cite{he2016deep} (DETR-R50). 
+This leads to an unacceptable memory and computation consumption during inference, and challenges deployments on devices with limited supplies of resources.
+\begin{figure}
+    \centering
+    \includegraphics[scale=.36]{motivation1.pdf} %attention_distance.pdf
+    \caption{The histogram of query values ${\bf q}$ (blue shadow) and corresponding PDF curves (red curve) of Gaussian distribution~\cite{li2022q}, {\em w.r.t} the cross attention of different decoder layers in (a) real-valued DETR-R50, and (b) 4-bit quantized DETR-R50 (baseline). 
+    Gaussian distribution is generated from the statistical mean and variance of the query values.
+    The query in quantized DETR-R50 bears information distortion compared with the real-valued one. Experiments are performed on the VOC dataset~\cite{voc2007}.
+    }
+    \label{fig:motivation1}
+\end{figure}
+
+Therefore, substantial efforts on network compression have been made towards efficient online inference~\cite{denil2013predicting,xu2021layer,xu2022ida,romero2014fitnets}. Quantization is particularly popular for deploying on AI chips by representing a network in low-bit formats.
+Yet prior post-training quantization (PTQ) for DETR~\cite{liu2021post} derives quantized parameters from pre-trained real-valued models, which often restricts the model performance in a sub-optimized state due to the lack of fine-tuning on the training data. In particular, the performance drastically drops when quantized to ultra-low bits (4-bits or less).
+Alternatively, quantization-aware training (QAT)~\cite{liu2020reactnet,xu2022recurrent} performs quantization and fine-tuning on the training dataset simultaneously, leading to trivial performance degradation even with significantly lower bits. Though QAT methods have been proven to be very effective in compressing CNNs~\cite{liu2018bi,esser2019learned} for computer vision tasks, an exploration of low-bit DETR remains untouched. 
+
+
+\begin{figure}
+    \centering
+    \includegraphics[scale=.25]{motivation2.pdf} 
+    \caption{Spatial attention weight maps in %the cross-attention layer of 
+    the last decoder of (a) real-valued DETR-R50, and (b) 4-bit quantized DETR-R50.
+    The green rectangle denotes the ground-truth bounding box.
+    Following~\cite{meng2021conditional}, the highlighted area denotes the large attention weights in the selected four heads in compliance with bound prediction. Compared to its real-valued counterpart that focuses on the ground-truth bounds, quantized DETR-R50 deviates significantly.
+    }
+    \label{fig:motivation2}
+\end{figure}
+
+In this paper, we first build a low-bit DETR baseline, a straightforward solution based on common QAT techniques~\cite{bhalgat2020lsq}. Through an empirical study of this baseline, we observe significant performance drops on the VOC~\cite{voc2007} dataset. For example, a 4-bit quantized DETR-R50 using LSQ~\cite{esser2019learned} only achieves 76.9\% AP$_{50}$, leaving a 6.4\% performance gaps compared with the real-valued DETR-R50. 
+We find that the incompatibility of existing QAT methods mainly stems from the unique attention mechanism in DETR, where the spatial dependencies are first constructed between the object queries and encoded features. Then the co-attended object queries are fed into box coordinates and class labels by a feed-forward network. A simple application of existing QAT methods on DETR leads to query information distortion, and therefore the performance severely degrades.
+Fig.\,\ref{fig:motivation1} exhibits an example of information distortion in query features of 4-bit DETR-R50, where we can see significant distribution variation of the query modules in quantized DETR and real-valued version.
+The query information distortion causes the inaccurate focus of spatial attention, which can be verified by following~\cite{meng2021conditional} to visualize the spatial attention weight maps in 4-bit and real-valued DETR-R50 in Fig.\,\ref{fig:motivation2}. We can see that the quantized DETR-R50 bear's inaccurate object localization. Therefore, a more generic method for DETR quantization is necessary.
+
+To tackle the issue above, we propose an efficient low-bit quantized DETR (Q-DETR) by rectifying the query information of the quantized DETR as that of the real-valued counterpart. Fig.\,\ref{fig:framework} provides an overview of our Q-DETR, which is mainly accomplished by a distribution rectification knowledge distillation method (DRD). We find ineffective knowledge transferring from the real-valued teacher to the quantized student primarily because of the information gap and distortion. 
+Therefore, we formulate our DRD as a bi-level optimization framework established on the information bottleneck principle (IB). Generally, it includes an inner-level optimization to maximize the self-information entropy of student queries and an upper-level optimization to minimize the conditional information entropy between student and teacher queries.
+At the inner level, we conduct a distribution alignment for the query guided by its Gaussian-alike distribution, as shown in Fig.\,\ref{fig:motivation1}, leading to an explicit state in compliance with its maximum information entropy in the forward propagation. At the upper level, we introduce a new foreground-aware query matching that filters out low-qualified student queries for exact one-to-one query matching between student and teacher, providing valuable knowledge gradients to push minimum conditional information entropy in the backward propagation.
+This paper attempts to introduce a generic method for DETR quantization. The significant contributions in this paper are outlined as follows: 
+(1) We develop the first QAT quantization framework for DETR, dubbed Q-DETR.
+(2) We use a bi-level optimization distillation framework, abbreviated as DRD.
+(3) We observe a significant performance increase compared to existing quantized baselines.
+
+
+
+
+\begin{figure*}
+\centering
+\includegraphics[scale=.28]{framework.pdf} %attention_distance.pdf
+\caption{Overview of the proposed Q-DETR framework. We introduce the distribution rectification distillation method (DRD) to refine the performance of Q-DETR. From left to right, we respectively show the detailed decoder architecture of Q-DETR and the learning framework of Q-DETR. The Q-Backbone, Q-Encoder, and Q-Decoder denote quantized architectures, respectively.}
+\label{fig:framework}
+\end{figure*}
+
+
+
+
+Related Work
+
+\textbf{Quantization}. Quantized neural networks often possess low-bit (1$\sim$4-bit) weights and activations to accelerate the model inference and save memory. 
+For example, DoReFa-Net~\cite{zhou2016dorefa} exploits convolution kernels with low bit-width parameters and gradients to accelerate training and inference. 
+TTQ~\cite{zhu2016trained} uses two real-valued scaling coefficients to quantize the weights to ternary values.
+Zhuang~\textit{et al.}~\cite{Zhuang_2018_CVPR} present a $2\!\sim\!4$-bit quantization scheme using a two-stage approach to alternately quantize the weights and activations, providing an optimal tradeoff among memory, efficiency, and performance. 
+In~\cite{jung2019learning}, the quantization intervals are parameterized, and optimal values are obtained by directly minimizing the task loss of the network. %and also the accuracy degeneration with further bit-width reduction. 
+ZeroQ~\cite{cai2020zeroq} supports uniform and mixed-precision quantization by optimizing for a distilled dataset which is engineered to match the statistics of the batch normalization across different network layers. 
+Xie~\textit{et al.}~\cite{xie2020deep} introduced transfer learning into network quantization to obtain an accurate low-precision model by utilizing Kullback-Leibler (KL) divergence.
+Fang~\textit{et al.}~\cite{fang2020post} enabled accurate approximation for tensor values that have bell-shaped distributions with long tails and found the entire range by minimizing the quantization error. 
+Li~\textit{et al.}~\cite{li2022q} proposed an information rectification module and distribution-guided distillation to push the bit-width in a quantized vision transformer. At the same time, we address the quantization in DETR from the IB principle.  
+The architectural design has also drawn increasing attention using extra shortcut~\cite{liu2018bi}, and parallel parameter-free shortcuts~\cite{liu2020reactnet} for example.
+
+\textbf{Detection Transformer}.
+Driven by the success of transformers~\cite{vaswani2017attention}, several researchers have also explored transformer frameworks for vision tasks. The first DETR~\cite{carion2020end} work introduces the Transformer structure based on the attention mechanism for object detection. But the main drawback of DETR lies in the  highly inefficient training process. %, which becomes the main motivation for many following works. 
+The approachh of another work modifies the multi-head attention mechanism (MHA). Deformable-DETR~\cite{zhu2020deformable} constructs a sparse and point-to-point MHA mechanism using a static point-wise query sampling method around the reference points. SMCA-DETR~\cite{gao2021fast} introduces a Gaussian-distributed spatial function  before formulating a spatially modulated co-attention. DAB-DETR~\cite{liu2022dab} re-defines the query of DETR as dynamic anchor boxes and performs soft ROI pooling layer-by-layer in a cascade manner. DN-DETR~\cite{li2022dn} introduces query denoising into query generation, reducing the bipartite graph matching difficulty and leading to faster convergence. Another set of arts improves DETR methods using additional learning constraints. For example, UP-DETR~\cite{dai2021up} proposes a novel self-supervised loss to enhance the convergence speed and the performance of DETR. 
+However, prior arts mainly focus on the training efficiency of DETR, few of which have discussed the quantization of DETR. 
+{To this end, we first build a  quantized DETR baseline and then address the query information distortion problem   based on the IB principle. Finally, a new KD method based on a foreground-aware query matching scheme is achieved  to solve Q-DETR effectively.
+}
+
+
+
+The Challenge of Quantizing DETR
+
+\subsection{Quantized DETR baseline}
+We first construct a baseline to study the low-bit DETR since no relevant work has been previously proposed.
+To this end, we follow LSQ+~\cite{bhalgat2020lsq} to introduce a general framework of asymmetric activation quantization and symmetric weight quantization:
+\begin{equation}\label{eq:quantization}
+\small
+    \begin{aligned}
+    \bm{x}_q = &\lfloor \operatorname{clip}\{\frac{(\bm{x} - z)}{\alpha_x}, Q_n^x, Q_p^x\} \rceil, {\bf w}_{q} = \lfloor \operatorname{clip}\{\frac{{\bf w}}{\alpha_{\bf w}}, Q_n^{\bf w}, Q_p^{\bf w}\} \rceil,
+    \\&
+    Q_a(x) = \alpha_x \circ \bm{x}_q + z, \;\;\;\;\;\;\;\;\;\;\;\;\, Q_w(x) = \alpha_{\bf w}\circ {\bf w}_{q},
+    \end{aligned}
+\end{equation}
+where $\operatorname{clip}\{y, r_1, r_2\}$ clips the input $y$ with value bounds $r_1$ and $r_2$; the $\lfloor y \rceil$ rounds $y$ to its nearest integer; the $\circ$ denotes the channel-wise multiplication. %, indicating that we utilize channel-wise quantizer in this paper.
+And $Q_n^x = - 2^{a-1}, Q_p^x = 2^{a-1}-1$, $Q_n^{\bf w} = - 2^{b-1}, Q_p^{\bf w} = 2^{b-1}-1$ are the discrete bounds for $a$-bit activations and $b$-bit weights. $x$ generally denotes the activation in this paper, including the input feature map of convolution and fully-connected layers and input of multi-head attention modules. Based on this, we first give the quantized fully-connected layer as: 
+\begin{equation}
+\small
+     \operatorname{Q-FC}(\bm{x}) = Q_a({\bm{x}}) \cdot Q_w({\bf w}) = \alpha_x\alpha_{\bf w} \circ (\bm{x}_q \odot {\bf w}_q + z / \alpha_x \circ {\bf w}_q), 
+     \label{q-fc}
+\end{equation}
+where $\cdot$ denotes the matrix multiplication and $\odot$ denotes the matrix multiplication with efficient bit-wise operations. The straight-through estimator (STE)~\cite{bengio2013estimating} is used to retain the derivation of the gradient in backward propagation. 
+In DETR~\cite{carion2020end}, the visual features generated by the backbone are augmented with position embedding and fed into the transformer encoder.
+Given an encoder output ${\bf E}$, DETR performs co-attention between object queries ${\bf O}$ and the visual features ${\bf E}$, which are formulated as:
+\begin{equation}
+    \begin{aligned}
+    {\bf q} &= \operatorname{Q-FC}({\bf O}),\;\;{\bf k},{\bf v} = \operatorname{Q-FC}({\bf E})\\
+    {\bf A}_i &= \operatorname{softmax}(Q_a({\bf q})_i \cdot Q_a({\bf k})_i^{\top}/\sqrt{d}), \\
+    {\bf D}_i &= Q_a({\bf A})_i\cdot Q_a({\bf v})_i,
+    \end{aligned}
+    \label{decoder}
+\end{equation}
+where ${\bf D}$ is the multi-head co-attention module, {\em i.e.}, the co-attended feature for the object query. The $d$ denotes the feature dimension in each head.
+More FC layers transform the decoder's output features of each object query for the final output. Given box and class predictions, the Hungarian algorithm~\cite{carion2020end} is applied between predictions and ground-truth box annotations to identify the learning targets of each object query. 
+
+\begin{figure}[t]
+\centering
+\includegraphics[scale=.26]{performance.pdf}
+\caption{Performance of 3/4-bit quantized DETR-R50 on VOC with different quantized modules.}
+\label{fig:quantization}
+\end{figure}
+
+\subsection{Challenge Analysis}
+Intuitively, the performance of the quantized DETR baseline largely depends on the information representation capability mainly reflected by the information in the multi-head attention module. 
+Unfortunately, such information is severely degraded by the quantized weights and inputs in the forward pass. Also, the rounded and discrete quantization significantly affect the optimization during backpropagation. 
+We conduct the quantitively ablative experiments by progressively replacing each module of the real-valued DETR baseline with a quantized one and compare the average precision (AP) drop on the VOC dataset~\cite{voc2007} as shown in Fig.\,\ref{fig:quantization}. 
+We find that quantizing the MHA decoder module to low bits, {\em i.e.}, (1)+(2)+(3), brings the most significant accuracy drops of accuracy among all parts of the DETR methods, up to 2.1\% in the 3-bit DETR-R50. At the same time, other parts of DETR show comparative robustness to the quantization function. 
+Consequently, the critical problem of improving the quantized DETR methods is restoring the information in MHA modules after quantization. Other qualitative results in Fig.\,\ref{fig:motivation1} and Fig.\,\ref{fig:motivation2} also indicate that the degraded information representation is the main obstacle to a better quantized DETR.
+
+
+
+The Proposed Q-DETR
+
+\subsection{Information Bottleneck of Q-DETR}
+
+To address the information distortion of the quantized DETR, we aim to improve the representation capacity of the quantized networks in a knowledge distillation framework. Generally, we utilize a real-valued DETR as a teacher and a quantized DETR as a student, which are distinguished with superscripts $\mathcal{T}$ and $\mathcal{S}$, respectively.
+
+Our Q-DETR  pursues the best tradeoff between performance and compression, which is precisely the goal of the information bottleneck (IB) method through quantifying the mutual information that the intermediate layer contains about the input (less is better) and the desired output (more is better)~\cite{shwartz2017opening,tishby2000information}. 
+In our case, the intermediate layer comes from the student, while the desired output includes the ground-truth labels as well as the queries of the teacher for distillation. 
+Thus, the objective target of our Q-DETR is:
+\begin{equation}
+    \begin{aligned}
+    \mathop{\min}_{\theta^{\mathcal{S}}} I(X; {\bf E}^{\mathcal{S}}) - \beta I( {\bf E}^{\mathcal{S}}, {\bf q}^{\mathcal{S}}; \bm{y}^{GT}) - \gamma I({\bf q}^{\mathcal{S}}; {\bf q}^{\mathcal{T}}), 
+    \end{aligned}
+    \label{eq:distill_IB}
+\end{equation}
+where ${\bf q}^{\mathcal{T}}$ and ${\bf q}^{\mathcal{S}}$ represent the queries in the teacher and student DETR methods as predefined in Eq.\,(\ref{decoder}); $\beta$ and $\gamma$ are the Lagrange multipliers~\cite{shwartz2017opening}; $\theta^{\mathcal{S}}$ is the parameters of the student; and $I(\cdot)$ returns the mutual information of two input variables. 
+The first item $I(X; {\bf E}^{\mathcal{S}})$ minimizes information between input and visual features ${\bf E}^{\mathcal{S}}$ to extract task-oriented hints~\cite{wang2020bidet}. The second item $I( {\bf E}^{\mathcal{S}}, {\bf q}^{\mathcal{S}}; \bm{y}^{GT})$  maximizes information between extracted visual features and ground-truth labels for better object detection. These two items can be easily accomplished by common network training and detection loss constraints, such as proposal classification and coordinate regression.
+The core issue of this paper is to solve the third item $I({\bf q}^{\mathcal{S}}; {\bf q}^{\mathcal{T}})$, which attempts to address the information distortion in student query via introducing teacher query as a priori knowledge. To accomplish our goal, we first expand the third item and reformulate it as:
+\begin{equation}
+\begin{aligned}
+I({\bf q}^{\mathcal{S}}; {\bf q}^{\mathcal{T}}) = H({\bf q}^{\mathcal{S}}) - H({\bf q}^{\mathcal{S}}|{\bf q}^{\mathcal{T}}), 
+\end{aligned}
+\label{eq:mutual}
+\end{equation}
+where $H({\bf q}^{\mathcal{S}})$ returns the self information entropy expected to be maximized while $H({\bf q}^{\mathcal{S}}|{\bf q}^{\mathcal{T}})$ is the conditional entropy expected to be minimized. 
+It is challenging to optimize the above maximum \& minimum items simultaneously. Instead, we make a compromise to reformulate Eq.\,(\ref{eq:mutual}) as a bi-level issue~\cite{liu2021investigating,colson2007overview} that alternately optimizes the two items, which is explicitly defined as:
+\begin{equation}
+\begin{aligned}
+& \mathop{\min}_{\theta}  H({\bf q}^{\mathcal{S}^*}|{\bf q}^{\mathcal{T}}), \\
+\operatorname{s.t.} \;\;\;\; &{\bf q}^{\mathcal{S}^*} = \mathop{\arg \max}_{{\bf q}^{\mathcal{S}}} H({\bf q}^{\mathcal{S}}). 
+\end{aligned}
+\label{eq:bi-level}
+\end{equation}
+Such an objective involves two sub-problems, including an inner-level optimization to derive the current optimal query ${\bf q}^{\mathcal{S}^*}$ and an upper-level optimization to conduct knowledge transfer from the teacher to the student. Below, we show that the two sub-problems can be solved in the forward \& backward network propagation's.
+
+
+\subsection{Distribution Rectification Distillation}
+\label{sec:DRD}
+
+\textbf{Inner-level optimization}. 
+We first detail the maximization of self-information entropy.
+According to the definition of self information entropy, $H({\bf q}^{\mathcal{S}})$ can be implicitly expanded as:
+\begin{equation}
+    H({\bf q}^{\mathcal{S}}) = -\int_{{\bf q}^{\mathcal{S}}_i \in {\bf q}^{\mathcal{S}}} p({\bf q}^{\mathcal{S}}_i){\operatorname{log} p({\bf q}^{\mathcal{S}}_i)}.
+\end{equation}
+ 
+However, an explicit form of $H({\bf q}^{\mathcal{S}})$ can only be parameterized with a regular distribution $p({\bf q}^{\mathcal{S}}_i)$.
+Luckily, the statistical results in Fig.\,\ref{fig:motivation1} shows that the query distribution tends to follow a Gaussian distribution, which is also observed in~\cite{li2022q}. This enables us to solve the inner-level optimization in a distribution alignment fashion. To this end, we first calculate the mean $\mu({\bf q}^{\mathcal{S}})$ and variance $\sigma({\bf q}^{\mathcal{S}})$ of query ${\bf q}^{\mathcal{S}}$ whose distribution is then modeled as ${\bf q}^{\mathcal{S}} \sim \mathcal{N}(\mu({\bf q}^{\mathcal{S}}), \sigma({\bf q}^{\mathcal{S}}))$. Then, the self-information entropy of the student query can be proceeded as:%
+\begin{equation}
+    \begin{aligned}
+    H({\bf q}^{\mathcal{S}}) &= -\mathbb{E}[\operatorname{log} \mathcal{N}(\mu({\bf q}^{\mathcal{S}}), \sigma({\bf q}^{\mathcal{S}}))]\\
+    &= -\mathbb{E}[\operatorname{log} [{(2\pi{\sigma({{\bf q}^{\mathcal{S}}})}^2)}^{\frac{1}{2}}\operatorname{exp}(-\frac{{({\bf q}^{\mathcal{S}}_i - \mu({\bf q}^{\mathcal{S}}))}^2}{2 {\sigma({{\bf q}^{\mathcal{S}}})^2}})]] \\
+    &= \frac{1}{2}\operatorname{log}2\pi{\sigma({{\bf q}^{\mathcal{S}}})}^2.
+    \end{aligned}
+\end{equation}
+
+The above objective reaches its maximum of $H({\bf q}^{\mathcal{S}^*}) = (1/2) \log 2 \pi e [\sigma({{\bf q}^{\mathcal{S}})}^2 + \epsilon_{{\bf q}^{\mathcal{S}}}]$ when ${\bf q}^{\mathcal{S}^*} = [{\bf q}^{\mathcal{S}} - \mu({\bf q}^{\mathcal{S}})] / [{\sqrt{\sigma{({\bf q}^{\mathcal{S}})}^2 + \epsilon_{{\bf q}^{\mathcal{S}}}}}]$ where $\epsilon_{{\bf q}^{\mathcal{S}}} = 1e^{-5}$ is a small constant added to prevent a zero denominator.
+In practice, the mean and variance might be inaccurate due to query data bias. To solve this we use the concepts in batch normalization (BN)~\cite{santurkar2018does,ioffe2015batch} where a learnable shifting parameter $\beta_{{{\bf q}}^{\mathcal{S}}}$ is added to move the mean value. A learnable scaling parameter $\gamma_{{\bf q}^{\mathcal{S}}}$ is multiplied to move the query to the adaptive position. In this situation, we rectify the information entropy of the query in the student as follows:
+    \begin{equation}
+        \begin{aligned}
+        {\bf q}^{\mathcal{S}^*} &= \frac{{\bf q}^{\mathcal{S}} - \mu({\bf q}^{\mathcal{S}})} {{ \sqrt{\sigma{({\bf q}^{\mathcal{S}})}^2 + \epsilon_{{\bf q}^{\mathcal{S}}}}}}\gamma_{{\bf q}^{\mathcal{S}}} + \beta_{{\bf q}^{\mathcal{S}}},
+        \end{aligned}
+    \label{eq:rectification}
+    \end{equation}
+    in which case the maximum self-information entropy of student query becomes $H({\bf q}^{\mathcal{S}^*}) = (1/2)\log 2 \pi e [(\sigma^2_{{\bf q}^{\mathcal{S}}} + \epsilon_{{\bf q}^{\mathcal{S}}})/\gamma^2_{{\bf q}^{\mathcal{S}}}]$. 
+    Therefore, in the forward propagation, we can obtain the current optimal query ${\bf q}^{\mathcal{S}^*}$ via Eq.\,(\ref{eq:rectification}), after which, the upper-level optimization is further executed as detailed in the following contents.
+    
+    
+\textbf{Upper-level optimization}.
+We continue minimizing the conditional information entropy between the student and the teacher. %Before a comprehensive description, we introduce some basic notations.
+Following DETR~\cite{carion2020end}, we denote the ground-truth labels by $\bm{y}^{GT}=\{c^{GT}_i, b^{GT}_i\}_{i=1}^{N_{gt}}$ as a set of ground-truth objects where $N_{gt}$ is the number of foregrounds, $c_i^{GT}$ and $b_i^{GT}$ respectively represent the class and coordinate (bounding box) for the $i$-th object.
+In DETR, each query is associated with an object. Therefore, we can obtain $N$ objects for teacher and student as well, denoted as $\bm{y}^{\mathcal{S}} = \{c^{\mathcal{S}}_j, b^{\mathcal{S}}_j\}_{j=1}^N$ and $\bm{y}^{\mathcal{T}} = \{c^{\mathcal{T}}_j, b^{\mathcal{T}}_j\}_{j=1}^N$.
+The minimization of the conditional information entropy requires the student and teacher objects to be in a one-to-one matching. However, it is problematic for DETR due primarily to the sparsity of prediction results and the instability of the query’s predictions~\cite{li2022dn}. We propose a foreground-aware query matching to rectify ``well-matched'' queries to solve this.  Concretely, we match the ground-truth bounding boxes with this student to find the maximum coincidence as:
+\begin{equation}
+    \begin{aligned}
+       G_i = \mathop{\max}_{1\leq j \leq N} \operatorname{GIoU}(b^{GT}_{i}, b^{\mathcal{S}}_{j}),
+    \end{aligned}
+    \label{eq:sigma}
+\end{equation}
+where $\operatorname{GIoU}(\cdot)$ is the generalized intersection over union function~\cite{rezatofighi2019generalized}. Each $G_i$ reflects the ``closeness'' of student proposals to the $i$-th ground-truth object.
+Then, we retain highly qualified student proposals around at least one ground truth to benefit object recognition~\cite{wang2019distilling} as:
+\begin{align}
+\begin{split}
+\small
+b_j^{\mathcal{S}} = \left \{
+\begin{array}{ll}
+    {b}_j^{\mathcal{S}},         \!\!\!\! & {\operatorname{GIoU}}(b^{GT}_{i}, b^{\mathcal{S}}_{j}) > \tau G_i, \,\,\forall\; i  \\
+    \varnothing,                                 & \text{otherwise},
+\end{array}
+\right.
+\end{split}
+\end{align}
+where $\tau$ is a threshold controlling the proportion of distilled queries. After removing object-empty ($\varnothing$) queries in $\tilde{\bm q}^{\mathcal{S}}$, we form a distillation-desired query set of students denoted as $\tilde{{\bm q}}^{\mathcal{S}}$ associated with its object set $\tilde{{\bm y}}^{\mathcal{S}} =  \{\tilde{c}^{\mathcal{S}}_j, \tilde{b}^{\mathcal{S}}_j\}_{j=1}^{\tilde{N}}$. Correspondingly, we can obtain a teacher query set $\tilde{{\bm y}}^{\mathcal{T}} =  \{\tilde{c}^{\mathcal{T}}_j, \tilde{b}^{\mathcal{T}}_j\}_{j=1}^{\tilde{N}}$. For the $j$-th student query, its corresponding teacher query is matched as:
+\begin{equation}
+\tilde{c}^{\mathcal{T}}_j, \tilde{b}^{\mathcal{T}}_j = \mathop{\arg \max}_{\tilde{c}^{\mathcal{T}}_k, \tilde{b}^{\mathcal{T}}_k}\sum^{N}_{k=1} \mu_1 \operatorname{GIoU}(\tilde{b}^{\mathcal{S}}_{j}, b^{\mathcal{T}}_{k})-\mu_2\|\tilde{b}^{\mathcal{S}}_{j} - b^{\mathcal{T}}_{k}\|_1, 
+\end{equation}
+where $\mu_1=2$ and $\mu_2=5$ control the matching function, values of which is to follow~\cite{carion2020end}.
+
+Finally, the upper-level optimization after rectification in Eq.\,(\ref{eq:bi-level}) becomes: 
+\begin{equation}
+\begin{aligned}
+ \mathop{\min}_{\theta} H(\tilde{{\bf q}}^{\mathcal{S}^*}|\tilde{{\bf q}}^{\mathcal{T}}). 
+\end{aligned}
+\label{eq:L_select2}
+\end{equation}
+Optimizing Eq.\,(\ref{eq:L_select2}) is challenging. Alternatively, we minimize the norm distance between $\tilde{\bf q}^{\mathcal{S}^*}$ and $\tilde{{\bf q}}^{\mathcal{T}}$, optima of which, \emph{i.e.}, $\tilde{\bf q}^{\mathcal{S}^*} = \tilde{\bf q}^{\mathcal{T}}$, is exactly the same with that in Eq.\,(\ref{eq:L_select2}).
+Thus, the final loss for our distribution rectification distillation loss becomes: 
+\begin{equation}
+\mathcal{L}_{DRD}(\tilde{{\bf q}}^{\mathcal{S}^*}, \tilde{{\bf q}}^{\mathcal{T}}) = \mathbb{E}[\|\tilde{\bf D}^{\mathcal{S}^*} - \tilde{\bf D}^{\mathcal{T}}\|_2],
+\label{drd}
+\end{equation}
+where we use the Euclidean distance of co-attented feature $\tilde{\bf D}$ (see Eq. \ref{decoder}) containing the information query $\tilde{\bf q}$ for optimization.
+
+In backward propagation, the gradient updating drives the student queries toward their teacher hints. Therefore we accomplish our distillation.
+The overall training losses for our Q-DETR model are:
+\begin{equation}
+\small
+\mathcal{L} = \mathcal{L}_{GT}(\bm{y}^{GT}, \bm{y}^{\mathcal{S}}) + \lambda \mathcal{L}_{DRD}(\tilde{{\bf q}}^{\mathcal{S}^*}, \tilde{{\bf q}}^{\mathcal{T}}),
+\label{final}
+\end{equation}
+where $L_{GT}$ is the common detection loss for missions such as proposal classification and coordinate regression~\cite{carion2020end}, and $\lambda$ is a tradeoff hyper-parameter.
+
+
+
+Experiments
+In this section, we evaluate the performance of the proposed Q-DETR mode using popular DETR~\cite{carion2020end} and SMCA-DETR~\cite{gao2021fast} models. To the best of our knowledge, there is no publicly available source code  on quantization-aware training of DETR methods at this point, so we implement the baseline and LSQ~\cite{esser2019learned} methods ourselves.
+
+\subsection{Datasets and Implementation Details}
+\label{sec:setup}
+\textbf{Datasets}.
+We first conduct the ablative study and hyper-parameter selection on the PASCAL VOC dataset \cite{voc2007}, which contains natural images from 20 different classes. We use the VOC {\tt trainval2012}, and VOC {\tt trainval2007} sets to train our model, which contains approximately 16k images, and the VOC {\tt test2007} set to evaluate our Q-DETR, which contains 4952 images. We report COCO-style metrics for the VOC dataset: AP, AP$_{50}$ (default VOC metric), and AP$_{75}$.
+We further conduct the experiments on the COCO {\tt 2017} \cite{coco2014} object detection tracking. Specifically, we train the models on COCO {\tt train2017} and evaluate the models on COCO {\tt val2017}.
+We list the average precision (AP) for IoUs$\in [0.5:0.05:0.95]$, designated as AP, using COCO's standard evaluation metric. For further analyzing our method, we also list AP$_{50}$, AP$_{75}$, AP$_s$, AP$_m$, and AP$_l$.
+
+\begin{figure}
+        \centering
+        \begin{subfigure}{0.495\linewidth}
+    	\centering
+    	\includegraphics[width=1.0\linewidth]{tau_lambda.pdf}
+    	\caption{Effect of $\tau$ and $\lambda$.}
+    	\label{motivation:teacher1}
+        \end{subfigure}
+        \begin{subfigure}{0.495\linewidth}
+    	\centering
+    	\includegraphics[width=1.0\linewidth]{information.pdf}
+ 		\caption{Mutual information curves.}
+    	\label{motivation:teacher_false1}
+        \end{subfigure}
+        \caption{(a) We select $\tau$ and $\lambda$ using 4-bit Q-DETR-R50 on VOC. (b) The mutual information curves of $I(X; {\bf 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

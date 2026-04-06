@@ -1,0 +1,196 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\par To reduce the expensive annotation costs of deep semantic segmentation models, weakly-supervised semantic segmentation (WSSS) is proposed to predict pixel-level predictions with only weak and cheap annotations, such as image-level labels \cite{ahn2018learning}, points \cite{bearman2016s}, scribbles \cite{zhang2021dynamic} and bounding boxes \cite{lee2021bbam}. Among all these annotation forms, the image-level label is the cheapest and contains the least information. This work also falls in the field of WSSS using only image-level labels.
+
+\par Prevalent works of WSSS using image-level labels typically derive Class Activation Map (CAM) \cite{zhou2016learning} or its variants \cite{selvaraju2017grad} as pseudo labels. The pseudo labels are then processed with alternative refinement methods \cite{ahn2019weakly,ahn2018learning} and used to train regular semantic segmentation models. However, CAM is usually flawed since it typically only identifies the most discriminative semantic regions, severely weakening the final performance of semantic segmentation \cite{ahn2019weakly,wang2020self,jiang2022l2g}. The recent works \cite{gao2021ts,ru2022learning,xu2022multi} show one reason is that previous methods usually generate CAM with CNN, in which convolution only perceives local features and fails to activate the integral object regions. To ameliorate this problem and generate more accurate pseudo labels for WSSS, these works propose solutions based on the recent Vision Transformer (ViT) architecture \cite{dosovitskiy2020image}, which inherently models the global feature interactions with self-attention blocks.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.45\textwidth,]{figures/token_smooth.pdf}
+  \caption{\textbf{The generated CAM and the pairwise cosine similarity of patch tokens ($sim.$ map).} Our method can address the over-smoothing issue well and produce accurate CAM. Here we use ViT-Base.}
+  \label{fig_teaser}
+\end{figure}
+
+\par However, as demonstrated in \cite{park2021vision,wang2021anti}, self-attention in ViT is essentially a low-pass filter, which inclines to reduce the variance of input signals. Therefore, stacking self-attention blocks is equivalent to repeatedly performing spatial smoothing operations, which encourages the patch tokens in ViT to be uniform \cite{shi2021revisiting,gong2021vision}, \ie, over-smoothing. We observe that the over-smoothing issue particularly impairs the WSSS task, since CAM used to derive pseudo labels relies on the output features (\ie patch tokens). As shown in Figure~\ref{fig_teaser}, due to over-smoothing, the pairwise cosine similarities of the patch tokens are close to $1$, suggesting the learned representations of different patch tokens are almost uniform. The generated CAM thus tends to assign different image regions with the monotonous semantic label. Though several recent works have explored the ViT architecture for WSSS \cite{xu2022multi,sun2021getam,ru2022learning}, they typically overlook the over-smoothing issue of patch tokens, leaving this problem unresolved.
+
+\par In this work, we empirically observe that ViT smooths the patch tokens progressively, \ie the learned representations in intermediate layers can still preserve the semantic diversity. Therefore, we propose a Patch Token Contrast (PTC) module to address the over-smoothing issue by supervising the final patch tokens with intermediate layer knowledge. Specifically, in the PTC module, we simply add an additional classifier in an intermediate layer to extract the auxiliary CAM and the corresponding pseudo pairwise token relations. By supervising the pairwise cosine similarities of final patch tokens with the pseudo relations, PTC can finely counter the over-smoothing issue and thus produce high-fidelity CAM. As shown in Figure~\ref{fig_teaser}, our method can generate CAM that aligns well with the semantic object regions. The pairwise cosine similarities also coincide with the corresponding semantics. In addition, to further differentiate the uncertain regions in generated CAM, inspired by the property that the class token in ViT can inherently aggregate high-level semantics \cite{caron2021emerging,gao2021ts}, we also propose a Class Token Contrast (CTC) module. In CTC, we first randomly crop local images from uncertain regions (background regions), and minimize (maximize) the representation difference between the class tokens of local and global images. As a result, CTC can facilitate the local-to-global representation consistency of semantic objects and the discrepancy between foreground and background, benefiting the integral and accurate object activation in CAM. Finally, based on the proposed PTC and CTC, we build Token Contrast (ToCo) for WSSS and extend it to the single-stage WSSS framework \cite{ru2022learning}.
+
+\par Overall, our contributions in this work include the following aspects.
+\begin{itemize}[noitemsep,nolistsep,leftmargin=*]
+  \item We propose Patch Token Contrast (PTC) to address the over-smoothing issue in ViT. By supervising the final tokens with intermediate knowledge, PTC can counter the patch uniformity and significantly promote the quality of pseudo labels for WSSS.
+  \item We propose Class Token Contrast (CTC), which contrasts the representation of global foregrounds and local uncertain regions (background) and facilitates the object activation completeness in CAM.
+  \item The experiments on the PASCAL VOC \cite{everingham2010pascal} and MS COCO dataset \cite{lin2014microsoft} show that the proposed ToCo can significantly outperform SOTA single-stage WSSS methods and achieve comparable performance with multi-stage competitors.
+\end{itemize}
+
+
+Related Work
+\noindent\textbf{Weakly-Supervised Semantic Segmentation.} Weakly-Supervised Semantic Segmentation (WSSS) using image-level labels typically generates CAM as the initial pseudo labels. A typical drawback of CAM is that it usually only activates the most discriminative object regions. To address this drawback, recent works proposed various training schemes, such as erasing \cite{wei2017object}, online attention accumulation \cite{jiang2019integral} and cross-image semantic mining \cite{sun2020mining}. \cite{ru2022weakly,chang2020weakly,wang2020self} propose to leverage auxiliary tasks to regularize the training objective, such as visual words learning \cite{ru2022weakly}, sub-category exploration \cite{chang2020weakly}, and scale in-variance regularization \cite{wang2020self}. \cite{lee2021railroad,yao2021non} utilize extra saliency maps as supervision to suppress the background regions and mine the non-salient objects. \cite{xie2022cross,su2021context,lee2022weakly} counter the problem of semantic co-occurrence via distilling knowledge from CLIP \cite{radford2021learning}, decoupling object context \cite{su2021context} and comparing the out-of-distribution images \cite{lee2022weakly}, respectively. \cite{zhou2022regional,du2022weakly,chen2022self} contrast the pixel and prototype representations to encourage the integral activation of the object regions. Typically, these methods are built upon the CNN network, inheriting the aforementioned locality flaw. In this work, we explore ViT for WSSS to avoid this drawback and achieve integral object activation.
+
+\noindent\textbf{Vision Transformer for WSSS.} Vision Transformer (ViT) has achieved great success in various vision tasks \cite{dosovitskiy2020image,xie2021segformer,carion2020end,xu2023demt,lan2022learning}. Some recent works also introduce ViT to WSSS \cite{gao2021ts,sun2021getam,ru2022learning,xu2022multi}. Inspired by the property that the class token in ViT can capture the foreground information \cite{caron2021emerging}, TS-CAM \cite{gao2021ts} extracts the class-agnostic attention map and couples it with the naive semantic-aware CAM. \cite{sun2021getam} proposes to derive the gradients of the attention map and extracts the attention of {class token} \wrt other tokens as the class-specific maps. MCTformer \cite{xu2022multi} embeds multiple {class tokens} and enforces them learning the activation maps of different classes. AFA \cite{ru2022learning} proposes to learn reliable semantic affinity from the attention blocks to refine the initial coarse labels. However, these methods typically overlook the over-smoothing issue of ViT. Besides, they need to modify the ViT architecture or extract the costly gradients at the inference stage. In this work, we propose ToCo to solve the over-smoothing issue without modification to architecture and further unlock the potential of ViT on the WSSS task.
+
+
+
+Preliminaries
+In this section, we briefly introduce the preliminary knowledge of class activation map (CAM), Vision Transformer (ViT), and over-smoothing in ViT.
+\subsection{Class Activation Map}
+\par CAM \cite{zhou2016learning} is proposed to identify the activated regions when a classification network predicts an image. Due to its efficacy and simplicity, CAM has been widely used to generate the initial pseudo labels for WSSS. Specifically, given an image, its feature maps $\mathbf{F}\in \mathbb{R}^{hw\times d}$ are extracted with a classification network (CNN or ViT), where $hw$ and $d$ denote the number of spatial and channel dimension, respectively. The CAM is computed by weighting and summing the feature maps with the weights $\mathbf{W} \in\mathbb{R}^{c\times d}$ in the classification layer, where $c$ is the number of semantic classes. The \texttt{relu} function and \texttt{max} normalization are then applied to eliminate the negative activation and scale the CAM to $[0,1]$. Therefore, CAM for class $c$ is thus calculated as
+\begin{equation}\small
+  \mathtt{CAM}_c(\mathbf{F},\mathbf{W}) = \frac{\mathtt{relu}(\mathbf{M}_c)}{\max(\mathtt{relu}(\mathbf{M}_c))}, \mathbf{M}_c=\sum_{i}\mathbf{W}_{c,i}\mathbf{F}_{:,i}.
+  \label{eq_cam}
+\end{equation}
+A background threshold $\beta$ is usually used to differentiate the background and foreground regions.
+
+\subsection{Vision Transformer \& Over-smoothing}
+\label{sec_trans_smoothing}
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.35\textwidth,]{figures/cos_sim.pdf}
+  \caption{\textbf{The average pairwise cosine similarity of patch tokens in each Transformer block.} The cosine similarity is computed on the VOC \texttt{train} set. Here we use the ViT-Base (ViT-B) \cite{dosovitskiy2020image} architecture which includes 12 Transformer blocks.}
+  \label{fig_voc_cos_sim}
+\end{figure}
+
+\par An ViT firstly splits an image into patches to form the initial patch tokens. Then the patch tokens are concatenated with an extra learnable class token and feed into the Transformer encoder to obtain the final patch and class tokens. As the key component, in each Transformer block, the multi-head self-attention (MHSA) is used to perform the global feature interaction. However, due to the low-pass property of self-attention \cite{park2021vision,wang2021anti}, after multiple Transformer blocks, the output patch tokens incline to be uniform, which severely affects the CAM according to Equation~\ref{eq_cam}.
+\par In Figure~\ref{fig_voc_cos_sim}, we visualized the pairwise cosine similarity of the patch tokens generated in each Transformer block. Figure~\ref{fig_voc_cos_sim} shows that the patch tokens in the late layers are highly similar, while the early layers can still preserve the semantic diversity. This observation motivates us to address the over-smoothing issue by supervising the final layer tokens with knowledge from intermediate layers.
+
+
+
+Methodology
+\par This section elaborates on the proposed method, \ie Token Contrast (ToCo) for WSSS. We first introduce the overall framework of ToCo. Then the Patch Token Contrast (PTC) and Class Token Contrast (CTC) are proposed to address the over-smoothing issue and further exploit the virtue of ViT for WSSS, respectively. Finally, we present the training objective of ToCo and how to plug it into the single-stage WSSS framework.
+\begin{figure*}[!tbp]
+  \centering
+  \includegraphics[width=0.8\textwidth]{./figures/toco.pdf}
+  \caption{\textbf{The overall framework of ToCo}. ToCo firstly uses an additional classification layer ($cls.$ layer) to produce the auxiliary CAM ($aux.$ CAM). In the PTC module, the $aux.$ CAM is used to derive token relations and supervise the pairwise token similarities of final patch tokens to address the over-smoothing issue. In the CTC module, the class tokens of the negative/positive images will be projected and contrasted with the global class token to further differentiate the low-confidence regions in CAM. The pseudo label is generated with the final CAM.}
+  \label{fig_toco}
+\end{figure*}
+
+\subsection{Overview}
+\label{sec_overall}
+\par As illustrated in Figure~\ref{fig_toco}, ToCo uses an auxiliary classification layer in the ViT encoder to produce the auxiliary CAM. The auxiliary CAM is subsequently leveraged to generate the auxiliary pseudo labels and guide the PTC module. Meanwhile, it's also used to produce proposals to crop positive and negative local images for the CTC module. The final CAM is obtained with a classification layer and used to generate the final pseudo labels.
+
+\subsection{Patch Token Contrast}
+\label{sec_ptc}
+\par The objective of the Patch Token Contrast (PTC) module is to address the over-smoothing issue of the final patch tokens. As aforementioned, since the intermediate layers can still preserve the semantic diversity of patch tokens, in PTC, we leverage knowledge from the intermediate layer, \ie reliable pairwise token relations in Figure~\ref{fig_toco}, to supervise the final patch tokens.
+
+\par Specifically, an input image $\mathbf{X}$ is firstly tokenized to construct initial patch tokens and then passed through the Transformer encoder. For a given intermediate layer, the output patch tokens are denoted as $\mathbf{F}^{m}\in\mathbb{R}^{n\times d}$, where $n$ and $d$ denotes the number of tokens and the feature dimension, respectively. As shown in Figure~\ref{fig_toco}, to extract the semantic-aware knowledge, we add an auxiliary classification layer to perform classification and generate CAM. In practice, we observe that not all intermediate layers produce satisfactory CAM for supervising PTC, since late layers incline to smooth the patch tokens while early layers may fail to capture high-level semantics. The choice of the intermediate layer will be discussed in Section~\ref{sec_ablation}.
+
+\par In the auxiliary classification head, the patch tokens $\mathbf{F}^{m}$ are firstly aggregated via global max-pooling (GMP) as suggested in \cite{ru2022learning} and then projected with a fully-connected layer parameterized with $\theta^{m}$ to calculate the auxiliary classification loss $\mathcal{L}^{m}_{cls}$. Therefore, the auxiliary CAM is computed as
+\begin{equation}\small
+  \mathbf{M}^{m} =\mathtt{CAM}(\mathbf{F}^{m}, \theta^{m}).
+  \label{eq_cam_aux}
+\end{equation}
+We then use two background thresholds $\beta_l, \beta_h$ ($0<\beta_l<\beta_h<1$) to segment $\mathbf{M}^{m}$ to the pseudo token label $\mathbf{Y}^{m}$, which consists of reliable foreground, background and uncertain regions.
+
+\noindent \textbf{Patch Token Contrast Loss.} The generated token label $\mathbf{Y}^{m}$ is used to derive reliable pairwise relations for supervising the final patch tokens. Specifically, if two tokens share the same semantic label, they are labeled as positive pairs; otherwise, they are labeled as negative pairs. In addition, to ensure reliability, we only consider two tokens that both belong to the reliable foreground or background regions and ignore the uncertain regions. To remedy the over-smoothing issue, we maximize the similarity of two final patch tokens that belong to positive pairs and minimize the similarity otherwise. Let $\mathbf{F} \in \mathbb{R}^{n\times d}$ be the final layer patch tokens, the loss function for the PTC module is then constructed as
+\begin{equation} \small
+  \begin{aligned}
+    \mathcal{L}_{ptc} & = \frac{1}{{N}^+}\sum_{\mathbf{Y}_i = \mathbf{Y}_j}(1-\mathtt{CosSim}(\mathbf{F}_i,\mathbf{F}_j)) \\
+                      & +\frac{1}{{N}^-}\sum_{\mathbf{Y}_i \neq \mathbf{Y}_j}\mathtt{CosSim}(\mathbf{F}_i,\mathbf{F}_j),
+  \end{aligned}
+  \label{eq_loss_ptc}
+\end{equation}
+where $\mathtt{CosSim}(\cdot,\cdot)$ computes the cosine similarity and ${N}^+$/${N}^-$ counts the number of positive/negative pairs. However, minimizing the original cosine similarity cannot ensure the diversity \cite{gong2021vision,chen2022principle}, since a token pair with minus cosine similarity (\eg, $-1$) could be highly correlated. Therefore, in practice, in Equation~\ref{eq_loss_ptc}, we use the absolute cosine similarity instead of the original form. By minimizing Equation~\ref{eq_loss_ptc}, the representations of positive tokens are encouraged to be more consistent, while the negative tokens pairs are more discriminative, so that the over-smoothing issue can be well addressed. %\cite{gong2021vision} In practice, we observe the cosine similarities of patch tokens are usually positive values \cite{gong2021vision}. Therefore, we use the absolute cosine similarity instead of the original form. 
+
+\subsection{Class Token Contrast}
+\label{sec_ctc}
+Addressing the over-smoothing with PTC can drive ViT to generate compelling CAM and pseudo labels. However, inevitably, there are still some less discriminative object regions that are hard to differentiate in CAM. Inspired by the property that class tokens in ViT can aggregate the high-level semantics \cite{gao2021ts,caron2021emerging}, we design a Class Token Contrast (CTC) module to facilitate the representation consistency between the local non-salient regions and the global object, which can further enforce more object regions to be activated in CAM.
+
+\par As illustrated in Figure~\ref{fig_toco_crop}, given an image, we first randomly crop the local images from the uncertain regions specified by its auxiliary CAM. Since the class token in ViT captures the information of semantic objects \cite{caron2021emerging,gao2021ts}, the class tokens of global and local images aggregate the information of the global and the local objects, respectively. By minimizing the difference between global and local class tokens, the representation of entire object regions can be more consistent.
+
+To counter the case that the cropped local images may contain few/no foreground objects, as shown in Figure~\ref{fig_toco}, we also crop some local images from background regions. By maximizing the difference between class tokens of global image and local background regions, the foreground-background discrepancy can be also facilitated. In practice, we randomly crop a fixed number of local images and assign them as positive (from uncertain regions) or negative (from background regions) with the guidance of $\mathbf{Y}^{m}$ in Section~\ref{sec_ptc}.
+
+\par Specifically, the global and local class tokens are first passed through the projection head $\mathcal{P}^g$ and $\mathcal{P}^l$, respectively, which consist of linear layers and an L2 normalization layer. Assuming $\mathbf{p}$ denotes the projected global class token, and $\mathcal{Q}^+$/$\mathcal{Q}^-$ denotes the set of projected local class tokens cropped from uncertain/background regions, the objective of CTC is to minimize/maximize the difference between $\mathbf{p}$ and the local class tokens in $\mathcal{Q}^+$/$\mathcal{Q}^-$. Here we use the InfoNCE loss \cite{oord2018representation} as the objective, \ie
+\begin{equation}\small
+  \mathcal{L}_{ctc} = \frac{1}{N^+}\sum_{\mathbf{q^+}}\log{\frac{e^{(\mathbf{p}^\top\mathbf{q^+}/\tau)}}{e^{(\mathbf{p}^\top\mathbf{q^+}/\tau)}+\sum_{\mathbf{q^-}}{e^{(\mathbf{p}^\top\mathbf{q^-}/\tau)}+\epsilon}}},
+  \label{eq_loss_ctc}
+\end{equation}
+where $\mathbf{q}^+\in\mathcal{Q}^+$, $\mathbf{q}^-\in\mathcal{Q}^-$, $N^+$ counts the number of $\mathcal{Q}^+$, $\tau$ is the temperature factor, and $\epsilon$ is a small positive value for stability. It's noted that CTC aims to enforce the local view representation to align the global view's. Therefore, we stop the gradient of the projection head $\mathcal{P}^g$. To update $\mathcal{P}^g$, we use the exponential moving average (EMA), \ie, $\theta^g \leftarrow \rho\theta^g+(1-\rho)\theta^l$, where $\rho$ is the momentum factor, $\theta^g$ and $\theta^l$ are parameters from  $\mathcal{P}^g$ and $\mathcal{P}^l$, respectively.
+
+\subsection{ToCo for WSSS}
+\label{sec_wsss}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.45\textwidth,]{figures/toco_crop.pdf}
+  \caption{\textbf{Illustration of the crop method in Figure~\ref{fig_toco}.}}
+  \label{fig_toco_crop}
+\end{figure}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{figures/toco_cam.pdf}
+  \caption{\textbf{Visualization of CAM.} From left to right, the CAM is generated with CNN baseline, AFA \cite{ru2022learning}, ViT baseline, ViT with PTC, ViT with PTC and CTC, and the proposed ToCo. }
+  \label{fig_toco_cam}
+\end{figure*}
+
+\noindent\textbf{Training Objective.} As shown in Figure~\ref{fig_toco}, except the token contrast losses $\mathcal{L}_{ptc} $ and $\mathcal{L}_{ctc}$, the training objective of the proposed ToCo also includes the classification loss $\mathcal{L}_{cls}$ and auxiliary classification loss $\mathcal{L}_{cls}^{m}$. Following the common practice, we use the multi-label soft margin loss for both $\mathcal{L}_{cls}$ and $\mathcal{L}_{cls}^{m}$. The optimization objective of ToCo is the weighted sum of these loss terms:
+
+\begin{equation}\small
+  \mathcal{L}_{toco} = \mathcal{L}_{cls}+\mathcal{L}^{m}_{cls}+\lambda_1\mathcal{L}_{ptc}+\lambda_2\mathcal{L}_{ctc}.
+  \label{eq_toco_loss}
+\end{equation}
+
+\noindent\textbf{Single-Stage WSSS.} We plug the proposed ToCo into the single-stage WSSS framework. Specifically, the pseudo labels produced by ToCo are then refined with a pixel-adaptive refinement module (PAR) \cite{ru2022learning} to align the low-level semantic boundaries. The refined pseudo labels will be used to supervise the segmentation decoder. We use the common cross-entropy loss as the segmentation loss $\mathcal{L}_{seg}$. The overall training objective should thus include $\mathcal{L}_{seg}$, \ie $\mathcal{L} = \mathcal{L}_{toco}+\lambda_3\mathcal{L}_{seg}$. Following previous single-stage WSSS works \cite{ru2022weakly,pan2022learning}, we also use an extra regularization loss term \cite{tang2018regularized} to enforce the spatial consistency of the predicted segmentation masks.
+
+\begin{table}[tbp]
+  \centering
+  \center
+  \small
+  {
+    \begin{tabular}{l|c|ccc}
+      \toprule
+      {Method}                                           & Backbone        & \texttt{train} & \texttt{val}  \\\midrule
+      RRM \cite{zhang2020reliability} \tiny AAAI'2020    & WR38            & --             & 65.4          \\
+      1Stage \cite{araslanov2020single}  \tiny CVPR'2020 & WR38            & 66.9           & 65.3          \\
+      AA\&LR \cite{zhang2021adaptive} \tiny ACM MM'2021  & WR38            & 68.2           & 65.8          \\
+      SLRNet \cite{pan2022learning} \tiny IJCV'2022      & WR38            & 67.1           & 66.2          \\
+      AFA \cite{ru2022learning} \tiny CVPR'2022          & MiT-B1          & 68.7           & 66.5          \\
+      ViT-PCM \cite{ros2022max} \tiny ECCV'2022          & ViT-B$^\dagger$ & 67.7           & 66.0          \\
+      ViT-PCM + CRF \cite{ros2022max} \tiny ECCV'2022    & ViT-B$^\dagger$ & 71.4           & 69.3          \\
+      \rowcolor[HTML]{eaeaea}
+      \textbf{ToCo}                                      & ViT-B           & 72.2           & 70.5          \\
+      \rowcolor[HTML]{eaeaea}
+      \textbf{ToCo$^\dagger$}                            & ViT-B$^\dagger$ & \textbf{73.6}  & \textbf{72.3} \\ \bottomrule
+    \end{tabular}
+    \caption{\textbf{Evaluation of pseudo labels}. $\dagger$ denotes using ImageNet-21k \cite{ridnik2021imagenet} pretrained parameters.}
+    \label{tab_pseudo_label_s}%
+  }
+\end{table}
+
+
+
+Experiments
+\subsection{Experimental Settings}
+\noindent\textbf{Datasets.} We evaluate the proposed method on the PASCAL VOC 2012 \cite{everingham2010pascal} and MS COCO 2014 dataset \cite{lin2014microsoft}. Following common practice, {VOC 2012} dataset is further augmented with the SBD dataset \cite{hariharan2011semantic}. The \texttt{train}, \texttt{val}, and \texttt{test} set of the augmented dataset consist of 10582, 1449, and 1456 images, respectively. For {COCO 2014} dataset, the \texttt{train} and \texttt{val} set consist of about 82k and 40k images, respectively. In the training stage, we only use image-level labels. By default, we report mIoU as the evaluation metric.
+
+\noindent\textbf{Network Architectures.} We use the ViT-base (ViT-B) \cite{dosovitskiy2020image} as the backbone, which is initialized with ImageNet pretrained weights \cite{ridnik2021imagenet}. To ensure the backbone accepts input images of arbitrary size, the \texttt{pos\_embedding} will be resized to input size via bilinear interpolation. The projection heads in the CTC module, \ie $\mathcal{P}^g$ and $\mathcal{P}^l$ in Figure~\ref{fig_toco}, consist of 3 linear layers and an L2-normalization layer. The parameters in projection heads are randomly initialized. We use a simple segmentation head as the decoder, which consists of two $3\times 3$ convolutional layers (with a dilation rate of 5) and a $1\times 1$ prediction layer.
+
+\noindent\textbf{Implementation Details.} We train ToCo with an AdamW optimizer. The learning rate linearly increases to $6e^{-5}$ in the first 1500 iterations and decays with a polynomial scheduler for later iterations. The warm-up and decay rates are set as $1e^{-6}$ and 0.9, respectively. For experiments on the VOC dataset, the batch size and total iterations are set as 4 and 20k, respectively. The crop size of global and local view images are $448^2$ and $96^2$, respectively. Besides, we follow the multi-crop and data augmentation strategy in \cite{caron2021emerging} for global and local views. By default, the background thresholds $(\beta_l, \beta_h)$ are set as (0.25, 0.7). The temperature factors $\tau$ in Equation~\ref{eq_loss_ctc} is 0.5. The momentum factor for the EMA process in the CTC module is set as 0.9. The weight factors $(\lambda_1, \lambda_2, \lambda_3)$ of the loss terms in Section~\ref{sec_wsss} are set as (0.2, 0.5, 0.1). In the inference stage, following the common practice in semantic segmentation \cite{chen2017deeplab}, we use multi-scale testing and dense CRF processing.
+\par For the experiments on the COCO dataset, the network is trained for 80k iterations with a batch size of 8. The background thresholds $(\beta_l, \beta_h)$ are set as (0.25, 0.65), while other settings remain the same. The impact of hyper-parameters will be presented in Section~\ref{sec_ablation} and Supplementary Material.
+
+\subsection{Experimental Results}
+
+\begin{table}[tbp]
+  \small
+  \centering
+  \setlength{\tabcolsep}{0.8mm}
+  \begin{tabular}{l|c|c|cc|c}
+    \toprule
+                                                      & \multirow{2}{*}{$Sup.$}   & \multirow{2}{*}{$Net.$  } & \multicolumn{2}{c|}{\textbf{VOC}} & {\textbf{COCO}}                                                                                           \\ \cmidrule{4-6}
+                                                      &                           &                           & \texttt{val}                      & \texttt{test}                                                                             & \texttt{val}  \\ \midrule
+    \multicolumn{4}{l}{\cellcolor[HTML]{ffffff}\textbf{\textit{Multi-stage WSSS methods}}.}                                                                                                                                                                   \\
+    RIB \cite{lee2021reducing} \tiny NeurIPS'2021     & $\mathcal{I}+\mathcal{S}$ & DL-V2                     & 70.2                              & 70.0                                                                                      & --            \\
+    EPS \cite{lee2021railroad}  \tiny CVPR'2021       & $\mathcal{I}+\mathcal{S}$ & DL-V2                     & 71.0                              & 71.8                                                                                      & --            \\
+    L2G \cite{jiang2022l2g} \tiny CVPR'2022           & $\mathcal{I}+\mathcal{S}$ & DL-V2                     & 72.1                              & 71.7                                                                                      & 44.2          \\
+    RCA   \cite{zhou2022regional}   \tiny CVPR'2022   & $\mathcal{I}+\mathcal{S}$ & DL-V2                     & 72.2                              & 72.8                                                                                      & 36.8          \\
+    Du \etal   \cite{du2022weakly}   \tiny CVPR'2022  & $\mathcal{I}+\mathcal{S}$ & DL-V2                     & 72.6                              & 73.6                                                                                      & --            \\
+    RIB \cite{lee2021reducing} \tiny NeurIPS'2021     & $\mathcal{I}$             & DL-V2                     & 68.3                              & 68.6                                                                                      & 43.8          \\
+    ReCAM \cite{chen2022class} \tiny CVPR'2022        & $\mathcal{I}$             & DL-V2                     & 68.4                              & 68.2                                                                                      & 45.0          \\
+    VWL \cite{ru2022weakly}  \tiny IJCV'2022          & $\mathcal{I}$             & DL-V2                     & 69.2                              & 69.2                                                                                      & 36.2          \\
+    W-OoD \cite{lee2022weakly} \tiny CVPR'2022        & $\mathcal{I}$        
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

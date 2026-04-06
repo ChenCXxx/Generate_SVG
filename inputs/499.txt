@@ -1,0 +1,344 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Large language models (LLMs), after pre-training on massive corpora~\cite{gpt3,llama,mistral}, show a surprising ability to generate knowledgeable content~\cite{sun2022recitation,yu2022generate}.
+Although this ability facilitates a wide range of applications, such as question answering (QA)~\cite{abdallah2023generator,liu2021generated,li2022self} and information retrieval~\cite{mao2020generation,ma2023query}, 
+the propensity of LLMs to occasionally produce non-factual knowledge~\cite{truthfulqa,wang2023survey} potentially hinders the practical utilization of generated content.
+Thus, it is necessary \textit{to detect whether LLMs generate non-factual content}.
+Previous studies offer evidence that the internal representation vectors in LLMs determine whether they produce factual answers to the input question~\cite{azaria2023internal,kadavath2022language,zou2023representation}.
+Specifically, the factual behavior entailed is extracted from the feed-forward layer activations of tokens before the generated content using linear probes~\cite{alain2016understanding,belinkov2022probing}.
+However, their construction relies on the labor-intensive process of annotating natural language questions, as well as labeling LLMs' outputs with factuality annotations, a factor that limits their applicability to questions and responses with unseen distributions.
+
+To avoid the annotation process, the most recent studies detect non-factual content via online self-consistency checking~\cite{wang2022self}.
+They assume that if LLMs give contradictory responses to the same prompt, the model is more likely to hallucinate to give that answer~\cite{elazar2021measuring}. In this way, detecting non-factual content is reduced to the mutual-entailment analysis among multiple generations, which is usually realized as natural language inference (NLI) models~\cite{kuhn2023semantic,manakul2023selfcheckgpt} or heuristic comparison of the hidden representation similarity~\cite{anonymous2023inside}. However, self-consistency checking introduces extensive computation overhead to sample multiple responses. In addition, due to the lack of training process, these methods are less robust than previous factuality probes.
+
+Giving these limitations of existing methods, we propose \model, a method to
+\underline{p}red\underline{i}ct \underline{no}n-factual respon\underline{se}s from LLMs.
+The main idea of \model is to construct a probing model that learns from offline self-consistency checking.
+It aims to present two core advantages over existing methods:
+\textbf{Transferability.} 
+Comparing with existing probing methods, \model eliminates human annotation for training data.
+This is achieved with bootstrapped natural language questions and generated pseudo factuality labels through an \textit{offline} consistency checking mechanism.
+Moreover, as \model does not rely on specific training data, it transfers effortlessly to any different data distributions.
+\textbf{Efficiency and Effectiveness.}
+Comparing with online consistency checking, \model avoids the computational burden associated with multiple generations during inference, thus enhancing time efficiency.
+Additionally, by analyzing the continuous internal representations of LLMs  
+rather than discrete tokens in the response,
+\model gains access to a broader spectrum of information, enhancing its prediction effectiveness.
+We conduct comprehensive experiments on established factuality detection benchmarks and variations of QA datasets. Our results reveal several key findings: (1) \smodel outperforms supervised probing-based baselines by 7.7-14.6 AUC across QA datasets, despite being trained without annotated labels. (2) Moreover, our \smodel achieves significant performance improvements (3-7 AUC) compared to unsupervised consistency checking baselines, while also demonstrating superior time efficiency. (3) Additionally, the dataset generated via offline self-consistency checking shows promise for transferring to probe various LLMs.
+
+
+
+Preliminaries
+\label{sec:relate}
+
+This study concentrates on identifying non-factual content using decoder-only LLMs. It begins by formally defining the task and then elaborates on decoder-only LLMs and the construction of probes for these models. Additionally, it discusses the distinctions between online and offline self-consistency checking.
+
+\paragraph{Task Definition.}
+Formally, given a question $\rvq=\langle q_1, q_2, \dots, q_n \rangle$ composed of $n$ tokens, and its corresponding response $\rvr=\langle r_1, r_2, \dots, r_m \rangle$ consisting of $m$ tokens, non-factual content detection aims to assign a binary judgment $f\in\{\mathtt{True}, \mathtt{False}\}$, determining the factual correctness of $\rvr$.
+For example, given the question ``\textit{What is the capital city of China?}'', ``\textit{Beijing}'' serves as the response with $\mathtt{True}$ judgement, while ``\textit{Shanghai}'' is classified as $\mathtt{False}$.
+Without losing generality, we allow $\rvq$ to be null (\textit{i.e.,} $\rvq=\varnothing$), in which scenario, the task evaluates the factuality of the standalone assertion.
+
+To detect whether LLMs generate non-factual content, in our setting, the response $\rvr$ is usually sampled from an LLM. In this case, we expect the model to assess the factuality of content generated by itself without the need of another LLM. 
+
+\paragraph{Decoder-only LLMs.}
+Decoder-only LLMs comprise a stack of Transformer decoder layers~\cite{vaswani2017attention}. 
+After embedding tokens into the hidden representation $\rmH^{(0)}$, each layer manipulates the hidden representation of the previous layer as follows\footnote{We omit residual connection~\cite{he2016deep} and layer normalization~\cite{ba2016layer} for simplicity.}:
+\begin{equation*}\small
+\rmH^{(l)} = \mathtt{FFN}\left(\mathtt{Attn}\left(\rmH^{(l-1)}\right)\right),
+\end{equation*}\normalsize
+where $\mathtt{Attn}(\cdot)$ is the attention mechanism.
+$\mathtt{FFN}(\cdot)$ is the feed-forward network composed of two consecutive affine transformations and activation functions.
+Thus, the intermediate representations of decoder-only LLMs are usually extracted from the output of $\mathtt{FFN}(\cdot)$ operation.
+In the following of this paper, we denote the hidden representation of the $i^\text{th}$ token extracted from layer $l$ as $\rmH^{(l)}[i]$.
+\paragraph{Language Model Probing.}
+Probing method extracts implicit information from the intermediate representation.
+It is usually implemented as a simple classification model that maps from the hidden representation of certain token into discrete classes.
+
+The probe in \model is a two-layer feed-forward network with binary classification outputs:
+
+\begin{equation}
+\label{equ:probe}
+    \mathtt{Probe}\left(\rmH^{(l)}[i]\right) = \sigma_2\left(\rmW_2\sigma_1\left(\rmW_1\rmH^{(l)}[i] + \rvb_1\right) + \rvb_2\right),
+\end{equation}\normalsize
+
+\noindent where $\sigma_1$ is the $\texttt{Sigmoid}$ function, $\sigma_2$ is any non-linear function, and $\rmW, \rvb$ are trainable parameters.
+$\mathtt{Probe}\left(\rmH^{(l)}[i]\right)$ is the probability for $\mathtt{True}$.
+
+\paragraph{Consistency Checking.}
+Consistency checking requires LLMs to generate multiple responses towards the same question, and utilize these semantic consistency to judge whether the generations are correct.
+Previous methods for non-factual content detection are \textbf{\textit{online}} self-consistency checking, where LLMs need to generate extensive responses to answer a single question to obtain factuality labels.
+Our method falls into the \textit{\textbf{offline}} consistency checking category, where consistency checking is solely used to generate labels for training the probe. During online checking, LLMs only need to produce a single response and obtain the factuality label from the probe.
+
+
+Methodology
+\label{sec:method}
+
+\begin{figure*}[!ht]
+    \centering
+    \includegraphics[width=0.97\linewidth]{figure/factuality.pdf}
+    \caption{The overall architecture of \model.
+    \label{fig:framework}
+    }
+\end{figure*}
+
+The construction of \model involves three main stages:
+(1) In the data preparation stage, we bootstrap natural language questions and generate multiple responses, which together serve as model inputs;
+(2) In the offline consistency checking stage, we employ a peer review mechanism to generate pseudo factuality label for each response;
+(3) In the probe construction stage, these pseudo factuality labels are used to train a language model probe.
+Figure~\ref{fig:framework} illustrates the overall process.
+
+\subsection{Stage 1: Data Preparation}
+
+In alignment with the requirements of the non-factual content detection task, the supporting data consists of three elements: natural language questions $\rvq$, their corresponding responses $\rvr$, and factuality labels $f$.
+This stage concentrates on generating large-scale data containing the initial two elements (\textit{i.e.,} $\rvq$ and $\rvr$).
+
+\textbf{Question Bootstrapping.}
+\model leverages natural language questions to prompt LLMs to generate responses for consistency checking.
+However, natural language questions are not always available across all domains.
+Furthermore, both the diversity and quantity of questions can significantly impact the quality of the prepared data. Therefore, we aim to enable LLMs to bootstrap questions with minimal human involvement.
+
+Fortunately, as \citet{honovich2022unnatural} point out, high-performing language models show significant capacity in question generation.
+Inspired by these findings, we manually annotate a set of seed questions and employ them as demonstrations for LLMs to generate a large volume of questions via in-context learning~\citep[ICL]{gpt3}. 
+To enhance diversity in generation, we broaden the scope of seed questions by incorporating the generated ones and sample diverse combinations from the seed questions for subsequent generation. 
+
+\textbf{Diverse Response Generation.}
+We use previously generated questions as input for LLMs to generate multiple responses for subsequent consistency checking.
+We design two strategies to encourage the diversity of multiple responses to the same input question.
+(1) From the perspective of decoding, we adjust the decoding strategy by applying a greedy sampling method with a relatively high sampling temperature ($t=1$).
+
+
+The outcome of this stage is a dataset containing questions paired with multiple responses, designated as $\{\left(\rvq, \{\rvr_i\}\right)\}$, where the number of responses $k = |\{\rvr_i\}|$ serves as a hyperparameter that determines the quantity of responses per question for the subsequent consistency check.
+
+
+\subsection{Stage 2: Offline Consistency Checking}
+
+We engage LLMs in the offline consistency check process via a peer review mechanism.
+First, we gather reviews by asking LLMs to determine for each response whether it is consistent with other responses.
+Then, we enrich reviews by sampling multiple consistency judgements by varying model inputs.
+Finally, we integrate reviews to form the pseudo-factuality label for each response and filter out low-quality responses.
+
+\textbf{Review Gathering.}
+Formally, consistency reviewing involves asking an LLM to evaluate whether the response $\rvr_i$ to the question $\rvq$ is semantically consistent with other responses (\textit{i.e.,} $\rvr_j, j\neq i$). 
+If $\rvr_i$ has equivalent meaning with other responses, it is considered factual. 
+To ensure unambiguous judgment, we require the LLM to make pairwise comparisons with other $k-1$ responses. For each comparison, it must output one of three labels: ``\texttt{Consistent}'', ``\texttt{Neutral}'', or ``\texttt{Non-Consistent}''. 
+\textbf{Review Enrichment.}
+To enhance the diversity of reviews, we introduce variability in the input provided to the LLM during consistency assessments. Recognizing the significant impact of demonstrations on LLM judgments in ICL~\cite{wang2023label}, we utilize a range of diverse demonstration combinations for ICL to elicit varied reviews from the LLM for each pairwise comparison. Diverse demonstrations facilitate the collection of multiple reviews, each potentially providing a unique perspective. In total, we gather $N$ round of reviews for each pairwise comparison, where $N$ is a hyper-parameter.
+
+
+\textbf{Integration and Filtering.}
+We integrate $N$ reviews for each pairwise comparison, and subsequently integrate $k-1$ pairwise comparisons for each response through the same majority voting mechanism. Here is how the voting works: we first consider \texttt{Neutral} consistency judgement as an abstention for voting.
+Then, to guarantee the quality of the final dataset, we exclude controversial judgements where no single label (\texttt{Consistent}, \texttt{Neutral}, \texttt{Non-Consistent}) receives over $50\%$ of the votes. 
+This step ensures that only the most widely agreed-upon judgements are retained for analysis. Finally, we assign the factuality label $\mathtt{True}$ ($\mathtt{False}$) to responses that are predominantly considered consistent (non-consistent) with others.
+
+This stage outputs the dataset with full elements for consistency checking, \textit{i.e.,} $\{(\rvq, \{(\rvr_i, f_i)\})\}$.
+
+\subsection{Stage 3: Probe Construction}
+
+\model predicts the factuality of responses via a probing model, as defined in Equation~\ref{equ:probe}.
+ Subsequently, the hidden representation of the last token in the response at the middle layer of the LLM is employed as the input for the probing model.
+We train the probing model to maximize the probability of the factuality label while freezing all the parameters of the LLM.
+Formally, the construction process of the probe optimizes the following cross-entropy loss:
+\begin{equation}\notag\small
+     \text{loss} = -\sum_{\{\rvq,\rvr_j,f_j\}}\text{log}\, \texttt{Probe}\Big(\rmH^{(l)}[i]\Big) \mathbbm{1}\Big(f_j=\mathtt{True}\Big),
+\end{equation}\normalsize
+
+\noindent where $\mathbbm{1}(\cdot)$ is the indicator function, $i$ is the index of the last input token, and $l$ represents half the layer number of the LLM to be detected.
+\subsection{Discussion}
+
+We discuss the rationality of \model and the involvement of LLMs for implementing \model.
+
+The reason of why \model successfully detect non-factual responses comes from the model and data perspective.
+(1) \textbf{Model property.} 
+LLMs are well-calibrated after massive pre-training~\cite{kadavath2022language,zhu2023calibration}.
+This indicates that for non-factual responses, LLMs tend to assign less probability, while preserve relatively high probability for factual generations.
+This calibration property guarantees the feasibility of distilling factuality detection dataset from offline consistency checking.
+It also suggests that the internal states of LLMs tracks whether they are producing factual contents, which \model tries to uncover with probing model.
+(2) \textbf{Data quality.} Offline consistency checking gathers diverse instances of inconsistency between responses from LLMs, potentially enhancing the quality of training data for the probing model. Consequently, it enables the model to address a broader range of inconsistency scenarios compared to online consistency checking.
+Moreover, as the data collection process is fully automated, the dataset can be significantly larger than existing training data for factuality probes. 
+The feasibility of this principle is also widely verified in distant supervision~\cite{quirk2016distant}.
+To implement \model, LLMs are multiply invoked during the construction process, including 
+data preparation, peer reviewing in consistency checking, and finally non-factual detection. For a coherent implementation, we employ the same LLM for detecting the factuality of responses as the one used for generation and checking consistency. This implementation strategy aligns with our setting, where no third-party LLM is available, and it also enhances the transferability of our method.
+
+
+
+Experiment
+\label{sec:exp}
+
+We conduct experiments to examine the performance of \model by comparing it to baseline methods for factuality detection.
+Additionally, we assess its transferability and efficiency.
+\subsection{Experiment Setup}
+\subsubsection{Datasets}
+The datasets include both factuality detection benchmark and variations of QA datasets.
+We introduce the purpose to incorporate each dataset and their data specifications.
+Detailed statistics are shown in Table~\ref{tb:datastatistics}.
+
+\textbf{Benchmark.}
+We follow previous research to use \textbf{True-False} benchmark~\cite{azaria-mitchell-2023-internal}.
+True-False provides statements generated by LLMs along with corresponding factuality labels examined by humans. It does not include questions for each statement (\textit{i.e.,} $\rvq=\varnothing$).
+True-False comes with both training dataset and test dataset. 
+
+
+\textbf{Variation of QA.}
+Given that probing statements, such as those in True-False dataset, is less practical compared to examining responses to questions from LLMs, for practical evaluation, we establish test sets based on existing QA datasets: \textbf{Natural Questions (NQ)}~\cite{naturalquestion}, \textbf{TriviaQA}~\cite{triviaqa}, and \textbf{WebQ}~\cite{webq}.
+In particular, we sample $1,000$ questions from each dataset and employ Llama2-7B~\cite{llama2} to generate responses accordingly.
+The factuality label for each response is annotated by human annotators through comparing with the original ground-truth of each question.
+
+
+\begin{table}[!t]
+    \centering
+    \scalebox{0.86}{
+    \begin{tabular}{lccccc}
+        \toprule
+         & True-False & NQ & TriviaQA & WebQ \\
+        \midrule
+        \#Train & $5,000$ & $\mathtt{N/A}$ & $\mathtt{N/A}$ & $\mathtt{N/A}$ \\
+        \#Test & $1,000$ & $1,000$ & $1,000$ & $1,000$ \\
+        \%$\mathtt{True}$ & $40.5$ & $46.6$ & $49.5$ & $58.3$\\
+        \bottomrule
+    \end{tabular}
+    }
+    \caption{Data statistics. 
+    \#Train and \#Test are the number of instances in the training data and test set, respectively.
+    \%$\mathtt{True}$ is the ratio of $\mathtt{True}$ labels in the test set.}
+    \label{tb:datastatistics}
+\end{table}
+\subsubsection{Baselines}
+We compare \model against probing-based and consistency-checking-based methods. Additionally, to ensure a comprehensive comparison, we implement heuristic confidence-based methods as baselines.
+
+\begin{itemize}[leftmargin=*,itemsep=0pt,parsep=0pt]
+\item \textbf{Probing Based:}
+\textbf{SAPLMA}~\cite{azaria2023internal} utilizes a feed-forward neural network for factuality detection, trained on the True-False training data. 
+\textbf{RepE}~\cite{zou2023representation} conduct principal component analysis (PCA) on the internal representations of True-False training data.
+It selects a factual direction vector using the factuality labels. 
+During testing, RepE compute the dot product between the internal representation of the given response and the factual direction vector.
+
+\item \textbf{Consistency Checking Based:}
+We compare against SelfCheckGPT~\cite{selfcheckgpt}, which performs factuality detection via online self-consistency checking.
+We implement two variants.
+\textbf{SelfCheckGPT-NLI} (SCGPT-NLI) uses a BERT-based NLI model~\cite{williams-etal-2018-broad} for consistency checking, while \textbf{SelfCheckGPT-Prompt} (SCGPT-PT) elicits LLM itself to evaluate the consistency between two responses via prompt.
+
+
+\item \textbf{Confidence Based:}
+We also utilize model confidence as an indicator for factuality detection.
+\textbf{Perplexity-AVE} (PPL-AVE) and \textbf{Perplexity-Max} (PPL-MAX)~\cite{kadavath2022language,azaria2023internal,zou2023representation} quantify the average and maximum token-level probabilities of statements within each test set generated by the evaluated LLM. 
+\textbf{It-is-True}~\cite{azaria2023internal} compares the probabilities between sentences ``\textit{It is true that} $\rvq||\rvr$.'' and ``\textit{It is false that} $\rvq||\rvr$.'', where $||$ denotes concatenation.
+
+\end{itemize}
+It is worth noting that probing based baselines rely on training data.
+We thus implement them using the training dataset from True-False.
+Besides, as SCGPT-PT and SCGPT-NLI needs input questions to generate multiple responses, it is infeasible to test on True-False, where we mark their results as ``N/A'' in Table~\ref{tab:overall}. 
+
+\subsubsection{Evaluation Metrics}
+We follow conventions~\cite{azaria-mitchell-2023-internal} in factuality detection, employing the area under the receiver operating characteristic curve (AUC) and accuracy (ACC) as evaluation metrics.
+
+\subsubsection{Implementation Details}
+
+To implement \model, we uniformly use Llama2-7B for data preparation, consistency checking, and factuality detection.
+For hyperparameters, we set the number of sampled responses $N$ to $9$ and the round of peer review $k$ to $7$.
+For fair comparison, we also allow SelfCheckGPT to generate $N=9$ responses for consistency checking.
+The training dataset for \smodel consists of $20,000$ constructed triplets $\{(\rvq, \rvr_i, f_i)\}$. The threshold for calculating accuracy is determined by selecting the value that yields the highest accuracy among $100$ validation instances partitioned from the test sets.
+
+\input{tables/0-main_result}
+
+\subsection{Main Results}
+Table~\ref{tab:overall} presents the AUC and ACC scores for all the compared methods across four test sets. Meanwhile, Table~\ref{tb:efficiency} provides insights into the average detection time required by SCGPT-NLI and our \smodel for each instance. \textbf{In general, \smodel outperforms probing-based methods across all QA variation dataset, despite being trained without annotated labels. Additionally, \smodel exhibits superior performance compared to consistency checking methods and is also more efficient.} Some detailed findings include:
+
+\textbf{Leveraging factuality labels substantially improves factuality detection accuracy.} 
+This is evidenced by \smodel's superior performance trained on factuality labels, compared to confidence-based methods such as PPL and It-is-True. 
+
+\textbf{Limitations of annotated labels on model transferability.}
+Despite being trained using annotated labels, probing-based methods like RepE and SAPLMA lag behind a large margin compared to \smodel on the three QA variation test sets. This disparity arises because the two baselines are trained on True-False's training data, which consists of statements rather than question and responses. 
+This difference in input distribution significantly limits the transferability of these models to out-of-distribution datasets. In contrast, \smodel is trained on a diverse range of questions, leading to superior performance across the QA datasets. The slight lag observed in True-False from SAPLMA is also attributed to the model's training on questions. However, probing the factuality of responses to questions is more practical than evaluating statements given by True-False. Therefore, training on datasets guided questions is reasonable.
+\textbf{Self-consistency correlates well with factuality.} Despite SCGPT lacking supervision from factuality labels, it surpasses supervised probing-based baselines, suggesting a strong correlation between its self-consistency principle and factuality. Furthermore, \model, also adhering to the self-consistency principle, outperforms SCGPT. This is due to \smodel being exposed to numerous instances with diverse inconsistencies between responses, unlike SCGPT, which focuses solely on responses related to the given question. Moreover, \smodel evaluates the consistency of internal representations rather than discrete output responses like SCGPT, allowing it access to a wider range of information, thereby enhancing its predictive accuracy.
+
+\textbf{\model's detection time is significantly shorter than SCGPT}, as shown in Table~\ref{tb:efficiency}. This is because \smodel relies on offline consistency checking, incorporating consistency characteristics into internal representations during training. As a result, its online inference depends solely on internal representations, eliminating the need for multiple online inferences like those performed by SCGPT.
+\begin{table}[!t]
+    \centering
+    \scalebox{0.85}{
+    \begin{tabular}{lcccc}
+        \toprule
+         &  NQ & TriviaQA & WebQ \\
+        \midrule
+        SCGPT-NLI &  2.530 & 2.210 & 2.050 \\
+        \model & 0.024 & 0.023 & 0.024 \\
+        
+        \bottomrule
+    \end{tabular}
+    }
+    \caption{Average time required for detecting each instance (in seconds).}
+
+    \label{tb:efficiency}
+\end{table}
+
+\subsection{Cross-model Evaluation}
+To implement \model, LLMs are invoked multiple times during the construction process, including data preparation, peer reviewing in consistency checking, and finally non-factual detection. 
+By default, we employ the same LLM for all stages, leveraging an LLM's calibration property. 
+Additionally, we explore whether training data generated by one LLM can effectively train a probe to detect the factuality of content generated by other LLMs. 
+To study this, we use Llama2-7B for data preparation but vary the detection target to Llama2-13B and Mistral-7B. We further switch the LLM for consistency checking to Llama2-13B  and Mistral-7B, consistent with the model to be detected. It's important to note that for a given LLM to be detected, the probe needs to be aligned with it, specifically in terms of probe's input, which consists of the internal representation of the response along with the question, that must be generated by the LLM. The crucial findings, as presented in Table~\ref{tb:crossmodel}, include:
+
+\textbf{More powerful LLMs brings better detection performance.} 
+Comparing group 2 and 3 with group 1, where the training data remains consistent (created by Llama2-7B), probes built based on more powerful LLMs demonstrate higher performance, attributed to the enhanced representational capacity of these models.
+
+\textbf{Generated data facilitates probing across various LLMs.} Switching the LLM for consistency checking to match the LLM being detected results in comparable performances between groups 4 and 2, as well as between groups 5 and 3, respectively.
+This indicates that we can generate the training data, comprising (question, response, factuality label) triplets, once, regardless of the LLMs being probed, and utilize them uniformly to train probes for any LLM.
+\begin{table}[t]
+    \centering
+    \scalebox{0.82}{
+    \setlength{\tabcolsep}{5pt}
+    \begin{tabular}{@{}c|ccccc@{}}
+        \toprule
+         \# & \tabincell{c}{Data\\Preparation} & \tabincell{c}{Consistency\\ Checking} & \tabincell{c}{Factuality\\detection} & AUC & ACC  \\
+        \midrule
+        1&Llama2-7B & Llama2-7B & Llama2-7B  & $80.4$ & $72.5$\\
+        \midrule
+        2&Llama2-7B & Llama2-7B & Llama2-13B & $81.1$ & $73.2$\\
+        3&Llama2-7B & Llama2-7B & Mistral-7B & $81.3$ & $73.1$\\
+        \midrule
+        4&Llama2-7B & Llama2-13B & Llama2-13B & $81.7$ & $73.5$\\
+        5&Llama2-7B & Mistral-7B & Mistral-7B & $81.4$ & $73.3$\\
+
+        \bottomrule
+    \end{tabular}
+    }
+\caption{Cross-model evaluation performance on NQ. We explore different combinations of LLMs across each of the three stages to evaluate their effectiveness.}
+
+    \label{tb:crossmodel}
+\end{table}
+
+\subsection{Ablation Studies on Data Preparation}
+We examine the impact of question distribution in the data preparation stage with two variants:
+\begin{itemize}[leftmargin=*,itemsep=0pt,parsep=0pt]
+    \item \textbf{\smodel with self questions:} 
+    Assumes a scenario where the training dataset consists of questions from the same distribution as the test questions. 
+    We utilize questions from the training data that belong to the same dataset as the test set.
+    \item \textbf{\smodel with external questions:} Considers a scenario where questions from the same distribution as the test questions are unavailable. We utilize questions from the training data that belong to a different dataset from the test set.
+\end{itemize}
+
+We evaluate these variants across three QA test sets, maintaining a consistent number of training questions ($1,000$ per set) for the first variant. For the second variant, we collect $5,000$ training questions from the remaining two datasets for each target test set. Additionally, we vary the number of generated questions within the range of [1K, 2K, 3K, 4K, 5K, 10K] to assess its impact.
+Figure~\ref{fig:questiongeneration}(a)(b)(c) presents the performance of these variants on the three QA test sets. We find:
+
+\textbf{Training on questions of the same distribution as the test set yields significantly better results than a different distribution.} Despite having more external questions ($5,000$ vs $1,000$), the second variant still lags behind the first. 
+
+\textbf{Training on generated questions could enhance transferability of the probe.} Across the three test sets, training with fewer than $5,000$ generated questions (approximately $3,000+$, $2,000+$, $1,000+$ questions on NQ, TriviaQA, and WebQA, respectively) can achieve performance comparable to using $5,000$ external questions. Additionally, training with approximately $6,000$, $10,000$, and $3,000$ generated questions on these three datasets respectively could outperform training using $1,000$ self-questions.
+These results indicate that generated questions offer greater diversity, facilitating the transferability of the probe across different test sets, despite the diverse distributions observed among the three test sets.
+
+\begin{figure*}[t]
+	\centering
+	\subfigure[NQ]{\label{subfig:nq}
+		\includegraphics[width=0.21\textwidth]{figure/nq}
+	}		
+	\subfigure[TriviaQA]{\label{subfig:triviaQA}
+		\includegraphics[width=0.21\textwidth]{figure/trivia}
+	}		
+	\subfigure[WebQA]{\label{subfig:webq}
+		\includegraphics[width=0.21\textwidth]{figure/webq}
+	}		
+	\subfigure[N\&k on NQ]{\label{s
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

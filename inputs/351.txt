@@ -1,0 +1,333 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+Open-vocabulary object detection (OVD) aims to detect objects belonging to open-set categories.
+It is a challenging task because novel categories do not appear during training. 
+Pre-trained vision-language models (VLMs) enable the detector to recognize base categories as well as novel categories via their zero-shot visual recognition ability learned from large-scale image-text pairs from the Internet.
+For instance, CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling} are widely used in OVD to classify unseen objects~\cite{gu2022open,wang2023object,lin2022learning}.
+
+\input{Figures/intro}
+Knowledge distillation is one approach to transfer the knowledge of VLMs to the detector. It has been extensively explored in the literature~\cite{gu2022open,Hanoona2022Bridging,wang2023object,zhong2022regionclip,du2022learning}.
+For more effective knowledge distillation, some works have endeavored to match words at the region level rather than at the image level to ensure better alignment~\cite{Hanoona2022Bridging,wang2023object,zhong2022regionclip}.
+To improve generalization to novel categories, several studies employ pseudo-labeling to expand detector knowledge~\cite{zhong2022regionclip,gao2022open,zhao2022exploiting,cho2023open}. 
+Pseudo-labels (positive classes) are generated for region proposals by matching their visual features with words from additional vocabulary sets or captions.
+So, the additional vocabulary sets are constructed only focusing on `positive' classes.
+We believe that more diverse vocabulary sets, such as `negative' classes and verbalized (visual) concepts with new techniques, will open the door to further improving OVD frameworks. 
+
+To study the underexplored directions, in this paper
+we propose methods utilizing `negative' classes and 
+`verbalized concepts' to more effectively use vocabulary sets to enhance the generalization ability to novel categories. 
+One approach involves retrieving vocabularies that have semantic relationships from large vocabulary sets when given a specific category. 
+For example, given the category `jaguar', we retrieve `cat' and `bottle' as hard (similar) and easy (dissimilar) negative vocabulary, respectively as shown in \Cref{fig:cr_intro_vocab}.
+Using these negative classes, we augment loss functions.
+Another approach is generating verbalized concepts that describe the attributes (\eg, sharp teeth) of classes by LLMs, as depicted in \Cref{fig:cr_intro_concept}.
+This information is useful in learning effective representations.
+
+We present a novel framework, \textbf{R}etrieval-\textbf{A}ugmented  \textbf{L}osses and visual \textbf{F}eatures (RALF), which retrieves vocabularies and concepts from a large vocabulary set and augments losses and visual features.
+RALF is composed of two parts: Retrieval-Augmented Losses (RAL) and Retrieval-Augmented visual Features (RAF).
+Given the ground-truth label, we construct hard and easy negative vocabularies by retrieving from the vocabulary store based on similarity. 
+Then, RAL optimizes the distance between the ground-truth label and pre-defined vocabularies with additional losses.
+Additionally, we utilize a large language model (LLM) to obtain abundant information rather than word units. 
+After generating descriptions about large vocabularies from LLM, we extract verbalized concept details that represent the characteristics of the objects and pile them in a concept store.
+During inference time, RAF augments visual features with the verbalized concepts retrieved from the concept store.
+Then the enhanced features are used in classification.
+To validate the effectiveness of RALF, we conducted experiments on COCO and LVIS benchmarks. 
+Overall, RALF improves the generalization ability of the detector.
+
+Our contributions are threefold: 
+\begin{itemize}
+    \item  We present \textbf{RALF} that retrieves vocabularies and augments losses and visual features to improve the generalizability of open-vocabulary object detectors.
+    \item \textbf{RAL} optimizes an embedding space by reflecting the distance between ground-truth labels and negative vocabularies from a large vocabulary set. And \textbf{RAF} augments visual features with  verbalized concepts relevant to visual attributes in images.
+    \item With the method, we achieve 41.3 AP$^\text{N}_{50}$ in novel categories on the COCO benchmark and also reach 21.9 mask AP$_\text{r}$ in novel categories on LVIS. 
+\end{itemize}
+\input{Figures/main}
+
+
+Related works
+\noindent\textbf{Pre-trained vision-language model.}
+Pre-trained VLMs such as CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling} are trained on large image-text pair datasets via contrastive learning for joint representation in visual and language modalities. Pre-trained VLMs consist of two encoders - image encoder and text encoder - extracting image embedding and text embedding, respectively. By applying contrastive learning, they can be aligned with each other in the same latent space. For this reason, pre-trained VLMs have superior generalizability and transferability to various downstream tasks. For example, CLIP~\cite{radford2021learning} which is pre-trained on extensive image-text pair data, shows impressive performance on zero-shot image classification tasks. Recently, thanks to the success of CLIP, there have been many studies for introducing VLMs to various downstream tasks such as image segmentation~\cite{zhou2022extract,rao2022denseclip,li2022languagedriven}, image generation~\cite{wang2022clip,ramesh2022hierarchical}, and object detection~\cite{gu2022open,wang2023object,Hanoona2022Bridging,wu2023aligning,lin2022learning}.
+
+\noindent\textbf{Open-vocabulary object detection.}
+Object detection task refers to a task that detects an object in a scene and classifies the detected object. A representative study, Fast R-CNN~\cite{girshick2015fast}, shows excellent object detection performance with CNN architecture. However, there is a limit to the object detection task that requires a lot of human cost for annotation. A zero-shot object detection approach was presented to determine whether a detector can detect a category that was not seen during learning. Recently, open-vocabulary object detection (OVD)~\cite{wu2023aligning,wang2023object,wu2023cora} has attracted attention. OVD evaluates the ability to predict novel categories by learning using additional caption data such as CC3M~\cite{sharma2018conceptual}. As pre-trained VLMs trained with large datasets perform well with zero-shot for various downstream tasks, diverse approaches to solve through pre-trained VLMs have been studied in OVD. ViLD~\cite{gu2022open}, the most representative study, uses knowledge from CLIP, one of the pre-trained VLMs, and learns the class-agnostic region proposal to perform well for unseen classes. Many follow-up studies have also been conducted on this, and Object-Centric-OVD~\cite{Hanoona2022Bridging} proposes an object-centric alignment method to solve the localization problem that occurs when CLIP is applied to OVD.
+
+\noindent\textbf{Retrieval-augmentation.}
+Retrieval augmentation was initially introduced in language generation tasks for parameter efficiency.
+RAG~\cite{lewis2020retrieval} introduces generation models that combine parametric and non-parametric memory access. 
+Recently, retrieval augmentation has been utilized in many vision tasks~\cite{long2022retrieval,xu2021texture,tseng2020retrievegan}.
+RDMs~\cite{blattmann2022retrieval} suggest efficiently storing an image database and conditioning a relatively compact generative model.
+EXTRA~\cite{ramos2023retrieval} proposes a retrieval-augmented image captioning model that enhances performance by leveraging cross-modal representations.
+Unlike these methods employing retrieval augmentation in generation tasks, we applied retrieval augmentation to the OVD task for the first time in our knowledge.
+
+
+
+Method
+In this section, we proposed a new framework \textbf{RALF} that \textbf{R}etrieves information from a large vocabulary store and \textbf{A}ugments \textbf{L}osses and visual \textbf{F}eatures.
+Before we delve into RALF, we briefly introduce the open-vocabulary object detection task in \Cref{subsec:prelim}. 
+The overall pipeline of the proposed method is described in~\Cref{subsec:overview}.
+Our method consists of two modules: 1) Retrieval-Augmented Losses (RAL) to train the object detector, and 2) Retrieval-Augmented visual Features (RAF) using 
+the generated concepts by a large language model. 
+The modules are presented in \Cref{subsec:ral} and \Cref{subsec:raf}, respectively. 
+
+\subsection{Preliminaries}
+\label{subsec:prelim}
+Open-vocabulary object detection (OVD) is an advanced visual recognition task that extends the capability of traditional object detectors beyond pre-trained categories. 
+OVD aims to \emph{localize} and \emph{classify} a wide range of objects, including the categories not encountered during training. 
+In OVD, the pre-trained categories and unseen categories are called base categories $C^\mathcal{B}$ and novel categories $C^\mathcal{N}$, respectively.
+In general, the approaches for OVD leverage a pre-trained region proposal method, \eg, Region Proposal Network (RPN), for category-agnostic (initial) localization. 
+After the region proposal step, OVD methods utilize a pre-trained vision-language model to classify a wide range of categories in a zero-shot learning manner. 
+Specifically, given region proposal $r$, the methods extract a region embedding $\boldsymbol{e}_r \in \mathbb{R}^d$ and compute the similarity or perform zero-shot classification with the text embeddings of category $\mathcal{T}(c) \in \mathbb{R}^d$, where $\mathcal{T}$ is the text encoder and $c$ is either a base or new category, \ie, $c \in  C^\mathcal{B}\cup C^\mathcal{N}$. 
+Unless explicitly stated, vectors are row vectors in this paper.
+
+\subsection{Overview of RALF}
+\label{subsec:overview}
+We present the overall pipeline of \textbf{R}etrieval-\textbf{A}ugmented \textbf{L}osses and visual \textbf{F}eatures \textbf{(RALF)}. 
+As described in \Cref{fig:cr_main}, RALF consists of two modules: 1) \textbf{RAL} (\Cref{fig:cr_main_train_ral}), which retrieves negative vocabularies from the vocabulary store by semantic similarity, and enhances the loss function for training object detectors, 
+and 2) \textbf{RAF} (\Cref{fig:cr_main_train_raf}), which augments visual features using verbalized concepts by a large language model given retrieved vocabulary. 
+
+In RAL, we define two negative vocabulary sets $V_{y_{b}}^{\text{hard}}$ and  $V_{y_{b}}^{\text{easy}}$ to train the object detector. 
+They are retrieved based on the semantic similarity score between the ground-truth class label $y_{b}$ and vocabularies from the external vocabulary store $C^{\mathcal{V}}$. 
+In RAF, we extract the concepts associated with objects by LLM and retrieve them to augment visual feature $\boldsymbol{v}_{r} \in \mathbb{R}^d$ by using the augmenter $\mathcal{A}$ for better classification. 
+
+Following the conventional OVD setup, our detector is trained with annotated bounding boxes of base categories $C^{\mathcal{B}}$.
+As shown in \Cref{fig:cr_main_train_ral}, retrieval-augmented losses are additionally used for training. 
+The total loss for training the object detector is defined as follows:
+\begin{equation}
+    \mathcal{L}^{\text{total}} = \mathcal{L}^\text{baseline} 
+    +\mathcal{L}^\text{RAL},
+\end{equation}
+where $\mathcal{L}^\text{baseline}$ denotes the loss of the baseline and $\mathcal{L}^\text{RAL}$ is explained in \Cref{subsec:ral}.
+We utilize the obtained conceptual information to train the RAF module independently.
+As illustrated in \Cref{fig:cr_main_test},
+RAF augments the visual feature in a plug-in manner during inference time.
+Detailed explanations of RAL and RAF will be introduced in \Cref{subsec:ral} and \Cref{subsec:raf}, respectively.
+
+\input{Figures/ral}
+
+\subsection{Retrieval-Augmented Losses}
+\label{subsec:ral}
+In our method, we introduce Retrieval-Augmented Losses (RAL), a novel framework utilizing a large vocabulary store to enhance 
+the detector's generalization power across both base and novel object categories.
+Our approach, as described in~\Cref{fig:cr_ral}, involves the creation of distinct negative vocabulary sets -- categorized as `hard' and `easy' -- based on
+their similarities to the ground-truth category. 
+RALF trains the detector with RAL, which is established with triplet losses between hard and easy negative vocabulary and ground-truth box.
+
+\noindent\textbf{Negative retriever.}
+To derive hard and easy negative vocabularies, we exploit a large vocabulary set containing a wider range of object classes.
+First, we remove redundant categories from a vocabulary set and refine the vocabulary store $C^\mathcal{V}$ to prevent the possibility that the detector may see novel categories $C^\mathcal{N}$, \ie, $C^\mathcal{V} \cap C^\mathcal{N} = \varnothing$.
+Then, we define hard negative vocabulary $V_{y_b}^{\text{hard}}$ and easy negative vocabulary $V_{y_b}^{\text{easy}}$ using relative similarity.
+Specifically, given a ground-truth class label $y_b$, we obtain text embedding $\mathcal{T}(y_b) \in \mathbb{R}^d$.
+The negative retriever samples hard and easy negative vocabularies from $C^\mathcal{V}$ with respect to cosine similarity between $\mathcal{T}(y_b)$ and $\mathcal{T}(C^\mathcal{V})$.
+However, we observed that some vocabularies have constantly high (or low) similarity scores for any base category. In this case, the vocabularies are not useful to augment losses. To mitigate this issue, we adopt the rank variance sampling scheme, which filters out the vocabularies based on the variance of their rankings measured by similarity. Specifically, we first measure the similarity between a base category $c \in  C^\mathcal{B}$ and all the vocabularies in $C^\mathcal{V}$. Then, the ranking of $C^\mathcal{V}_i$ given $c$ is defined as:
+\begin{equation}
+    \underset{c \in C^\mathcal{B}}{\text{rank}_{c}(C_i^{\mathcal{V}})}  = 1+\sum_{ j \neq i} \mathbbm{1}[\mathcal{T}(c) \mathcal{T}(C^\mathcal{V}_j)^\top > \mathcal{T}(c) \mathcal{T}(C^\mathcal{V}_i)^\top]. 
+\end{equation}
+We finally compute the variance of $\text{rank}_{c}(C_i^{\mathcal{V}})$ using all $C^\mathcal{B}$. 
+Vocabularies with a relatively low variance of rankings are removed.
+Then, top-$m$ and bottom-$m$ vocabularies based on the similarity score are selected for each base category as hard and easy negative vocabularies, respectively. 
+For each iteration of training, $n$ vocabularies are randomly selected among the $m$ vocabularies to augment losses. 
+Further details of sampling schemes are discussed in the supplementary materials.
+
+\noindent\textbf{Hard and easy negative losses.}
+Hard and easy negative vocabularies are denoted as $V_{y_b}^{\text{hard}}$ and $V_{y_b}^{\text{easy}}$, respectively. 
+$V_{y_b}^{\text{hard}}$ consists of the words similar to ground-truth $y_b$ class whereas $V_{y_b}^{\text{easy}}$ is the least similar words to $V_{y_b}^{\text{hard}}$.
+Using the two sets of negative vocabularies with the triplet loss, we propose hard negative loss $\mathcal{L}^{\text{hard}}$ and easy negative loss $\mathcal{L}^{\text{easy}}$. 
+Specifically, we first define the average cosine similarity with ground-truth embedding $\boldsymbol{e}_b$ as below:
+\begin{align}
+    & U_{y_b}^{\text{hard}} := \cfrac{1}{n} \; \mathbf{1} \mathcal{T}(V^\text{hard}_{y_b}) \boldsymbol{e}_b^\top, 
+    \label{eq:avg_hard}
+    \\
+    & U_{y_b}^{\text{easy}} := \cfrac{1}{n} \; \mathbf{1} \mathcal{T}(V^\text{easy}_{y_b}) \boldsymbol{e}_b^\top,
+    \label{eq:avg_easy}
+\end{align}
+where $\mathbf{1} \in \mathbb{R}^n$ given $n$ vocabularies.
+Then, the hard negative loss $\mathcal{L}^{\text{hard}}$ and easy negative loss $\mathcal{L}^{\text{easy}}$ are defined as follows:
+\begin{align}
+    & \mathcal{L}^\text{hard} = \max \left( \lambda^\text{hard} U^\text{hard}_{y_b} - \mathcal{T}(y_b) \boldsymbol{e}_b^\top + \alpha^\text{hard}, 0 \right),
+    \label{eq:loss_hard}
+    \\
+    & \mathcal{L}^\text{easy} = \max \left( \lambda^\text{easy} U^\text{easy}_{y_b} - U^\text{hard}_{y_b} + \alpha^\text{easy}, 0 \right),
+    \label{eq:loss_easy}
+\end{align}
+where $\lambda^{\text{hard}}$ and $\lambda^{\text{easy}}$ are hyperparameters, and $\alpha^{\text{hard}}$ and $\alpha^{\text{easy}}$ denote margins.
+To sum up, hard negative loss $\mathcal{L}^{\text{hard}}$ encourages $\boldsymbol{e}_b$ to have higher similarity with $y_b$ than $V_{y_b}^{\text{hard}}$.
+Easy negative loss $\mathcal{L}^{\text{easy}}$ prompts $V_{y_b}^{\text{hard}}$ to exhibit relatively higher similarity to $y_b$ than $V_{y_b}^{\text{easy}}$.
+The total loss $\mathcal{L}^{\text{RAL}}$ is computed with a summation of hard negative loss and easy negative loss as follows:
+\begin{equation}
+    \mathcal{L}^{\text{RAL}} = \beta^{\text{hard}}\mathcal{L}^{\text{hard}} + \beta^{\text{easy}}\mathcal{L}^{\text{easy}},
+    \label{eq:raf_loss}
+\end{equation}
+where $\beta^{\text{hard}}$ and $\beta^{\text{easy}}$ are hyperparameters.
+
+\subsection{Retrieval-Augmented visual Features}
+\label{subsec:raf}
+We introduce Retrieval-Augmented visual Features (RAF) that augments visual features using the \emph{verbalized concepts} of each object category, as depicted in \Cref{fig:cr_raf}.
+
+\noindent\textbf{Concept store.}
+The concept store consists of a set of characteristics describing the object (\eg, color, scale, shape, etc.).
+The characteristics for $C^\mathcal{B} \cup C^\mathcal{V}$ are generated by a large language model (LLM) using `$\texttt{Describe}$ $\texttt{what a(n)}$ $\texttt{\{vocabulary\}}$ $\texttt{looks like.}$' prompt template, following~\cite{kaul2023multi}.
+Note that $C^\mathcal{N}$ is not used to generate verbalized concepts.
+We remove meaningless words such as prepositions from descriptions generated by LLM and store only meaningful noun chunks in the concept store.
+
+\noindent\textbf{Concept retriever.}
+Concepts for augmenting visual features are retrieved by the concept retriever.
+Concept embeddings $H$ are obtained from the text encoder $\mathcal{T}$ with the concepts from the concept store.
+Given visual feature $\boldsymbol{v}_r \in \mathbb{R}^d$, the concept retriever calculates the cosine similarity between concept embeddings $H$ and visual feature $\boldsymbol{v}_{r}$. 
+Then, it returns the $k$ most relevant concept embeddings $H_{r} \in \mathbb{R}^{k \times d}$ and corresponding scores $\boldsymbol{s}_{r} \in \mathbb{R}^{k}$.
+
+\input{Figures/raf}
+
+\noindent\textbf{Augmenter.}
+We propose an augmenter $\mathcal{A}$ that augments visual feature $\boldsymbol{v}_{r}$ with the retrieved concepts.
+Let $\boldsymbol{v}_r^\text{aug} \in \mathbb{R}^d$ denote a combination of $\boldsymbol{v}_{r}^{\text{coarse}} \in \mathbb{R}^d$ and $\boldsymbol{v}_{r}^{\text{fine}} \in \mathbb{R}^d$. 
+$\boldsymbol{v}_{r}^{\text{coarse}}$ is calculated as:
+\begin{equation}
+    \boldsymbol{v}_r^\text{coarse} = \text{Proj}(\boldsymbol{v}_r),
+    \label{eq:aug}
+\end{equation}
+where $\text{Proj}(\cdot)$ is a linear projection.
+On the other hand, $\boldsymbol{v}_{r}^{\text{fine}}$ is enhanced with the retrieved concepts.
+It is the final output of the decoder that has query embedding $\boldsymbol{q}_1 \in \mathbb{R}^d$ as query and $M \in \mathbb{R}^{(1 + k) \times d}$ as key and value. 
+$M$ is computed as:
+\begin{equation}
+    M = (\boldsymbol{v}_r + E^\text{type}_0) \| (\text{diag}  (\text{softmax}(\boldsymbol{s}_r)) H_r + E^\text{pos} + E^\text{type}_1),
+    \label{eq:M}
+\end{equation}
+where $\text{diag}(\cdot)$ denotes a diagonal matrix function and $\|$ is the concatenation function.
+$E^\text{pos} \in \mathbb{R}^{k \times d}$ denotes positional embeddings to determine how many concepts will be utilized.
+$E^\text{type}_0 \in \mathbb{R}^d$ and $E^\text{type}_1 \in \mathbb{R}^d$ are type embeddings to distinguish $\boldsymbol{v}_r$ between information from retrieved concepts. $E^\text{type}_1$ is replicated to $\mathbb{R}^{k \times d}$ in \cref{eq:M}.
+The augmenter $\mathcal{A}$ consists of $L$ decoder layers. 
+The operation in $l$-th decoder layer is as follows:
+\begin{equation}
+    \begin{split}
+        \boldsymbol{q}^{\prime}_{l}&=\boldsymbol{q}_{l}+\text{CA}(\boldsymbol{q}_{l}, M, M), \\
+        \boldsymbol{q}_{l+1}&= \boldsymbol{q}^{\prime}_{l}+\text{FFN}(\boldsymbol{q}^{\prime}_{l}), \\
+        \boldsymbol{v}_{r}^{\text{fine}} &= \boldsymbol{q}_{L},
+    \end{split}
+\end{equation}
+where $l \in \{1, \ldots, L\}$.
+The term \text{CA} represents cross-attention operation, while \text{FFN} stands for feed-forward network.
+Finally, the augmented visual feature $\boldsymbol{v}^\text{aug}_r$ is obtained by adding the coarse and fine feature of $\boldsymbol{v}_{r}$ as below:
+\begin{equation}
+    \boldsymbol{v}_r^\text{aug} = \boldsymbol{v}_{r}^{\text{coarse}} + \boldsymbol{v}_{r}^{\text{fine}}.
+    \label{eq:aug_v_r}
+\end{equation}
+At test time, as depicted in \Cref{fig:cr_main_test} the augmented visual features and text embeddings of test categories are used to compute auxiliary logits $\boldsymbol{l}_r^\text{aux}$: 
+\begin{equation}
+    \boldsymbol{l}_r^\text{aux} = \boldsymbol{v}_r^\text{aug} {\mathcal{T}(C^\mathcal{B} \cup C^\mathcal{N})}^\top.
+\end{equation}
+Then the auxiliary logits are ensembled with $\boldsymbol{l}_r$ to compute the final logits $\boldsymbol{l}_r^\text{final}$ for the final classification of proposal $r$. The details of the logit ensemble are described in \Cref{sec:experiments}.
+
+\noindent\textbf{Loss for RAF training.} 
+We pre-trained RAF with visual features from region proposals.
+For pre-training, we use classification loss $\mathcal{L}^{\text{cls}}$ and regularization loss $\mathcal{L}^{\text{reg}}$. 
+We first define the pseudo-label of region proposal $r$ as $\tilde{y}_r$: 
+\begin{equation}
+    \tilde{y}_r = \argmax_{c \in (C^\mathcal{B} \cup C^\mathcal{V})} ( \mathcal{T}(c)\boldsymbol{v}_r^\top).
+\end{equation}
+Then, using the pseudo-labels, classification loss $\mathcal{L}^{\text{cls}}$ is defined as:
+\begin{equation}
+    \mathcal{L}^\text{cls} = \cfrac{1}{N}\sum_r \mathcal{L}^\text{ce}(\boldsymbol{v}^\text{aug}_r {\mathcal{T}(C^\mathcal{B} \cup C^\mathcal{V})}^\top, \tilde{y}_r), 
+    \label{eq:cls_loss}
+\end{equation}
+where $N$ is the number of proposals per image and $\mathcal{L}^\text{ce}$ is the cross entropy loss.
+We encourage augmented visual feature $\boldsymbol{v}_r^{\text{aug}}$ to similar to the original visual feature $\boldsymbol{v}_r$ using regularization loss $\mathcal{L}^{\text{reg}}$ defined as below:
+\begin{equation}
+    \mathcal{L}^\text{reg} = \cfrac{1}{N}\sum_r (\boldsymbol{v}^\text{aug}_r - \boldsymbol{v}_r)^2.
+    \label{eq:reg_loss}
+\end{equation}
+Finally, the total loss $\mathcal{L}^{\text{RAF}}$ for RAF training is the combination of~\cref{eq:cls_loss} and~\cref{eq:reg_loss} as follows:
+\begin{equation}
+    \mathcal{L}^{\text{RAF}} = \beta^{\text{cls}}\mathcal{L}^{\text{cls}} + \beta^{\text{reg}}\mathcal{L}^{\text{reg}},
+\end{equation}
+where $\beta^{\text{cls}}$ and $\beta^{\text{reg}}$ are hyperparameters.
+
+
+
+Experiments
+\label{sec:experiments}
+In this section, we briefly discuss the experimental setup, including datasets and implementation details.
+Next, we evaluate the performance of RALF compared to various baselines and investigate RALF with further analysis. 
+
+\noindent\textbf{Datasets.}
+We evaluate RALF on two public benchmarks, COCO~\cite{lin2014microsoft} and LVIS~\cite{gupta2019lvis}. 
+In the open-vocabulary object detection setting, COCO dataset is split into 48 base categories and 17 novel categories following OVR-CNN~\cite{zareian2021open}. 
+It includes 118k images, which separated 107,761 images for training and 4,836 images for validation. 
+Referring to ViLD~\cite{gu2022open}, we divide the LVIS dataset into 866 base categories and 337 novel categories. 
+For both benchmarks, we use base categories during training, yet novel categories are also validated for inference. 
+We adopt the mean average precision (mAP) as the evaluation metric. 
+We report $\text{AP}_{\text{50}}$, ${\text{AP}}^{\text{B}}_{\text{50}}$, and ${\text{AP}}^{\text{N}}_{\text{50}}$ for COCO and $\text{AP}_{\text{r}}$, $\text{AP}_{\text{c}}$, ${\text{AP}}_{\text{f}}$, and ${\text{AP}}$ for LVIS. 
+Note that instance segmentation (mAP) results are reported on LVIS.
+To generate the vocabulary store, we adopt V3Det~\cite{wang2023v3det} as a vocabulary set. 
+
+\noindent\textbf{Implementation details.}
+We implement RALF with pre-trained CLIP~\cite{radford2021learning} with ViT-B/32 image encoder backbone and text encoder from the official repository. 
+Note that we freeze all parameters in image and text encoders during training. 
+Additionally, we use GPT-3~\cite{brown2020language} DaVinci-002 to generate descriptions from RAF as a large language model. 
+We use Faster R-CNN~\cite{ren2015faster} with ResNet-50~\cite{he2016deep} backbone and Mask R-CNN~\cite{he2017mask} with ResNet-50 FPN backbone for COCO and LVIS, respectively. 
+For training RAF, we use region proposals provided from OADP~\cite{wang2023object}. 
+We set our baselines as OADP~\cite{wang2023object}, Object-Centric-OVD~\cite{Hanoona2022Bridging}, and DetPro~\cite{du2022learning}. 
+As RALF enhances the generalizability power via a plug-in manner, we construct RALF into baselines. 
+In all experiments, we train and evaluate on NVIDIA RTX-3090 4 GPUs. 
+More implementation details, including hyperparameters, are discussed in the supplementary materials.
+
+\noindent\textbf{Logit ensemble in RAF.}
+Since each baseline has a different range of logits, the final logits $\boldsymbol{l}_r^\text{final}$ are calculated as below:
+\begin{equation}
+    \boldsymbol{l}_r^\text{final} = 
+    \begin{cases}
+        \boldsymbol{l}_r + \sigma (\boldsymbol{l}_r^\text{aux}) & \text{if Object-Centric-OVD}, \\
+        \boldsymbol{l}_r * (\sigma (\boldsymbol{l}_r^\text{aux}) - 0.25) & \text{if DetPro}, \\
+        \boldsymbol{l}_r + \boldsymbol{l}_r^\text{aux} & \text{if OADP}, \\
+    \end{cases}
+\end{equation}
+where $\sigma(\cdot)$ denotes the sigmoid function.
+Without using all values of auxiliary logits when adding to $\boldsymbol{l}_r$, only top-1 figures on COCO and top-10 or 20 figures on LVIS are utilized, considering the number of test categories.
+
+\subsection{Main results}
+We evaluate RALF on COCO and LVIS benchmarks in the open-vocabulary object detection (OVD) setting and compare with various baselines. Overall results are reported in ~\Cref{tab:cr_coco} and ~\Cref{tab:cr_lvis}.
+
+\noindent{\textbf{COCO benchmark.}}
+As reported in ~\Cref{tab:cr_coco}, RALF shows great performance enhancement when plugged into baselines for all evaluation metrics. 
+RALF significantly improved 4.7 $\text{AP}^\text{N}_\text{50}$ when plugged into Object-Centric-OVD~\cite{Hanoona2022Bridging} and achieved state-of-the-art results. 
+Moreover, RALF surpasses Object-Centric-OVD for not only novel categories but also base and all categories, with 0.3 $\text{AP}^\text{B}_\text{50}$ and 1.5 $\text{AP}_\text{50}$ improvements, respectively.
+Like the inclination observed in the Object-Centric-OVD, implementing RALF on OADP~\cite{wang2023object} demonstrates remarkable effectiveness. 
+The results show performance gains for the novel, base, and all categories by 3.4 $\text{AP}^\text{N}_\text{50}$, 1.2 $\text{AP}^\text{B}_\text{50}$, and 1.8 $\text{AP}_\text{50}$, correspondingly. 
+\input{Tables/main_coco}
+
+\input{Tables/main_lvis}
+\noindent{\textbf{LVIS benchmark.}}
+To verify that our method improves performance in various cases, we experimented on the LVIS benchmark and added another baseline -- DetPro~\cite{du2022learning}. 
+The results are noted in~\Cref{tab:cr_lvis}. 
+Overall, RALF improves detection ability on novel categories for all baselines by up to 2.0 $\text{AP}_{\text{r}}$. 
+Although Object-Centric-OVD~\cite{Hanoona2022Bridging} slightly decreases except $\text{AP}_{\text{r}}$, RALF improves all metrics on DetPro and OADP~\cite{wang2023object}.
+To summarize, the results imply that RALF improves generalizability. 
+
+\subsection{Ablation study}
+As discussed in \Cref{subsec:overview}, RALF consists of two modules -- RAL and RAF. 
+We conducted ablation studies on RAL and RAF to verify the effectiveness of each module on COCO and LVIS benchmarks. 
+
+\noindent\textbf{Effectiveness of RAL.}
+We demonstrate the results of RAL in \Cref{tab:cr_ablation_coco} and \Cref{tab:cr_ablation_lvis}. 
+From the results, RAL improves performance gain in all baselines. 
+RAL shows an improvement of up to 1.3 $\text{AP}_{\text{50}}^{\text{N}}$ and at least 1.0 $\text{AP}_{\text{50}}^{\text{N}}$ on COCO. 
+Interestingly, RAL demonstrates exceptional generalizability, specifically within the COCO base categories, exhibiting no performance declines. 
+While there are marginal decreases in $\text{AP}_{\text{c}}$, $\text{AP}_{\text{f}}$, and $\text{AP}$ on LVIS, the performance of novel categories is notably increased up to 3.2 $\text{AP}_{\text{r}}$.
+
+\input{Tables/ablation_coco}
+\input{Tables/ablation_lvis}
+\input{Figures/qualitative}
+
+\noindent\textbf{Effectiveness of RAF.}
+We plug RAF into several baselines and evaluate performance to verify whether RAF is effective. 
+~\Cref{tab:cr_ablation_coco} and~\Cref{tab:cr_ablation_lvis} show the performance of RAF on COCO and LVIS, respectively. 
+There are notable improvements in overall baselines. 
+In particular, RAF improves the prediction ability for novel categories of OADP and Object-Centric-OVD by 1.5 $\text{AP}_{\text{50}}^{\text{N}}$ and 0.8 $\text{AP}_{\text{50}}^{\text{N}}$ on COCO, respectively. 
+Without performance decreasing in base categories, the performance of novel categories improved by up to 1.4 $\text{AP}_{\text{r}}$ on LVIS.
+
+From the results in ~\Cref{tab:cr_ablation_coco} and ~\Cref{tab:cr_ablation_lvis}, irrespective of the baselines, RAL and RAF enhance the prediction of novel categories while maintaining somewhat the pre
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

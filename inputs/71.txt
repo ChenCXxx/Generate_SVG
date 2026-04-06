@@ -1,0 +1,155 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Semantic Scene Completion (SSC) aims to jointly infer the complete scene geometry and semantics. It serves as a crucial step in a wide range of 3D perception tasks such as autonomous driving~\cite{UniAD, bevformer}, robotic navigation~\cite{occ3d, DenseCaption}, mapping and planning~\cite{SGN}. SSCNet~\cite{SSCNet} initially formulates the semantic scene completion task. Subsequently, many LiDAR-based approaches~\cite{S3CNet, JS3CNet, LMSCNet} have been proposed, but these approaches usually suffer from high-cost sensors. 
+
+Recently, there has been a shift towards vision-based SSC solutions. MonoScene~\cite{MonoScene} lifts the input 2D images to 3D volumes by densely assigning the same 2D features to both visible and occluded regions, leading to many ambiguities. With advancements in bird's-eye-view (BEV) perception~\cite{bevformer, BEVFormerv2}, transformer-based approaches~\cite{TPVFormer, surroundOcc, VoxFormer} achieve feature lifting by projecting 3D queries from 3D space to image plane and aggregating 3D features through deformable attention mechanisms~\cite{DeformableDetr}. Among these, VoxFormer~\cite{VoxFormer} introduces a sparse-to-dense architecture, which first aggregates 3D information for the visible voxels using the depth-based queries and then completes the 3D information for non-visible regions by leveraging the reconstructed visible areas as starting points. Building upon VoxFormer~\cite{VoxFormer}, the following approaches further improve performance through self-distillation training strategy~\cite{HASSC}, extracting instance features from images~\cite{Symphonize}, or incorporating an image-conditioned cross-attention module~\cite{MonoOcc}.
+
+Despite significant progress, existing sparse-to-dense approaches typically employ shared voxel queries (referred to as context-independent queries) across different input images. These queries are defined as a set of learnable parameters that are independent of the input context. Once the training process is completed, these parameters remain constant for all input images during inference, failing to capture distinctions among various input images, as the focal regions of different images vary. Additionally, these queries also encounter the issue of undirected feature aggregation in cross-attention, where the sampling points may fall in irrelevant regions. Besides, when projecting the 3D points onto the image plane, many points may end with the same 2D position with similar sampling points in the 2D feature map, causing a crucial depth ambiguity problem. An illustrative diagram is presented in Fig.~\ref{fig:head}\textcolor{red}{(a)}.
+
+\begin{figure*}[t]
+	\centering\includegraphics[width=0.8\linewidth]{fig/Fig_head.pdf}
+	\caption{Comparison of feature aggregation. (a) VoxFormer~\cite{VoxFormer} employs a set of shared context-independent queries for different input images, which fails to capture distinctions among them and may lead to undirected feature aggregation. Besides, due to the ignorance of depth information, multiple 3D points may be projected to the same 2D point, causing depth ambiguity. (b) Our CGFormer initializes the voxel queries based on individual input images, effectively capturing their unique features and aggregating information within the region of interest. Furthermore, the deformable cross-attention is extended from 2D to 3D pixel space, enabling the points with similar image coordinates to be distinguished based on their depth coordinates.}
+	\label{fig:head}
+\end{figure*}
+
+In this paper, we propose a context and geometry aware voxel transformer (CGVT) to lift the 2D features. We observe that context-dependent query tend to aggregate information from the points within the region of interest. A visual comparison of the sampling points between the context-dependent and context-independent queries is presented in Fig.~\ref{fig:sampling_offset}. Thus, before the aggregation of cross-attention, we first utilizes a context aware query generator to predict context-aware queries from the input individual images. Additionally, we extend deformable cross-attention from 2D to 3D pixel space, which allows points ending with similar image coordinates to be distinguished by their depth coordinates, as illustrated in Fig.~\ref{fig:head}\textcolor{red}{(b)}. Furthermore, we propose a simple yet efficient depth refinement block to enhance the accuracy of estimated depth probability. This involves incorporating a more precise estimated depth map from a pretrained stereo depth estimation network~\cite{MobileStereoNet}, avoiding the heavy computational burden as observed in StereoScene~\cite{StereoScene}.
+
+Based on the aforementioned module, we devise a neural network, named as CGFormer. To enhance the obtained 3D volume from the view transformation we integrate multiple representation, \ie voxel and tri-perspective view (TPV). The TPV representation offers a global perspective that encompasses more high-level semantic information, while the voxel representation focuses more on the fine-grained structures. Drawing from the above analyses, we propose a 3D local and global encoder (LGE) that dynamically fuses the results of the voxel-based and TPV-based branches, to further enhance the 3D features from both local and global perspectives.
+
+Our contributions can be summarized as follows:
+\begin{itemize}
+\item We propose a context and geometry aware voxel transformer (CGVT) to improve the performance of semantic scene completion. This module initializes the queries based on the context of individual input images and extends the deformable cross-attention from 2D to 3D pixel space, thereby improving the performance of feature lifting.
+\item We introduce a simple yet effective depth refinement block to enhance the accuracy of estimated depth probability with only introducing minimal computational burden.
+\item We devise a 3D local and global encoder (LGE) to strengthen the semantic and geometric discriminability of the 3D volume. This encoder employs various 3D representations (voxel and TPV) to encode the 3D features, capturing information from both local and global perspectives.
+\item Benefiting from the aforementioned modules, our CGFormer attains state-of-the-art results with a mIoU of $16.63$ and an IoU of $44.41$ on SemanticKITTI, as well as a mIoU of $20.05$ and an IoU of $48.07$ on SSCBench-KITTI-360. Notably, our method even surpasses methods employing temporal images as inputs or using much larger image backbone networks.
+\end{itemize}
+
+
+Related Work
+\label{sec:related}
+
+\subsection{Vision-based 3D Perception}
+Vision-based 3D perception~\cite{bevformer, BEVFusion, BEVFusionMIT, BEVStereo, BEVDet, DETR3D, PointOcc, DFA3D, OpenOccupancy, LODE, SSCGroupConv, YanOcc, TPVD, RigNet, PointDC} has received extensive attention due to its ease of deployment, cost-effectiveness, and the preservation of intricate visual attributes, emerging as a crucial component in the autonomous driving. Current research efforts focus on constructing unified 3D representations (\textit{e.g.,} BEV, TPV, voxel) from input images. LiftSplat~\cite{lss} lifts image features by performing outer product between the 2D image features and their estimated depth probability to generate a frustum-shaped pseudo point cloud of contextual features. The pseudo point cloud features are then splatted to predefined 3D anchors through a voxel-pooling operation. Building upon this, BEVDet~\cite{BEVDet} extends LiftSplat to 3D object detection, while BEVDepth~\cite{bevdepth} further enhances performance by introducing ground truth supervision for the estimated depth probability. With the advancements in attention mechanisms~\cite{DETR, DeformableDetr, DINO, rtDETR, DETR3D}, BEVFormer~\cite{bevformer, BEVFormerv2} transforms image features into BEV features using point deformable cross-attention~\cite{DeformableDetr}. Additionally, many other methods, such as OFT~\cite{OFT}, Petr~\cite{PETR, PETRv2}, Inverse Perspective Mapping (IPM)~\cite{IPM}, have also been presented to transform 2D image features into a 3D representation.
+
+\subsection{Semantic Scene Completion}
+SSCNet~\cite{SSCNet} initially introduces the concept of semantic scene completion, aiming to infer the semantic voxels. Following methods~\cite{LMSCNet, AICNet, JS3CNet, S3CNet} commonly utilize explicit depth maps or LIDAR point clouds as inputs. MonoScene~\cite{MonoScene} is the pioneering method for directly predicting the semantic occupancy from the input RGB image, which presents a FLoSP module for 2D-3D feature projection. StereoScene\cite{StereoScene} introduces explicit epipolar constraints to mitigate depth ambiguity, albeit with heavy computational burden for correlation. TPVFormer~\cite{TPVFormer} introduces a tri-perspective view (TPV) representation to describe the 3D scene, as an alternative to the BEV representation. The elements fall into the field of view aggregates information from the image features using deformable cross-attention~\cite{bevformer, DeformableDetr}. Beginning from depth-based~\cite{VoxFormer} sparse proposal queries, VoxFormer~\cite{VoxFormer} construct the 3D representation in a coarse-to-fine manner. The 3D information from the visible queries are diffused to the overall 3D volume using deformable self-attention, akin to the masked autoencoder (MAE)\cite{MAE}. HASSC~\cite{HASSC} introduces a self-distillation training strategy to improve the performance of VoxFormer~\cite{VoxFormer}, while MonoOcc~\cite{MonoOcc} further enhance the 3D volume with an image-conditioned cross-attention module. Symphonize~\cite{Symphonize} extracts high level instance features from the image feature map, serving as the key and value of the cross-attention. 
+
+
+
+CGFormer
+\label{sec:method}
+\subsection{Overview}
+As shown in Fig.~\ref{fig:architecture}, the overall framework of CGFormer is composed of four parts: feature extraction to extract 2D image features, view transformation (Section~\ref{sec:view_transformation}) to lift the 2D features to 3D volumes, 3D encoder (Section~\ref{sec:local_and_global_encoder}) to further enhance the semantic and geometric discriminability of the 3D features, and a decoding head to infer the final result. 
+
+\noindent\textbf{Image Encoder.} The image encoder consists of a backbone network for extracting multi-scale features and a feature pyramid network (FPN) to fuse them. We adopt $\mathbf{F}^{\text{2D}}\in \mathbb{R}^{H \times W\times C}$ to represent the extracted 2D image feature, where $C$ is the channel number, and $(H, W)$ refers to the resolution.
+
+\noindent\textbf{Depth Estimator.} In alignment with VoxFormer~\cite{VoxFormer}, we use an off-the-shelf stereo depth estimation model~\cite{MobileStereoNet} to predict the depth $\mathbf{Z}(u,v)$ for each image pixel $(u,v)$. The resulting estimated depth map is then employed to define the visible voxels located on the surface, serving as query proposals. Additionally, it is also used to refine the depth probability for lifting the 2D features.
+
+\begin{figure*}[t]
+	\centering\includegraphics[width=0.95\linewidth]{fig/Fig_architecture.pdf}
+	\caption{Schematics and detailed architectures of CGFormer. (a) The framework of the proposed CGFormer for camera-based semantic scene completion. The pipeline consists of the image encoder for extracting 2D features, the context and geometry aware voxel (CGVT) transformer for lifting the 2D features to 3D volumes, the 3D local and global encoder (LGE) for enhancing the 3D volumes and a decoding head to predict the semantic occupancy. (b) Detailed structure of the context and geometry aware voxel transformer. (c) Details of the Depth Net.}
+	\label{fig:architecture}
+\end{figure*}
+
+\subsection{View Transformation}
+\label{sec:view_transformation}
+
+A detailed diagram of our context and geometry aware voxel transformer is presented in Fig~\ref{fig:architecture}\textcolor{red}{(b)}. The process begins with a context aware query generator, which takes the context feature map to generate the context-dependent queries. Subsequently, the visible query proposals are located by the depth map from the pretrained depth estimation network. These proposals then attend to the image features to aggregate semantic and geometry information based on the 3D deformable cross-attention. Finally, the aggregated 3D information is further diffused from the updated proposals to the overall 3D volume via deformable self-attention.
+
+\noindent\textbf{Context-dependent Query Generation.} Previous coarse-to-fine approaches~\cite{VoxFormer, HASSC, H2GFormer, MonoOcc} typically employ shared context-independent queries for all the inputs. However, these approaches may overlook the differences among different images and aggregate information from irrelevant areas. In contrast, CGFormer first generates context-dependent queries from the image features using a context aware query generator. To elaborate, the extracted $\mathbf{F}^{2D}$ is fed to the context net and the depth net~\cite{bevdepth} to generate the context feature $\mathbf{C}\in\mathbb{R}^{H \times W\times C}$ and depth probability $\mathbf{D}\in\mathbb{R}^{H\times W\times D}$, respectively. Then the query generator $f$ takes $\mathbf{C}$ and $\mathbf{D}$ as inputs to generate voxel queries $\mathbf{V}_{\textbf{Q}}\in\mathbb{R}^{X\times Y\times Z}$
+\begin{equation}
+	\mathbf{V}_{\textbf{Q}}=f(\mathbf{C},\mathbf{D}),
+\end{equation}
+where $(X, Y, Z)$ denotes the spatial resolution of the 3D volume. Benefiting from the initialization, the sampling points of the context-dependent queries usually locate within the region of interest. A comparison between the deformable sampling points of two types of queries is displayed in Fig.~\ref{fig:sampling_offset}.
+\input{fig/SamplingOffsets}
+
+\noindent\textbf{Depth-based Query Proposal.} Following VoxFormer~\cite{VoxFormer}, we determine the visible voxels through the conversion of camera coordinates to world coordinates using the pre-estimated depth map, except that we do not employ an additional occupancy network~\cite{LMSCNet}. A pixel $(u,v)$ will be transformed to a 3D point $(x,y,z)$, utilizing the camera intrinsic and extrinsic matrices ($K\in\mathbb{R}^{4\times 4}, E\in\mathbb{R}^{4\times 4}$). The synthetic point cloud is further converted into a binary voxel grid map $\mathbf{M}$, where each voxel is masked as $1$ if occupied by at least one point and $0$ otherwise. The query proposals are selected based on the binary $\mathbf{M}$ as
+\begin{equation}
+	\mathbf{Q} = \mathbf{V}_{\textbf{Q}}[\mathbf{M}].
+\end{equation}
+
+\noindent\textbf{3D Deformable Cross-Attention.} 
+The query proposals then attend to the image features to aggregate the visual features of the 3D scene. We first expand the dimension of $\mathbf{C}$ from 2D to 3D pixel space by conducting the outer product between $\mathbf{D}$ and $\mathbf{C}$, formulated as $\mathbf{F}=\mathbf{C}\otimes\mathbf{D}$. Here, the operator $\otimes$ refers to the outer product conducted at the last dimension. Taking $\mathbf{F}$ as key and value, for a 3D query $\mathbf{Q}_{p}$ located at position $p$, the 3D deformable cross-attention mechanism can be formulated as
+\begin{equation}
+	\hat{\mathbf{Q}}_{p} = \mathrm{3D\text{-}DCA}(\mathbf{Q}_{p}, \mathbf{F}, p) = \sum_{n=1}^{N}A_{n}W\phi(\mathbf{F},\mathcal{P}(p)+\Delta{p}),
+\end{equation}
+where $n$ indexes the sampled point from a total of $N$ points, ${\mathcal{P}(p)}$ denotes camera projection function to obtain the reference points in the 3D pixel space, $A_{n}\in [0,1]$ is the learnable attention weight, and $W$ denotes the projection weight. $\Delta{p}\in\mathbb{R}^{3}$ is the predicted offset to the reference point $p$, and $\phi(\mathbf{F},\mathcal{P}_{d}(p)+\Delta{p_d})$ indicates the trilinear interpolation used to sample features in the expanded 3D feature map $\mathbf{F}$. $\hat{\mathbf{Q}}$ denotes the updated query proposals. For simplicity, we only show the formulation of single-head attention.
+
+\noindent\textbf{Deformable Self-Attention.} After several layers of deformable cross-attention, we merge $\hat{\mathbf{Q}}$ and the invisible elements of $\mathbf{V}_{\textbf{Q}}$, indicated as $\mathbf{F}^{\text{3D}}$. The information of the updated query proposals is diffused to the overall 3D volume via deformable self-attention and $\hat{\mathbf{F}}^{\text{3D}}$ indicates the updated 3D volume. This process of a query located at position $p$ can be formulated as
+\begin{equation}
+	\hat{\mathbf{F}}^{\text{3D}}_{p} = \mathrm{DSA}(\mathbf{F}^{\text{3D}}_{p}, \mathbf{F}^{\text{3D}}, p) = \sum_{n=1}^{N}A_{n}W\phi(\mathbf{F}^{\text{3D}}, p+\Delta{p}).
+\end{equation}
+
+\noindent\textbf{Depth Net.} The depth probability serves as the inputs of both the context aware query generator and 3D deformable cross-attention, whose accuracy greatly influences the performance. The results of single image depth estimation are usually unsatisfactory. Incorporating epipolar constraint can help estimate more accurate depth map. However, computing correlation to achieve this may introduce much computation burden during the estimation of the semantic voxels. Instead, we introduce a simple yet effective depth refinement strategy. The detailed architecture of the depth net is shown in Fig.~\ref{fig:architecture}\textcolor{red}{(c)}. We first estimate monocular depth feature $\mathbf{D}_{\text{M}}$ from $\mathbf{F}^{\text{2D}}$. The depth map generated from the stereo method~\cite{MobileStereoNet} is encoded as stereo feature $\mathbf{D}_{\text{S}}$ by several convolutions. These two features are further processed by cross-attention blocks for information interaction. To save memory, the window size of cross-attention is restricted within a range of the nearest neighboring pixels~\cite{NeighborAttn}, which can be formulated as
+\begin{equation}
+	\begin{split}
+	\hat{\mathbf{D}}_{\text{M}} & = \psi(\mathbf{D}_{\text{M}}, \mathbf{D}_{\text{S}}, \mathbf{D}_{\text{S}}),                               \\
+	\hat{\mathbf{D}}_{\text{S}} & = \psi(\mathbf{D}_{\text{S}}, \mathbf{D}_{\text{M}}, \mathbf{D}_{\text{M}}),
+	\label{eq:neighbor_attntion}
+	\end{split}
+\end{equation}
+where $\hat{\mathbf{D}}_{\text{M}}$ and $\hat{\mathbf{D}}_{\text{S}}$ denote the enhanced $\mathbf{D}_{\text{M}}$ and $\mathbf{D}_{\text{S}}$, and $\psi$ denotes the neighborhood attention~\cite{NeighborAttn}. We set the window size to $5\times 5$. Finally, these two volumes are concatenated and fed to estimate the final depth probability. This strategy can boost the accuracy of the depth probability a lot with only minimal computation cost.
+
+\subsection{3D Local and Global Encoder}
+\label{sec:local_and_global_encoder}
+The TPV representation is derived by compressing the voxel representation along its three axes. TPV focuses more on the global high-level semantic information, whereas the voxel emphasizes more on the details of intricate structures. We combine these two representations to enhance representation capability of the 3D features. As shown in Fig.~\ref{fig:architecture}\textcolor{red}{(a)}, our 3D local and global encoder consists of the voxel-based and TPV-based branches. With the input 3D volume, the two branches first aggregate features in parallel. The dual-branch outputs are then fused dynamically and fed to the final decoding block.
+
+\noindent\textbf{Voxel-based Branch.} The voxel-based branch aims to enhance the fine-grained structure features of the 3D volume. We adopt a lightweight ResNet~\cite{ResNet} with 3D convolutions to extract multi-scale voxel features from $\hat{\mathbf{F}}^{\text{3D}}$ and merge them into $\mathbf{F}^{\text{3D}}_{\text{voxel}}\in\mathbb{R}^{X\times Y\times Z\times C}$ using a 3D feature pyramid network.
+
+\noindent\textbf{TPV-based Branch.} To obtain three-plane features of the TPV representation, we apply spatial pooling to the voxel features along three axes. Directly performing MaxPooling may cause the loss of the fine-grained details. Considering the balance between performance and efficiency, we apply the group spatial to channel operation~\cite{S2C, BEVFusion, PointOcc} to transform the voxel representation to TPV representation. Specifically, we split the voxel features along the pooling axis into $K$ groups and apply the MaxPooling within each group. Then we concatenate each group features along the channel dimension and use convolutions to reduce the channel dimension into $C$. Denote the 2D view features as $\mathbf{F}^{\text{3D}}_{XY}\in\mathbb{R}^{X\times Y\times C}, \mathbf{F}^{\text{3D}}_{XZ}\in\mathbb{R}^{X\times Z\times C}, \mathbf{F}^{\text{3D}}_{YZ}\in\mathbb{R}^{Y\times Z\times C}$, the above process can be formulated as
+\begin{equation}
+	\begin{split}
+		\mathbf{F}^{\text{3D}}_{XY}&=\mathrm{Conv}_{XY}(\mathrm{Concat}(\{\mathrm{Pooling}_{\{Z,i\}}(\hat{\mathbf{F}}^{\text{3D}})\}^{K}_{i=1})),\\
+		\mathbf{F}^{\text{3D}}_{YZ}&=\mathrm{Conv}_{YZ}(\mathrm{Concat}(\{\mathrm{Pooling}_{\{X,i\}}(\hat{\mathbf{F}}^{\text{3D}})\}^{K}_{i=1})), \\
+		\mathbf{F}^{\text{3D}}_{XZ}&=\mathrm{Conv}_{XZ}(\mathrm{Concat}(\{\mathrm{Pooling}_{\{Y,i\}}(\hat{\mathbf{F}}^{\text{3D}})\}^{K}_{i=1}))
+	\end{split}
+\end{equation}
+After obtaining the TPV features, we employ a 2D image backbone to process each plane to produce corresponding multi-scale features, which are then fused by a 2D feature pyramid network. For simplicity, we leverage $\mathbf{F}^{\text{3D}}_{XY}, \mathbf{F}^{\text{3D}}_{XZ}, \mathbf{F}^{\text{3D}}_{YZ}$ to represent the outputs of these networks, as well.
+
+\noindent\textbf{Dynamic Fusion.} The dual-path outputs are fused dynamically. We generate aggregation weights $\mathbf{W}\in\mathbb{R}^{X\times Y\times Z\times 4}$ from $\mathbf{F}^{\text{3D}}_{\text{voxel}}$ using a convolution with a softmax on the last dimension. The final 3D feature volume $\mathbf{F}^{\text{3D}}_{\text{final}}$ is computed as
+\begin{equation}
+	\mathbf{F}^{\text{3D}}_{\text{final}} = \sum_{i}^{4} \mathbf{W}_{i}\odot\mathbf{F}^{\text{3D}}_{i},
+\end{equation}
+where $\mathbf{W}_{i}\in\mathbb{R}^{X\times Y\times Z\times 1}$ is a slice of the $\mathbf{W}$ and $\mathbf{F}^{\text{3D}}_{i}$ is an element of the set $[\mathbf{F}^{\text{3D}}_{\text{voxel}}, \mathbf{F}^{\text{3D}}_{XY}, \mathbf{F}^{\text{3D}}_{XZ}, \mathbf{F}^{\text{3D}}_{YZ}]$. The operation $\odot$ refers to the element multiplication and the dimension broadcasting of the features from TPV-based branches is omitted in the equation for conciseness. $\mathbf{F}^{\text{3D}}_{\text{final}}$ is finally fed to the decoding block to infer the complete scene geometry and semantics. Please refer to the supplementary material for more detailed schematics of the 3D local and global encoder.
+\subsection{Training Loss}
+To train the proposed CGFormer, cross-entropy loss weighted by class frequencies $\mathcal{L}_{ce}$ is leveraged to optimize the network. Following MonoScene~\cite{MonoScene}, we also utilize affinity loss $\mathcal{L}_{scal}^{geo}$ and $\mathcal{L}_{scal}^{sem}$ to optimize the scene-wise and class-wise metrics (geometric IoU and semantic mIoU). We also employ explicit depth loss $\mathcal{L}_{d}$~\cite{bevformer} to supervise the estimated depth probability of the depth net. Hence, the overall loss function can be formulated as
+\begin{equation}
+	\mathcal{L} = \lambda_{d}\mathcal{L}_{d} + \mathcal{L}_{ce} + \mathcal{L}_{scal}^{geo} + \mathcal{L}_{scal}^{sem},
+\end{equation}
+where we set the weight of depth loss $\lambda_{d}$ to $0.001$.
+
+
+
+Experiments
+\subsection{Quantitative Results}
+\input{tab/tab_sem_test}
+\input{tab/tab_kitti_360_test}
+We conducted experiments to evaluate the performance of our CGFormer with the latest state-of-the-art methods on the SemanticKITTI~\cite{SemanticKITTI} and SSCBench-KITTI-360~\cite{SSCBench}. Refer to the supplement material for information of datasets, metrics and detailed implementation details.
+
+We list the results on SemanticKITTI hidden test set in Table~\ref{tab:sem_kitti_test}. CGFormer achieves a mIoU of $16.63$ and an IoU of $44.41$. Notably, CGFormer outperforms all competing methods in terms of mIoU, demonstrating its superior performance. Regarding IoU, CGFormer surpasses all other methods except DepthSSC~\cite{DepthSSC}. While ranking 2nd in terms of IoU, CGFormer exhibits only a slight marginal difference of $0.17$ in comparison to DepthSSC~\cite{DepthSSC}. However, CGFormer significantly outperforms DepthSSC~\cite{DepthSSC} by a substantial margin of $3.52$ in terms of mIoU. Additionally, compared to VoxFormer-T~\cite{VoxFormer}, HASSC-T~\cite{HASSC}, H2GFormer-t~\cite{H2GFormer}, and MonoOcc-L~\cite{MonoScene}, although they utilize temporal stereo image pairs as inputs or larger image backbone networks, our CGFormer exceeds them a lot in terms of both metrics. For specific instances, CGFormer achieves the best or second-best performance on most of the classes, such as road, sidewalk, parking, and building.
+To demonstrate the versatility of our model, we also conduct experiments on the SSCBench-KITTI-360~\cite{SSCNet} dataset and list the results in Table~\ref{tab:kitti_360_test}. It is observed that CGFormer surpasses all the published camera-based methods by a margin of $3.95$ IoU and $1.67$ mIoU. Notably, CGFormer even outperforms the two LiDAR-based methods in terms of mIoU. The above analyses further verifies the effectiveness and excellent performance of CGFormer.
+\subsection{Ablation Study}
+We conduct ablation analyses on the components of CGFormer on the SemanticKITTI validation set. 
+
+\input{tab/tab_ablation_arch}
+\input{tab/tab_ablation_addition}
+
+\noindent\textbf{Ablation on the context and geometry aware voxel transformer (CGVT).} Table~\ref{ablation:arch} presents a detailed analysis of various architectural components within CGFormer. The baseline can be considered as a simplified version of VoxFormer~\cite{VoxFormer}, without utilizing the extra occupancy network~\cite{LMSCNet} to generate coarse occupancy masks. It begins with an image encoder to extract image features, a depth-based query proposal layer to define the visible queries, the deformable cross-attention layer to aggregate features for visible areas, the deformable self-attention layer to diffuse features from the visible regions to the invisible ones. Extending the cross-attention to 3D deformable cross-attention (a) brings a notable improvement of 1.63 mIoU and 2.15 IoU. The performance is further enhanced by giving the voxel queries a good initialization by introducing the context ware query generator (b).
+
+\noindent\textbf{Ablation on the local and global encoder (LGE).} After obtaining the 3D features, CGFormer incorporates multiple representation to refine the 3D volume form both local and global perspectives. Through experimentation, we validate that the voxel-based and TPV-based branches collectively contribute to performance improvement with a suitable fusion strategy. Specifically, we compate the results of solely utilizing the local voxel-based branch (c), simply adding the results of dual branches (d), and dynamically fusing the dual-branch outputs (h), as detailed in Table~\ref{ablation:arch}. The accuracy is notably elevated to an IoU of $45.99$ and mIoU of $16.87$ by dynamically fusing the dual-branch outputs. Additionally, we conduct an ablation study on the three TPV planes utilized in the TPV-based branch (e,f,g). The results demonstrate that any individual plane improves performance compared to the model with only the local branch. Combining the information from all three planes into the TPV representation achieves superior performance, underscoring the complementary nature of the three TPV planes in effectively representing complex 3D scenes.
+
+\noindent\textbf{Ablation on the context aware query generator.} We present the ablation analysis of the context-aware query generator in Table~\ref{ablation:CAQG}. We remove the CAQG and increase the number of attention layers, where the results of the previous layers can be viewed as a initialization of the queries for the later layers. This configuration (6 cross-attention layers and 4 self-attention layers) significantly improves IoU but only marginally lifts mIoU, and it requires much more training memory. Employing FLoSP~\cite{MonoScene} with the occupancy-aware depth module~\cite{OccDepth} can improve performance without much additional computational burden. By replacing it with the voxel pooling~\cite{lss}, the model achieves the best performance. Thus, we employ voxel pooling as our context aware query generator.
+
+\noindent\textbf{Ablation on the depth refinement block.} Table~\ref{ablation:DR} presents analyses of the impact of each module within the depth net. By removing the stereo feature $\mathbf{D}_{S}$ and employing the same structure as BEVDepth~\cite{bevdepth}, we observe a performance drop of $1.42$ IoU and $1.79$ mIoU. When incorporating the stereo feature $\mathbf{D}_{S}$ but fusing it with a simple concatenate operation without using the neighborhood attention, the model achieves a mIoU of $45.72$ and an IoU of $16.26$. These results emphasize that deactivating any component of the depth net leads to a decrease of the accuracy of the full network. Additionally, we replace the depth refinement module with the dense correlation module from StereoScene~\cite{StereoScene}. Compared to this, our depth refinement module achieves comparable results while using significantly fewer parameters and less training memory.
+
+\subsection{Qualitative Results} 
+\input{fig/QualitativeResults}
+Fig.~\ref{fig:visualization} present visualizations of predicted results on the SemanticKITTI validation set obtained from MonoScene\cite{MonoScene}, VoxFormer~\cite{VoxFormer}, OccFormer~\cite{OccFormer}, and our proposed CGFormer. Notably, CGFormer outperforms other methods by effectively capturing the semantic scene and inferring previously invisible regions. The predictions generated by CGFormer exhibit distin
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

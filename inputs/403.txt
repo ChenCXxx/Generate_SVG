@@ -1,0 +1,296 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+3D instance segmentation is a fundamental task in 3D scene understanding, primarily focused on predicting masks and categories for every foreground object within a scene. 
+Current instance segmentation methods are mainly in fully supervised settings~\cite{vu2022softgroup,sun2023superpoint,ngo2023isbnet,schult2023mask3d,lu2023query} and achieve commendable results. 
+However, the time-consuming nature of point-level annotations poses a significant challenge.
+In contrast, annotating instances with 3D bboxes (object-level) is notably easier, requiring only the annotations for center points and dimensions (length, width, height). 
+Nevertheless, a notable limitation stems from the use of bboxes, which cannot capture the detailed shape or geometry of objects. 
+Consequently, bridging the gap between object-level and point-level annotations remains a challenge.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=1\linewidth]{figure/motivation2.pdf}
+    \caption{
+      (a) The visualization of an overlapping sample. (b) The proposed Simulation-assisted Mean Teacher helps the labeler acquire prior knowledge from simulated samples. (c) Our method improves local-global structure modeling of overlapping samples to generate better pseudo-labels (especially in yellow circles).}
+    \label{fig:intro}
+\end{figure}
+
+To solve the above challenge, existing methods~\cite{chibane2022box2mask,du2023weakly,shin2017real} conduct several explorations.
+Box2Mask~\cite{chibane2022box2mask} parameterizes bboxes and utilizes them as labels.
+However, due to bbox overlap, some point clouds may exist within multiple bboxes, introducing ambiguity in point-object assignments. 
+As illustrated in Figure~\ref{fig:intro}(a), instance labels for point clouds in non-overlapping areas are determined as they only belong to one bbox. 
+In contrast, overlapping areas are governed by two different bboxes, resulting in indeterminate instance labels.
+Consequently, the point-wise predicted bboxes cannot be reliably used for clustering.
+To better address the ambiguity in overlapping areas, WISGP~\cite{du2023weakly} employs straightforward heuristics based on local structure modeling. 
+Concretely, for each indeterminate point, WISGP selects the most common label from its neighboring points as its label.
+On the other hand, Gapro~\cite{ngo2023gapro} uses Gaussian Process (GP)~\cite{shin2017real} to train individual overlapping samples, modeling global structure by fitting the similarity relationships between all points into a Gaussian distribution.
+Then Gapro computes posterior probability to achieve binary classification for overlapping areas.
+
+Based on the preceding discussion, we identify two key issues in bbox-supervised 3DIS:
+1) \textit{How to generate labels for overlapping areas?}
+Using Mean Teacher~\cite{cao2023contrastive,li2022cross,zheng2021exploiting,deng2023se} to generate and continuously optimize pseudo-labels for overlapping areas is an effective way.
+This paradigm allows for the online update of pseudo-labels during the training process, continuously transferring knowledge from a teacher network to a student network. 
+Besides, the teacher network employs Exponential Moving Average (EMA) to integrate information from historical students, providing more stable learning targets for the student network.
+However, given that non-overlapping areas contain a single object with a clear structure, while overlapping areas involve two intertwined objects, there is a significant disparity in complexity between them.
+Hence, it is difficult to infer accurate pseudo-labels for overlapping areas solely according to non-overlapping area labels. 
+To tackle this issue, given the abundance of non-overlapping bboxes in the dataset with definite labels, we can construct simulated overlapping samples using these bboxes. 
+As illustrated in Figure~\ref{fig:intro}(b), we can train a base model on these simulated samples, and transfer this model to real datasets.
+By this way, the information loss resulting from the absence of labels in overlapping areas can be compensated and higher quality pseudo-labels can be predicted.
+2) \textit{How to better model structure of overlapping samples?}
+As illustrated in Figure~\ref{fig:intro}(c), current methods~\cite{du2023weakly,ngo2023gapro} either tend to focus on local structure modeling, bringing dedicated local structure representations like WISGP~\cite{du2023weakly}, or emphasize global relationship modeling, results in a more effective connection between overlapping areas and non-overlapping areas like Gapro~\cite{ngo2023gapro}. 
+Both types of modeling are crucial, but there is currently no approach effectively integrating these two aspects. 
+Consequently, it is essential to devise a universal network proficient in extracting local structure features efficiently while fostering interactions between overlapping and non-overlapping areas, yielding more precise pseudo-labels.
+
+To achieve the above goals, we introduce a novel pseudo-labeler called Simulation-assisted Transformer (SAFormer), which is trained based on an innovative training strategy called Simulation-assisted Mean Teacher (SMT) and incorporates a special decoder called Local-Global Aware Attention (LGA).
+In order to solve the \textbf{first problem} in the previous paragraph, we introduce the SMT. Concretely, student network is directly supervised with definite instance labels for non-overlapping areas, and for overlapping areas, pseudo-labels generated by teacher network are used as supervision. 
+As to teacher network, we use EMA to updates its parameters.
+This approach yields more accurate predictions for overlapping areas compared to classical statistical methods like GP~\cite{shin2017real}.
+Furthermore, to address the challenge of suboptimal pseudo-label quality, we generate simulated overlapping samples using non-overlapping bboxes.
+And these simulated samples are used to train a base model, producing weights that serve as the initialization for teacher and student networks. 
+This fundamentally equips the network with the ability to distinguish overlapping areas, and the higher quality pseudo-labels generated by the teacher network aid in the rapid training of the Mean Teacher.
+Additionally, when applied to multiple datasets, only a brief finetuning is required instead of retraining the pre-trained weights. 
+Taking S3DIS~\cite{armeni20163d} as an example, the model's training time decreases from 42 hours to just 1.7 hours.
+As to the \textbf{second problem}, we introduce the LGA. Concretely, we first initialize two learnable queries, with each representing one of the two foreground instances. 
+We then employ local-structure attention to effectively model the local structure of each instance and aggregate structural relationships within each instance into a holistic representation through queries.
+Subsequently, by employing global-context attention, we facilitate the aggregation of global information, especially interactions between the two foreground instances and interactions between overlapping areas and non-overlapping areas. 
+Through this design, we can effectively model category, structure, and contextual information adaptively. 
+Additionally, we can leverage the response values of the overlapping area points to the queries to remove background points from the overlapping areas.
+
+In summary, the main contributions of this work are as follows: (i) We propose a weakly supervised 3D instance segmentation method called BSNet, which uses bboxes as annotations and devises a novel pseudo-labeler. 
+(ii) We design a pioneering pseudo-labeler called SAFormer, which for the first time incorporates the deep neural network and the Mean Teacher paradigm, and innovatively constructs simulated samples to facilitate training. 
+Besides, with the help of LGA, SAFormer can accurately predict pseudo-labels for overlapping areas, thus achieving precise weakly supervised 3DIS results.
+(iii) Extensive experimental results on two standard benchmarks, ScanNetV2~\cite{dai2017scannet} and S3DIS~\cite{armeni20163d}, verify the superiority of our designs.
+
+
+
+Related Work
+In this section, we briefly overview related works on 3D instance segmentation, weakly supervised 3D  instance segmentation and the Mean Teacher paradigm.
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=1\linewidth]{figure/framework1.pdf}
+    \caption{
+      \textbf{(\Rmnum{1}) The overall framework of our method BSNet. (\Rmnum{2}) The total process to generate an outstanding pseudo-labeler SAFormer.} BSNet is a novel two-step method consisting of generating pseudo instance labels by SPFormer and using the pseudo instance labels to train a 3D instance segmentation network.}
+    \label{fig:framework}
+  \end{figure*}
+
+\noindent\textbf{3D Instance Segmentation.}
+3D instance segmentation is a fundamental task for 3D scene understanding, which can be categorized into proposal-based, grouping-based and transformer-based methods. 
+Proposal-based methods~\cite{yi2019gspn,yang2019learning,engelmann20203d,liu2020learning} extract 3D bboxes and utilize a mask learning branch to predict the object mask inside each box. 
+Grouping-based methods~\cite{jiang2020pointgroup,chen2021hierarchical,liang2021instance,zhong2022maskgroup,vu2022softgroup,wu20223d,ngo2023isbnet} predict semantic categories and geometric offsets for each point, and then employ clustering algorithms to group the points into instances. 
+Transformer-based methods~\cite{schult2023mask3d,sun2023superpoint,lu2023query} are the state-of-the-art paradigm, where queries are used to represent instances and global information is aggregated into queries through a transformer decoder~\cite{carion2020end,cheng2021per,cheng2022masked}. 
+Although these fully supervised methods have achieved superior performance, they still have significant limitations in practice due to the time-consuming point-wise instance annotation. 
+Therefore, some weakly supervised instance segmentation methods have been proposed to alleviate this problem.
+
+\noindent\textbf{Weakly Supervised 3D Instance Segmentation.}
+The current weakly supervised 3D instance segmentation methods~\cite{hou2021exploring,xie2020pointcontrast,chibane2022box2mask,du2023weakly,ngo2023gapro} can be divided into two categories: sparse points as annotations and 3D bboxes as annotations. 
+Sparse-point annotation methods~\cite{hou2021exploring,xie2020pointcontrast} primarily utilize sparsely labeled point clouds as supervision to train the network. 
+In comparison to methods using sparse points as annotations, 3D bboxes provide richer instance information such as category and shape size, enabling the network to better handle instance segmentation tasks. 
+Box2mask~\cite{chibane2022box2mask} uses bboxes as supervision, allowing the network to predict bbox for each individual point. %and then employs clustering algorithms for grouping. 
+WISGP~\cite{du2023weakly} leverages 3D local geometric information to generate point-level labels from bbox annotations. 
+Gapro~\cite{ngo2023gapro} employs GP~\cite{shin2017real} to model the global similarity relationships between overlapping and non-overlapping regions. 
+However, these methods have relatively simple modeling of structure in overlapping samples and do not effectively incorporate category, structure, and contextual information. 
+In contrast, our proposed Local-Global Aware Attention enhances the capacity to model both local structures and global relationships.
+
+\noindent\textbf{Mean Teacher Paradigm.}
+The Mean Teacher paradigm has been widely researched in various tasks, such as UDA for semantic segmentation~\cite{araslanov2021self,hoyer2022daformer,zhang2021prototypical}, semi-supervised object detection~\cite{xu2021end,mi2022active,wang2023consistent}, weakly supervised object detection~\cite{wang2022omni,wang2023alwod}, UDA for object detection~\cite{cao2023contrastive,li2022cross}, and UDA for person ReID~\cite{ge2020mutual,zheng2021exploiting,han2022delving}. 
+This paradigm helps to avoid the interative self-training complicated multi-stage training process. 
+SoftTeacher~\cite{xu2021end} introduces the first end-to-end pseudo labeling framework in semi-supervised object detection, gradually improving the quality of pseudo labels during a curriculum. 
+To mitigate the issue of low-quality pseudo-labels, CMT~\cite{cao2023contrastive} identifies the alignment and synergy between Mean Teacher and contrastive learning. 
+UNRN~\cite{zheng2021exploiting} proposes the estimation and exploitation of the credibility of assigned pseudo-labels for each sample, reducing the impact of noisy pseudo-labels generated by the teacher network. 
+Based on the above research, we introduce a Simulation-assisted Mean Teacher approach, which employs the Mean Teacher paradigm to generate stable pseudo-labels in real-time and constructs simulated samples to assist the network in acquiring prior knowledge about overlapping areas. 
+
+
+
+Method
+\subsection{Overview}
+As illustrated in Figure~\ref{fig:framework}(\Rmnum{1}), the framework of our method begins by generating pseudo object masks for instances in the training set based on bbox annotations. 
+Subsequently, these pseudo object masks are employed to train a 3DIS network. 
+Throughout the entire process, the most critical step is to generate an outstanding pseudo-labeler to predict pseudo-labels for overlapping areas, as shown in Figure~\ref{fig:framework}(\Rmnum{2}). 
+In the generation process, two distinct designs stand out. The first one is the adoption of a unique training strategy called Simulation-assisted Mean Teacher (SMT), which can be divided into two steps: Simulated Sample Generation in Section~\ref{Generation} and Mean Teacher Approach in Section~\ref{SimulationTransfer}. 
+The second one is a novel decoder named Local-Global Aware Attention (LGA) in Section~\ref{Local-global}.
+First, we generate simulated samples using non-overlapping bboxes from real datasets. These simulated samples are then used to train a labeler $\phi$.
+Subsequently, we utilize the weights of $\phi$ to initialize the teacher labeler $\phi_t$ and the student labeler $\phi_s$. 
+Finally, we finetune the labelers $\phi_s, \phi_t$ using the Mean Teacher approach to generate pseudo-labels in overlapping areas. The resulting labeler $\phi_t$ is denoted as SAFormer. 
+After obtaining the pseudo-labels, we employ them for soft supervision of the 3DIS network.
+
+\subsection{Process to Generate SAFormer}
+We develop a novel pseudo-labeler called SAFormer, which accurately predicts labels for overlapping areas, leading to precise results in bbox-supervised 3DIS.
+Next, we will sequentially introduce the generation process.
+
+\subsubsection{Simulated Sample Generation}
+\label{Generation}
+The abundant non-overlapping bboxes in ScanNetV2~\cite{dai2017scannet} with definite instance labels allow us to generate simulated overlapping samples.
+As illustrated in Figure~\ref{fig:generate_pipeline}, we begin by extracting real overlapping samples $O$ and non-overlapping objects $P$ from real scenes. Subsequently, we conduct an analysis of the class distribution and spatial distribution within these real overlapping samples. To be more specific, we determine which class pairs make up overlapping samples, counting the number $n$ of samples for each class pair and calculate the mean $\mu$  and variance $\sigma$ of the distances between the center points of each class pair.
+After obtaining the statistical data, we commence the simulation of the distribution. Firstly, we perform sampling of class pairs based on the distribution of $n$. Assuming the sampled class pair is denoted as $(a, b)$, we then uniformly sample one object point cloud for each of the classes $a$ and $b$ from the set $P$. After obtaining these two point clouds, we perform gaussian sampling based on the corresponding $\mu$ and $\sigma$ to obtain a distance $d$, representing the distance between the two point clouds. Finally, for the sake of simplicity, we directly translate one of the point clouds along the X or Y-axis by the distance $d$.
+It is worth noting that, before performing the distance translation, we align the center points of the point cloud pairs.
+
+To better maintain physical plausibility, we make scene adjustments based on the following two principles~\cite{rao2021randomrooms}: 1) gravity: objects should not float in the air; 2) collision: these two objects should not exhibit any collision. Specific details are covered in the supplementary materials. Another purpose of designing the collision constraint is to verify whether two objects can be matched when constructing simulated samples. Concretely, after multiple (with an upper limit of $\mathbf{M}$) distance samplings and collision constraint corrections, some object pairs may still fail to generate overlapping regions. Such pairs are subsequently excluded from use.
+Finally, considering that real overlapping samples contain background noise points, we add an appropriate number of $floor$ points to represent the presence of background noise points.
+
+During the aforementioned process, we have obtained simulated overlapping samples $S$.
+Currently, we utilize these samples to train a labeler $\phi$.
+The labeler $\phi$ primarily consists of two components: a lightweight 3D-UNet based on sparse convolution~\cite{graham2017submanifold,liu2015sparse,graham20183d} and LGA.
+In next section, we provide a detailed introduction of LGA.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=1\linewidth]{figure/generate_pipeline2.pdf}
+  \caption{
+    \textbf{The process of generating simulated samples.}  There are numerous non-overlapping objects ($P$) with definite instance labels in real scenes. We can generate simulated samples ($S$) based on the distribution of real overlapping samples ($O$) and the physical plausibility.}
+  \label{fig:generate_pipeline}
+\end{figure}
+\subsubsection{Local-Global Aware Attention}
+\label{Local-global}
+As shown in Figure~\ref{fig:LGFormer}, LGA mainly contains local-structure attention and global-context attention.
+Assuming that the input point cloud consists of $N$ points, with each point containing position coordinates $(x, y, z)$ and color information $(r, g, b)$.
+First, we input the point cloud into a lightweight 3D-UNet to obtain point-level features $F$. 
+Subsequently, following SPFormer~\cite{sun2023superpoint}, we aggregate the point-level features $F$ into superpoint-level features $F_{sup}$ using average pooling.
+Next, we initialize two learnable queries $Q_1, Q_2$, representing two foreground instances respectively.
+To better model local structure, we separately employ the self-attention layer and the feed-forward layer within the non-overlapping areas of different instances. 
+This approach ensures that each local region interacts with similar regions belonging to the same instance, significantly enhancing the discriminative and representational capabilities of local structures.
+Specifically, we concatenate $F_{sup,1}$ with $Q_1$ and $F_{sup,2}$ with $Q_2$ to form $F_{v,1}, F_{v,2}$, and then input them separately into the self-attention layer, just as follows:
+{\small
+\begin{equation}
+  \label{self-attention}
+  F_{v,i}' = {\rm Softmax}(\frac{\mathcal{Q}\mathcal{K}^T}{\sqrt{\mathcal{C}}}) \mathcal{V}, i = 1, 2,
+\end{equation}}where $ \mathcal{Q} = F_{v,i}W_q$, $\mathcal{K} = F_{v,i}W_k$, $\mathcal{V} = F_{v,i}W_v$, and $W_q, W_k, W_v$ denote the linear transform matrices for queries, keys, and values, respectively.
+Finally we input $F_v'$ into the feed-forward layer to obtain $F_v''$.
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=1\linewidth]{figure/LGNet.pdf}
+  \caption{
+    \textbf{The Local-Global Aware Attention.} Two foreground queries are input into local-structure attention and global-context attention to generate corresponding masks. $S_1, S_2$ represent non-overlapping areas. $S_3$ represents overlapping areas.}
+  \label{fig:LGFormer}
+\end{figure}
+
+After modeling the local structures within each non-overlapping area $S_1, S_2$, and aggregating these structures into a holistic representation through foreground queries, we need to incorporate global information. % 
+The specific approach involves concatenating the features $F_{v,1}'', F_{v,2}''$, and $F_{sup,3}$. 
+Then, we input this concatenated features into the self-attention layer and the feed-forward layer. 
+Through this method, we can model relationships between non-overlapping and overlapping areas, between the two foreground instances, and aggregate these global relationships into $Q_1$ and $Q_2$, respectively.
+Finally, to classify the overlapping areas, we obtain the masks $M_{ins,1}, M_{ins,2}$ for the two objects by calculating the dot product between $F_{sup,3}$ and $Q_1$, $Q_2$. 
+The final mask is obtained through the Sigmoid function followed by a threshold of 0.5:
+{\small
+\begin{equation}
+  \label{sigmoid}
+    M_{i} = {\rm Sigmoid}(M_{ins,i}) > 0.5, i = 1, 2.
+\end{equation}
+}Since $M_1$ and $M_2$ represent two different foreground object masks, for areas where both $M_1$ and $M_2$ are not activated, we classify them as background areas. 
+This approach naturally helps the labeler filter out background points, which is an improvement over Gapro~\cite{ngo2023gapro}, as Gapro overlooks the presence of background points.
+Furthermore, to better assist the labeler in learning unified knowledge for the same class, we add a class prediction head.
+
+For training on the simulated overlapping samples $S$, since the instance labels are complete, we directly use the shared losses from SPFormer~\cite{sun2023superpoint} and Mask3D~\cite{schult2023mask3d}:
+\begin{equation}
+  \label{loss_simulated}
+   L_{total\_sim} = \lambda_1 L_{cls} + \lambda_2 L_{bce} + \lambda_3 L_{dice},
+\end{equation}
+where $\lambda_1, \lambda_2, \lambda_3$ are hyperparameters, $L_{cls}$ is the cross-entropy loss, $L_{bce}$ is the binary cross-entropy loss, $L_{dice}$ is the dice loss~\cite{milletari2016v}.
+\subsubsection{Mean Teacher Approach}
+\label{SimulationTransfer}
+During the above process, the labeler $\phi$ has learned prior knowledge about overlapping scenes through training on the simulated samples.
+Subsequently, we used the pretrained weights as the initial weights for both the teacher labeler $\phi_t$ and the student labeler $\phi_s$.
+Then, we apply data augmentation to the real overlapping samples, including flipping, jittering, elastic distortion, and so on. 
+The original samples are fed into the teacher labeler, while the augmented samples are input into the student labeler.
+Since the labels for non-overlapping areas in real samples are known, we can directly supervise these areas. 
+As for the overlapping areas, to better leverage the predictions of the teacher labeler, we select high-confidence pseudo-labels for the overlapping areas based on a fixed threshold $\tau$.
+The teacher labeler updates its parameters using the EMA technique.
+With this design, the teacher labeler can continuously update pseudo-labels online and transfer knowledge to the student. 
+Simultaneously, the student labeler can employ EMA to transmit the acquired knowledge back to the teacher. 
+Going a step further, with the initialization weights obtained through simulation, the teacher labeler gains the ability to distinguish overlapping areas. 
+It can generate higher quality pseudo-labels, accelerating the Mean Teacher's training speed. %
+Finally, the well-trained teacher labeler $\phi_t$ is referred to as SAFormer, which is used to generate final pseudo-labels for overlapping regions.
+
+For finetuning on the real samples, we adopt a weakly supervised approach. The specific approach can be divided into two parts. First, for non-overlapping areas, where the labels are known but only partial labels of the complete objects, we only supervise the non-overlapping areas.:
+{\small
+\begin{equation}
+  \label{m_no}
+    M' = Q_sF_{s,sup,1\cup2}^T,
+\end{equation}
+}where $Q_s$ represents the instance queries of the student labeler, $1\cup2$ represents the union of $S_1$ and $S_2$,
+{\small
+\begin{equation}
+  \label{loss_real_no}
+   L_{sup} = \lambda_2 L_{bce}(M',M_{gt}') + \lambda_3L_{dice}(M',M_{gt}'). 
+\end{equation}
+}Next, for overlapping areas, we obtain high-confidence pseudo-labels based on a threshold $\tau$ from the teacher labeler and solely supervise the overlapping areas that have corresponding pseudo-labels:
+{\small
+\begin{gather}
+  \label{m_o}
+    M_{ps}'' = Q_tF_{t,sup,3}^T \odot (Q_tF_{t,sup,3}^T>\tau), \\
+    M'' = Q_sF_{s,sup,3}^T \odot (Q_tF_{t,sup,3}^T>\tau),
+\end{gather}
+}where $\odot$ represents hadamard product, $Q_t$ represents the instance queries of the teacher labeler, $M_{ps}''$ represents the pseudo-labels of overlapping areas,
+{\small
+\begin{equation}
+  \label{loss_real_o}
+  L_{unsup} = \lambda_2L_{bce}(M'',M_{ps}'') + \lambda_3L_{dice}(M'',M_{ps}'').
+\end{equation}
+}
+The total loss for real samples is:
+\begin{equation}
+  \label{loss_total_real}
+  L_{total\_real} = \lambda_1 L_{cls} + L_{sup} + L_{unsup}.
+\end{equation}
+\subsection{Training a 3DIS Network}
+\label{Training}
+Due to the fact that the instance labels for points within non-overlapping bboxes and non-overlapping areas of overlapping bboxes are definite,  we can combine these determined instance labels with the pseudo-labels obtained through SAFormer.
+Then the combined labels are used to train a 3DIS network.
+It's worth noting that since the predicted pseudo-label values $\in[0,1]$, which reflect confidence, employing a soft supervision is a better choice.
+Assuming there are $K$ instances, the pseudo masks $M\in[0,1]^{K\times N}$,
+{\small
+\begin{equation}
+  \label{loss_SOFT_BCE}
+  L_{bce}' = \frac{\sum_{i = 1}^{K} \sum_{j = 1}^{N}   L_{bce}(M_{pred,i,j},M_{i,j}) *  M_{i,j}}{\sum_{i = 1}^{K} \sum_{j = 1}^{N}M_{i,j}},
+\end{equation}
+}where $M_{pred}$ represents the results predicted by the 3DIS network.  The total soft loss is:
+{\small
+\begin{equation}
+  \label{loss_soft}
+   L_{total\_soft} = \widehat{\lambda_1} L_{cls} + \widehat{\lambda_2}L_{bce}' + \widehat{\lambda_3}L_{dice} + L_{net},
+\end{equation}
+}where $\widehat{\lambda_1}, \widehat{\lambda_2}, \widehat{\lambda_3}$ are hyperparameters specific to different 3DIS networks, and $L_{net}$ are loss functions unique to different 3DIS networks.
+
+
+
+Experiments
+\subsection{Experimental Setup}
+\textbf{Datasets and metrics.}
+We conduct our experiments on ScanNetV2~\cite{dai2017scannet} and S3DIS~\cite{armeni20163d} datasets.
+ScanNetV2 includes 1,613 scenes with 18 instance categories.
+Among them, 1,201 scenes are used for training, 312 scenes are used for validation, and 100 scenes are used for test.
+S3DIS is a large-scale indoor dataset collected from six different areas, which contains 272 scenes with 13 instance categories.
+Following previous works~\cite{vu2022softgroup,ngo2023gapro}, we train on Area 1, 2, 3, 4, 6 and evaluate on Area 5.
+AP@25 and AP@50 represent the average precision scores with IoU thresholds 25\% and 50\%,
+and mAP represents the average of all the APs with IoU thresholds ranging from 50\% to 95\% with a step size of 5\%.
+On ScanNetV2, we report mAP, AP@50 and AP@25. Moreover, we also report the
+Box AP@50 and AP@25 results following Gapro~\cite{ngo2023gapro}.
+On S3DIS, we report mAP and AP@50.
+
+\textbf{Implementation details.}
+\label{Implementation}
+The whole method BSNet is trained on a single RTX3090. As to the training setting of the pseudo-labeler SAFormer, first we train 100 epochs on simulated samples with a batch size of 64, which takes about 6 hours.
+Next, we fintune 5 epochs on real samples of ScannetV2 training set with a batch size of 64, which takes about 90 minutes.
+During inference, it takes approximately 10 minutes to generate pseudo-labels for the entire training set.
+As to S3DIS, it takes about 100 minutes for fintuning with 5 epochs and 10 minutes to generate pseudo-labels.
+Given that our pseudo-labeler only needs to be trained once on the simulated samples when applied to multiple datasets, so the more datasets we apply, the more efficient the method is.
+As to the backbone of SAFormer, we use a lightweight 3D-UNet based on sparse convolution~\cite{graham2017submanifold,liu2015sparse,graham20183d} with 3 blocks and 32 media channels.
+At last, we tune the hyperparameters $\mathbf{M}, \tau, \lambda_1, \lambda_2, \lambda_3$ as 8, 0.9, 2, 5, 2.
+\subsection{Comparison with state-of-the-art methods}
+\textbf{ScanNetV2.}
+As shown in Table~\ref{table:ScanNetV2}, we compare our approach with existing state-of-the-art methods on the ScanNetV2 validation set.
+Attributed to the innovative construction of simulated samples by SMT and the capability of LGA to model local and global information, our proposed SAFormer can generate higher-quality pseudo-labels to supervise the 3DIS network.
+Consequently, our box-supervised 3DIS method outperforms other methods by a significant margin in terms of mAP, AP@50 and AP@25.
+It is worth emphasizing that our results can achieve 95\% in terms of mAP when compared to the corresponding fully supervised methods. 
+This signifies a substantial improvement over previous approaches, which typically achieves only about 90\% performance.
+To vividly illustrate the differences between our method and others, we visualize the qualitative results of pseudo-labels in Figure~\ref{fig:visualiztion}. 
+From the regions highlighted in yellow circles, it is evident that our method can generate more accurate pseudo-labels for overlapping areas.
+
+\begin{table}[!t]
+  \begin{center}
+    \footnotesize
+    \setlength\tabcolsep{1.6pt}
+    \caption{\textbf{Comparison on ScanNetV2 validation set.} \%full indicates the percentage of the current method's performance compared to its corresponding fully supervised method.
+    ISBNet$\dagger$ refers that we use the pseudo-labels generated by "Box2Mask~\cite{chibane2022box2mask}: assign points to smaller bo
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

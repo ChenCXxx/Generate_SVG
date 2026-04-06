@@ -1,0 +1,237 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}
+\begin{center}
+\includegraphics[width=0.98\linewidth]{Figures/Fig1-Motivation1.jpg}
+\end{center}
+\caption{
+Directly leveraging optical flow can be distracted by irrelevant clues such as background and  blur 
+(a), and sometimes fails in scenarios with fast motion and mutual occlusion (b). 
+Our proposed framework proceeds with temporal difference encoding and useful information disentanglement to capture more tailored temporal dynamics (c),  yielding more robust pose estimations (d).
+\label{fig:motivation}
+\end{figure}
+\label{sec:intro}
+Human pose estimation has long been a nontrivial and fundamental problem in the computer vision community. The goal is to localize anatomical keypoints (\emph{e.g.}, nose, ankle, etc.) of human bodies from images or videos. Nowadays, as more and more videos are recorded endlessly, video-based human pose estimation has been  extremely desired in enormous applications including live streaming, augmented reality, surveillance, and movement tracking \cite{isobe2022look, schmidtke2021unsupervised, liu2022temporal}.
+
+An extensive body of literature focuses 
+on estimating human poses in \emph{static images}, ranging from earlier methods employing pictorial structure models \cite{wang2008multiple, wang2013beyond, zhang2009efficient, sapp2010cascaded} to recent attempts leveraging deep convolutional neural networks \cite{Toshev_2014_CVPR, Wei_2016_CVPR,  xiao2018simple, liu2022temporal} or Vision Transformers \cite{li2021tokenpose, yuan2021hrformer, yang2021transpose}. Despite the impressive performance in still images, the extension of such methods to video-based human pose estimation 
+still remains 
+challenging due to the additional temporal dimension in videos \cite{wu2022motion, liu2021deep}. 
+By nature, the video presents distinctive and valuable \emph{dynamic contexts} (\emph{i.e.}, the temporal evolution in the visual content) \cite{zhao2018recognize}. Therefore, being able to effectively utilize the temporal dynamics (motion information) is fundamentally important for accurate pose estimation in videos \cite{liu2022temporal}.
+
+One line of work \cite{liu2022temporal, wang2020combining, luo2018lstm} attempts to derive a unified spatial-temporal representation through \emph{implicit} motion compensation. \cite{wang2020combining} presents a 3DHRNet which utilizes 3D convolutions to extract spatiotemporal features of a video tracklet to estimate pose sequences. \cite{liu2022temporal} adopts deformable convolutions to align multi-frame features and aggregates aligned feature maps to predict  human poses.
+	On the other hand, 
+	\cite{song2017thin, pfister2015flowing, zhang2018poseflow} \emph{explicitly} model motion contexts with optical flow. 
+    \cite{song2017thin, pfister2015flowing} propose to compute dense optical flow between every two frames and leverage the flow features for refining pose heatmaps temporally across multiple frames. %\cite{zhang2018poseflow} proposes PoseFlow that generates optical flow on human body region to represent motion.
+
+Upon studying the previous methods \cite{liu2021deep, liu2022temporal, pfister2015flowing, song2017thin}, we empirically observe that the pose estimation performance is boosted with the implicit or explicit imposition of motion priors. However, the movement of any visual evidence is usually attended to in these paradigms, resulting in cluttered motion features that include numerous irrelevant information (\emph{e.g.}, nearby person, background), as illustrated in Fig. \ref{fig:motivation}. Directly exploiting such vanilla motion features delivers inferior results, especially in complex scenarios of mutual occlusion and fast motion. More specifically, not all pixel movements are equally important in video-based human pose estimation \cite{zeng2022not}. For example, background variations and pixel changes caused by image quality degradation (\emph{e.g.}, blur and occlusion) are usually  useless and distracting, whereas the salient pixel movements driven by human body motions play a more important role in understanding motion patterns \cite{huang2021self}. Therefore, discovering meaningful motion dynamics is crucial to fully recovering human poses  across a video.
+On the other hand, investigating temporal differences across video frames allows one to discover representative motion cues \cite{wang2021tdn, xiao2022learning, jiang2019stm}. Although it has already shown success in various video-related tasks (action recognition \cite{wang2021tdn}, video super-resolution \cite{isobe2022look}), its application on video-based human pose estimation remains under-explored.
+
+
+In this paper, we present a novel framework, named \underline{\textbf{T}}emporal \underline{\textbf{D}}ifference Learning based on \underline{\textbf{M}}utual \underline{\textbf{I}}nformation (TDMI) for human pose estimation.
+	Our TDMI consists of two key components: 
+	  \textbf{(i)} A multi-stage Temporal Difference Encoder (TDE) is designed to model motion contexts conditioned on multi-stage feature differences among video frames. Specifically, we first compute the feature difference sequences across multiple stages by leveraging a temporal difference operator. Then, we perform incremental cascaded learning via intra- and inter-stage feature integration to derive the motion representation. %During feature aggregation, our TDE spatially modulates each stage feature tensors to adaptively focus on the important information, and progressively accumulates the features of historical stages to preserve motion details in all stages. In this way, the resulting motion representations tend to be informative and fine-grained. 
+	  \textbf{(ii)} We further introduce a Representation Disentanglement module (RDM) from the mutual information perspective, which distills the task-relevant motion features to enhance the frame representation for pose estimation. In particular, we first disentangle the useful and noisy constituents of the vanilla  motion representation by activating corresponding feature channels. Then, we theoretically analyze the statistical dependencies between the useful and the noisy motion features and arrive at an information-theoretic loss. Minimizing this mutual information objective encourages the useful motion components to be more discriminative and task-relevant. Our approach achieves significant and consistent performance improvements over current state-of-the-art methods on four benchmark datasets. Extensive ablation studies are conducted to validate the efficacy of each component in the proposed method.
+
+The main contributions of this work can be summarized as follows: (1) We propose a novel framework that leverages temporal differences to model dynamic contexts for video-based human pose estimation.
+(2) We present a disentangled representation learning strategy to grasp discriminative task-relevant motion signals via an information-theoretic objective.
+(3) We demonstrate that our approach achieves new state-of-the-art results on four benchmark datasets, PoseTrack2017, PoseTrack2018, PoseTrack21, and HiEve. %Our code has been released.
+
+
+Related Work
+\textbf{Image-based human pose estimation.}\quad
+With the recent advances in deep learning architectures \cite{he2016deep, vaswani2017attention} as well as the availability of large-scale datasets \cite{Iqbal_2017_CVPR, Andriluka_2018_CVPR, doering2022posetrack21, lin2020human},
+various deep learning methods  \cite{artacho2020unipose, cheng2020higherhrnet, sun2019deep, xiao2018simple, li2021tokenpose, yuan2021hrformer, yang2021transpose} are proposed for image-based human pose estimation. These approaches broadly fall into two paradigms: bottom-up and top-down. \emph{Bottom-up} approaches \cite{Cao_2017_CVPR, kocabas2018multiposenet, kreiss2019pifpaf} detect individual body parts and  associate them with an entire person. \cite{kreiss2019pifpaf} proposes a composite framework that employs a Part Intensity Field to localize human body parts and uses a Part Association Field to associate the detected body parts with each other. Conversely, \emph{top-down} approaches \cite{xiao2018simple, Wei_2016_CVPR, sun2019deep, fang2017rmpe, li2021tokenpose} detect bounding boxes of persons first and  predict human poses within each bounding box region. %\cite{li2021tokenpose} proposes to explicitly represent joints as token embeddings and simultaneously capture visual cues and constraint relations through a Transformer architecture. 
+\cite{sun2019deep} presents a high-resolution convolutional architecture that preserves high-resolution features in all stages, demonstrating superior performance for human pose estimation.
+
+\textbf{Video-based human pose estimation.}\quad
+Existing image-based methods could not generalize well to video streams %and usually exhibit temporal discontinuity, 
+since they inherently have difficulties in capturing temporal dynamics across frames. 
+A direct approach would be to leverage optical flow to impose motion priors \cite{song2017thin, pfister2015flowing}.
+These approaches typically compute dense optical flow among frames and leverage such motion cues to refine the predicted pose heatmaps. 
+However, the optical flow estimation is computationally intensive and tends to be vulnerable when encountering severe image quality degradation. Another approach \cite{liu2022temporal, bertasius2019learning, liu2021deep, wang2020combining} considers implicit motion compensation using deformable convolutions or 3DCNNs. \cite{bertasius2019learning, liu2021deep} propose to model multi-granularity joint movements based on heatmap residuals and perform pose resampling or pose warping through deformable convolutions. %\cite{liu2022temporal} uses deformable convolutions to temporally align the features of different frames for better feature aggregation. 
+As the above cases generally consider motion details from all pixel locations, their resulting representations are suboptimal for accurate pose estimation. 
+
+\textbf{Temporal difference modeling.}\quad
+Temporal difference operations, \emph{i.e.}, RGB Difference (image-level) \cite{wang2016temporal, zhao2018recognize, ng2018temporal, wang2021tdn} and Feature Difference (feature-level) \cite{liu2020teinet, jiang2019stm, li2020tea}, are typically exploited for motion extraction,  showing outstanding performance with high efficiency for many video-related tasks such as action recognition \cite{wang2021tdn, li2020tea} and video super-resolution \cite{isobe2022look}. \cite{zhao2018recognize, ng2018temporal, wang2021tdn} leverage RGB difference as an efficient alternative modality to optical flow to represent motions. \cite{isobe2022look} proposes to explicitly model temporal differences in both LR and HR space. However, the additional RGB difference branch usually replicates the feature-extraction backbone, which increases the model complexity. 
+On the other hand, \cite{liu2020teinet, jiang2019stm, li2020tea} employ a feature difference operation for network design which our work falls within this scope more closely.
+In contrast to previous methods that simply compute feature differences, we seek to disentangle discriminative task-relevant temporal difference representations for pose estimation.
+
+
+Our Approach
+\textbf{Preliminaries.}\quad 
+Our work follows the top-down paradigm, starting with an object detector to obtain the bounding boxes for individual  persons in a video frame $I_t$. Then, each bounding box is enlarged by $25\%$ to crop the same individual in a consecutive frame sequence $\boldsymbol{\mathcal{X}}_t = \left \langle I_{t-\delta},...,I_t,...,I_{t+\delta} \right \rangle$ with $\delta$ being a predefined temporal span. In this way, we attain the cropped video clip $\boldsymbol{\mathcal{X}}^i_t = \left \langle I_{t-\delta}^i,...,I_t^i,...,I_{t+\delta}^i \right \rangle$ for person $i$.
+
+\textbf{Problem formulation.}\quad 
+Given a cropped video segment $\boldsymbol{\mathcal{X}}^i_t$ centered on the key frame $I_t^i$, we are interested in estimating the pose in $I_t^i$. Our goal is to better leverage frame sequences through principled temporal difference learning and useful information disentanglement, thereby addressing the common shortcoming of existing methods in failing to adequately mine motion dynamics.
+
+\textbf{Method overview.}\quad
+The overall pipeline of the proposed TDMI is outlined in Fig. \ref{fig:pipeline}. Our framework  consists of two key components: a multi-stage Temporal Difference Encoder (TDE) (Sec. \ref{sec. smtde}) and a Representation Disentanglement module (RDM) (Sec. \ref{sec. drl}). Specifically, we first extract visual features of the input sequence and feed them to TDE, which computes feature differences and performs information integration to obtain the motion feature $\mb{M}_t^i$. Then, RDM takes motion feature $\mb{M}_t^i$ as input and excavates its useful constituents to yield $\mb{M}_{t,u}^{i}$. Finally, both the motion feature $\mb{M}_{t,u}^{i}$ and the visual feature of the key frame are aggregated to produce the enhanced representation $ \tilde {\mb{F}}_t^i$.  $ \tilde {\mb{F}}_t^i$ is handed to a detection head which outputs the pose estimation $\mb{H}_t^i$. In the following, we explain the two key components in depth.
+
+\subsection{Multi-Stage Temporal Difference Encoder} \label{sec. smtde}
+As multi-stage feature integration enables the network to retain diverse semantic information from fine to coarse scale \cite{jiang2020pay, pang2019towards, zeng2022not}, we propose to simultaneously aggregate shallow feature differences (early stages) compressing detailed motion cues and deep feature differences (late stages) encoding global semantic movements to derive informative and fine-grained motion representations. 
+A naive approach to fuse features in multiple stages is to feed them into a convolutional network \cite{ke2018multi, chen2018cascaded}. However, this simple fusion solution suffers from two drawbacks: (i) redundant features might be over-emphasized, and (ii) fine-grained cues of each stage cannot be fully reserved. Motivated by these observations and insights, we present a multi-stage temporal difference encoder (TDE) with an incremental cascaded learning architecture, addressing the above issues through two designs: a \emph{spatial modulation} mechanism to adaptively focus on important information at each stage, and a \emph{progressive accumulation} mechanism to preserve fine-grained contexts across all stages.
+
+Specifically, given an image sequence $\boldsymbol{\mathcal{X}}^i_t = \left \langle I_{t-\delta}^i,...,I_t^i,...,I_{t+\delta}^i \right \rangle$, our  proposed TDE first constructs multi-stage feature difference sequences and performs both intra- and inter-stage feature fusion to yield the encoded motion representation $\mb{M}_t^i$. For simplicity, we take $\delta = 1$ in the following.
+
+\begin{figure*}
+\begin{center}
+\includegraphics[width=0.96\linewidth]{Figures/Fig2-Pipeline-color.png}
+\end{center}
+\caption{{Overall pipeline of the proposed framework. The goal is to detect the human pose of the key frame $I_t^i$. Given an input sequence $ \left \langle I_{t-1}^i,I_t^i,I_{t+1}^i \right \rangle$, we first extract their visual features $\{ \mb{F}_{t-1}^{i,J}, \mb{F}_{t}^{i,J}, \mb{F}_{t+1}^{i,J} \}$. Our multi-stage Temporal Difference Encoder  takes these features as input and outputs the motion feature $\mb{M}_t^i$. Then, $\mb{M}_t^i$ is handed to the Representation Disentanglement module which performs useful information disentanglement and outputs $\mb{M}_{t,u}^{i}$. Finally, the motion feature $\mb{M}_{t,u}^{i}$ and the visual feature $\mb{F}_{t}^{i,j}$ and are used to obtain the final pose estimation $\mb{H}_t^i$.}}\label{fig:pipeline}
+
+\end{figure*}
+
+\textbf{Feature difference sequences generation.}\quad We build TDE upon the HRNet-W48 \cite{sun2019deep} network, which includes four convolutional stages to extract feature maps of the input sequence $\{ \mb{F}_{t-1}^{i,J}, \mb{F}_{t}^{i,J}, \mb{F}_{t+1}^{i,J} \}$. The superscript $J = \{1,2,3,4\}$ refers to network stages. Subsequently, we compute the consecutive feature difference sequences $\bm{S}_t^{i,J} = \left \{ \mb{S}^1, \mb{S}^2, \mb{S}^3, \mb{S}^4 \right \}$ over four stages as follows:
+\begin{equation}
+	\begin{aligned}
+		 \mb{S}^j &= \left \{\mb{F}_{t}^{i,j}- \mb{F}_{t-1}^{i,j}, \mb{F}_{t+1}^{i,j} - \mb{F}_{t}^{i,j} \right\}, j = 1, ..., 4.
+	\end{aligned}
+\end{equation}
+\textbf{Intra-stage feature fusion.}\quad Given the feature difference sequences $\bm{S}_t^{i,J}$, several residual blocks \cite{he2016deep} are leveraged to separately aggregate the feature elements within each stage to generate stage-specific motion representations $\bm{D}_t^{i,J} = \left \{ \mb{D}^{1}, \mb{D}^2, \mb{D}^3, \mb{D}^4 \right \}$. This computation can be expressed as:
+\begin{equation}
+	\begin{aligned}
+		 \mb{D}^{j} &= \textbf{Conv}\left [\left(\mb{F}_{t}^{i,j}- \mb{F}_{t-1}^{i,j} \right) \oplus \left(\mb{F}_{t+1}^{i,j} - \mb{F}_{t}^{i,j} \right)\right],
+	\end{aligned}
+\end{equation}
+where $\oplus$ is the concatenation operation and $\mb{Conv}(\cdot)$ is the function of convolutional blocks. In practice, we employ $\left \{ 3, 3, 2, 2 \right\}$ residual blocks with kernel size $3 \times 3$ to aggregate the features at corresponding stages, respectively.
+
+\textbf{Inter-stage feature fusion.}\quad After obtaining the motion features of each stage $\bm{D}_t^{i,J}$, we perform feature integration across stages to obtain the fused motion representation $\mb{M}_t^i$, via the proposed \emph{spatial modulation} and \emph{progressive accumulation}. 
+\textbf{(1)} We first employ deformable convolutions (DCN V2 \cite{zhu2019deformable}) to adaptively modulate the spatial-wise responses of each stage feature. Specifically, given $\bm{D}_t^{i,J}$, we independently estimate the kernel sampling offsets $\mathcal{O}$ and modulated scalars $\mathcal{W}$:
+\begin{equation}
+\begin{aligned}
+\left\{\mb{D}^{1}, \cdots, \mb{D}^4 \right\}  &\xrightarrow[\text{blocks}]{\text{residual}} \xrightarrow[\text{convolution}]{\text{regular}} \left\{O^1, \cdots, O^4\right\},\\
+\left\{\mb{D}^{1}, \cdots, \mb{D}^4 \right\}  &\xrightarrow[\text{blocks}]{\text{residual}} \xrightarrow[\text{convolution}]{\text{regular}} \left\{W^1, \cdots, W^4\right\}. 
+\end{aligned}
+\end{equation}
+The adaptively learned offsets $\mathcal{O}$ reveal the pixel movement association fields while the modulated scalars $\mathcal{W}$ reflect the magnitude of motion information in each pixel location. Then, we apply deformable convolutions which take the motion features $\bm{D}_t^{i,J}$, the kernel offsets $\mathcal{O}$, and the modulated scalars $\mathcal{W}$ as input, and output the spatially calibrated motion features of each stage $\bar{\bm{D}}_t^{i,J} =\left \{ \bar{\mb{D}}^{1}, \bar{\mb{D}}^2, \bar{\mb{D}}^3, \bar{\mb{D}}^4 \right \}$:
+\begin{equation}
+\begin{aligned}
+\left (\mb{D}^{j}, O^j, W^j \right) \xrightarrow[\text{convolution}]{\text{deformable}} \bar{\mb{D}}^j, j = 1,...,4.
+\end{aligned}
+\end{equation}
+\textbf{(2)} As shown in Fig. \ref{fig:pipeline}, after the spatial modulation, TDE adds the motion feature in the previous stage to the modulated feature, followed by several $3\times3$ convolutions. Such processing is executed progressively until all stages of features are converged to $\mb{M}_t^i$. The above computation is formulated as:
+\begin{equation}
+\begin{aligned}
+\mb{M}_t^i = \textbf{Conv}\left(\cdots\left(\textbf{Conv}\left(\bar{\mb{D}}^1\right) + \cdots + \bar{\mb{D}}^4\right)\right).
+\end{aligned}
+\end{equation}
+By selectively and comprehensively aggregating multi-stage features, our TDE is able to encode informative and fine-grained motion representation $\mb{M}_t^i$.
+
+\subsection{Representation Disentanglement Module} \label{sec. drl}
+Directly leveraging the encoded motion feature $\mb{M}_t^i$ for subsequent pose estimation is prone to inevitable task-irrelevant pixel movements  (\emph{e.g.}, background, occlusion). To alleviate this limitation, one can  train a Vision Attention module end-to-end via a heatmap loss to further distill meaningful motion cues. While being straightforward, the learned features in this approach tend to be plain and undistinguished, which results in limited performance improvement (see Table \ref{abl-drl}). After manual examination of the extracted temporal dynamic features for pose estimation, it would be fruitful to investigate whether introducing \emph{supervision to the meaningful information distillation} would facilitate the task. 
+Ideally, incorporating motion information annotations as feature constraints would simplify this problem. Unfortunately, such movement labels in videos are typically absent in most cases. In light of the above observations, we propose to approach this issue through a mutual information viewpoint. In specific, we explicitly define both useful composition $\mb{M}_{t,u}^{i}$ and noisy composition $\mb{M}_{t,n}^{i}$ of the vanilla motion feature $\mb{M}_{t}^{i}$, in which $\mb{M}_{t,u}^{i}$ is used for subsequent task while $\mb{M}_{t,n}^{i}$ serves as a contrastive landmark. By introducing mutual information supervision to reduce the statistical dependence between $\mb{M}_{t,u}^{i}$ and $\mb{M}_{t,n}^i$, we can grasp discriminative task-relevant motion signals. Coupling these network objectives, the representation disentanglement module (RDM) is designed.
+
+\textbf{Representation factorization.}\quad
+Given the vanilla motion representation $\mb{M}_t^i$, we factorize it into useful motion component $\mb{M}_{t,u}^{i}$ and noisy component $\mb{M}_{t,n}^{i}$ by activating corresponding feature channels. Specifically, we first squeeze the global spatial information into a channel descriptor via a global average pooling (GAP) layer. Then, a Multilayer Perceptron (MLP) is used to capture channel-wise interactions followed by a sigmoid function to output an attention mask. This channel-wise attention matrix  is finally exploited to rescale the input feature $\mb{M}_t^i$ to output $\mb{M}_{t,u}^{i}$ and $\mb{M}_{t,n}^{i}$, respectively. The above factorization process is formulated as:
+\begin{equation}
+\begin{aligned}
+\mb{M}_{t,u}^{i} = \sigma\left(\textbf{MLP}_u\left(\textbf{GAP}\left(\mb{M}_t^i\right) \right)\right) \odot \mb{M}_t^i,\\
+\mb{M}_{t,n}^{i} = \sigma\left(\textbf{MLP}_n\left(\textbf{GAP}\left(\mb{M}_t^i\right) \right)\right) \odot \mb{M}_t^i.
+\end{aligned}
+\end{equation}
+The symbol $\sigma$ denotes the sigmoid function and $\odot$ refers to the channel-wise multiplication. The network parameters of $\textbf{MLP}_u$ and $\textbf{MLP}_n$ are learned independently. 
+
+\textbf{Heatmap generation.}\quad We integrate the useful motion feature $\mb{M}_{t,u}^{i}$ and the visual feature of the key frame $\mb{F}_{t}^{i,j}$ through several residual blocks to obtain the enhanced representation $ \tilde {\mb{F}}_t^i$. $ \tilde {\mb{F}}_t^i$ is fed to a detection head to yield the estimated pose heatmaps $\mb{H}_t^i$. We implement the detection head using a $3\times 3$ convolutional layer.
+
+\textbf{Mutual information objective.} \quad \label{MI}
+Mutual information (MI) measures the amount of information one variable reveals about the other \cite{liu2022temporal, hou2021disentangled}. Formally, the MI between two random variables $\bs{x}_1$ and $\bs{x}_2$ is defined as:
+\begin{equation}
+\begin{aligned}
+	\mathcal{I}(\bs{x}_{1} ; \bs{x}_{2}) = 
+	\mathbb{E}_{p(\bs{x}_{1}, \bs{x}_{2})}\left[\log \frac{p(\bs{x}_{1}, \bs{x}_{2})}{p(\bs{x}_{1}) p(\bs{x}_{2})}\right],
+\end{aligned}
+\end{equation}
+where $p(\boldsymbol{x}_{1}, \boldsymbol{x}_{2})$ is the joint probability distribution between $\boldsymbol{x}_{1}$ and $\boldsymbol{x}_{2}$,
+while $p(\boldsymbol{x}_{1})$ and $p(\boldsymbol{x}_{2})$ are their marginals.
+Within this framework, our main objective for learning effective temporal differences is formulated as: 
+\begin{equation}\label{eq8}
+	\begin{aligned}
+			 \min \text{ } \mathcal{I}\left(\mb{M}_{t,u}^{i}; \mb{M}_{t,n}^{i}  \right) .
+	\end{aligned}
+\end{equation}
+The term $\mathcal{I}\left(\mb{M}_{t,u}^{i}; \mb{M}_{t,n}^{i}  \right)$ rigorously quantifies the amount of information  shared between the useful motion feature $\mb{M}_{t,u}^{i}$ and the noisy feature $\mb{M}_{t,n}^{i}$. Recall that $\mb{M}_{t,u}^{i}$ is used for the subsequent pose estimation task. Intuitively, at the beginning of model training, both meaningful and noisy motion cues will be encoded into $\mb{M}_{t,u}^{i}$ and $\mb{M}_{t,n}^{i}$ simultaneously under the constraint of mutual information minimization. As the training progresses, the features encoded by $\mb{M}_{t,u}^{i}$ and $\mb{M}_{t,n}^{i}$ are gradually systematized into task-relevant motion information and irrelevant motion clues. Under this contrastive setting of $\mb{M}_{t,n}^{i}$, the useful motion feature $\mb{M}_{t,u}^{i}$ would be more discriminative and beneficial for the pose estimation task, as shown in Fig. \ref{fig:motivation} (c).
+
+Furthermore, two regularization functions are introduced to facilitate model optimization. \textbf{(i)} We propose to improve the capacity of the multi-stage temporal difference encoder (TDE) to perceive meaningful information:
+
+\begin{equation}\label{re1}
+	\begin{aligned}
+			 \max \text{ } \mathcal{I}\left(\mb{M}_{t}^{i}; \mb{M}_{t,u}^{i}  \right) ,
+	\end{aligned}
+\end{equation}
+ where $\mathcal{I}\left(\mb{M}_{t}^{i}; \mb{M}_{t,u}^{i}\right)$ measures the useful motion information compressed in the vanilla motion feature $\mb{M}_{t}^{i}$. Maximizing  this term encourages more abundant and effective motion cues to be encoded in our TDE. 
+
+\textbf{(ii)} We propose to mitigate the information dropping during the feature enhancement of $\tilde {\mb{F}}_t^i$:
+\begin{equation}
+\begin{aligned}
+\label{eq.re.}
+\min \left[ 
+\mathcal{I}\left(\mb{M}_{t,u}^{i};{y}^{i}_{t}\mid\tilde {\mb{F}}_t^i  \right)
++ 
+\mathcal{I}\left(\mb{F}_{t}^{i,j};{y}^{i}_{t}\mid\tilde{\mb{F}}_t^i  \right)
+\right],
+\end{aligned} 
+\end{equation}
+
+where ${y}^{i}_{t}$ refers to the label, and terms $\mathcal{I}\left(\mb{M}_{t,u}^{i};{y}^{i}_{t} \mid    \tilde {\mb{F}}_t^i  \right)$ and $\mathcal{I}\left(\mb{F}_{t}^{i,j};{y}^{i}_{t}\mid\tilde{\mb{F}}_t^i  \right)$ quantify the vanishing task-relevant information in $\mb{M}_{t,u}^{i}$ and $\mb{F}_{t}^{i,j}$ respectively when aggregating them into the enhanced feature $\tilde {\mb{F}}_t^i$. Minimizing these two regularization terms fosters the nondestructive propagation of information. Given the notorious difficulty of conditional MI calculations  \cite{hjelm2018learning, tian2021farewell}, we adopt a simplified version as done in \cite{liu2022temporal, zhao2021learning}. We approximate the first term $\mathcal{I}\left(\mb{M}_{t,u}^{i};{y}^{i}_{t} \mid    \tilde {\mb{F}}_t^i  \right)$ as:
+
+\begin{equation}
+\begin{aligned} 
+\mathcal{I}\left(\mb{M}_{t,u}^{i};{y}^{i}_{t}  \mid \tilde{\mb{F}}_t^i  \right) \rightarrow \mathcal{I}\left({\mb{M}_{t,u}^{i};y}^{i}_{t} \right) - \mathcal{I}\left(\mb{M}_{t,u}^{i} ; \tilde{\mb{F}}_t^i\right).
+\end{aligned} 
+\end{equation}
+Similarly, the second term $\mathcal{I}\left(\mb{F}_{t}^{i,j};{y}^{i}_{t}\mid\tilde{\mb{F}}_t^i  \right)$ in Eq. \ref{eq.re.} can be simplified as follows:
+\begin{equation}
+\begin{aligned} 
+\mathcal{I}\left(\mb{F}_{t}^{i,j};{y}^{i}_{t}\mid\tilde{\mb{F}}_t^i  \right)\rightarrow 
+\mathcal{I}\left(\mb{F}_{t}^{i,j}; y^{i}_{t} \right) - 
+\mathcal{I}\left(\mb{F}_{t}^{i,j} ; \tilde{\mb{F}}_t^i\right).
+\end{aligned} 
+\end{equation}
+
+Ultimately, the proposed primary objective (Eq. \ref{eq8}) and the regularization terms (Eq. \ref{re1} and Eq. \ref{eq.re.}) are simultaneously optimized to provide feature supervision:
+\begin{equation}
+\begin{aligned} 
+\mathcal{L}_{\text{MI}} &= \mathcal{I}\left(\mb{M}_{t,u}^{i}; \mb{M}_{t,n}^{i}  \right) -  \mathcal{I}\left(\mb{M}_{t}^{i}; \mb{M}_{t,u}^{i}  \right) \\ &+ \mathcal{I}\left(\mb{M}_{t,u}^{i};{y}^{i}_{t}\mid\tilde {\mb{F}}_t^i  \right)
++ 
+\mathcal{I}\left(\mb{F}_{t}^{i,j};{y}^{i}_{t}\mid\tilde{\mb{F}}_t^i  \right).
+\end{aligned} 
+\end{equation}
+We adopt Variational Self-Distillation (VSD) \cite{tian2021farewell} to compute the MI for each term.
+\subsection{Loss Functions}
+Overall, our loss function consists of two portions. (1) We employ the standard pose heatmap loss $\mathcal{L}_\text{H}$ to supervise the final pose estimation:
+\begin{equation}
+	\begin{aligned}
+		\mathcal{L}_\text{H} = \left\|\mb{H}_t^i - \mb{G}_t^i \right\| _{2}^{2},
+	\end{aligned}
+\end{equation}
+where $\mb{H}_t^i$ and $\mb{G}_t^i$ denote the predicted and ground truth pose heatmaps, respectively. (2) We also leverage the proposed mutual information objective $\mathcal{L}_\text{MI}$ to supervise the learning of motion features. Our total loss is given by:
+\begin{equation}\label{eq.final}
+	\begin{aligned}
+		\mathcal{L}_\text{total} = \mathcal{L}_\text{H} + \alpha \mathcal{L}_\text{MI},
+	\end{aligned}
+\end{equation}
+where $\alpha$ is a hyper-parameter to balance the ratio of different loss terms.
+
+
+Experiments
+
+\renewcommand\arraystretch{1.1}
+\begin{table}
+  \resizebox{0.48\textwidth}{!}{
+  \begin{tabular}{l|ccccccc|c}
+    \hline
+      Method                            &Head   &Shoulder &Elbow       &Wrist   &Hip    &Knee   &Ankle   &{\bf Mean}\cr
+      \hline
+      PoseTracker \cite{girdhar2018detect}   &$67.5$ &$70.2$   &$62.0$      &$51.7$  &$60.7$ &$58.7$ &$49.8$  &{$60.6$}\cr
+     PoseFlow \cite{xiu2018pose}         &$66.7$ & $73.3$  &$68.3$      &$61.1$  &$67.5$ &$67.0$ &$61.3$  &{$ 66.5$}\cr
+JointFlow \cite{doering2018joint}        & -     & -       &-           &-       &-      &-      &-       &{ $ 69.3$}\cr
+   FastPose \cite{zhang2019fastpose}   	&$80.0$ &$80.3$   &$69.5$      &$59.1$  &$71.4$ &$67.5$ &$59.4$  &{$ 70.3$}\cr
+   TML++ \cite{hwang2019pose}    	 		&-       &-     &-      &-      &-      &-       &-    &{$ 71.5$}\cr
+Simple (R-50) \cite{xiao2018simple}    &$79.1$ &$80.5$   &$75.5$      &$6
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

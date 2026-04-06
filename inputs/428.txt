@@ -1,0 +1,336 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Panoptic segmentation aims to obtain the pixel-wise labels of instance things and semantic stuff in the whole image, which plays an important role in applications such as autonomous driving, image editing and robotic manipulation. Although having achieved promising performance, most of the existing panoptic segmentation approaches~\cite{cvpr2022_panopticsegformer, nips2021_maskformer, zhang2021k, cheng2022masked, kirillov2019panoptic, yu2022cmt} are trained in a fully supervised manner, which heavily depend on the pixel-wise mask annotations, incurring expensive labeling costs.
+To deal with this problem, weakly-supervised methods have recently attracted research attentions to obtain high-quality pixel-wise masks with label-efficient sparse annotations, such as bounding box~\cite{tian2021boxinst, li2022box,iccv2021discobox,li2022box2mask}, multiple points~\cite{li2022fully}, or the combination of them~\cite{cheng2022pointly, tang2022active}. 
+Such methods make image segmentation
+more accessible with lower annotation efforts for new categories or scene types. 
+In this paper, we explore a simpler yet more efficient annotation form, \ie, \textit{a single random point} for each thing and stuff target, to achieve high-quality panoptic segmentation.
+As discussed in~\cite{whatpoint_eccv2016}, the cost of point-level labels is only marginally above image-level ones~\footnote{On Pascal VOC~\cite{pascalvoc2010}, image labels cost around 20 sec./img, single point labels cost 22.1 sec./img, while full mask labels cost 239.7 sec./img.}.
+Such a setting has been rarely studied due to the little available supervision information from a single point for pixel-wise mask prediction. Only one recent study~\cite{fan2022pointly} has attempted to build the minimum traversing distance between each pair of pixel sample and  ground-truth (denoted as $gt$) point label to determine the accurate pseudo mask label.
+Unfortunately, it is sub-optimal to assign the pixel samples independently for each random $gt$ point label according to the  defined minimum distance.
+As shown in Fig.~\ref{fig:intro_motivation},
+the previous method \cite{fan2022pointly} heavily relies on the defined distance and lacks the global context in dealing with the ambiguous locations (\textit{i.e.}, the border pixels among different thing-based targets with the same category). 
+The pixel-to-$gt$ assignment for ambiguous samples is non-trivial, which requires further information beyond the local view. To this end, we model this task from a global optimization perspective to determine the high-quality pixel sample partition for all $gt$ point labels within an image.
+ \begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.999\linewidth]{motivation-v11.pdf} \end{center}
+    \caption{By taking an image with a single random $gt$ point label per target as the input, the method in~\cite{fan2022pointly} adopts the minimum distance for each pixel-$gt$ pair to determine the pseudo label, which cannot handle the ambiguous locations and heavily relies on the defined distance. For example, d$_2$ is shorter than d$_1$ for the current  pixel in black color, which results in wrong assignment.
+    Our Point2Mask formulates this task as a global Optimal Transport problem, and obtains accurate pseudo-mask labels.}
+\label{fig:intro_motivation}
+ \end{figure}
+
+In this paper, we propose a novel single point-supervised panoptic segmentation method, dubbed as \textit{Point2Mask}, which formulates the pseudo-mask generation as an Optimal Transport (OT) problem. 
+Specifically, we firstly define each $gt$ point label as a supplier who provides a certain number of labels, and regard each pixel sample as a consumer who needs one unit $gt$ label. To accurately define the transportation cost between each pixel-$gt$ pair, we introduce two types of task-oriented maps, including category-wise semantic map and instance-wise boundary map.
+The former focuses on the semantic differences among the categories, while the later aims to discriminate the thing-based objects with accurate boundary. 
+Furthermore, we propose an effective centroid-based scheme to set the accurate unit number for each $gt$ point supplier in the OT problem.
+
+Under our proposed framework, the pseudo-mask generation is converted into finding the optimal transport plan at a globally minimal transportation cost, which can be efficiently solved via the Sinkhorn-Knopp Iteration~\cite{nips2013sinkhorndistances}.
+By making use of the pseudo-mask labels, the panoptic segmentation sub-network is optimized in a fully-supervised manner. The proposed Point2Mask method is an end-to-end training framework, where only the fully-supervised sub-network is retained for inference. Extensive experiments are conducted on Pascal VOC~\cite{pascalvoc2010} and COCO~\cite{lin2014microsoft} benchmarks, and the promising qualitative and quantitative results demonstrate the effectiveness of our proposed approach. Notably, Point2Mask surpasses the state-of-the-art method~\cite{fan2022pointly} by 4.0\% PQ on Pascal VOC and 3.1\% PQ on COCO with the same ResNet-50 backbone~\cite{he2016deep}, and achieves comparable performance with the fully-supervised methods using the Swin-L backbone~\cite{liu2021swin}.  Some
+qualitative results are shown in Fig.~\ref{fig:intro_vis}.
+
+
+Related Work
+
+\textbf{Fully-supervised Panoptic segmentation.} Image segmentation tackles the problem of grouping pixels. 
+As the unified image segmentation task, panoptic segmentation~\cite{panopticfpn_cvpr2019} simultaneously incorporates semantic and instance segmentation, where each pixel is uniquely assigned with one of the stuff classes or one of the thing instances.  
+
+To this end, some methods~\cite{panopticfpn_cvpr2019, cvpr2019upsnet, cvpr2020panopticdeeplab} have been proposed by dealing with things and stuff using  separate network branches within one model. Recently, some works~\cite{cvpr2022_panopticsegformer, nips2021_maskformer, maxdeeplab_cvpr2021, zhang2021k, cheng2022masked, maskdino} aim to unify the model for this task. DETR~\cite{eccv2020-detr} predicts the boxes for things and stuff categories with Transformer to perform panoptic segmentation. Mask2Former~\cite{cheng2022masked} further employs an additional pixel decoder to take into account of the high-resolution features and generates the mask predictions by the Transformer decoder with the masked-attention.
+Despite being able to segment objects with accurate boundaries, these methods rely on the expensive and laborious pixel-wise mask annotations, which hinders them from dealing with new categories or scene types in real-world applications~\cite{whatpoint_eccv2016, tpami2023survey, iclrh2rbox}. 
+
+\textbf{Weakly-supervised Panoptic Segmentation.}
+Weakly supervised segmentation intends to alleviate the annotation burden in segmentation tasks by label-efficient sparse labels for training. According to different kinds of tasks, it ranges from semantic segmentation~\cite{TPAMI2021affinity,cvpr2022tree, iclr2021universal, cvpr2018normalized} to instance segmentation~\cite{cheng2022pointly, tian2021boxinst, iccv2021discobox, li2022box, li2022box2mask, ahn2019weakly} and to panoptic segmentation~\cite{fan2022pointly,cvpr2021_JTSM,li2022fully} tasks.
+As for panoptic segmentation, Li \textit{et al.}~\cite{li2022fully} employed coarse polygons with multiple point annotations for each target to supervise the panoptic segmentation model.
+Recently, Fan \textit{et al.}~\cite{fan2022pointly} adopted a simpler labeling form, \ie, a single point annotation, for each target in an image, and introduced the minimum traversing distance between each pixel sample and the target point label. In spite of its promising performance, it heavily relies on the defined distance, which cannot handle the ambiguous border locations with a local view. Thus, it is still challenging to obtain the accurate mask predictions for single point-supervised panoptic segmentation.
+\textbf{Optimal Transport in Computer Vision.} The Optimal Transport (OT) is a classical optimization problem with a wide range of computer vision applications.
+In the early years, the Wasserstein distance (WD), also known as the Earth Mover’s distance, was adopted to capture the structure of color distribution and texture spaces for image retrieval~\cite{rubner1998metric}. Recently, Chen \textit{et al.}~\cite{chen2020uniter} employed OT to explicitly encourage the fine-grained alignment between words and image regions for vision-and-language pre-training. 
+Li \textit{et al.}~\cite{li2020enhanced} built an attention-aware transport distance in OT to measure the discriminant information from domain knowledge for unsupervised domain adaptation. 
+To achieve high-quality label assignment, Ge \textit{et al.}~\cite{ge2021ota} formulated the label assignment in object detection as the problem of solving an OT plan.
+In this work, we explore OT for point-supervised panoptic segmentation.
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=0.99\linewidth]{overall_network_v10.pdf} \end{center}
+    \caption{Overview of Point2Mask. It consists of two branches, one branch for mask pseudo-label generation, and another for panoptic segmentation based on the generated pseudo-labels. The mask pseudo-label generation is formulated as the OT problem,
+    where the cost matrix is defined based on the task-oriented maps. The $k$ unit number is calculated by the centriod-based scheme.
+    The global optimal transportation plan ${\Gamma}$ can be solved by the Sinkhorn-Knopp Iteration to obtain the accurate pseudo-mask labels. Only panoptic segmentation branch is kept for inference.}
+ \label{fig:overallnetwork}
+ \end{figure*}
+
+
+Method
+
+
+\subsection{Overview of Point2Mask}
+As illustrated in Fig.~\ref{fig:overallnetwork}, we leverage a unified framework, namely Point2Mask, for single point-supervised panoptic segmentation. 
+It consists of two network branches. One branch generates the mask pseudo-labels, and the other focuses on the fully supervised learning using Panoptic SegFormer model~\cite{cvpr2022_panopticsegformer} based on the generated pseudo-labels.
+The two branches share the basic backbone and neck network, which are trained in an end-to-end fashion.
+The key of our proposed approach is how to model the process of mask pseudo-label generation as the global Optimal Transport (OT) problem, which aims to obtain the accurate pixel-wise pseudo-masks with only a single point label per target.
+
+\subsection{Optimal Transport}
+We first give a brief review of OT~\cite{rachev1985monge},  which aims to find a transportation plan $\Gamma$ minimizing the total cost of moving goods from one location to another. 
+It is subject to certain constraints on the amount of goods to be transported and the cost of transportation. 
+
+Given a set of $m$ suppliers, another set of $n$ consumers, and a cost function $c_{ij}$ that specifies the cost of transporting one unit of goods from the $i$-th supplier to the $j$-th consumer. The goal of OT is to find a transportation plan ${\Gamma} = \{ {\Gamma_{i,j}}\left| {i = 1,2, \cdots ,m,j = 1,2,} \right. \cdots ,n\}$ that minimizes the total cost of transporting all the goods from the suppliers to the consumers. Thus, the OT problem can be formulated as follows: 
+\begin{equation}
+\mathop {\min }\limits_{{\Gamma _{ij}} \in \Gamma } \;\;\sum\nolimits_{i,j}^{m,n} {{\Gamma _{ij}}{c_{ij}}},
+\end{equation}
+where $\Gamma_{ij} \ge 0$. The constraints to be satisfied are: the $i$-th supplier holds 
+${x_i} = \sum\nolimits_{j = 1}^n {{\Gamma _{ij}}}$  units of goods, and the $j$-th consumer needs 
+${y_j} = \sum\nolimits_{i =1}^m {{\Gamma _{ij}}}$ units goods. Meanwhile, the total amount of goods held by all suppliers are equal to the amount needed by all consumers, \ie, $\sum\nolimits_{i = 1}^m {{x_i}}  = \sum\nolimits_{j = 1}^n {{y_j}}$.
+To efficiently tackle this problem, we adopt the Sinkhorn Iteration method~\cite{nips2013sinkhorndistances}.
+\subsection{Pseudo-mask Generation by OT}
+
+Given an input image $I^{H \times W  \times 3}$,  
+supposing there are $m$ $gt$ point labels and $n$ pixel samples (\ie, $n=H\times W$), we view each $gt$ point label as a supplier who holds $k$ 
+pixel samples (\ie, $x_i=k, i=1,2,..., m$).
+Each pixel of $I$ is regarded as a consumer who needs one $gt$ point label (\ie, $y_j=1, j=1,2, ..., n$).
+Given the defined cost $c_{ij}$ to transport one unit 
+from the $i$-$th$ $gt$ point label to the $j$-th pixel,
+the global OT plan $\Gamma \in \mathbb{R}^{m \times n}$ 
+can be obtained by solving the OT problem via the Sinkhorn-Knopp Iteration~\cite{nips2013sinkhorndistances}. Once $\Gamma$ is obtained, the pseudo-mask label generation can be decoded by assigning the pixel samples to the suppliers who transport point $gt$ labels to them with the minimal transportation costs.
+
+The pseudo-mask generation consists of task-oriented map generation, transportation cost definition  and centroid-based unit number calculation, which are introduced in details in the following subsections. The  completed procedure is summarized in Algorithm~\ref{OT_pseudo_mask}.
+\subsubsection{Task-oriented Map Generation}
+The task-oriented map includes the category-wise semantic map $P^{s}$ and instance-wise boundary map $P^{b}$. 
+The former measures the semantic logit differences among the various categories. 
+The latter discriminates the different thing-based targets under the same class from the accurate instance-level boundary.
+Based on these maps, the distance of the adjacent pixels can be calculated to obtain each pixel-to-$gt$ cost $c_{ij}$.
+
+\textbf{Category-wise Semantic Map.} 
+An input image for panoptic segmentation task is composed of the stuff-based and thing-based targets. 
+The semantic parsing is 
+important to obtain category-wise logits.
+As shown in Fig.~\ref{fig:overallnetwork},
+we adopt the transformer decoder layers~\cite{cvpr2022_panopticsegformer} to construct the semantic decoder with a set of semantic query tokens, which is one-to-one match to the semantic categories.
+The semantic logits $P^s$ with $N_c$ classes can be generated by multiplying the mask scores and the class probabilities together as in~\cite{fan2022pointly}.  The supervision information for category-wise semantic logits $P^s$ with the weak point labels is introduced in Sec.~\ref{weak loss} in detail.
+
+\textbf{Instance-wise Boundary Map.} To discriminate the instances for thing-based targets, especially for the instances with the same category, we introduce the instance-wise boundary map $P^b$ for each target.
+
+To generate the pure boundary, we suggest the high-level boundary $P_{high}^{b}$ that is learnt by the boundary decoder. In specific, we firstly sum the multi-level feature tokens from the Transformer-based neck in 2D spatial feature.
+Then, two 1$\times$1 convolution layers interleaved by a ReLU activation are employed. The one-channel boundary map $P_{high}^{b}$ is obtained via the \texttt{sigmoid} function. For high-level boundary learning objective, we design an effective boundary loss function and explain it with details in Sec.~\ref{weak loss}.
+
+Besides, we employ the Structured Edge (SE) detection method~\cite{iccv2013structured_edge} based on the original input image to capture the low-level contour $P_{low}^{b}$, which takes advantage of the inherent structure in edge patches to focus on the sparse object-level boundary map.
+
+  
+\subsubsection{Transportation Cost}
+
+Based on the obtained task-oriented maps, the transportation cost can be calculated.
+
+In our method, each map can be represented as an 8-connected planar graph $G(V,E)$, where each pixel is adjacent to eight neighbors. The vertex set $V$ consists of all pixels of the map, and the edge set $E$ is made of the edges between two adjacent vertices. Let the vertex $l$ and vertex $k$ be adjacent on the graph. Based on the $P^s$ and $P^b$ maps, the corresponding distance function  $d_{k,l}^s$ and $d_{k,l}^b$ can be defined as follows: 
+
+\begin{equation}
+\begin{split}
+d_{k,l}^s &= \left| {P^s(k) - P^s(l)} \right|, \\
+d_{k,l}^b &= \mathop {\max } \{ P^b(k),P^b(l)\},
+\end{split}
+\end{equation}
+where ${P}(l)$, ${P}(k)$ are the map values of vertex $l$ and vertex $k$, respectively.
+Once the edge length is obtained from the $P^s$ and $P^b$ maps, we define the transportation cost $c_{i,j}$ from the $i$-th pixel to the $j$-th $gt$ point label as the sum of the lengths of their connected edges along the shortest path $\mathbb{P}$:
+\begin{equation}
+{c_{i,j}} = \sum\limits_{(k,l) \in \mathbb{P}_{i,j}} ({d_{k,l}^s}  + \beta  {d_{k,l}^b}),
+\label{edgedistance}
+\end{equation}
+where $\beta$ is the balanced weight. 
+The shortest path $\mathbb{P}$ is implemented by the classical \texttt{Dijkstra} algorithm like~\cite{fan2022pointly}.
+\begin{algorithm}[t]
+\caption{Optimal Transport for Pseudo-mask Generation}
+\label{alg:Algorithm1}
+\hspace*{0.02in} {\bf Input:}\\
+\hspace*{0.2in} $I^{H \times W \times 3}$ is an input image. \\
+\hspace*{0.2in} $M^{H \times W \times 1}$ is the pseudo-mask label with ZerosInit. \\
+\hspace*{0.2in} $\mathscr{P}$ is a set of $gt$ point labels. \\
+\hspace*{0.2in} $T$ is the iteration number in Sinkhorn-Knopp Iter. \\
+\hspace*{0.02in} {\bf Output:} \\
+\hspace*{0.2in} $M$ is the assigned pseudo-mask label.
+\begin{algorithmic}[1]
+
+\State $m$ $\leftarrow$ $\left\vert \mathscr{P} \right\vert$, $n$ $\leftarrow$ $\left\vert M \right\vert$ \\
+$P^{s}, P_{high}^{b}, P_{low}^{b} $ $\leftarrow$ Forward($I$, $\mathscr{P}$) \\
+Compute pairwise pixel-to-$gt$ cost  $c_{ij}$.  \\
+$x_i (i=1,2,...,m) \leftarrow$ Centriod-based $k$ calculation \\
+$y_j (j=1,2,...,n) \leftarrow$  $\mathbb{1}$ \Comment{Init $y$ with ones} \\ %OnesInit
+
+$u^0, v^0\leftarrow$ $\mathbb{1}$ \Comment{Init $u$ and $v$ with ones}
+\For{$t=0$ \textbf{to} $T$}: \\
+\hspace*{0.2in} $u^{t+1},v^{t+1}\leftarrow$ SinkhornIter($c,u^t,v^t,x,y$) 
+\EndFor \\
+Compute optimal plan $\Gamma$. \\
+Compute pseudo-mask label: $M= \text{argmax} (\Gamma). $
+\State \Return $M$ 
+\end{algorithmic}\label{OT_pseudo_mask}
+\end{algorithm}
+\subsubsection{Centroid-based Unit Number Calculation} \label{centriod-based}
+Each $gt$ point label $\mathscr{P}_i$ is regarded as the supplier in our proposed OT problem, which holds $x_i=k$ pixels of pseudo mask label $M$. To set the accurate number of $k$,  we introduce the centroid-based unit number calculation scheme that can be divided into two steps, as shown in Fig.~\ref{fig:centroids}.
+ 
+Firstly, we obtain the pair-wise cost values along the shortest path $\mathbb{P}$ for each undetermined pixel to each $gt$ point label $\mathscr{P}_i$. 
+The initial $gt$ point label assignment for each pixel can be achieved with its minimum cost among all $gt$ labels in the whole image.
+Note that the $gt$ points are randomly labeled on each target in the image, which can be located at any position of the target to be segmented, such as the  corner or the edge. This cannot reflect the typical and accurate characteristics, especially for the border pixels between thing-based instances belonging to the same category.
+Based on the initial $gt$ point label assignment, the initial mask label for each target can be obtained. 
+We then calculate the corresponding centroid $\mathcal{C}_i$ of initial mask label as the substitution of $gt$ point label $\mathscr{P}_i$ for each target.
+The pair-wise cost $c_{ij}$ for each pixel and $\mathcal{C}_i$ can be re-calculated along the corresponding shortest path. The $k$ unit number ($x_i$) is computed by counting the ones in $N_{ij}$ with the minimum cost values to each centriod $\mathcal{C}$,
+which can be formulated as follows:
+\begin{equation}
+{x_i} = \sum\limits_j^n {{\textit{N}_{ij}}}, \ \ \ \ {\textit{N}_{ij}} = \left\{ \begin{array}{l}
+1, \ \ \ \ \ \  {\rm{    }}\mathop {{\rm{argmin}}}\limits_i {c_{ij}} = i,\\
+0,\ \ \ \ \ \ {\rm{     otherwise}}{\rm{.}}
+\end{array} \right.
+\end{equation}
+
+The iterated calculation scheme can obtain a more accurate unit number $k$, and 
+we leave the detailed performance analysis in Sec.~\ref{ablation} to examine the effectiveness of the proposed scheme.
+
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.98\linewidth]{centroids_v10.pdf} \end{center}
+    \caption{The process of centroid-based $k$ calculation with two targets in an image.
+    \textbf{Step 1:} The initial assignment (\ie, the pixels with yellow and green color divided by the middle curve line of dashes) with the minimal cost can be achieved based on the  $gt$ point labels $\mathscr{P}_1$ and  $\mathscr{P}_2$. 
+    \textbf{Step2:} The centroids $\mathcal{C}_1$  and  $\mathcal{C}_2$ of each initially assigned mask are the  substitutions of $gt$ points, and the minimal cost can be re-calculated to achieve the refined assignment and determine the accurate unit number $k$  for each target.}
+ \label{fig:centroids}
+ \end{figure}
+ 
+\subsection{Learning and Inference}
+
+\subsubsection{Weakly Supervised Learning}\label{weak loss}
+
+In this section, we introduce the objective for category-wise semantic map $P^s$ and instance-wise boundary map $P^b$ in a weakly-supervised manner with only a single point label.
+
+\textbf{Semantic Map Learning.} %To generate the semantic map, we 
+Like the weakly-supervised semantic  methods~\cite{cvpr2022tree,cvpr2018normalized},  we adopt the partial cross-entropy loss $\mathcal{L}_{partial}$, which is able to make full use of the available $gt$ point labels to achieve region supervised learning and generate sparse semantic map.
+
+To obtain the accurate semantic logits for the unlabeled regions, we further take advantage of both local LAB affinity and long-range RGB affinity based on the input image. 
+Local LAB affinity explores the color similarity in LAB color space with the local kernel, which is employed as the loss term $\mathcal{L}_{sem}^{LAB}$ as in~\cite{tian2021boxinst}. Long-range RGB affinity absorbs the pixel similarity in RGB space, which is implemented by the minimum spanning tree. As in~\cite{cvpr2022tree}, it is utilized as the loss term $\mathcal{L}_{sem}^{RGB}$. The objective for  semantic map learning is denoted as:
+\begin{equation}
+\mathcal{L}_{sem} = \mathcal{L}_{partial} + \alpha_1 \mathcal{L}_{sem}^{LAB}  +  \alpha_2 \mathcal{L}_{sem}^{RGB}.
+\label{loss_sem}
+\end{equation}
+
+\textbf{High-level Boundary Map Learning.}
+To encourage the boundary decoder to predict the high-level instance-wise boundary map $P_{high}^b$,
+we suggest an effective loss function $\mathcal{L}_{bou}$ for panoptic segmentation task. 
+In terms of the existence of a boundary between two adjacent pixels, we assume that their affinity is small as in~\cite{ahn2019weakly}.  Hence, we introduce the high-level affinity $\mathcal{A}$ representation.
+For each pixel $p_k$ on $P_{high}^b$,  $p_l$ is one of its eight neighbors $\mathcal{N}_8$.
+The $\mathcal{A}_{kl}$  can be represented as follows: 
+\begin{equation}
+{\mathcal{A}_{kl}} = 1 - \mathop {\max } {P_{high}^b}({p_k, p_l}).
+\end{equation}
+Then, we make full use of the mask affinity equivalence among the neighbor pixels based on the generated pseudo-mask $M$. 
+The loss function $\mathcal{L}_{bou}$ can be defined as: 
+\begin{footnotesize}
+\begin{equation}
+\begin{aligned}
+{\mathcal{L}_{bou}} =  &- \sum\limits_{(k,l) \in M_{thing}^ + } {\frac{{\log {\mathcal{A}_{kl}}}}{{2\left| {M_{thing}^ + } \right|}}}  - \sum\limits_{(k,l) \in M_{stuff}^ + } {\frac{{\log {\mathcal{A}_{kl}}}}{{2\left| {M_{stuff}^ + } \right|}}} \\ & - \sum\limits_{(k,l) \in {M^ - }} {\frac{{\log (1 - {\mathcal{A}_{kl}})}}{{\left| {{M^ - }} \right|}}},
+\end{aligned}
+\end{equation}
+\end{footnotesize}where $M^{+}_{thing}$ denotes that the pair of adjacent pixels $p_k$ and $p_l$ are inside the same thing-based pseudo mask. Similarly, $M^{+}_{stuff}$ represents that $p_k$ and $p_l$ are inside the same stuff-based pseudo mask. Instead, $M^{-}$ denotes that a pair of pixels are with different pseudo-mask labels. Driven by the ${\mathcal{L}_{bou}}$ term, we can learn the accurate high-level boundary.
+\subsubsection{Training and Inference}
+\textbf{Loss Function.} Once the pseudo-masks are obtained, the panoptic segmentation sub-model is trained with these generated labels in a fully supervised manner.
+We adopt Panoptic SegFormer~\cite{cvpr2022_panopticsegformer} as the panoptic sub-network.
+The fully-supervised loss terms consist of the focal loss for classification prediction, the localization loss for box localization, and the dice loss on mask decoder for final panoptic segmentation,
+respectively.  
+For simplicity, we denote these losses to train the panoptic segmentation model as $\mathcal{L}_{full}$.
+The total loss $\mathcal{L}_{total}$ can be formulated as follows:
+\begin{equation}
+\mathcal{L}_{total} = \mathcal{L}_{full} +  \mathcal{L}_{sem} + \mathcal{L}_{bou}.
+\end{equation}
+
+\begin{table*}[t]
+\begin{center}
+\setlength{\tabcolsep}{2.2mm}{
+\begin{tabular}{llccccccc}
+\hline
+\multirow{2}{*}{Method} & \multirow{2}{*}{Backbone} & \multirow{2}{*}{Supervision}
+ &\multicolumn{3}{c}{VOC 2012} & \multicolumn{3}{c}{VOC 2012 \textit{with} COCO} \\  
+\cmidrule(r){4-6}
+\cmidrule(r){7-9} 
+& & & PQ & PQ$^{th}$ & PQ$^{st}$ & PQ & PQ$^{th}$ & PQ$^{st}$ \\
+
+\hline\hline
+Li~\textit{et al}.~\cite{li_eccv2018} & ResNet-101 & $\mathcal{M}$ & 62.7 & - & -& 63.1 & - & - \\
+
+Panoptic FPN~\cite{panopticfpn_cvpr2019} &  ResNet-50 & $\mathcal{M}$ & 65.7 & 64.5 & 90.8 & - & - & -\\
+
+Panoptic FCN~\cite{li2022fully} & ResNet-50 & $\mathcal{M}$  & 67.9  & 66.6 & \textbf{92.9} & \textbf{73.1} & \textbf{72.1} & \textbf{93.8}   \\
+
+Panoptic SegFormer~\cite{cvpr2022_panopticsegformer} &  ResNet-50 & $\mathcal{M}$ & \textbf{67.9} & \textbf{66.6} & 92.7 & - & - & -\\
+
+\hline
+
+Li~\textit{et al.}~\cite{li_eccv2018} &  ResNet-101 & $\mathcal{B} + \mathcal{I}$ & 59.0 & - & - & 59.5 & - & -   \\
+JTSM~\cite{cvpr2021_JTSM} & ResNet-18-WS~\cite{ResNet-18-ws-eccv2020} & $\mathcal{I}$  & 39.0 & 37.1 & 77.7 & - & - &- \\
+
+PSPS~\cite{fan2022pointly} & ResNet-50 & $\mathcal{P}$ & 49.8 & 47.8 & 89.5   & - & - & -\\
+
+Panoptic FCN~\cite{li2022fully} & ResNet-50 & $\mathcal{P}_{10}$  & 48.0 & 46.2 & 85.2 & 52.4 & 50.8 & 86.0 \\
+\hline 
+Point2Mask & ResNet-50& $\mathcal{P}$ & 53.8 & 51.9 & 90.5  & 60.7 & 59.1 & 91.8\\
+
+Point2Mask & ResNet-101& $\mathcal{P}$ & 54.8 & 53.0 & 90.4 & 63.2 & 61.8 & 92.3\\
+
+Point2Mask & Swin-L & $\mathcal{P}$ & \textbf{61.0} & \textbf{59.4} & \textbf{93.0} & \textbf{64.2} & \textbf{62.7} & \textbf{93.2}\\
+
+\hline
+\end{tabular}} 
+\end{center}
+\caption{Performance comparisons on Pascal VOC2012 $\texttt{val}$.
+$\mathcal{M}$ denotes the pixel-wise mask annotations. $\mathcal{P}$ and $\mathcal{P}_{10}$ % $\mathcal{P}_{20}$
+are point-level supervision with 1 and 10  points per target, respectively. $\mathcal{I}$ and $\mathcal{B}$ are the image-level and box-level supervisions (the same below).
+ Besides, VOC 2012 \textit{with} COCO represents training and validation on VOC 2012 dataset with COCO pre-trained model.} \label{tab:voc}
+\end{table*}
+\textbf{Inference.} For the inference process of Point2Mask, 
+only the panoptic segmentation model is maintained after training, which is the same as the original Panoptic SegFormer model~\cite{li2022fully}. The process of pseudo-mask generation with OT incurs about 25\% extra computational load in training, but it is totally cost-free during inference.
+
+\begin{table*}[t]
+\begin{center}
+\setlength{\tabcolsep}{2.6mm}{
+\begin{tabular}{llcccccccccc}
+\hline
+Method & Backbone & Supervision & PQ & PQ$^{th}$ & PQ$^{st}$ & SQ & RQ  \\
+
+\hline\hline
+
+AdaptIS~\cite{cvpr2019adaptis} &  ResNet-50 &  $\mathcal{M}$ & 35.9 & 40.3 & 29.3 & - & - \\
+
+Panoptic FPN~\cite{panopticfpn_cvpr2019} &  ResNet-50 & $\mathcal{M}$ & 39.4 & 45.9 & 29.6 & 77.8 & 48.3 \\
+
+Panoptic-DeepLab~\cite{cvpr2020panopticdeeplab} &  Xception-71~\cite{cvpr2017xception} & $\mathcal{M}$ & 39.7 & 43.9 & 33.2 & - & - \\
+Panoptic FCN~\cite{li2022fully} & ResNet-50 & $\mathcal{M}$  &  43.6 & 49.3 & 35.0 & \textbf{80.6} & \textbf{52.6}  \\
+
+Panoptic SegFormer~\cite{cvpr2022_panopticsegformer} &  ResNet-50 & $\mathcal{M}$  &  48.0 &52.3 & 41.5  & - & - \\
+
+Mask2Former~\cite{cheng2022masked} & ResNet-50 & $\mathcal{M}$ &  \textbf{51.9} & \textbf{57.7} & \textbf{43.0} & - & -\\
+\hline
+JTSM~\cite{cvpr2021_JTSM} & ResNet-18-WS & $\mathcal{I}$ & 5.3 & 8.4 & 0.7 & 30.8  & 7.8  \\
+
+PSPS~\cite{fan2022pointly} & ResNet-50 & $\mathcal{P}$  &  29.3 & 29.3 & 29.4  & - & - \\
+Panoptic FCN~\cite{li2022fully} & ResNet-50 & $\mathcal{P}_{10}$  &  31.2 & 35.7  & 24.3 & - & -  \\
+\hline 
+Point2Mask & ResNet-50& $\mathcal{P}$ &  32.4 & 32.6 & 32.2 & 75.1 & 41.5  \\
+
+Point2Mask & ResNet-101& $\mathcal{P}$ & 34.0 &  34.3 & 33.5 & 75.1 & 43.5   \\
+
+Point2Mask & Swin-L & $\mathcal{P}$ & \textbf{37.0}  & \textbf{37.0} & \textbf{36.9}  & \textbf{75.8} & \textbf{47.2} \\
+
+\hline
+\end{tabular}}
+\end{center}
+\caption{Panoptic segmentation results on COCO \texttt{val2017}. Weakly and fully supervised methods are compared.} \label{tab:coco}
+\end{table*}
+
+
+Experiments
+To evaluate our proposed approach, we conduct experiments on Pascal VOC~\cite{pascalvoc2010} and COCO~\cite{lin2014microsoft}. \textit{Only a single point label per target is used to train our method}, which is randomly sampled with the uniform distribution from the original pixel-wise mask annotations.
+
+\subsection{Datasets}
+
+\noindent  \textbf{Pascal VOC}~\cite{pascalvoc2010}. Pascal VOC consists of 20 ``thing'' and 1 ``stuff'' categories. 
+It contains 10,582 images for model training and 1,449 validation images for evaluation~\cite{iccv2011_SBDdataset}.
+\noindent  \textbf{COCO}~\cite{lin2014microsoft}. COCO has 80 ``thing"  and 53 ``stuff" categories, which is a challenging benchmark. Our models are trained on \texttt{train2017} (115K images), and evaluated on \texttt{val2017} (5K images).
+\subsection{Implementation Details}
+The models are trained with the AdamW optimizer~\cite{AdamW2017decoupled}.
+We make use of the \texttt{mmdetection} t
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

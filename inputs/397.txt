@@ -1,0 +1,158 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+ 
+Video segmentation (VS) partitions a video sequence into different regions or segments, facilitating many applications such as semantic-guided video restoration \cite{li2018video,wu2024seesr,sun2023improving}, video generation \cite{Peebles2022DiT,rombach2021highresolution}, video editing and augmented reality \cite{wei2023elite,zhang2023controlvideo,guo2023animatediff}, \etc.
+VS tasks can be divided into two groups: category-specified VS and prompt-specified VS. The former focuses on segmenting and tracking entities from a predefined set of categories. Typical tasks along this line include video instance \cite{yang2019video,qi2021occluded}, semantic \cite{vspw} and panoptic segmentation \cite{vps,vipseg} (VIS/VSS/VPS), where the object category information needs to be specified. Another group focuses on identifying and segmenting specific targets throughout the video, where visual prompts or textual descriptions of the targets need to be provided. 
+Prompt-specified VS tasks include video object segmentation (VOS) \cite{Perazzi2016vos,youtubevos,mose,burst}, Panoptic VOS (PVOS) \cite{xu2023viposeg} and referring VOS (RefVOS) \cite{refvos}. Each of above VS tasks has established its own protocol for dataset annotation, as well as model evaluation. 
+
+VS has a close relationship with image segmentation (IS) \cite{everingham2010pascalvoc,lin2014microsoft,ade20k,panoptic_seg,cordts2016cityscapes,xu2016deep_interactive_seg,extreme_interactive_seg,refcoco,zhou2023interseg-GP,peng2022semantic}, which has similar types of segmentation tasks to VS. 
+In the past decades, the model performance on each individual IS/VS task has been significantly improved, and many well-known network architectures have been developed  \cite{he2017mask,bolya2019yolact,chen2017deeplab,fcn_ss,2015Unet,deeperlab_ps,panoptic_deeplab,extreme_interactive_seg,refer,grounding_refer,Li_2021_CVPR,wang2020vistr,xmem,IDOL,huang2022minvis,openvis}. Some architectures \cite{k-net,cheng2021mask2former, li2022maskdino,zou2022xdecoder, videoknet, videokmax, tubelink, dvis} have also been proposed to deal with multiple segmentation tasks; however, these architectures require separate training and inference for different tasks because of the different annotations and evaluation protocols. 
+Fortunately, the recent advancements in vision-language models \cite{li2022blip,clip,12-in-1,li2021glip,regionclip,jin2023context,zhang2024dual,liu2023llava,lin2023videollava,liu2023LargeWorldModel,yu2023magvit} align and harmonize the multimodal feature representations, which bridge the labeling gaps across various IS/VS tasks. As a result, some unified segmentation models \cite{freeseg, seem, semanticsam} have emerged to process multiple segmentation tasks simultaneously, which can be jointly trained on different datasets and tasks. These methods generally convert prompt-guided segmentation into the category-specified segmentation problem \cite{he2017mask,zhu2020deformable_detr,cheng2021mask2former}, which first predicts masks for all potential entities per frame and then utilizes a post-processing matching to find the target. For example, SEEM \cite{seem} captures prompt information of the target via concatenating learnable queries and prompt features as keys and values in the self-attention layer of the mask decoder, showing good versatility in various IS tasks. % (see Fig. \ref{fig:maskdec_sub}(a)). 
+
+\input{figs/prompt_as_query}
+
+Compared to IS, the additional challenge of VS lies in the temporal consistency \cite{wang2021unitracker} of segmentation across frames in a video sequence. Existing unified models \cite{uninext,tarvis} for VS tasks are mostly inspired by the unified IS models. They segment the video sequence frame by frame, and then use a similarity matching step to associate common objects or find the targets for category-specified and prompt-specified VS tasks, respectively. For example, UNINEXT \cite{uninext} is specially designed for object-centric IS and VS tasks. Though UNINEXT performs very well in several aspects, it becomes ineffective when segmenting `stuff’ entities, such as `sky’. To adapt to different VS tasks, TarVIS \cite{tarvis} subdivides the learnable queries within the mask decoder into four groups: semantic, class-agnostic instance, object and background queries. However, TarVIS falls short in encoding linguistic information, hindering it from resolving language-guided VS tasks.
+
+From the above discussions, we can see that it remains a challenge to develop a unified VS framework to effectively handle all VS tasks. This is mainly because category-specified and prompt-specified VS tasks attribute to different focuses. As shown in Figs. \ref{fig:prompt_as_queries}(a1) and \ref{fig:prompt_as_queries}(a2), category-specified segmentation prioritizes the precise detection per frame and the inter-frame association for common objects, while prompt-specified segmentation concentrates on accurately tracking the target with text/visual prompts in video sequences, where the target can be an uncommon object or a part of an object. The different focuses of the two types of VS tasks make it challenging to integrate them within a single framework while achieving satisfactory results.
+
+To alleviate the above issues, we propose a novel unified VS architecture, namely \textbf{UniVS}, by using prompts as queries. For each target of interest, UniVS averages the prompt features from previous frames as its initial query. A target-wise prompt cross-attention (ProCA) layer is introduced in the mask decoder to integrate comprehensive prompt features stored in the memory pool. The initial query and the ProCA layer play a crucial role in the explicit and accurate decoding of masks.
+On the other hand, by taking the predicted masks of entities from previous frames as their visual prompts, UniVS can convert different VS tasks into the task of prompt-guided target segmentation task, eliminating the heuristic inter-frame matching. The overall process of UniVS is depicted in Fig. \ref{fig:prompt_as_queries}(b). UniVS not only unifies the different VS tasks (see Fig. \ref{fig:vs_tasks}) but also naturally achieves universal training and testing, resulting in robust performance across different scenarios. It shows a commendable balance between performance and universality on 10 challenging VS benchmarks, covering VIS, VSS, VPS, VOS, RefVOS and PVOS tasks. To the best of our knowledge, \textit{\textbf{UniVS is the first work which can unify all the existing VS tasks successfully in a single model}}. 
+
+\input{figs/overview}
+
+
+Related Work
+We first briefly introduces the representative models designed for category-specified and prompt-specified VS tasks, and then introduce the existing unified and universal models for processing multiple VS tasks simultaneously.
+
+\textbf{Category-specified VS} tasks includes video instance \cite{yang2019video}, semantic \cite{vspw} and panoptic segmentation \cite{vipseg} tasks, which aim to correctly partition the regions and label them with specific categories or open-world vocabulary\cite{openseed,li2023opensd,openvis}. Building on representative query-based image detection and segmentation methods \cite{carion2020detr,zhu2020deformable_detr,lishuai2023one,cheng2021mask2former}, recent approaches \cite{Li_2021_CVPR,wang2020vistr,seqformer,IDOL,heo2022vita,huang2022minvis,li2023mdqe,GenVIS,tubelink,tubeformer,videoknet} focus on efficiently encoding both short-term and medium-term temporal information. Some methods \cite{seqformer, IDOL,huang2022minvis,li2023mdqe,panoptic_fcn} utilize the consistency of the relative relationship between objects in a short period of time to associate entities across frames, while the latest state-of-the-arts \cite{heo2022vita,GenVIS,videoknet,tubelink,dvis} design learnable trackers between multiple video clips to better learn entity motion information over short to medium time periods, thus maintaining more temporally consistent segmentation results. This continual learning strategy also bridges the gap between training and inference.
+
+\textbf{Prompt-specified VS} tasks consist of video object segmentation (VOS) \cite{youtubevos,davis,mose,burst}, panoptic VOS \cite{xu2023viposeg} and referring VOS \cite{refvos}, which aim to re-identify and segment the target objects with visual/text prompts in a video.
+Recent offline models \cite{xmem,yang2022deaot,referformer,grounding_refer,li2022r2vos,Miao_2023_ICCV_sgmg,cheng2023cutie} focus more on designing long-term information propagation modules to transfer previous image features and corresponding masks to the target frame to predict masks. This helps more precisely identify and track the movement trajectory of objects throughout the entire video sequence (more than 200 frames), but also makes the network architecture heavy \cite{yang2022deaot,Wu_2023_ICCV_uniref}.
+Due to the slow speed of offline models, online models \cite{wu2023onlinerefer,jointformer_vos,Wu_2023_ICCV_uniref} come back into focus, aiming to keep the right balance between speed and performance.
+
+\textbf{Unified VS} models \cite{cheng2021mask2former-video,videoknet,videokmax,tubelink,dvis,uninext,tarvis,cheng2023DEVA_tracking,Wu_2023_ICCV_uniref} have emerged recently.
+TubeLink \cite{tubelink} and DVIS \cite{dvis} employ a single framework to accomplish different category-specified VS tasks, but they still need to be trained separately for each task and cannot be used for prompt-specified VS tasks.
+UniRef \cite{Wu_2023_ICCV_uniref} uses a model to unify prompt-specified VS tasks, but it cannot handle category-specified VS tasks. To handle more types of VS tasks, TarVIS \cite{tarvis} decouples learnable queries of mask decoder into four groups. But, it fails to solve RefVOS due to the lack of language encoding capability. UNINEXT \cite{uninext} is a unified object-centric segmentation model on images and videos, demonstrating universal applicability in several aspects. Unfortunately, it cannot handle entities with `stuff' categories.
+
+By far, there still lacks a unified model that can accommodate all VS tasks simultaneously. This is mainly because different VS tasks have different focuses, which can be contradictory. To address this difficulty, we use prompts as queries to unify different tasks into a unified framework.
+
+
+
+Methodology
+UniVS contains of three main modules: the Image Encode, the Prompt Encoder and the Unified Video Mask Decoder, as depicted in Fig. \ref{fig:overview}. The Image Encoder transforms RGB images to the feature tokens, while the Prompt Encoder translates raw visual/text prompts into the prompt embeddings. The Unified Video Mask Decoder explicitly decodes masks for any entity or prompt-guided target in the video.
+
+\subsection{Image and Prompt Encoders}
+
+{\bf Image encoder} contains a backbone and a pixel decoder \cite{cheng2021mask2former}. The backbone maps the RGB image $X \in R^{3\times H\times W}$ into multi-scale features, and the pixel decoder further fuses features across scales to enhance the representation: 
+$\{F_s\}_{s=1}^4 = \text{ImEnc}(X),$
+where $F_s\!\in\! R^{C\times H_s \times W_s}$ is the $s$-th scale image embeddings, $H_s, W_s$ are its height and width and $C$ is the number of channels. The resolutions of multi-scale feature maps are 1/32, 1/16, 1/8 and 1/4 of that of the input image, respectively.
+
+{\bf Prompt encoder} converts the input visual/text prompts into the prompt embeddings. 
+The visual prompts can be clicked points, boxes, masks and scribbles, \etc. For the $i$-th target, we use $X_i^*\in R^{l_i\times 3}$ and $ y_i^* \in R^{l_i}$ to represent its prompt-specified pixels and corresponding segment IDs, where $l_i$ is the total number of prompt-specified pixels. To convert the visual prompts into image embeddings, we adopt the Visual Sampler strategy proposed in SEEM \cite{seem}. It samples $l^*$ points from the prompt-specified pixels for each target, and extracts point features from the 3rd scale image embeddings $F_3$ as its visual prompt embeddings: 
+\begin{align}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+P_{i}^* = \text{VisualSampler}(X_i^*,\ F_3),
+\end{align}
+where the shape of $P_i^* $ is ${l^* \times C}$.
+
+The language prompt can be category names, such as `person', and textual expressions, such as `a person is skateboarding'. Following \cite{devlin2018bert,clip}, we feed a category name or an expression into a tokenizer to get its string tokens $L_i^* \in R^{l^* \times C^t}$, which are input into the CLIP text encoder to obtain the text embeddings. 
+We then introduce a single cross-attention layer to achieve language-image embeddings interaction, where the query is text embeddings, the keys and values are flattened multi-scale image embeddings $F \in R^{C\times (\sum_{s=1}^3 H_sW_s)}$. This process can be formulated as:
+\begin{align}
+    \setlength{\abovedisplayskip}{3pt}
+    \setlength{\belowdisplayskip}{3pt}
+    P_i^*  = \text{Lang2Img-CA}(\text{CLIPTextEnc}(L_i^*) \cdot W^{t2v},\ F), 
+\end{align}
+where the shape of text embeddings $P_i^*$ is $l^* \times C$, and $l^*$ is the length of string tokens. The matrix $W^{t2v} \in R^{C^t\times C}$ maps the text embddings of dimension $C^t$ to the visual space of dimension $C$.  Note that we freeze the weights of CLIP text encoder to take advantage of the strong open vocabulary capabilities of CLIP.
+
+\subsection{Unified Video Mask Decoder} \label{sec:uni_mask_dec}
+The unified video mask decoder aims to decode the masks for prompt-specified targets, which can be described as:
+\begin{equation}
+    M_i^t = \text{MaskDec}(\{F_s^t\}_{s=1}^{4},\ P_i^*,\ y_i^*), \forall i \in [1, N_p], t \in [1, V] \nonumber
+\end{equation}
+where $P_i^*$ and $ y_i^*$ are prompt features and associated segment IDs for the $i$-th target, and $M_i^t$ is its predicted masks in the $t$-th frame. $N_p$ and $V$ are the total numbers of provided targets and  frames in the video, respectively.
+To achieve our goal, we adapt the mask decoder of Mask2Former \cite{cheng2021mask2former,cheng2021mask2former-video}, which was initially designed for generic segmentation tasks with a set of learnable queries, by introducing a side stream that takes the mean of prompt features as input queries. As illustrated in the right yellow area of Fig. \ref{fig:overview}, our proposed unified video mask decoder comprises four key components: target-wise prompt cross-attention layer, an image cross-attention layer, a separated self-attention layer and a feed-forward network (FFN, which is omitted in Fig. \ref{fig:overview}).
+\textbf{Initial prompt query (P$\rightarrow$Q).}
+The visual/text prompt embeddings of the $i$-th target $P_i^* \in  R^{l^* \times C}$ consist of $l^*$ prompt tokens, which are point features from the visual prompt or string tokens of category names and expressions. We compute the average of all prompt tokens associated with it as the initial query for the target: $q_i^* = \sum\nolimits_{l=1}^{l^*}{P_{i, l}^*}$. If the input contains a video clip with $T$ frames, the initial query will be repeated $T$ times to generate a clip-level initial query $q_i^* \in R ^{T \times C}$.
+Using the mean of prompt features as the initial query provides an informative and stable starting point for the unified video mask decoder.
+
+\textbf{Prompt cross-attention (ProCA).} 
+The initial query may not be sufficient to provide a distinct representation for targets, particularly for those with similar characteristics, such as `person' and `black T-shirt' in Fig. \ref{fig:overview}. To enhance the uniqueness in representation, we introduce an entity-wise prompt cross-attention layer to learn  prompt information to better differentiate between targets:
+{\small
+\begin{align}
+    \setlength{\abovedisplayskip}{3pt}
+    \setlength{\belowdisplayskip}{3pt}
+    \text{ProCA}(q_i^*, P_i^*) = \text{Softmax}(\frac{q_i^* W^Q\ (P_i^* W^K)^T}{\sqrt{d_k}})\ P_i^* W^V,
+\end{align}
+}%
+where the query is $q_i^*$, and the keys and values are the prompt tokens $P_i^*$. $W^Q, W^K$ and $W^V$ represent the projection weights. The ProCA layer is placed in the front of image cross-attention layer to avoid forgetting prompt information as the decoder layer goes deep. 
+\textbf{Image cross-attention and separated self-attention.} 
+The ProCA layer facilitates the incorporation of prompt information, while the image cross-attention layer focuses on extracting entity details from the input frames. We only compute the image cross-attention between each frame's query and the corresponding image features to reduce the memory overhead. Furthermore, the separated self-attention (Sep-SA) layer serves for two purposes. On one hand, it isolates the interactions between learnable queries and prompt queries, minimizing unnecessary negative impacts. On the other hand, by flattening learnable/prompt queries in the time dimension, it facilitates content interactions of the target of interest across spatial and time domains. The Sep-SA layer can be formulated as:
+\begin{equation}
+    \text{SepSA}(\mathbf{q}, \mathbf{q}^*) = \text{SA}(\mathbf{q}, \mathbf{q})\  \& \ \text{SA}(\mathbf{q}^*, \mathbf{q}^*),
+\end{equation}
+where $\mathbf{q} \in R^{NT \times C}$ and $\mathbf{q}^* \in R^{N_pT \times C}$ represent flattened learnable and flattened prompt queries, respectively, and $N$ and $N_p$ are the numbers of them.
+
+\textbf{Overall architecture.} In addition to the ProCA, image cross-attention and SepSA layers, the FFN further allows the mask decoder to learn non-linear relationships from data. These four key components constitute a transformer layer, and our unified video mask decoder is composed of nine such transformer layers.
+In addition, there are two mask decoding streams, which share the same set of weights, to decode learnable queries and prompt queries, respectively. Note that the ProCA layer is omitted for learnable queries to simplify the representation. 
+
+To obtain the predicted masks for the $t$-th frame, we linearly combine mask coefficients with the finest-scale feature map $F_4^t \in R^{C\times H/4\times W/4}$, \ie, $[{M}^t, {M}^{*t}] = f_\text{mask}([\mathbf{q}^t, \mathbf{q}^{*t}]) \cdot F_4^t$, where mask coefficients are generated by passing the output queries through a multi-layer perception, denoted as $f_\text{mask}$.
+
+
+
+Training and Inference
+\subsection{Training Stages}\label{sec:train_settings}
+Training Losses consist of three terms: pixel-wise mask supervision loss, classification loss, and ReID loss.
+The training process of UniVS consists of three stages: image-level training, video-level training and long video fine-tuning. In the first stage, UniVS is trained on multiple image segmentation datasets, pretraining the model with image-level annotations for a good visual representation.
+In the second stage, we feed a short clip of three frames to the pretrained model, and fine-tune it on video segmentation datasets to perceive entity changes over a short period of time. In the third stage, we employ long video sequences of more than five frames to further fine-tune the unified video mask decoder, encouraging it to learn more discriminative features and trajectory information over a longer time period. To optimize memory usage, we freeze the backbone weights in the last two stages and further freeze the pixel decoder in the final stage.  In each iteration, all samples within a batch come from the same dataset. We found that this sampling strategy can make the training more stable compared with the mixed sampling from different datasets. 
+
+More detailed information about the training losses and stages can be found in the \textbf{Supplementary Material}.
+\subsection{Unified Streaming Inference Process}\label{sec:uni_reference}
+
+In UniVS, the model input can be a single frame or a clip of multiple frames. In this subsection, we take a single frame as input to elucidate the unified inference process for generic category-specified and prompt-specified VS tasks.
+
+For \textbf{prompt-specified VS tasks}, UniVS takes video frames and visual/text prompts as input, and the inference process is illustrated in the yellow boxes of Fig. \ref{fig:overview_inf}. UniVS can process multiple targets simultaneously. First, the image encoder transforms the first frame into multi-scale image embeddings. Consequently, the prompt encoder converts visual/text prompts of the target into prompt tokens. In our design, each target has its dedicated memory pool to store associated prompt tokens, and its prompt query is obtained by averaging the tokens in the memory pool. These queries are used by the mask decoder to predict the masks of targets in the current frame, which are then used as visual prompts of targets and fed back to the prompt encoder, thereby updating the target's memory pool with new prompt information.
+In short, UniVS utilizes the prompt information of target objects stored in the memory pool to identify and segment the targets in subsequent frames, eliminating the cumbersome post-matching step in other unified models like SEEM \cite{seem} and UNINEXT \cite{uninext}, where targets need to be filtered out from all predicted entities. 
+
+\input{figs/overview_inf}
+
+For \textbf{category-specified VS tasks}, UniVS adopts a periodic object detection strategy and transforms the segmentation into a prompt-guided target segmentation problem. The detailed process is depicted in the light green box in Fig. \ref{fig:overview_inf}. First, UniVS employs learnable queries to identify all entity masks presented in the first frame, then employs non-maximum suppression (NMS) and classification thresholding to filter out redundant masks and those with low classification confidence. The remaining target objects also serve as their visual prompts, with which UniVS employs the prompt-guided target segmentation stream to directly predict their masks in the following frames, eliminating the need of cross-frame entity matching in previous methods. 
+Furthermore, to identify newly appearing objects in subsequent frames, UniVS performs target detection for every a few frames using a learnable query and compares them to previously detected objects stored in a memory pool. We use the bi-Softmax approach \cite{pang2021quasi} to distinguish between old and new objects in the video.
+
+\textbf{Remarks.} Existing VS methods mostly assume smooth object motion within a short clip to associate entities across frames. However, for videos containing complex trajectories or large scene changes, this assumption does not hold, resulting in a decline of tracking accuracy. In contrast, our proposed UniVS overcomes this limitation by using prompts as queries to achieve explicit mask decoding. 
+
+
+Experiments
+\subsection{Experimental Settings}
+\textbf{Datasets.} 
+The VIS datasets include YouTube-VIS 2019/2021 (YT19/21) \cite{yang2019video} and OVIS \cite{qi2021occluded}. The VSS and VPS datasets respectively include VSPW \cite{vspw} and VIPSeg. The VOS datasets include DAVIS \cite{davis}, YouTube-VOS 2018 (YT18) \cite{youtubevos}, MOSE \cite{mose} and BURST \cite{burst}.
+RefVOS datasets include RefDAVIS \cite{refvos} and Ref-YouTube-VOS (RefYT) \cite{refvos}, while PVOS uses VIPOSeg \cite{xu2023viposeg} as dataset. The 2017 version of DAVIS and RefDAVIS are used  \cite{davis}. Note that VSPW, VIPSeg and VIPOseg share the same original videos but have different protocols and guidelines for annotation. Due to the high cost of annotating datasets, the video scenes contained in each dataset lack diversity, being mostly sports scenes or animal scenes. 
+
+\textbf{Implementation Details.} We use Detectron2 \cite{wu2019detectron2} and follow Mask2Former \cite{cheng2021mask2former} baseline settings. For data augmentation, we use the large-scale jittering (LSJ) augmentation \cite{du2021lsj_aug} with a random scale sampled from range 0.5 to 4.0, followed by fixed-size cropping and padding to $1024 \times 1024$. We use the distributed training framework with 16 V100/A100 GPUs. Each mini-batch has 3 images or 1 video clip (2-7 frames) per GPU. ResNet50 \cite{he2016resnet} and SwinT/B/L \cite{swin} are adopted as the backbone networks, while we use the CLIP Text Encoder, whose corresponding visual encoder is ResNet50x4. We sample 32 points per visual prompt for visual prompt-guided targets. Considering the difference in the number of objects on various videos, we increase the number of learnable queries from 100 to 200 in the unified video mask decoder.
+
+More detailed information about experimental settings can be found in the \textbf{Supplementary Material}.
+
+\input{tables/sota_vid_individual}
+\input{tables/sota_vid_unified}
+
+\subsection{Video Benchmark Results}
+We compare the results of recent high-performance VS models. The results of individual models trained on a single task/dataset are shown in Table \ref{tab:sota_r50_individual}, and the results of unified models trained individually or jointly on different tasks are shown in Table \ref{tab:sota_strong_vid2}. To assess the generalization capability of competing models, we present the quantitative performance comparison on 10 benchmarks of six VS tasks, including VIS, VSS, VPS, VOS, RefVOS and PVOS. The detailed quantitative comparison on more image/video benchmarks can be found in the \textbf{Supplementary Material}.
+
+\textbf{Individual models} are specifically designed based on the characteristics of each task, resulting in high performance on each benchmark, as shown in Table \ref{tab:sota_r50_individual}. For VIS task, GenVIS-off \cite{GenVIS} with sequential learning achieves impressive performance of 51.3, 46.3 and 34.5 mAP on YT19, YT21 and OVIS, respectively. For the recently proposed VSS/VPS tasks, the baselines \cite{vspw,vps} only obtain decent performance.
+For VOS task, XMem\cite{xmem} and DEAOT \cite{yang2022deaot} employ long-term information propagation modules, achieving state-of-the-art performance of 86.2 on DAVIS and 86.0 on YT18, respectively. For RefVOS task, SgMg \cite{Miao_2023_ICCV_sgmg} achieves the best performance of 62.0 on RefYT by using a spectrum-guided multi-granularity approach. For the newly proposed PVOS task, PAOT \cite{xu2023viposeg} extends the typical VOS method DEAOT, obtaining 75.4 on VIPOSeg. 
+ 
+\textbf{Unified models trained individually} on different tasks include VideoK-Net \cite{videoknet}, Video-kMax \cite{videokmax}, Tube-Link \cite{tubelink}, DVIS \cite{dvis} and TubeFormer \cite{tubeformer}, as listed in Table \ref{tab:sota_strong_vid2}, which tend to handle both thing and stuff categories within a single framework.
+Video-kMax with clip k-means mask transformer achieves high performance on VSS task, reaching 44.3 mIoU on VSPW. By using the strong Mask2Former\cite{cheng2021mask2former} as baseline, Tube-Link and DVIS inherit its ability to handle both thing and stuff classes, achieving remarkable performance on VIS and VPS tasks, as evidenced by the 33.8 mAP on OVIS and 43.2 VPQ on VIPSeg. It should be noted that the above unified models are trained individually on each dataset so that they can achieve excellent performance on each benchmark; however, this makes them lack the generalization ability to other datasets. Additionally, they cannot handle prompt-specified VS tasks, including VOS, RefVOS and PVOS.
+
+\textbf{Unified models trained jointly} on different tasks aim to accommodate as many VS tasks as possible within a single model, where all tasks can be accomplished using the same set of trained weights. As shown in the top rows of Table \ref{tab:sota_strong_vid2}, UniRef \cite{Wu_2023_ICCV_uniref} unifies all prompt-specified VS tasks, but it fails to deal with category-specified VS tasks, such as VIS, VSS and VPS. TarVIS \cite{tarvis} can handle most VS tasks except for RefVOS due to the lack of language encoding capabilities. UNINEXT \cite{uninext} focuses solely on object-centric segmentation without considering entity segmentation of stuff categories, thereby being incapable of handling VSS, VPS and PVOS tasks. In contrast, our UniVS is the only approach that accommodates all VS tasks within a single model, demonstrating the highest generalization capability in universal segmentation.
+
+Specifically, UniRef achieves outstanding performance on VOS and RefVOS tasks, reaching 81.4 on YT18. TarVIS achieves state-of-the-art performance on datasets with simple scenes, such as 48.3 mAP on YT21 of VIS task and 82.6 on DAVIS of VOS task. UNINEXT utilizes a large amount of image/video data to jointly train the model, allowing it to achieve state-of-the-art performance in instance-level segmentation benchmarks, such as 53.0/34.0 mAP on YT19/OVIS for VIS task and 63.9/61.2 on DAVIS and RefYT for RefVOS task. Our UniVS achieves comparable performance on VIS task, top-ranked performance on VSS/VPS tasks and slightly lower performance in prompt-specified VS tasks. For VSS and VPS tasks, UniVS brings 2$\sim$4\% performance improvement, reaching 48.2 mIoU and 88.5 mVC$_8$ on VSPW and 45.8 STQ on VIPSeg.
+
+Compared with UniRef, TarVIS and UNINEXT, our UniVS can handle category-specified VS tasks, text prompt-guided segmentation and entity segmentation for stuff categories simultaneously. Pursuing a more universal segmentation capability, however, may sacrifice performance in individual tasks due to task conflicts and limited video data. 
+Compared to UniRef, which utilizes heavy temporal propagation modules to pass reference frames and masks to the current frame, UniVS adopts a parameter-free Visual Sampler to extract prompt information, resulting in a slight decrease in performance.
+Compared to UNINEXT, which uses 900 object queries, we train UniVS  using only 200 object queries with fewer video data. Additionally, UniVS needs to accommodate stuff categories in object segmentation. These two factors explain the slightly lower performance of our approach in instance-level segmentation benchmarks compared to UNINEXT. In future w
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

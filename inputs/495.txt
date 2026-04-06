@@ -1,0 +1,253 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Over the past two years, diffusion models \cite{song2020denoising,ho2020denoising,dhariwal2021diffusion,ho2022classifier} have achieved unprecedented success in image generation and shown potential to become vision foundation models. 
+Recently, many works~\cite{li2023your,karazija2023diffusion,zhao2023generative,zhang2023inversion,parmar2023zero,kawar2023imagic,brooks2023instructpix2pix} have demonstrated that diffusion models trained on large-scale text-to-image datasets can already understand various visual attributes and provide versatile visual representations for downstream tasks, \eg, image classification~\cite{li2023your}, segmentation~\cite{karazija2023diffusion,zhao2023generative}, translation~\cite{zhang2023inversion,parmar2023zero}, and editing~\cite{kawar2023imagic,brooks2023instructpix2pix}. 
+However, due to the inherent randomness in the diffusion process, existing diffusion models cannot maintain consistent contents to the input image and thus fail in handling \task vision tasks.  
+To this end, some methods~\cite{tumanyan2023plug,parmar2023zero} propose to utilize input images as a prior via the DDIM Inversion~\cite{song2020denoising} strategy when editing images, but they are unstable when the scenes are complex. 
+Other methods~\cite{saharia2022palette,ren2023multiscale,wang2023dr2,yi2023diff,guo2023shadowdiffusion} attempt to train new diffusion models on task-specific datasets from scratch, limiting them to solve only a single task.
+In this work, we observe that an accurate text prompt describing the goal of the task can already instruct a pre-trained diffusion model to address many \task tasks, but typically leads to obvious content distortion, as illustrated in \figref{fig:observation}. 
+Our insight to this problem is that task-specific priors containing both guidance information of the task and spatial information of the input image can adequately guide pre-trained diffusion models to handle \task tasks while maintaining high-fidelity content consistency. 
+To harness this potential, we propose \textit{Diff-Plugin}, the first framework enabling a pre-trained diffusion model, such as stable diffusion~\cite{rombach2022high}, to accommodate a variety of \task  tasks without compromising its original generative capability. 
+\textit{Diff-Plugin} consists of two main components. First, it includes a lightweight Task-Plugin module to help extract task-specific priors. 
+The Task-Plugin is bifurcated into the Task-Prompt Branch (TPB) and the Spatial Complement Branch (SCB). While TPB distills the task guidance prior, orienting the diffusion model towards the specified vision task and minimizing its reliance on complex textual descriptions, SCB leverages task-specific visual guidance from TPB to assist the spatial details capture and complement, enhancing the fidelity of the generated content. 
+Second, to facilitate the use of multiple different Task-Plugins, \textit{Diff-Plugin} includes a  Plugin-Selector to allow users to choose their desired Task-Plugins through text inputs (visual illustrations are depicted in \figref{fig:teaser}). 
+To train the Plugin-Selector, we employ multi-task contrastive learning \cite{radford2021learning}, using task-specific visual guidance as pseudo-labels. This enables the Plugin-Selector to align different visual embeddings with task-specific text inputs, thereby bolstering the robustness and user-friendliness of the Plugin-Selector. 
+
+To thoroughly evaluate our method, we conducted extensive experiments on eight diverse \task vision tasks. Our results affirm that \name is not only stable across different tasks but also exhibits remarkable schedulability, facilitating text-driven multi-task applications. 
+Additionally, \name showcases its scalability, adapting to various tasks across datasets of varying sizes, from less than 500 to over 50,000 samples, without affecting existing trained plugins. 
+Finally, our results also show that the proposed framework outperforms existing diffusion-based methods both visually and quantitatively, and achieves competitive performances compared to regression-based methods.
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/observation.pdf}
+    \caption{ Stable Diffusion (SD) \cite{rombach2022high} results on four low-level vision tasks: desnowing, deblurring, deraining, and highlight removal. Each sub-figure illustrates a two-step process: 
+    First, we generate the left image using SD with a full-text description, where task-critical attributes are highlighted in {\color{red}{red}}. 
+    Then, we remove unwanted attributes (indicated with \st{strikethrough}), optionally add new attributes (denoted with {\color{orange}{orange}} word), and employ the \textit{img2img} function in SD, using the left image as a condition to generate the edited image on the right. 
+    We observe that while SD can grasp rich attributes of various low-level tasks and create content consistent with descriptions, its inherent randomness often leads to content change in further editing. 
+    For instance, in sub-fig (1), besides addressing the primary task-related degradation (\eg, snow), SD also alters unrelated content (\eg, face profile).
+    }
+    \label{fig:observation}
+\end{figure}
+
+Our key contributions are summarized as follows: 
+\begin{itemize}
+    \item We present \textit{Diff-Plugin}, the first framework to enable a pre-trained diffusion model to perform various \task tasks while maintaining the original generative abilities. 
+    \item We propose a Task-Plugin, a lightweight dual-branch module designed for injecting task-specific priors into the diffusion process, to enhance the fidelity of the results. 
+    \item We propose a Plugin-Selector to select the appropriate Task-Plugin based on the text provided by the user.  This extends to a new application that can allow users to edit images via text instructions for \task vision tasks.
+    \item We conduct extensive experiments on eight tasks, demonstrating the competitive performances of \textit{Diff-Plugin} over existing diffusion and regression-based methods.
+\end{itemize}
+
+
+
+
+Related Works
+\label{sec:related}
+\textbf{Diffusion models} \cite{sohl2015deep,song2019generative} have been applied to image synthesis \cite{ho2020denoising,song2020denoising,dhariwal2021diffusion,ho2022classifier} and achieved remarkable success. 
+With extensive text-image data \cite{schuhmann2022laion} and large-scale language models \cite{raffel2020exploring,radford2021learning}, diffusion-based text-guided image synthesis \cite{nichol2021glide,ramesh2022hierarchical,saharia2022photorealistic,rombach2022high,balaji2022ediffi} has become even more compelling. 
+Leveraging the text-guided synthesis diffusion model, several approaches harness the generative prowess for text-driven editing. Zero-shot approaches \cite{hertz2022prompt,parmar2023zero,tumanyan2023plug} rely on a correct initial noise \cite{song2020denoising} and manipulate the attention map to edit specified content at precise locations. 
+Tuning-based strategies strive to balance between image fidelity and generated diversity through optimized DDIM inversion \cite{wallace2023edict}, attention tuning \cite{kumari2023multi}, text-image coupling \cite{zhang2023sine,ruiz2023dreambooth,kawar2023imagic} and prompt tuning \cite{mokady2023null,dong2023prompt,gal2022image}. 
+Conversely, InstructP2P \cite{brooks2023instructpix2pix, zhang2023magicbrush} generates paired data through latent diffusion \cite{rombach2022high} and prompt-to-prompt \cite{hertz2022prompt} for training and editing. 
+However, the randomness in the diffusion process and the absence of task-specific priors render them infeasible for \task vision tasks that require details preservation.
+
+
+\noindent \textbf{Conditional generative models} 
+use various external inputs to ensure output consistency with the conditions. Training-free methods \cite{couairon2023zero,xie2023boxdiff} can generate new contents at specified positions by manipulating attention layers, yet with limited condition types. 
+Fine-tuning-based approaches inject additional guidance to the pre-trained diffusion models by training a new diffusion branch \cite{zhang2023adding,mou2023t2i,zhao2023uni} or the whole model \cite{avrahami2023spatext}. 
+Despite the global structural consistency, these methods cannot ensure high-fidelity between output and input image details due to the randomness and generative nature.
+
+
+\noindent \textbf{Diffusion-based \task methods} can be grouped into zero-shot and training-based. The former can borrow generative priors from pre-trained denoising diffusion-based generative models \cite{ho2020denoising} to solve linear \cite{kawar2022denoising,wang2022zero} and/or non-linear \cite{fei2023generative,chung2023diffusion} \fang{image restoration} tasks, but often produce poor results on real-world data. 
+The latter usually train or fine-tune an individual model for different tasks via task-dependent designs, such as super-resolution \cite{saharia2022image, xia2023diffir}, 
+JPEG compression \cite{saharia2022palette}, 
+deblurring \cite{whang2022deblurring,ren2023multiscale}, 
+face restoration \cite{wang2023dr2,zhao2023towards}, 
+low-light enhancement \cite{yi2023diff,zhang2023unified, jiang2023low}, and shadow removal \cite{guo2023shadowdiffusion}. 
+Concurrent works, StableSR \cite{wang2023exploiting} and DiffBIR \cite{lin2023diffbir}, use a learnable conditional diffusion branch with degraded or restored images to train diffusion models specifically for blind face restoration. 
+In contrast, our framework enables one pre-trained diffusion model to handle a variety of \task tasks by equipping it with lightweight task-specific plugins.
+
+\noindent \textbf{Multi-task models}  can learn complementary information across different tasks, \eg, object detection and segmentation \cite{he2017mask}, rain detection and removal \cite{yang2017deep}, adverse weather restoration \cite{zhu2023learning,ye2023adverse, ozdenizci2023restoring} and blind image restoration \cite{potlapalli2023promptir,li2022all}. 
+However, these methods can only handle the pre-defined tasks after training.  Instead, our \textit{Diff-Plugin} is flexible and can integrate new tasks through task-specific plugins, as our Task-Plugins are trained individually. Hence, when adding new \task tasks to \textit{Diff-Plugin}, we only need to add the pre-trained Task-Plugins to the framework, without the need to retrain the existing ones.
+
+
+Methodologies
+\label{sec:method}
+
+In this section, we first review the diffusion model formulations (\secref{subsec:pre}). Then, we introduce our \textit{Diff-Plugin} framework (\secref{subsec:diff_plugin}), which developed from our newly proposed Task-Plugin (\secref{subsec:plugin}) and Plugin-Selector (\secref{subsec:scheduler}).
+
+\subsection{Preliminaries}
+\label{subsec:pre}
+The diffusion model consists of a forward process and a reverse process. 
+In the forward process, given a clean input image $\mathbf{x}_{0}$, the diffusion model progressively adds Gaussian noise to it to get noisy image $\mathbf{x}_t$ at time-step $t\in \{0,1,...,T \}$, as $\mathbf{x}_t = \sqrt{\bar{\alpha}_t} \mathbf{x}_0+\sqrt{1-\bar{\alpha}_t} \boldsymbol{\epsilon}_{t}$, where $\bar{\alpha}_t$ is the pre-defined scheduling variable and $ \boldsymbol{\epsilon}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$ is the added noise. 
+In the reverse process, the diffusion model performs iteratively remove noise from a standard Gaussian noise $\mathbf{x}_T$, and finally estimating a clean image $\mathbf{x}_0$. 
+This is typically employed to train a noise prediction network $\boldsymbol{\epsilon}_\theta$, with supervision informed by the noise $ \boldsymbol{\epsilon}_t$, 
+as $\mathcal{L}=\mathbb{E}_{\mathbf{x}_0 \text{,} t \text{,} \epsilon \sim \mathcal{N}(0\text{,}1)} \left[ \left\|\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_\theta\left(\mathbf{x}_t \text{,} \ t\right)\right\|_2^2\right]$.
+
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/pipeline.pdf}
+    \caption{Schematic illustration of the \textit{Diff-Plugin} framework. 
+    \textit{Diff-Plugin} identifies appropriate Task-Plugin $\mathcal{P}$ based on the user prompts, extracts task-specific priors, and then injects them into the pre-trained diffusion model to generate the user-desired results.}
+    \label{fig:pipeline}
+\end{figure}
+\subsection{Diff-Plugin}
+\label{subsec:diff_plugin}
+Our key observation is the inherent zero-shot capability of pre-trained diffusion models in performing \task vision tasks, enabling them to generate diverse visual content without explicit task-specific training. 
+However, this capability faces limitations in more nuanced task-specific editing. 
+For example, in the desnowing task, while the model should ideally only remove snow and leave other contents unchanged, as shown in \figref{fig:observation}, the inherent randomness of the diffusion process often leads to unintended alterations in the scene beyond just snow removal. This inconsistency arises from the model's lack of task-specific priors, which are crucial for precise detail preservation in \task vision tasks.
+
+Inspired by modular extensions in NLP \cite{xu2023small,xiao2023plug} and GPT-4 \cite{gpt_plugins}, which utilize plug-and-play tools to enhance the capabilities of large language models for downstream tasks without compromising their core competencies, 
+we introduce a novel framework, \textit{Diff-Plugin}, \ryn{based on a similar idea}. This framework integrates several lightweight plugin modules, termed Task-Plugin, into the pre-trained diffusion models for various low-level tasks. \ryn{Task-Plugins} are crafted to provide essential task-specific priors, guiding the models to produce high-fidelity and task-consistent content.
+In addition, while diffusion models can generate content based on text instructions for targeted scenarios, they lack the ability to schedule Task-Plugins for different low-level tasks. Even existing conditional generation methods \cite{zhang2023adding,qin2023unicontrol} can only specify different generation tasks through input conditional images. Thus, to facilitate smooth text-driven task scheduling and enable the switching between different Task-Plugins for complex workflows, \textit{Diff-Plugin} \ryn{includes a Plugin-Selector to allow} users to choose and schedule appropriate Task-Plugins with textual commands.
+\figref{fig:pipeline} depicts the \textit{Diff-Plugin} framework. 
+Given an image, users specify the task through a text prompt, either singular or multiple, and the Plugin-Selector identifies the appropriate Task-Plugin for it. 
+The Task-Plugin then processes the image to extract the task-specific priors, guiding the pre-trained diffusion model to produce user-desired outcomes. 
+For more intricate tasks beyond the scope of a single plugin, \textit{Diff-Plugin} breaks them down into sub-tasks with \ryn{a predefined mapping table}. 
+Each sub-task is tackled by a designated Task-Plugin, showcasing the framework's capability to handle diverse and complex \ryn{user requirements}. 
+
+
+\subsection{Task-Plugin}
+\label{subsec:plugin}
+
+
+As illustrated in \figref{fig:plugin}, our Task-Plugin module is composed of two branches: a Task-Prompt Branch (TPB) and a Spatial Complement Branch (SCB). 
+The TPB is crucial for providing task-specific guidance to the pre-trained diffusion model, akin to using text prompts in text-conditional image synthesis \cite{rombach2022high}. 
+We employ visual prompts, extracted via the pre-trained CLIP vision encoder \cite{radford2021learning}, to direct the model's focus towards task-relevant \yu{patterns (\eg, rain streaks for deraining and snow flakes for desnowing)}. 
+Specifically, for an input image $\mathbf{I}$, the encoder $\textit{Enc}_{I}(\cdot)$ first extracts general visual features, which are then distilled by the TPB to yield discriminative visual guidance priors $\mathbf{F}^{p}$:
+\begin{equation}
+    \mathbf{F}^{p} = \textit{TPB}(\textit{Enc}_{I}(\mathbf{I})) \text{,}
+\label{eq:tpb}
+\end{equation}
+where TPB, comprising three MLP layers with Layer Normalization and LeakyReLU activations (except for the final layer), ensures the retention of only the most task-specific attributes. This approach aligns $\mathbf{F}^{p}$ with the textual features the diffusion model typically uses in its text-driven generation process, thus facilitating better task alignment \yu{for Plugin-Selector}. Furthermore, using visual prompts simplifies the user's role by eliminating the need for complex text prompt engineering, which is often challenging for specific vision tasks and sensitive to minor textual variations \cite{xu2023prompt}.
+
+However, the task-specific visual guidance prior $\mathbf{F}^{p}$, while \yu{crucial for prompting global semantic attributes, is not sufficient for preserving fine-grained details.}
+In this context, DDIM Inversion plays a pivotal role by providing initial noise that contains information about the image content. 
+Without this step, the inference would rely on random noise devoid of image content, resulting in less controllable results in the diffusion process. 
+\yu{However, the inversion process is unstable and time-consuming.} \yu{To alleviate this}, we introduce the SCB  to extract and enhance spatial details preservation effectively. 
+\fang{We} utilizes the pre-trained VAE encoder \cite{esser2021taming} $\textit{Enc}_{V}(\cdot)$, to capture full content of input image $\mathbf{I}$, \fang{denoted} as $\mathbf{F}$. 
+This comprehensive image detail, when combined with the semantic guidance from $\mathbf{F}^{p}$, is then processed by our SCB \yu{to distill the spatial feature  $\mathbf{F}^{s}$:}
+\begin{equation}
+\mathbf{F}^{s} = \textit{SCB}(\mathbf{F}\text{,} \ \mathbf{F}^{t}\text{,} \ \mathbf{F}^{p})=\textit{Att}(\textit{Res}(\mathbf{F}\text{,} \ \mathbf{F}^{t})\text{,} \ \mathbf{F}^{t}\text{,} \ \mathbf{F}^{p}) \text{,}
+\label{eq:SCB}
+\end{equation}
+where $\mathbf{F}^t$ is time embedding used to denote the varied time step in diffusion process. The $\textit{Res}$ and $\textit{Att}$ blocks represent the standard ResNet and Cross-Attention transformer blocks, from the diffusion model \cite{rombach2022high}. The output from $\textit{Res}$ is utilized as the Query features and $\mathbf{F}^{p}$ acts as both Key and Value features in the cross-attention \fang{layer}. 
+We then introduce the task-specific \yu{visual guidance} prior $\mathbf{F}^{p}$ into the cross-attention layers of the diffusion model, where it serves to \yu{direct the model's generation process toward the specific requirements of the low-level vision task.}
+Following this, we directly incorporate the distilled spatial prior $\mathbf{F}^{s}$  into the final stage of the decoder as a residual. 
+This placement is based on our experimental observations in \tableref{tab:plugin_position}, which indicated that the fidelity of spatial details in the stable diffusion \cite{rombach2022high} tends to decrease from the shallow layers to the deeper ones. 
+By adding $\mathbf{F}^{s}$ at this specific stage, we effectively counteract this tendency, thereby enhancing the preservation of fine-grained spatial details. 
+
+To train the Task-Plugin modules, we adopt the denoising loss as defined in \cite{rombach2022high}, introducing the task-specific priors into the diffusion denoising training process: 
+\begin{equation}
+    \mathcal{L}=\mathbb{E}_{\boldsymbol{z}_0\text{,} t \text{,} \mathbf{F}^{p} \text{,} \mathbf{F}^{s} \text{,}  \epsilon \sim \mathcal{N}(0\text{,}1)}\left[\| \epsilon-\epsilon_\theta\left(\boldsymbol{z}_t\text{,} \ t \text{,} \ \mathbf{F}^{p} \text{,} \ \mathbf{F}^{s}\right) \|_2^2\right] \text{,}
+\label{eq:denois_loss}
+\end{equation}
+where $\mathbf{z}_t = \sqrt{\bar{\alpha}_t} \mathbf{z}_0+\sqrt{1-\bar{\alpha}_t} \boldsymbol{\epsilon}_{t}$ represents the noised version of the latent-space image at time $t$, and $\mathbf{z}_0$, the latent-space representation of the ground truth image $\hat{\mathbf{I}}$, is obtained as $\mathbf{z}_0=\textit{Enc}_{V}(\hat{\mathbf{I}})$. This loss function ensures that the Task-Plugin is effectively trained to incorporate the task-specific priors in guiding the diffusion process.
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/plugin.pdf}
+    \caption{Schematic illustration of task-specific priors extraction via the proposed lightweight Task-Plugin. Task-Plugin processes three inputs: time step $t$, visual prompt from $\textit{Enc}_I(\cdot)$, and image content from $\textit{Enc}_V(\cdot)$. 
+    It distills visual guidance $\mathbf{F}^p$ via a task-prompt branch and extracts spatial features $\mathbf{F}^s$ through a spatial complement branch, jointly for task-specific priors.
+    }
+    \label{fig:plugin}
+\end{figure}
+
+
+\subsection{Plugin-Selector}
+\label{subsec:scheduler}
+
+We propose the Plugin-Selector, enabling users to select the desired Task-Plugin using text input. 
+For an input image $\mathbf{I}$ and a text prompt $\mathbf{T}$, we define the set of Task-Plugins as $\mathcal{P}=\{\mathcal{P}_1, \mathcal{P}_2, \cdots, \mathcal{P}_m\}$, 
+with each $\mathcal{P}_i$ corresponding to a specific vision task, transforming $\mathbf{I}$ into task-specific priors $(\mathbf{F}^{p}_i, \mathbf{F}^{s}_i)$. 
+Then, visual guidance $\mathbf{F}^{p}_i$ of each Task-Plugin is then cast to a new textual-visual aligned multi-modality latent space via a shared visual projection head $\textit{VP}(\cdot)$ and denoted as $\mathcal{V} = \{\boldsymbol{v}_1, \boldsymbol{v}_2, \cdots, \boldsymbol{v}_m\}$. 
+Concurrently, $\mathbf{T}$ is encoded into a text embedding by $\textit{Enc}_{T}(\cdot)$  \cite{radford2021learning} and then projected to $\boldsymbol{q}$ using a textual project head $\textit{TP}(\cdot)$, aligning the textual and visual embedding. The process is formulated as:
+\begin{equation}
+    \boldsymbol{v}_i = \textit{VP}(\mathbf{F}_{i}^{p})\text{;} \quad \boldsymbol{q} = \textit{TP}(\textit{Enc}_{T}(\mathbf{T})) \text{.}
+\end{equation}
+
+We then compare the textual embedding $\boldsymbol{q}$ with each visual embedding $\boldsymbol{v}_i \in \mathcal{V}$ using cosine similarity function such that $\boldsymbol{s}_i = \text{sim}(\boldsymbol{v}_i, \boldsymbol{q})$,  yielding a set of similarity scores $\mathcal{S} = \{\boldsymbol{s}_1, \boldsymbol{s}_2, \cdots, \boldsymbol{s}_m\}$.
+We select the Task-Plugin $\mathcal{P}_{\text{selected}}$ that meet a specified similarity threshold, $\theta$: 
+ \begin{equation}
+\mathcal{P}_{\text{selected}} = \{\mathcal{P}_i \mid \boldsymbol{s}_i \geq \theta \text{,}  \ \mathcal{P}_i \in \mathcal{P}\}.
+\end{equation}
+
+We adopt the $\mathbf{F}^{p}_i$ as the pseudo label and pair it with task-specific text to construct training data. We employ contrastive loss \cite{chen2020simple,radford2021learning} to optimize the vision and text projection heads, enhancing their capability to handle multi-task scenarios. 
+This involves minimizing the distance between the anchor image and positive texts while increasing the distance from negative texts. 
+For each image $\mathbf{I}$, a positive text relevant to its task (\eg, ``\textit{I want to remove rain}'' for deraining task) and  $N$ negative texts from other tasks (\eg, ``\textit{enhance the face}'' for face restoration) are sampled. 
+The loss function for a positive pair of example $(i,j)$ is as follows:
+\begin{equation}
+    \ell_{i, j}=-\log \frac{\exp \left(\operatorname{sim}\left(\boldsymbol{v}_{i}\text{,}  \  \boldsymbol{q}_{j}\right) / \tau\right)}{\sum_{k=1}^{N+1} \mathbbm{1}_{[k_{c} \neq i_{c}]} \exp \left(\operatorname{sim}\left(\boldsymbol{v}_{i}\text{,}  \  \boldsymbol{q}_k\right) / \tau\right)} \text{,} 
+\label{eq:scheduler}
+\end{equation}
+where $c$ represents the task type for each sample and $\mathbbm{1}_{[k_{c} \neq i_{c}]} \in  \{0 \text{,} 1 \}$ is an indicator function evaluating to 1 iff $k_{c} \neq i_{c}$. 
+$\tau$ denotes a temperature parameter.
+
+
+\begin{figure*}[htp]
+\begin{center}
+\begin{tabular}{c@{\hspace{1.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c@{\hspace{0.7mm}}c}
+\multirow{1}{*}[1.1cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Desnowing}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/input.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/ours.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/promptir.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/controlnet.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/nulltext.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/plug_and_play.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/instructP2P.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/snow/stable_diffusion.jpg}
+\multirow{1}{*}[1cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Dehazing}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/input.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/ours.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/promptir.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/controlnet.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/nulltext.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/plug_and_play.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/instructP2P.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/dehaze/stable_diffusion.jpg}
+\multirow{1}{*}[1.1cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Deblurring}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/input.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/ours.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/promptir.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/controlnet.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/nulltext.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/plug_and_play.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/instructP2P.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/blur/stable_diffusion.jpg}
+\multirow{1}{*}[1cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Deraining}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/input.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/ours.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/promptir.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/controlnet.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/nulltext.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/plug_and_play.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/instructP2P.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/derain/stable_diffusion.jpg}
+\multirow{1}{*}[1.67cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Face Restoration}}
+&\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/input2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/ours2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/promptir2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/controlnet2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/nulltext2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/plug_and_play2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/instructP2P2.png}&
+\includegraphics[width=0.116\linewidth,height=0.116\linewidth]{figures/compare/face/stable_diffusion2.png}
+\multirow{1}{*}[1.24cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Low-light En.}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/input.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/ours.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/promptir.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/controlnet.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/nulltext.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/plug_and_play.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/instructP2P.jpeg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/lowlight/stable_diffusion.jpeg}
+\multirow{1}{*}[1.1cm]{\rotatebox{90}{\fontsize{8pt}{\baselineskip}\selectfont Demoireing}}
+&\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/moire/input.jpg}&
+\includegraphics[width=0.116\linewidth,height=0.085\linewidth]{figures/compare/moir
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

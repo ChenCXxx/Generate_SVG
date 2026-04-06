@@ -1,0 +1,355 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+With the rapid development of deep learning,
+semantic segmentation has made tremendous progress~\cite{long2015fully,zhao2017pyramid,chen2017deeplab},
+but such success requires massive time and human efforts for annotating the pixel-wise masks.
+To save annotation cost, semi-/weakly-supervised segmentation~\cite{wei2018revisiting,jiang2022l2g,fan2022ucc} are proposed to take advantages of unlabelled/weakly-labelled data. 
+Nevertheless, they both fail to segment unseen classes (during training), which prevents segmentation from generalizing to novel classes.
+To tackle this problem, few-shot segmentation (FSS)~\cite{shaban2017one,wang2019panet,zhang2019canet} is introduced to quickly adapt the model to novel classes, with the help of a few annotated samples.
+
+\begin{figure}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/framework_comparisons.pdf}
+  \end{center}
+  \caption{{\bf (a) Details of cross attention for FSS. (b)\&(c) Existing and our proposed cross attentions.}
+  In {\bf (b)}, query {\color{red} FG} features are correctly fused with matched support {\color{red} FG} features, but query {\color{blue} BG} features are combined with mismatched support {\color{red} FG} features, and they get entangled.
+  In {\bf (c)}, query {\color{blue} BG} is correctly fused with matched query {\color{blue} BG} instead, so query features are disentangled.}
+  \label{fig:framework_comparisons}
+\end{figure}
+
+Naturally, human could refer to a few samples of a novel object, and recognize them in unlabelled images, even without knowing what they actually are, \ie, class-agnostic.
+Inspired by this phenomenon, researchers develop the learning-to-learn paradigm~\cite{ren2018meta,snell2017prototypical} for FSS models. They learn a segmentation pattern on some base classes during training, and apply the same pattern to segment novel classes during testing.
+Particularly, this pattern is to use the knowledge of a few annotated support samples to perform segmentation on an unlabelled query image for a class.
+
+There exist many solutions for FSS, where prototype-based methods~\cite{zhang2019canet,wang2019panet,li2021adaptive} are the most popular.
+Specifically, support prototypes~\cite{zhang2019canet,li2021adaptive} are extracted from support FG\footnote{{\bf FG} and {\bf BG} are used to represent foreground and background.}, and they are used to segment query image through, \eg, feature comparison~\cite{wang2019panet}.
+However, compressing support FG to prototypes leads to information loss, 
+Therefore, some methods~\cite{zhang2019pyramid,wang2020few,zhang2021few,wang2022adaptive} employ cross attention instead to fuse query features with uncompressed support FG (as shown in \cref{fig:framework_comparisons}(a)).
+Unfortunately, two other issues would arise.
+(1) As shown in \cref{fig:framework_comparisons}(b), query BG ($Q$, carpet) cannot find matched features in support FG ($K\&V$, cat), \ie, the similarity scores between all query BG and support FG pixel pairs are low. Then, such low scores are amplified after softmax normalization, \eg, 1e-10 to 0.1 for one pair.
+As a result, query BG features are inevitably fused with mismatched support FG features and get biased.
+This issue is termed {\em BG mismatch}.
+(2) Meanwhile, query FG could effectively integrate the knowledge of matched support FG. As both query FG and BG are fused with support FG, their features get entangled,  which is called {\em FG-BG entanglement}, thereby leading to ineffective segmentation.
+
+To address these two issues, we propose a novel attention module named {\bf self-calibrated cross attention (SCCA)} that calculates self and cross attentions simultaneously.
+As shown in \cref{fig:framework_comparisons}(c), query features are still taken as $Q$, but the query features and support FG are grouped as $K\&V$. The rationality is explained as follows:
+(1) Query BG features are effectively fused with matched query BG features from the same query image in $K\&V$ (via self attention). Hence, the {\em BG mismatch} issue is solved.
+(2) Query FG can be enhanced by matched information in both query features (via self attention) and support FG (via cross attention). In this way, query BG features persist to integrate BG information, while query FG is combined with FG information, the {\em FG-BG entanglement} issue is mitigated.
+
+Unluckily, the attention cost of SCCA is twice as much as that of standard cross attention.
+Therefore, we incorporate SCCA with the memory efficient swin transformer (ST)~\cite{liu2021swin}, and present the {\bf self-calibrated cross attention network (SCCAN)} to boost FSS.
+To be specific, a pseudo mask aggregation (PMA) module is firstly developed to generate pseudo query masks. PMA takes \emph{all} pairwise similarities to generate the mask value for a query pixel, which is better at alleviating the effects of noises, compared to existing methods~\cite{luo2021pfenet++,tian2020prior} that merely use a \emph{single} largest similarity value.
+Then, {\bf self-calibrated cross attention (SCCA) block} is proposed for effective patch-based cross attention, which mainly consists of (1) patch alignment (PA) module and (2) aforementioned SCCA module.
+(1) ST-based cross attention may have the patch misalignment issue in local attention calculation.
+Thus, we design a PA module to align each query patch with its most similar support patch (with FG pixels).
+(2) Given pairs of query and aligned support patches, SCCA effectively fuses query features with support FG features.
+Recall that query FG features integrate information both from the same query image patches and the support image patches. Naturally, a query patch is more similar to itself than another support patch, and thus self attention might 
+dominate
+in SCCA, and the query FG features may not integrate sufficient support FG features, which may weaken the FG feature representations. Hence, we further incorporate SCCA with a scaled-cosine (SC) mechanism to encourage query FG to integrate more information from the support image.
+In a nutshell, our contributions could be summarized as follows:
+\begin{itemize}
+    \item We propose a self-calibrated cross attention network (SCCAN), including pseudo mask aggregation (PMA) module and self-calibrated cross attention (SCCA) blocks, to effectively utilize support information.
+    \item SCCA could tackle the {\em BG mismatch} and {\em FG-BG entanglement} issues, which disentangles query FG and BG, thereby leading to effective segmentation.
+    \item Training-agnostic PMA module could roughly locate query FG, and it is better at suppressing the effects of noises, compared to existing methods.
+    \item New state-of-the-art could be set on PASCAL-5$^i$ and COCO-20$^i$, \eg, the mIoU score under 5-shot setting on COCO-20$^i$ is 5.6\%+ better than previous methods.
+\end{itemize}
+
+
+Related work
+\label{sec:related_work}
+\begin{figure*}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/overview_lin.pdf}
+  \end{center}
+  \caption{{\bf Overall architecture of (a) self-calibrated cross attention network (SCCAN) and (b) self-calibrated cross attention (SCCA) block.}
+  {\bf (a) Pseudo mask aggregation} module generates a pseudo mask that could roughly locate query FG.
+  {\bf Feature fusion} module adapts query and support features for better cross attention.
+  {\bf SCCA blocks} could effectively fuse query features with support FG.
+  Finally, the enhanced query features is forwarded to a decoder for segmentation.
+  {\bf (b) SCCA blocks} perform patch-based attentions. {\bf Patch alignment} module aims at finding the most similar support patch $S_i^A$ for each query patch $T_i$. {\bf SCCA} takes a query patch $T_i$ as $Q$, and groups the same $T_i$ and its aligned support patch $S_i^A$ as $K\&V$ to address the {\em BG mismatch} and {\em FG-BG entanglement} issues.
+  }
+  \label{fig:overview}
+\end{figure*}
+
+\smallskip
+\noindent
+\textbf{Few-shot segmentation.}
+To alleviate the 
+generalization
+problem on unseen classes of semantic segmentation, few-shot segmentation (FSS) is firstly introduced in OSLSM~\cite{shaban2017one}, 
+which segments
+query image with the help of annotated support samples.
+Recent FSS methods could be roughly divided into four categories.
+(1) Prototype-based methods~\cite{zhang2019canet,wang2019panet,tian2020prior,li2021adaptive,lang2022beyond,liu2022learning,zhang2021self,fan2022self,liu2022intermediate} compress support FG into single or multiple prototypes, which are then used to help segment the query image through, \eg, cosine similarity or feature concatenation.
+{\xu
+{\cheng Based on the intuition}
+that pixels from the same object are more similar than those from {\cheng different} objects, SSP~\cite{fan2022self} {\cheng is designed to generate} query FG and BG prototypes to find other similar query features.
+}
+(2) To prevent from information loss of prototypes, attention-based methods~\cite{zhang2021few,zhang2019pyramid,wang2020few,hu2019attention,xie2021scale,wang2022adaptive,jiao2022mask} build up per-pixel relationships between query and uncompressed support features, then use cross attention to fuse query features with support FG features. Nevertheless, 
+they suffer from the {\em BG mismatch} and {\em FG-BG entanglement} 
+issues as explained in \cref{sec:intro}.
+(3) More recently, correlation-based methods~\cite{min2021hypercorrelation, shi2022dense, hong2022cost,xiong2022doubly} focus on visual correspondence to build 4D correlations upon query and support features, then use expensive 4D operations to perform segmentation.
+(4) There also exist some other methods, \eg, DPCN~\cite{liu2022dynamic} generates dynamic kernels from support sample which is then used to process query features, some methods~\cite{lang2022learning,sun2022singular,iqbal2022msanet} benefit from base classes during testing and generate good results.
+In this work, we focus on the cross attention-based methods,
+and contribute effective self-calibrated cross attention (SCCA) for FSS, to solve the aforementioned issues.
+
+\smallskip
+\noindent
+\textbf{Attention.}
+Recently, some works~\cite{dosovitskiy2020image,touvron2021training,wang2021pyramid,yuan2021tokens,zhang2022hivit,liu2021swin} demonstrate that pure transformer architecture could achieve excellent results in computer vision tasks.
+Particularly, swin transformer (ST)~\cite{liu2021swin} calculates efficient self attention within small windows to reduce computational burden, while achieving good results.
+In spite of its good performance, ST in its original form does not support effective cross attention that could be utilized to fuse query features with support samples in FSS. 
+In this work,
+we adapt ST for SCCA to enable efficient and effective cross attentions.
+
+
+Problem definition
+\label{sec:problem_definition}
+
+Suppose the sets for training and testing are denoted as $\mathcal{D}_{tr}$ and $\mathcal{D}_{te}$, respectively.
+$\mathcal{D}_{tr}$ involves some classes $\mathcal{C}_{tr}$, while $\mathcal{D}_{te}$ covers another class set $\mathcal{C}_{te}$. FSS studies a scenario where $\mathcal{C}_{tr}$ and $\mathcal{C}_{te}$ are disjoint, \ie, $\mathcal{C}_{tr} \cap \mathcal{C}_{te} = \emptyset$.
+Both $\mathcal{D}_{tr}$ and $\mathcal{D}_{te}$ contain numerous {\em episodes}, which are the basic elements of episodic training.
+For $k$-shot setting, each episode consists of a support set $\mathcal{S} = \{I_S^n,M_S^n\}_{n=1}^{k}$ and a query set $\mathcal{Q} = \{I_Q,M_Q\}$ for a specific class $c$, where $I_S^n$ and $M_S^n$ represent the $n$-th support image and its annotated binary mask, $I_Q$ and $M_Q$ indicate the query image and corresponding mask.
+During training, the model learns to segment $I_Q$ under the guidance of support set $\mathcal{S}$ for classes $\mathcal{C}_{tr}$, and then apply the learned pattern to $\mathcal{C}_{te}$ during testing.
+For simplicity, we introduce our method under $1$-shot setting.
+
+
+
+Methodology
+\label{sec:methodology}
+As shown in \cref{fig:overview}(a), we propose self-calibrated cross attention network (SCCAN), which consists of pseudo mask aggregation (PMA) module, feature fusion (FF) module and self-calibrated cross attention (SCCA) blocks.
+PMA is responsible for generating a pseudo query mask that could roughly locate query FG with minor cost.
+Then, FF adapts query and support features to close the gap between their FG features for better cross attention.
+Particularly, SCCA is designed to alleviate the {\em BG mismatch} and {\em FG-BG entanglement} issues of existing cross attention-based FSS methods, and to effectively fuse query features with support FG information.
+Next, we will introduce the details of SCCA first, followed by PMA and FF modules.
+
+\subsection{Self-calibrated cross attention block}
+\label{sec:self_calibrated_cross_attention}
+
+\begin{figure}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/swin_comparisons_v1.pdf}
+  \end{center}
+  \caption{{\bf Issues of swin transformer when used for cross attention.}
+  Support BGs are usually not used in FSS, we preserve them for completeness.
+  {\bf (a)} {\em Invalid support patch}.
+  {\bf (b)} {\em Misaligned support patch}.
+  }
+  \label{fig:issue_swin}
+\end{figure}
+
+Swin transformer (ST)~\cite{liu2021swin} is well known for its excellent performance and efficiency for self attention. Specifically, it seamlessly splits features into small windows, and performs window-based self attention. Then, windows are shifted for another self attention to capture long-range dependencies.
+Nevertheless, merely taking query patch (we denote that pixels in a window form a patch) as $Q$, and its corresponding support patch as $K\&V$ for cross attention would raise some problems.
+(1) 
+{\em BG mismatch} and {\em FG-BG entanglement} (as explained earlier);
+(2) {\em Invalid support patch} (\cref{fig:issue_swin}(a)): $T_0$'s corresponding patch $S_0$ does not contain FG objects, and thus $T_0$ cannot be enhanced after performing cross attention with $S_0$;
+(3) {\em Misaligned support patch} (\cref{fig:issue_swin}(b)): $T_2$ represents headstock, but in support image, headstock locates in $S_3$. $T_2$ would perform cross attention with $S_2$, {and thus} its most similar features, \ie, headstock, cannot be directly accessed, which degrades the effectiveness of cross attention.
+
+Therefore, we propose self-calibrated cross attention (SCCA) to adapt ST for effective cross attention and mitigate these issues.
+We employ 8 consecutive SCCA blocks (as shown in \cref{fig:overview}(b)), each of which takes the enhanced query and support features from previous block as inputs, and seamlessly split them into patches.
+Then, patch alignment (PA) module is proposed to align each query patch with its most similar support patch.
+After that, each query patch and its aligned support patch are grouped for SCCA to effectively enhance query features with support FG.
+
+The inputs for the first block come from feature fusion (FF) module, which will be introduced later.
+Both input features of the $L$-th block $F_Q^{L} \in \mathbb{R}^{C \times H \times W}$ and $F_S^{L} \in \mathbb{R}^{C \times H \times W}$ are split into patches $T_i \in \mathbb{R}^{N^2 \times C \times K \times K}$ and $S_i \in \mathbb{R}^{N^2 \times C \times K \times K}, i \in \{0,\cdots,N^2-1\}$, where $N^2$ is the number of patches, and $K \times K$ denotes window/patch size.
+
+\smallskip
+\noindent
+\textbf{Patch alignment (PA).}
+PA could mitigate the {\em invalid support patch} and {\em misaligned support patch} issues by aligning each query patch with its most similar support patch (with FG pixels) for effective cross attention.
+Specifically, as shown in \cref{fig:patch_alignment}, the prototype of each patch is obtained via patch-wise average pooling.
+\begin{equation}
+    T_i^P = PAP(T_i), S_i^P = PAP(S_i)
+\end{equation}
+where $T_i^P \in \mathbb{R}^{N^2 \times C \times 1 \times 1}$ and $S_i^P \in \mathbb{R}^{N^2 \times C \times 1 \times 1}$ are the prototypes of query and support patches, and $PAP$ denotes patch-wise average pooling. Note that support features and support prototypes only contain FG information.
+
+\begin{figure}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/patch_alignment_lin.pdf}
+  \end{center}
+  \caption{{\bf Details of patch alignment (PA) module.}
+  Firstly, prototype is obtained from each input patch.
+  Then, cosine similarity is calculated among query and support prototypes.
+  Finally, each query patch's most similar support patch is obtained via $\arg\max$ operation, and then they are aligned.
+  }
+  \label{fig:patch_alignment}
+\end{figure}
+
+Next, we measure the cosine similarity between patch prototypes $T_i^P$ and $S_i^P$, mask out support patches without FG objects
+in
+the similarity score, and perform $\mathop{\arg\max}$ to obtain each query patch's most similar support patch.
+\begin{equation}
+    Indices = \arg\max(Cos(T_i^P, S_i^P) \circ M_S^P)
+\end{equation}
+where $Indices \in \mathbb{R}^{N^2}$ are the indices of aligned support patches $S_i^{A}$, $Cos$ means cosine similarity, $\circ$ denotes Hadamard product, $M_S^P \in \{1, 0 \}^{1 \times N^2}$ is a mask indicating if each support patch has FG pixels or not.
+Then, each query and its aligned support patch are grouped for SCCA.
+
+\smallskip
+\noindent
+\textbf{Self-calibrated cross attention (SCCA).}
+Given a pair of query and its aligned support patch, the query patch is taken as $Q$, while both of them are taken as $K\&V$, and thus self attention (query patch in $Q$ with query patch in $K\&V$) and cross attention (query patch in $Q$ with support patch in $K\&V$) would be calculated simultaneously.
+We explain the rationale as follows.
+
+\begin{figure}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/self_calibrated_cross_attention_lin.pdf}
+  \end{center}
+  \caption{{\bf Details of self-calibrated cross attention.}
+  Fusion module is a feed-forward network.
+  Query patch firstly calculates self and cross attention scores with itself and the aligned support patch.
+  Scores are then concatenated and normalized.
+  Finally, the score is used to obtain useful support information, which is fused with input query patch for query feature enhancement.
+  }
+  \label{fig:self_calibrated_cross_attention}
+\end{figure}
+
+(1) For a query BG pixel, it cannot find similar information from support FG in existing cross attention-based FSS methods. 
+During SCCA,
+query BG could find other matched BG information from query features themselves (via self attention), while ignoring the dissimilar support FG. Thus, the {\em BG mismatch} problem is solved.
+
+(2) Query FG could find matched FG features not only from support FG but also from query features, and thus it could be fused with reasonable features, and get enhanced.
+
+(3) Since both query FG and BG are correctly fused with their matched features in SCCA, the {\em FG-BG entanglement} problem could be mitigated.
+
+Recall that the performance of FSS is affected by how the support sample is utilized. Unfortunately, in (2), query FG may not be fused with sufficient support features, because FG pixels in a query patch are more similar to themselves, compared with those in the aligned support patch. As a result, self attention might dominate in SCCA.
+To address this issue,
+we further contribute a {\bf scaled-cosine (SC)} mechanism.
+As illustrated in \cref{fig:self_calibrated_cross_attention}, when performing SCCA, we use scaled dot product for self attention, and cosine similarity for cross attention.
+Their attention scores are then concatenated and normalized.
+Dot product is a more strict
+similarity-related operator,
+as it takes both direction and magnitude into consideration.
+In contrast,
+cosine similarity only measures the similarity of directions.
+Hence, we employ cosine similarity for cross attention to encourage
+{\xu to discover more similar regions,}
+and query FG is more likely to integrate sufficient information from support FG.
+
+We formally describe SCCA as follows.
+Scaled dot product is firstly conducted on query patch $T_i$ and itself to obtain self attention score.
+Meanwhile, cosine similarity is performed on the same $T_i$ and aligned support patch $S_i^{A}$ to obtain cross attention score.
+Their scores are denoted as $A_{QQ} \in \mathbb{R}^{N^2 \times K^2 \times K^2}$ and $A_{QS} \in \mathbb{R}^{N^2 \times K^2 \times K^2}$, where $N^2$ and $K^2$ are the number of patches and pixels, respectively.
+\begin{equation}
+    A_{QQ} = \frac{T_i \cdot T_i}{\sqrt{d_k}}, A_{QS} = \frac{T_i \cdot S_i^A}{\Vert T_i \Vert\Vert S_i^A \Vert}
+\end{equation}
+Then, two scores are concatenated and normalized by the softmax operation to obtain the final attention score $A \in \mathbb{R}^{N^2 \times K^2 \times 2K^2}$.
+\begin{equation}
+    A = Softmax(Concat(A_{QQ}, A_{QS}))
+\end{equation}
+Finally, $A$ is used to aggregate information from $T_i$ and $S_i^A$, and then be fused with $T_i$ for query feature enhancement.
+\begin{equation}\label{eq:fuse}
+    \hat{T}_i = FFN(A \cdot Concat(T_i, S_i^A) + T_i)
+\end{equation}
+where $FFN$ is feed-forward network.
+
+Once all enhanced query patches are obtained, they are assembled to be $F_Q^{L+1} \in \mathbb{R}^{C \times H \times W}$.
+Moreover, $F_Q^7$ from the last SCCA block is forwarded to the decoder~\cite{lang2022learning} and generate the segmentation $\hat{M}_Q \in \mathbb{R}^{2 \times H \times W}$.
+
+\smallskip
+\noindent
+\textbf{Window shifting.}
+To enable interactions among patches, we adopt window shifting operation in even layers as swin transformer~\cite{liu2021swin}.
+After window shifting, some irregular patches are obtained at image borders, and we pad them to have regular size for PA and SCCA.
+
+\subsection{Pseudo mask aggregation}
+\label{sec:pseudo_mask_aggregation}
+
+Pseudo masks~\cite{liu2022dynamic,luo2021pfenet++,tian2020prior,zhang2021few} are commonly incorporated into FSS models because they could roughly locate the query FG object without learnable parameters.
+Specifically, they measure the cosine similarity between each pair of high-level query and support FG pixels~\cite{tian2020prior,zhang2021few} or patches~\cite{liu2022dynamic,luo2021pfenet++}.
+Then, query pixel's largest similarity score is normalized and taken as its probability of being FG.
+
+However, existing methods suffer from the following two issues.
+(1) They only take support FG into consideration, which may not work well when both query FG and BG look dissimilar to support FG, \ie, their scores are similar.
+(2) As each value in pseudo mask merely corresponds to the largest cosine similarity among pixel or patch pairs, they would be heavily affected by noises.
+As a result, the locating function of pseudo mask is weakened.
+
+\begin{figure}[t]
+  \begin{center}
+  \includegraphics[width=1\linewidth]{figures/pseudo_mask_aggregation_lin.pdf}
+  \end{center}
+  \caption{{\bf Details of pseudo mask aggregation (PMA).}
+  Given a query pixel, the weighted summation of its normalized similarity scores with all support pixels and the annotated support mask means the probability of being FG.
+  }
+  \label{fig:pseudo_mask_aggregation}
+\end{figure}
+
+To tackle these issues, we propose a pseudo mask aggregation (PMA) module, which is illustrated in \cref{fig:pseudo_mask_aggregation}. Concretely, we apply two changes to the original one:
+(1) Both support FG and BG features are used for reliable comparisons, \eg,
+human head (query FG) is more similar to body (support FG) than room (support BG), and thus it is classified as FG.
+(2) To suppress the effects of noises, we use all pairwise similarities to perform weighted summation on binary support mask, instead of merely taking a largest value.
+
+First of all, PMA calculates cosine similarity $Sim \in \mathbb{R}^{HW \times HW}$ between high-level query features $F_Q^{High} \in \mathbb{R}^{C \times H \times W}$ and support features $F_S^{High} \in \mathbb{R}^{C \times H \times W}$.
+Then, a softmax operation is applied to normalize the score.
+After that, dot product is conducted on $Sim$ and support mask $M_S$ to obtain the pseudo mask $M_{Pseudo} \in \mathbb{R}^{HW \times 1}$.
+Finally, normalization and reshape operations are employed to generate the pseudo mask $M_{Pseudo} \in \mathbb{R}^{1 \times H \times W}$.
+
+\subsection{Feature fusion}
+\label{sec:feature_fusion}
+
+Due to the fact that FG objects in query and support images could be dissimilar, we start from the mid-level query features $F_Q^{Mid}$ and support features $F_S^{Mid}$ {\final (obtained from the $3^{rd}$ and $4^{th}$ blocks of the backbone~\cite{tian2020prior})}, and use the support prototype $P_S$ (extracted from support FG) to close their gaps.
+Concretely, $F_Q^{Mid}$ is combined with $P_S$ and its pseudo mask $M_{Pseudo}$ to obtain $F_Q$.
+Similarly, $F_S^{Mid}$ is fused with support prototype $P_S$ and support mask $M_S$ to generate $F_S$.
+Particularly, $F_Q$ and $F_S$ are inputted to SCCA as $F_Q^0$ and $F_S^0$, respectively.
+
+
+Experiments
+\label{sec:experiments}
+\subsection{Experimental settings}
+\label{sec:experimental_settings}
+
+\begin{table*}[t]
+  \begin{center}
+  \resizebox{.9\linewidth}{!}{
+      \begin{tabular}{c|r|cccccc|cccccc}
+        \hline
+        \multirow{2}{*}{Backbone} & \multirow{2}{*}{Method} & \multicolumn{6}{c|}{1-shot} & \multicolumn{6}{c}{5-shot}\\
+        & & 5$^0$ & 5$^1$ & 5$^2$ & 5$^3$ & Mean & FB-IoU & 5$^0$ & 5$^1$ & 5$^2$ & 5$^3$ & Mean & FB-IoU \\
+        \hline
+        \multirow{10}{*}{ResNet50} & PFENet$^{\dagger}$ (TPAMI'20)~\cite{tian2020prior} & 61.7 & 69.5 & 55.4 & 56.3 & 60.8 & 73.3 & 63.1 & 70.7 & 55.8 & 57.9 & 61.9 & 73.9\\
+         & MLC$^{\dagger}$ (ICCV'21)~\cite{yang2021mining} & 59.2 & 71.2 & 65.6 & 52.5 & 62.1 & - & 63.5 & 71.6 & \bf 71.2 & 58.1 & 66.1 & -\\
+         & HSNet$^{\ddagger\star}$ (ICCV'21)~\cite{min2021hypercorrelation} & 63.5 & 68.2 & 62.4 & \underline{59.8} & 63.5 & 76.5 & 70.1 & 72.0 & 67.9 & \bf 67.1 & 69.3 & 80.6\\
+         & CyCTR$^{\dagger}$ (NIPS'21)~\cite{zhang2021few} & 65.7 & 71.0 & 59.5 & 59.7 & 64.0 & - & 69.3 & 73.5 & 63.8 & 63.5 & 67.5 & -\\
+         & NTRENet$^{\dagger}$ (CVPR'22)~\cite{liu2022learning} & 65.4 & 72.3 & 59.4 & \underline{59.8} & 64.2 & 77.0 & 66.2 & 72.8 & 61.7 & 62.2 & 65.7 & 78.4\\
+         & DPCN$^{\dagger}$ (CVPR'22)~\cite{liu2022dynamic} & - & - & - & - & 65.7 & \underline{77.4} & - & - & - & - & - & -\\
+         & DCAMA$^{\ddagger\star}$ (ECCV'22)~\cite{shi2022dense} & 66.1 & 71.9 & 59.7 & 57.5 & 63.8 & 75.7 & 70.7 & 72.9 & 63.0 & 65.0 & 67.9 & 79.4\\
+         & VAT$^{\ddagger\star}$ (ECCV'22)~\cite{hong2022cost} & 65.9 & 70.0 & 64.9 & 59.0 & 65.0 & \underline{77.4} & \underline{72.1} & \underline{74.2} & 69.7 & 65.3 & \underline{70.3} & \underline{81.1}\\
+        \cline{2-14}
+         & SCCAN$^{\dagger}$ (Ours) & \underline{67.5} & \bf 72.6 & \bf 67.2 & \bf 60.5 & \bf 67.0 & 76.4 & 69.9 & \bf 74.3 & \underline{70.1} & \underline{66.9} & \underline{70.3} & 79.7\\
+         & SCCAN$^{\ddagger}$ (Ours) & \bf 68.3 & \underline{72.5} & \underline{66.8} & \underline{59.8} & \underline{66.8} & \bf 77.7 & \bf 72.3 & 74.1 & 69.1 & 65.6 & \bf 70.3 & \bf 81.8\\
+        \hline
+        \multirow{9}{*}{ResNet101} & PFENet$^{\dagger}$ (TPAMI'20)~\cite{tian2020prior} & 60.5 & 69.4 & 54.4 & 55.9 & 60.1 & 72.9 & 62.8 & 70.4 & 54.9 & 57.6 & 61.4 & 73.5\\
+         & MLC$^{\dagger}$ (ICCV'21)~\cite{yang2021mining} & 60.8 & 71.3 & 61.5 & 56.9 & 62.6 & - & 65.8 & 74.9 & \bf 71.4 & 63.1 & 68.8 & -\\
+         & HSNet$^{\ddagger\star}$ (ICCV'21)~\cite{min2021hypercorrelation} & 65.7 & 70.3 & 63.2 & \underline{61.9} & 65.3 & 77.2 & 72.0 & 73.6 & 68.7 & \underline{68.4} & 70.7 & 80.9\\
+         & CyCTR$^{\dagger}$ (NIPS'21)~\cite{zhang2021few} & 67.2 & 71.1 & 57.6 & 59.0 & 63.7 & - & 71.0 & 75.0 & 58.5 & 65.0 & 67.4 & -\\
+         & NTRENet$^{\dagger}$ (CVPR'22)~\cite{liu2022learning} & 65.5 & 71.8 & 59.1 & 58.3 & 63.7 & 75.3 & 67.9 & 73.2 & 60.1 & 66.8 & 67.0 & 78.2\\
+         & DCAMA$^{\ddagger}$ (ECCV'22)~\cite{shi2022dense} & 62.5 & 70.8 & 64.5 & 56.4 & 63.5 & 76.5 & 70.0 & 73.8 & 66.8 & 65.0 & 68.9 & 81.1\\
+         & VAT$^{\ddagger\star}$ (ECCV'22)~\cite{hong2022cost} & 68.1 & 71.7 & 64.8 & \bf 63.3 & 67.0 & \bf 78.7 & \underline{72.6} & 74.1 & 69.5 & \bf 69.5 & \underline{71.4} & \underline{82.0}\\
+        \cline{2-14}
+         & SCCAN$^{\dagger}$ (Ours) & \underline{69.1} & \bf 74.0 & \underline{66.3} & 61.6 & \underline{67.7} & 77.3 & 71.6 & \underline{75.2} & 69.5 & 66.5 & 70.7 & 79.6\\
+         & SCCAN$^{\ddagger}$ (Ours) & \bf 70.9 & \underline{73.9} & \bf 66.8 & 61.7 & \bf 68.3 & \underline{78.5} & \bf 73.1 & \bf 76.4 & \underline{70.3} & 66.1 & \bf 71.5 & \bf 82.1\\
+        \hline
+      \end{tabular}
+  }
+  \end{center}
+  \caption{{\bf Comparison with state-of-the-arts on PASCAL-5$^i$}. {\bf Bold} results represent the best performance, while the \underline{underlined} results indicate the second best. $\star$ means a method originally uses different data lists for testing, and is adapted with the uniform ones. $\dagger$ and $\ddagger$ indicate that the resize methods from PFENet~\cite{tian2020prior} and HSNet~\cite{min2021hypercorrelation} are used (which is explained in supplementary material).}
+  \label{tab:results_pascal}
+\end{table*}
+
+\begin{table*}[t]
+  \begin{center}
+  \resizebox{.9\linewidth}{!}{
+      \begin{tabular}{c|r|cccccc|cccccc}
+        \hline
+        \multirow{2}{*}{Backbone} & \multirow{2}{*}{Method} & \multicolumn{6}{c|}{1-shot} & \multicolumn{6}{c}{5-shot}\\
+        & & 20$^0$ & 20$^1$ & 20$^2$ & 20$^3$ & Mean & FB-IoU & 20$^0$ & 20$^1$ & 20$^2$ & 20$^3$ & Mean & FB-IoU \\
+        \hline
+        \multirow{9}{*}{ResNet50} & MLC$^{\dagger}$ (ICCV'21)~\cite{yang2021mining} & \bf 46.8 & 35.3 & 26.2 & 27.1 & 33.9 & - & \bf 54.1 & 41.2 & 34.1 & 33.1 & 40.6 & -\\
+         & HSNet$^{\ddagger}$ (ICCV'21)~\cite{min2021hypercorrelation} & 36.7 & 41.4 & 39.5 & 39.1 & 39.2 & 67.6 & 44.4 & 49.7 & 46.1 & 45.5 & 46.4 & 70.9\\
+         
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,188 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+  
+
+  With the increasing availability of hardware resources, large-scale models \cite{swin, vit, htsat} pre-trained on extensive data have achieved significant advancements in various multi-modal tasks \cite{clip, clap}. Nonetheless, since these models are primarily pre-trained on single modality, they may not be optimally suited for current multi-modal downstream tasks \cite{avel, avvp, avsbench, music-avqa}. 
+  As depicted in Fig \ref{fig:1} (a), the pre-trained model equally extracts visual features and directly passes them to downstream tasks. However, when perceiving the roaring sound of an engine, the visual region depicting a "car" should receive more attention than the region of "trees". Simultaneously, when observing the car, it is crucial to concentrate on the audio segments of the engine sound.
+  Therefore, the encoder should not only equally extract modal-specific information from the current modality, but also highlight information related to other modalities to enhance feature fusion across diverse modalities in downstream tasks. Retraining these large models based on downstream tasks would impose an unaffordable burden \cite{zeng2021contrastive, ma2020active, lape}, leading recent works to explore methods for fine-tuning pre-trained models on downstream tasks without full retraining, showing promising progress.
+  However, these CLIP-based methods have primarily focused on text-image tasks \cite{coop, cocoop, clip-adapter, maple}
+  , while overlooking another important multi-modal scenario: audio-visual tasks. Hence, in this paper, we primarily investigate how to utilize existing large-scale models, such as CLIP \cite{clip} and Swin-Transformer \cite{swin}, to adaptively adjust the encoding features with the guidance of counterpart modality when encoding audio or visual information.
+  The success of prompt learning in large language models (LLMs) \cite{lester2021power, liu2021gpt, ptuningv2, parameter, tpg} has recently sparked growing research interest in multi-modal prompt learning, as seen in works such as CoOp \cite{coop}, CoCoOp \cite{cocoop}, CLIP-Adapter \cite{clip-adapter}, DenseCLIP \cite{denseclip}, and MaPLe \cite{maple}. While these approaches enable adaptive adjustment of input features using text-based prompt templates for downstream tasks, an important question arises: \textit{Can audio or video serve as innovative prompt templates to enhance task comprehension for pre-trained models and guide adaptive feature extraction of the counterpart modality?} Our findings suggest a positive answer to this question.
+
+  In this paper, we present the \textbf{Dual-Guided Spatial-Channel-Temporal} (DG-SCT) attention mechanism, designed to adaptively adjust feature extraction of pre-trained models based on audio-visual input. Our work is motivated by a recent work, LAVisH \cite{lavish}, which introduces trainable layers with shared parameters in pre-trained models to enhance fusion of audio-visual features, demonstrating promising performance on various audio-visual downstream tasks with minimal additional parameters. However, LAVisH has a few limitations. First, it relies solely on a visual encoder to encode audio, which we argue is insufficient for capturing key audio features \cite{audioclip, mahmud2023ave}. Second, it only employs cross-attention in trainable layers to introduce information from different modalities, without explicitly highlighting crucial information within the current modality. By contrast, our approach incorporates cross-modal interaction layers into audio (HTS-AT \cite{htsat}) and visual (ViT \cite{vit} or Swin-T \cite{swin}) pre-trained models, leveraging different modalities as prompts to focus on special aspects of the input features that are more relevant to the counterpart modal semantics across  \textbf{spatial}, \textbf{channel}, and \textbf{temporal} dimensions. We term our proposed approach as "prompts" to denote the guidance provided to the trainable weights in preceding layers. It emphasizes utilizing audio and video cues to guide the representation of the counterpart modalities.
+  
+  
+  As depicted in Fig.~\ref{fig:1}, unlike previous audio and visual encoders, which generate audio and visual features separately and uniformly (Fig.~\ref{fig:1}~(a)), our features contain fine-grained, task-specific information at multiple levels by leveraging the guiding characteristics of multi-modal information \cite{cmran, cmbs}. This enables efficient implementation of a wide range of downstream tasks. Notably, unlike previous CLIP works \cite{coop, cocoop} that offer unidirectional prompts, our approach introduces bidirectional prompts. This means that visual and audio modalities can mutually guide each other, facilitating enhanced feature extraction from the respective modalities.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figures/figure1.pdf}
+   \caption{Our \textbf{Spatial} and \textbf{Temporal} attention can focus on important regions and moments in video and emphasize critical timestamps and frequencies in audio; \textbf{Channel} attention enhances the representations of audio and visual features. Take visual modality, our visual features contain fine-grained, task-specific information under the guidance of audio prompts.}
+   \label{fig:1}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figures/figure2.pdf}
+   \caption{1) Audio-visual inputs; 2) DG-SCT is injected into every layer of frozen pre-trained audio and visual encoders; 3) After feature extraction, the audio and visual features are sent to various downstream tasks; 4) Details of DG-SCT in spatial-channel-temporal attention levels. }
+   \label{fig:2}
+\end{figure*}
+
+In summary, this paper makes the following contributions:
+  
+  \begin{itemize}
+  
+  \item 
+  We highlight the limitations faced by large-scale pre-trained models in audio-visual downstream tasks, which hinder their optimal performance. To overcome these, we propose to utilize audio-visual features as novel prompts to fully leverage the feature extraction capabilities of large-scale models, enabling the effective utilization of task-specific information from different modalities.
+
+  \item 
+  We introduce a novel attention mechanism named Dual-Guided Spatial-Channel-Temporal (DG-SCT), which utilizes audio and visual modalities to guide the feature extraction of their respective counterpart modalities across spatial, channel, and temporal dimensions. Notably, our approach adds only a limited number of parameters for the interaction layer, while keeping the original parameters of the large-scale pre-trained models frozen.
+
+  \item 
+  Extensive experimental results on four audio-visual tasks, namely, AVE, AVVP, AVQA, and AVS, demonstrate the superiority of our model compared to state-of-the-art counterparts across various settings. Furthermore, we evaluate the performance of DG-SCT in few-shot and zero-shot scenarios on the AVE and LLP datasets, demonstrating its superiority over CLIP and several competitive CLIP-Adapters.
+  
+  \end{itemize}
+
+
+Related work
+\label{related_work}
+
+\subsection{Audio-visual understanding}
+  Audio-visual understanding tasks involve utilizing both audio and visual modalities to get a better perception of audio-visual scenarios \cite{visualvoice, ma2020active, zeng2021contrastive, tian2021cyclic}. For instance, \textbf{Audio-Visual Event Localization (AVE \cite{avel})} requires models to recognize joint audio-visual events. Previous works \cite{avel, AVSDN, dam, cmran, cmbs} use late interaction strategies to better leverage the visual and audio features encoded from modality-specific pre-trained models. \textbf{Audio-Visual Video Parsing (AVVP \cite{avvp})} task breaks the restriction that audio and visual signals are definitely aligned. To tackle the weakly-supervised AVVP task, previous work \cite{avvp} proposes a hybrid attention network and attentive Multimodal Multiple Instance Learning (MMIL) Pooling mechanism to aggregate all features. The task of \textbf{Audio-Visual Segmentation (AVS \cite{AVS})} focuses on whether each pixel corresponds to the given audio so that a mask of the sounding object(s) is generated. Zhou et al. \cite{avsbench} use a temporal pixel-wise audio-visual interaction module to inject audio semantics as guidance for the visual segmentation process. Furthermore, the newly introduced \textbf{Audio-Visual Question Answering (AVQA \cite{music-avqa}) } task requires methods that perceive both audio and visual modalities to answer human-generated questions about the audio-visual content. Li et al. propose a spatiotemporal grounding model \cite{music-avqa} to achieve scene understanding and reasoning over audio and visual modalities.
+
+  However, most methods designed for these tasks rely on modality-specific audio and visual pre-trained models, which can not utilize multi-modal cues early in the representation stage. In this paper, we propose a novel early-interaction strategy,  adaptively extracting key information from the current modality across spatial-channel-temporal dimensions.
+  
+\subsection{Vision-language models and prompt learning}
+  
+  \textbf{Vision-language models} have made remarkable progress since the introduction of CLIP \cite{clip}, with zero-shot and few-shot ideas achieving excellent generalization abilities in many downstream tasks; Meanwhile, \textbf{prompt}, a concept in NLP \cite{, li2021prefix, lester2021power, ptuningv2}, has achieved impressive results in various NLP domains since its introduction, as evidenced by the success of the GPT series \cite{gpt, gpt-3}. Subsequent works have attempted to combine these two and achieved better results. For example, CoOp \cite{coop} improves the CLIP model by optimizing the continuous prompts in the language branch, and CoCoOp \cite{cocoop} further improves the model by incorporating prompts in the video branch. However, these works only utilize prompts to guide individual branches. CLIP-adapter \cite{clip-adapter} builds on these works by proposing to use embedding of video and language to guide each other at the end of the encoder. MaPLe \cite{maple} is the first to use an adaptor to guide each other inside the encoder, integrating visual and text representations with the semantics of each other to enhance the generalization ability of the model. However, none of these works consider utilizing prompts in the audio-visual domain.
+  
+  In this paper, we introduce a novel bidirectional prompt that employs audio and video cues independent of text to achieve outstanding information extraction abilities for audio-visual tasks.
+
+
+
+Approach
+  In this section, more details about our proposed DG-SCT are elaborated. An overview of the proposed framework is illustrated in Fig.~\ref{fig:2}.
+\subsection{Representations for audio-visual modalities}
+
+  \textbf{Visual representation} \quad Given an input video sequence, we first sample a fixed number of RGB video frames ${ \{ {V}_{t} \} }^{T}_{t=1} \in \mathbb{R}^{T\times H\times W\times3}$, where H, W are height and width. Following the Swin-T \cite{swin}, we first split each RGB frame $ {V}_{t}$ into non-overlapping patches by a patch-splitting module with kernel size $({{P} _ {v}} \times {{P} _ {v}})$. Each patch is treated as a "token" and its feature is set as a concatenation of the raw pixel values. A linear embedding layer is then applied to this raw-valued feature and we can get visual features as $ \textit{v} _ {t} \in \mathbb{R}^{ \frac{H}{{P} _ {v}} \times \frac{W}{{P} _ {v}} \times {C}_{v}}$, where ${C}_{v}$ is the number of visual channels.
+  
+  \textbf{Audio representation} \quad Given an input audio track, we first get an audio mel-spectrogram ${ \{ {A}_{t} \} }^{T}_{t=1}$, where $ {A}_{t} \in \mathbb{R}^{L\times F}$ with time $L$ and frequency bins $F$.} the audio mel-spectrogram is cut into different patch tokens with a Patch-Embed CNN of kernel size $({{P} _ {a}} \times {{P} _ {a}})$. A linear embedding layer is then applied to this raw-valued feature and we can obtain audio features as $ \textit{a} _ {t} \in \mathbb{R}^{ \frac{L}{{P} _ {a}} \times \frac{F}{{P} _ {a}} \times {C}_{a}}$, where ${C}_{a}$ is the number of audio channels.
+
+\subsection{Adding DG-SCT modules to frozen encoders}
+\label{add_to_swin}
+  Now, we describe how we adjust pre-trained Swin-T and HTS-AT with our proposed DG-SCT. Every layer of the Swin-T and HTS-AT consists of three main operations: 1) multi-head attention (MHA), 2) multi-layer perceptron (MLP), and 3) our DG-SCT modules which use the intermediate layer information of audio and video as prompts to guide each other through spatial-channel-temporal dimensions. We skip the linear normalization layers in both MHA and MLP operations for brevity.
+
+  Given audio inputs $\textit{a} ^{(\ell)} \in \mathbb{R}^{T\times (L ^{(\ell)} \cdot F ^{(\ell)}) \times  {C}_{a}^{(\ell)}}$ and visual inputs $\textit{v} ^{(\ell)} \in \mathbb{R}^{T\times (H ^{(\ell)} \cdot W ^{(\ell)}) \times  {C}_{v}^{(\ell)}}$ from layer $\ell$, we first use a two-dimensional convolution kernel and a linear projection to make the dimensions of the audio and visual prompts consistent of their counterpart modality. Let $\textit{v}_{f}^{(\ell)} = \Omega^{\text{a2v}} ({\textit{a} ^{(\ell)}}, {\textit{v} ^{(\ell)}})$ and $\textit{a}_{f}^{(\ell)} = \Omega^{\text{v2a}} ({\textit{v} ^{(\ell)}}, {\textit{a} ^{(\ell)}})$ denote the operation that implements DG-SCT module, which we will describe in the next subsection. Then, the operations in each layer can be written as:
+
+\begin{align}
+\label{eq:a2v}
+       \textit{v}_{y} ^{(\ell)} &= \textit{v} ^{(\ell)} + \text{MHA}(\textit{v} ^{(\ell)}) + \Omega^{\text{a2v}}(\textit{a} ^{(\ell)}, \textit{v} ^{(\ell)}), \quad \textit{a}_{y} ^{(\ell)} = \textit{a} ^{(\ell)} + \text{MHA}(\textit{a} ^{(\ell)}) + \Omega^{\text{v2a}}(\textit{v} ^{(\ell)}, \textit{a} ^{(\ell)}), \\ 
+       \textit{v} ^{({\ell+1})} &= \textit{v}_{y} ^{(\ell)} + \text{MLP}(\textit{v}_{y} ^{(\ell)}) + \Omega^{\text{a2v}}(\textit{a}_{y} ^{(\ell)}, \textit{v}_{y} ^{(\ell)}),  \quad \textit{a} ^{({\ell+1})} = \textit{a}_{y} ^{(\ell)} + \text{MLP}(\textit{a}_{y} ^{(\ell)}) + \Omega^{\text{v2a}}(\textit{v}_{y} ^{(\ell)}, \textit{a}_{y} ^{(\ell)}).
+\end{align}
+
+\subsection{Dual-guided spatial-channel-temporal attention}
+  In this subsection, we will describe how DG-SCT works in more detail. Given visual and audio features, the encoder such as Swin-Transformer pre-trained on large-scale single-modal data, will uniformly extract features from audio-visual inputs (See Fig.~\ref{fig:1}~(a)). 
+  However, in practical multi-modal scenarios, not all of this information carries equal importance. For example, as we see in Fig.~\ref{fig:1}, the region where the car appears in the visual field is evidently more crucial than the background trees. Additionally, the moment when the engine sound emerges in the audio should also be given more attention. Hence, we take advantage of the fact that audio-visual pairs can provide mutual guidance for each other, and utilize different modalities as prompts to help pre-trained models focus more on specific aspects of opposite modal inputs across spatial, channel, and temporal dimensions. Different from previous works \cite{cmran, cmbs} which only leverage audio as guidance to extract visual features, our proposed DG-SCT module can achieve triple levels of information highlighting in two directions. We illustrate these cross-modal attention mechanisms in the following parts:
+  
+  \textbf{Channel-wise attention:} Different channels represent different aspects of features. The introduction of channel attention can facilitate the model to ignore irrelevant features and improve the quality of representations \cite{hu2018squeeze}. We let the audio and video serve as mutual guidance signals and explicitly model the dependencies between channels on each other's modality. Concretely, We use $\psi_a$ and $\psi_v$ to denote the combinations of convolutional and linear projection in section~\ref{add_to_swin}, to encode audio and visual inputs as prompts: $ \textit{a} _ {t} ^{'} = \psi_a(\textit{a}_{t})\in \mathbb{R}^{{C}_{v} \times ({H} \cdot {W} )}$ and $ \textit{v} _ {t} ^{'} = \psi_v(\textit{v}_{t}) \in \mathbb{R}^{{C}_{a} \times ({L} \cdot {F})}$, respectively. For audio-to-visual (A2V), we use the spatial average pooling to process $\textit{a} _{t} ^{'}$ and get $\textit{a} _{t} ^{''} \in \mathbb{R}^{{C}_{v} \times 1}$, then fuse it with vision via element-wise multiplication after feeding them to projection layers $\Theta _a ^c, \Theta _v ^c \in \mathbb{R}^{{C}_{v} \times{C}_{v} }$ respectively, generating audio channel-guidance maps $\textit{a} _{t} ^{cm} = {(\Theta_{a}^{c}(\textit{a}_{t}^{''} ) \odot \Theta _{v} ^{c}(\textit{v}_{t}))} \in \mathbb{R}^{C_v \times {({H} \cdot {W} )} }$. After that, we spatially squeeze the fused feature by global average pooling, denoted as $\delta_{a}$, Finally, a bottleneck layer $\Phi_{a}$ follows with a sigmoid function $\sigma$ is used, yielding channel attention maps ${\textit{M} _ {t} ^{vc}}$; Similarly, we generate V2A channel attentive maps $\textit{M} _ {t} ^{ac}$:
+  
+\begin{equation}\label{eq:lambda3}
+       \textit{M} _ {t} ^{vc} = \sigma ( \Phi_{a}(\delta_{a}(\textit{a} _{t} ^{cm}))) \in \mathbb{R}^{{C_v} \times {1}}, \quad \textit{M} _ {t} ^{ac} = \sigma ( \Phi_{v}(\delta_{v}(\textit{v} _{t} ^{cm}))) \in \mathbb{R}^{{C_a} \times {1}},
+\end{equation}
+
+  where $\textit{v} _{t} ^{cm} \in \mathbb{R}^{C_a \times ({L} \cdot {F})}$ is the visual channel-guidance maps, $\delta_{v}$ is spatial-wise global average pooling, $\Phi_{v}$ indicates a bottleneck layer and $\sigma$ denotes the sigmoid function. 
+  
+  \textbf{Spatial-wise attention:} Audio can improve visual feature extraction by contributing to visual attention in the spatial dimension \cite{avel}. Inspired by this, we leverage the guidance capabilities of audio and visual prompts to guide visual spatial attention and audio frequency attention, respectively. Similar to the aforementioned channel-wise attention, For A2V, we first get channel-attentive visual features $\textit{v}_{t}^{c} = (\textit{M} _ {t} ^{vc} + 1 ) \odot \textit{v}_{t}$, then we element-wise multiply audio prompt and $\textit{v}_{t}^{c}$ after the projection of $\Theta_a^{s}$ and $\Theta_v^s$ to hidden dimension $d=256$, generating audio spatial-guidance maps $\textit{a} _{t} ^{sm} = {(\Theta_{a}^{s} ( \textit{a}_{t}^{'} )\odot \Theta _{v} ^{s} (\textit{v}_{t}^{c}))} \in \mathbb{R}^{d \times {({H} \cdot {W} )} }$. Then we use a projection layer $ \Theta ^{s} \in \mathbb{R}^{{1} \times {d}}$ with a sigmoid function $\sigma$ to obtain spatial attention maps ${\textit{M} _ {t} ^{vs}}$; Similarly, we generate V2A frequency attentive maps $\textit{M} _ {t} ^{af}$:
+
+\begin{equation}
+       \textit{M} _ {t} ^{vs} = \sigma ( \Theta ^{s}(\textit{a} _{t} ^{sm})) \in \mathbb{R}^{{1} \times {(H\cdot W)}}, \quad \textit{M} _ {t} ^{af} = \sigma ( \Theta ^{f}(\textit{v} _{t} ^{fm})) \in \mathbb{R}^{{1} \times {(L\cdot F)}},
+\end{equation}
+
+  where $\textit{v} _{t} ^{fm}$ denotes visual frequency-guidance maps, $\Theta ^{f} \in \mathbb{R}^{{1} \times {d}}$ is a projection layer.
+
+  
+  \textbf{Temporal-gated attention:} Given an audio, significant time segments (e.g., “engine sound”) should be emphasized, while background information (e.g., “silence”) should be attenuated. The same holds for the visual information as well \cite{cmbs}. Inspired by this, we add temporal-gated attention in the final layer. For A2V, we first feed the frequency-channel attentive audio features ${ \{ {a}_{t}^{cf} \} }^{T}_{t=1}$ through an RNN to capture temporal information better and then pass it through a projection layer with sigmoid function to obtain the temporal attention gates $\textit{G}^{v} \in \mathbb{R}^{{T} \times 1}$; Similarly, for V2A, we feed the spatial-channel attentive visual features to generate $\textit{G}^{a} \in \mathbb{R}^{{T} \times 1}$:
+
+\begin{equation}
+       \textit{G} ^{v} = \sigma ( \Theta_{a}^{t} ( \text{RNN}({ \{ {a}_{t}^{cf} \} }^{T}_{t=1}))), \quad
+       \textit{G} ^{a} = \sigma ( \Theta_{v}^{t} ( \text{RNN}({ \{ {v}_{t}^{cs} \} }^{T}_{t=1}))).
+\end{equation}
+
+  \textbf{Summary:} We combine the abovementioned three attention mechanisms together to form our DG-SCT module. Given audio features $ \textit{a} _ {t} \in \mathbb{R}^{{C}_{a} \times ({L} \cdot {F} )}$ and visual features $ \textit{v} _ {t} \in \mathbb{R}^{{C}_{v} \times ({H} \cdot {W})}$, DG-SCT first generates channel-wise attention maps $ {\textit{M} _ {t} ^{vc}}$ and $ {\textit{M} _ {t} ^{ac}}$ to let audio and video adaptively emphasize informative features of the corresponding modality. It then lets audio pay attention to the important sounding regions to produce spatial-wise attention maps $ {\textit{M} _ {t} ^{vs}}$ and lets video pay attention to the important frequency regions to generate frequency-wise attention maps $ {\textit{M} _ {t} ^{af}}$, thus the yielding of the spatial-channel attentive visual features ${\textit{v} _{t} ^{cs}}$ and the frequency-channel attentive audio features ${\textit{a} _{t} ^{cf}}$ can be summarized as:
+
+\begin{equation}
+{\textit{v} _{t} ^{cs}}  = (\alpha \cdot {{\textit{M} _ {t} ^{vc}} + \beta \cdot {\textit{M} _ {t} ^{vs}}} + 1) \odot {\textit{v} _{t}}, \quad {\textit{a} _{t} ^{cf}}  = (\alpha \cdot {{\textit{M} _ {t} ^{ac}} + \beta \cdot {\textit{M} _ {t} ^{af}}} + 1) \odot {\textit{a} _{t}},
+\end{equation}
+
+  Then we generate two temporal attention gates $\textit{G} ^{v} \in \mathbb{R}^{ \textit{T} \times {1}}$ and $\textit{G} ^{a} \in \mathbb{R}^{ \textit{T} \times {1}}$ for ${ \{ {v}_{t}^{cs} \} }^{T}_{t=1}$ and ${ \{ {a}_{t}^{cf} \} }^{T}_{t=1}$, respectively, thus the final outputs of $\Omega^{\text{a2v}}$ and $\Omega^{\text{v2a}}$ mentioned in section~\ref{add_to_swin} are:
+
+\begin{align}
+    { \{ \textit{v} _{t} ^{cst} \} _{t=1}^{T}}  = (\gamma \cdot {\textit{G} ^{v}} + 1) \odot { \{ \textit{v} _{t}^{cs} \}_{t=1}^{T} }, \ \ 
+    { \{ \textit{a} _{t} ^{cft} \} _{t=1}^{T}}  = (\gamma \cdot {\textit{G} ^{a}} + 1) \odot { \{ \textit{a} _{t}^{cf} \}_{t=1}^{T} },
+\end{align}
+  
+  Where $\alpha$, $\beta$, and $\gamma$ are hyperparameters. Consequently, this approach yields high-quality, fine-grained audio-visual representations, significantly improving the performance of subsequent tasks in the audio-visual domain.
+  
+
+
+Experiments
+  
+\subsection{Tasks and datasets}
+  \textbf{Audio-visual event localization (AVE)} focuses on recognizing an audio-visual event that is both visible and audible throughout multiple time segments in a video. We evaluate the AVE \cite{avel} dataset; \textbf{Audio-visual video parsing (AVVP)} aims to parse a video into temporal event segments and label them as either audible, visible, or both. We evaluate our method for weakly-supervised AVVP task on the LLP dataset \cite{avvp}; The goal of \textbf{Audio-visual segmentation (AVS)} is to output a pixel-level map of the object(s) that produce sound at the image frame. We evaluate on AVSBench \cite{avsbench}; \textbf{Audio-visual question answering (AVQA)} aims to answer questions based on the associations between objects and sounds. We conduct our experiments on the MUSIC-AVQA dataset \cite{music-avqa}. 
+  
+  Meanwhile, We propose \textbf{Audio-visual few-shot/zero-shot} tasks on AVE \cite{avel} and LLP \cite{avvp} datasets. We evaluate AVE and classification tasks on AVE dataset and classification task on LLP dataset.
+  
+   
+\subsection{Implementation details}
+\label{metrics}
+  \textbf{Audio-visual downstream tasks}: To adapt our approach to the four audio-visual downstream tasks, we replace the pre-trained audio and visual encoders with a frozen HTS-AT \cite{htsat} and a frozen Swin-Transformer \cite{swin}, respectively. The trainable DG-SCT modules in Fig.~\ref{fig:2}~(4) are injected into the frozen layers to let audio and visual modalities guide each other. We then use this as our audio-visual feature extractor. For \textbf{AVE} task, our feature extractor is combined with CMBS \cite{cmbs}. The event category label of each video segments is required to be predicted in supervised manner. We adopt \cite{avel, cman, cmran, cmbs} and exploit the overall accuracy of the predicted event category as the evaluation metrics; Combined with MGN \cite{mgn}, DG-SCT is able to tackle the weakly-supervised \textbf{AVVP} task. Following \cite{avvp}, we evaluate the parsing performance of all events (audio, visual, and audio-visual events) under segment-level and event-level metrics; For \textbf{AVS} task, We combine our audio-visual feature extractor with the original AVS model \cite{avsbench}. We use the Jaccard index $\mathcal{J}$ \cite{voc} and F-score $\mathcal{F}$ as the evaluation metrics; For \textbf{AVQA} task, our audio-visual feature extractor is used in the original ST-AVQA \cite{music-avqa}. Similarly, we use the answer prediction accuracy as the evaluation metrics.
+  
+
+\textbf{Audio-visual few-shot/zero-shot tasks}: We incorporate DG-SCT modules as adapters between the frozen CLIP image encoder ViT \cite{clip} and frozen CLAP audio encoder HTS-AT \cite{clap}, generating audio and visual features for text-audio and text-image contrastive learning, as shown in Fig.~\ref{fig:2}~(e). For the zero-shot setting, the model is pre-trained on the VGG-Sound(40K) \cite{vggsound} dataset.
+
+\begin{table}[]
+\caption{\textbf{Audio-visual event localization.} Comparisons on the test set of AVE in supervised manner. The result of our re-implementation of LAVisH \cite{lavish} is $79.7 \%$.}
+\label{table_AVE}
+\centering
+\begin{tabular}{cccc}
+\toprule
+\textbf{Method}        & \textbf{Visual Encoder} & \textbf{Audio Encoder} & \textbf{Acc} \\ \hline
+AVEL(Audio-Visual) \cite{avel}    & VGG-19                  & VGG-like               & 71.4            \\
+AVEL(Audio-Visual+Att) \cite{avel} & VGG-19                  & VGG-like               & 72.7            \\
+AVSDN \cite{AVSDN}                 & VGG-19                  & VGG-like               & 72.6            \\
+CMAN \cite{cman}                 & VGG-19                  & VGG-like               & 73.3            \\
+DAM \cite{dam}                   & VGG-19                  & VGG-like               & 74.5            \\
+CMRAN \cite{cmran}                 & VGG-19                  & VGG-like               & 77.4            \\
+PSP \cite{psp}                 & VGG-19                  & VGG-like               & 77.8            \\
+CMBS \cite{cmbs}                  & VGG-19                  & VGG-like               & 79.3            \\
+LAVisH \cite{lavish}                & \multicolumn{2}{c}{Swin-V2-L (shared)}           & 81.1            \\
+LAVisH \cite{lavish}                & \multicolumn{2}{c}{Swin-V2-L (shared)}           & 79.7            \\
+LAVisH*\tablefootnote{Our modified implementation of LAVisH for fair comparisons.}               & Swin-V2-L               & HTS-AT                 & 78.6            \\ \hline
+\textbf{Ours}          & Swin-V2-L               & HTS-AT                 & \textbf{82.2}   \\ \bottomrule
+\end{tabular}%
+\end{table}
+\begin{table}[]
+\caption{\textbf{Audio-visual video parsing.} Comparisons on the test set of LLP.}
+\label{table_AVVP}
+\centering
+\begin{tabular}{clcccccccccc}
+\toprule
+\multicolumn{2}{c}{\multirow{2}{*}{\textbf{Methods}}} & \multicolumn{5}{c}{\textbf{Segment-level}}                                    & \multicolumn{5}{c}{\textbf{Event-level}}                                      \\ \cline{3-12} 
+\multicolumn{2}{c}{}                                  & A             & V             & AV            & Type          & Event         & A             & V             & AV            & Type          & Event         \\ \hline
+\multicolumn{2}{c}{AVE \cite{avel}}                               & 49.9          & 37.3          & 37.0          & 41.4          & 43.6          & 43.6          & 32.4          & 32.6          & 36.2          & 37.4          \\
+\multicolumn{2}{c}{AVSDN \cite{AVSDN}}                             & 47.8          & 52.0          & 37.1          & 45.7          & 50.8          & 34.1          & 46.3          & 26.5          & 35.6          & 37.7          \\
+\multicolumn{2}{c}{HAN \cite{avvp}}                               & 60.1          & 52.9          & 48.9          & 54.0          & 55.4          & \textbf{51.3} & 48.9          & 43.0          & 47.7          & 48.0          \\
+\multicolumn{2}{c}{MGN \cite{mgn}}                               & \textbf{60.7} & 55.5          & 50.6          & 55.6          & \textbf{57.2} & 51.0          & 52.4          & 44.4          & 49.3          & \textbf{49.2} \\ \hline
+\multicolumn{2}{c}{\textbf{Ours}}                     & 59.0          & \textbf{59.4} & \textbf{52.8} & \textbf{57.1} & 57.0          & 49.2          & \textbf{56.1} & \textbf{46.1} & \textbf{50.5} & 49.1          \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Compared with state-of-the-arts on audio-visual downstream tasks}
+  First, we challenge our method against current state-of-the-art methods on the four audio-visual tasks. As demonstrated in Table~\ref{table_AVE}, our model outperforms CMBS \cite{cmbs} and LAVisH \cite{lavish} by a significant margin ($ \textbf{2.9\%} $ and $ \textbf{2.5\%} $); In Table~\ref{table_AVVP}, our model attains either a  competitive or even better performance. For instance, DG-SCT surpasses MGN by $\textbf{3.9\%}$ points in the segment-level visual event parsing metric, demonstrating our method can utilize large-scale models to extract more useful features and further promote the fusion of these features in downstream tasks. We also achieve state-of-the-art results on S4 setting of AVS task (Table~\ref{table_AVS}). Lastly, our model performs exceptionally well on AVQA task and outperforms previous leading methods on AQ, VQ, and AVQ question
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

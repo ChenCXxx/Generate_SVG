@@ -1,0 +1,215 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+Proteins serve as the mainstay governing diverse biological processes and life itself, inducing important applications in drug discovery~\cite{teague2003implications} and healthcare~\cite{world2007protein}. Recent studies have proven the great promise of machine learning methods in predicting protein structures~\cite{jumper2021highly,baek2021accurate} and functionality~\cite{meier2021language,gligorijevic2021structure}. Among these methods, protein language models (PLMs)~\cite{elnaggar2020prottrans,rives2021biological,lin2022language} pre-trained on large-scale protein sequence corpus succeed in acquiring powerful protein representations, which boost protein structure and function prediction~\cite{xu2022peer}.  
+
+Most existing PLMs~\citep{elnaggar2020prottrans,lu2020self,rives2021biological,lin2022language} learn protein representations based only on their sequences, which can well capture co-evolutionary information but cannot explicitly acquire protein functions and other important properties like their subcellular locations. Acquiring such function and property information is actually the end goal of protein representation learning. Fortunately, for many proteins, we can get access to their textual property descriptions in which their diverse functions are also described. This fact motivates us to study protein sequence representation learning enriched with diverse protein properties described by biomedical texts. 
+
+To our best knowledge, OntoProtein~\citep{zhang2022ontoprotein} is the only existing PLM that explicitly captures protein properties. However, it learns a closed set of properties over a \emph{fixed biological knowledge graph} and thus can hardly generalize to unknown properties of new proteins. In comparison, by modeling \emph{textual protein property descriptions}, we can flexibly model the generalization from known properties to unknown ones based on the semantic correlation of their text descriptions, as shown by our zero-shot experiments (Secs.~\ref{sec:exp:zero} and \ref{sec:exp:t2p}). 
+To attain biomedical-text-enhanced protein sequence representation learning, we first build the \textbf{\dataset} dataset, a paired dataset of protein sequences and textual property descriptions. We resort to the Swiss-Prot database~\cite{bairoch2000swiss} for high-quality protein annotations and construct each protein's property description with the selected annotations of it. 
+{\dataset} incorporates the information of protein names, protein functions, subcellular locations and protein families, and these properties are described by biomedical texts with rich expressions. 
+
+Based on this dataset, we propose the \textbf{\method} framework to enhance protein sequence pre-training and understanding by biomedical texts. 
+During {\method} pre-training, to preserve the beneficial representation power of a conventional PLM on capturing co-evolutionary information, we adopt the \textbf{Unimodal Mask Prediction} task for masked protein modeling. On such basis, two multimodal pre-training tasks are designed to inject different granularities of pertinent protein property information into a PLM: \textbf{Multimodal Representation Alignment} injects integrated and general property information into the PLM, in which a biomedical language model is used to extract structured text representations of different property descriptions, and protein sequence representations are aligned to the corresponding text representations; \textbf{Multimodal Mask Prediction} models the fine-grained dependencies between residues in a protein sequence and property-descriptive words in its property description, in which a fusion module is employed to derive multimodal representations of residues and words, and, based on these fused multimodal representations, masked residues and words are predicted. 
+For downstream applications, {\method} can conduct supervised learning with only the PLM and can also perform zero-shot prediction based on the aligned representation space of protein sequences and text descriptions. 
+
+We investigate the PLMs trained under {\method} by representation learning and zero-shot prediction. 
+For representation learning, we verify their superior performance over previous masked language modeling and knowledge-enhanced PLMs on 11 standard benchmarks for protein localization prediction, fitness landscape prediction and protein function annotation (Sec.~\ref{sec:exp:repr}). 
+For zero-shot protein classification, {\method}-induced zero-shot classifiers show better data efficiency against various few-shot classifiers (Sec.~\ref{sec:exp:zero:eff}), and are proven to be able to enhance the performance of supervised learning models via ensemble (Sec.~\ref{sec:exp:zero:enhance}). 
+For zero-shot text-to-protein retrieval, we verify the effectiveness of {\method} on 
+retrieving functional proteins from a large-scale database without any function annotation (Sec.~\ref{sec:exp:t2p}). 
+
+\iffalse
+\textcolor{temp}{
+(Temp) To summarize, our contributions are as follows:
+\begin{enumerate}
+    \item We contribute the {\dataset} dataset, a collection of paired protein sequences and protein property descriptions, which covers a diverse set of protein properties. 
+    \item We propose the {\method} framework to enhance a PLM with the protein property information with different granularities, and {\method} enables both supervised learning and zero-shot prediction on downstream tasks. 
+    \item We demonstrate the effectiveness of {\method}-induced PLMs on both representation learning and zero-shot prediction, and we investigate different framework components with extensive analytical studies. 
+\end{enumerate}
+}
+\fi
+
+
+
+Preliminaries
+
+\subsection{Problem Definition} \label{sec:pre:def}
+
+In the pre-training phase, we study the problem of learning informative protein sequence representations guided by the proteins' associated biomedical text descriptions. In this problem, a protein $P=(S, T)$ is represented by an amino acid sequence $S=[s_1, s_2, \cdots , s_n]$ with $n$ amino acids (\emph{a.k.a.}, residues) and a text description $T=[t_1, t_2, \cdots , t_m]$ with $m$ word tokens. 
+Given a pre-training dataset with $N$ proteins $\mathcal{P} = \{ P_1, P_2, \cdots , P_N \}$, our goal is to extract effective protein representations by fully utilizing the information from their sequences and descriptions. The extracted protein representations are expected to boost various downstream tasks by supervised learning or zero-shot prediction. 
+\subsection{Protein Language Models} \label{sec:pre:protein_lm}
+
+Protein language models (PLMs)~\cite{elnaggar2020prottrans,rives2021biological,meier2021language,lin2022language} pre-trained on large-scale protein sequence corpus have shown impressive results on protein function~\cite{meier2021language} and structure~\cite{lin2022language} prediction. 
+PLMs are commonly trained by masked protein modeling, in which partial residues are masked at input and predicted based on the context. 
+In this work, we select three state-of-the-art PLMs, ProtBert~\cite{elnaggar2020prottrans}, ESM-1b~\cite{rives2021biological} and ESM-2~\cite{lin2022language}, as baselines and seek to enhance their representation power by 
+modeling biomedical texts at the same time as protein sequence modeling. 
+\subsection{Biomedical Language Models} \label{sec:pre:biomedical_lm}
+
+Compared to the texts from general domains like newswire and Web, biomedical texts differ a lot in terms of vocabulary and expressions. 
+To tackle such differences, language models specific to the biomedical domain~\cite{beltagy2019scibert,lee2020biobert,gu2021domain} are actively studied. 
+In this work, we employ a performant biomedical language model, PubMedBERT~\cite{gu2021domain}, to represent the biomedical text descriptions of proteins. 
+
+
+
+Method
+
+In this section, we first motivate the proposed {\method} framework and present its general picture in Sec.~\ref{sec:method:overview}, and then elucidate the design of pre-training tasks in Sec.~\ref{sec:method:pretrain}, followed by discussing the connections with and advantages over previous works in Sec.~\ref{sec:method:discuss}. 
+\begin{figure*}[t]
+\centering
+    \includegraphics[width=1.0\linewidth]{figs/framework.pdf}
+    \caption{\textbf{Graphical illustration of {\method} framework}. (a) A protein language model (PLM) is first pre-trained along with a biomedical language model (BLM) and a fusion module to jointly model protein sequences and biomedical texts. (b)~After this multi-modal pre-training, the PLM can be used individually for supervised learning on downstream tasks. (c)~The couple of pre-trained PLM and BLM can perform zero-shot protein classification using only label descriptions. (d)~The paired PLM and BLM can also retrieve functional proteins from a large-scale database without any function annotation.}
+    \label{fig:framework}
+\end{figure*}
+\subsection{Motivation and Overview} \label{sec:method:overview}
+
+\textbf{Motivation:} Existing PLMs~\citep{elnaggar2020prottrans,lu2020self,rives2021biological,lin2022language} learn protein representations primarily based on their sequences, which can well capture co-evolutionary information but cannot explicitly acquire various protein properties like protein functions and subcellular locations. By acquiring such property information, the effectiveness of a PLM can be further improved, considering that the protein properties studied in pre-training and downstream tasks can correlate with each other~\cite{bhardwaj2005correlation}.
+
+To gain such improvement, we curate the {\dataset} dataset that augments protein sequences with text descriptions of their diverse properties (see Sec.~\ref{sec:exp:pretrain} for details). By injecting such property information into protein sequence representations, we aim at (1) a PLM that is more effective than previous ones on various downstream tasks under supervised learning, and (2) it can further enable zero-shot prediction through the generalization of text descriptions between known protein properties and unknown ones. 
+
+\iffalse
+Existing protein sequence pre-training methods aim to discover the co-evolutionary and protein structure information hidden in protein sequences by self-supervised learning, \emph{e.g.}, masked protein modeling~\cite{elnaggar2020prottrans,rives2021biological,lin2022language} and contrastive learning~\cite{lu2020self}. 
+Despite the impressive performance on downstream protein understanding tasks, the protein language models (PLMs) trained in these ways cannot explicitly capture the biological and biomedical properties of proteins. 
+By acquiring such property information, the effectiveness of a PLM can be further improved, considering that the protein properties studied in pre-training and downstream tasks can be correlated~\cite{bhardwaj2005correlation}.
+
+To attain such improvement, we curate the {\dataset} dataset that collects diverse property descriptions of proteins (see Sec.~\ref{sec:exp:pretrain} for details). 
+By injecting such property information into protein sequence representations, we aim at a PLM that is more effective than previous ones on various downstream tasks under supervised learning, and it is expected to further enable zero-shot prediction. 
+\fi
+
+\textbf{{\method} Framework:} 
+To attain these goals, we first perform multi-modal pre-training of sequences and texts and then apply the pre-trained model to three types of downstream applications (framework overview is shown in Fig.~\ref{fig:framework}):
+\begin{itemize}
+    \item \textbf{Multimodal Pre-training:} Given the {\dataset} dataset, we train a PLM together with a biomedical language model (BLM) and a fusion module to model the paired protein sequences and text descriptions. 
+    We consider three kinds of pre-training tasks, \emph{i.e.}, unimodal mask prediction, multimodal representation alignment and multimodal mask prediction, to capture the protein property information with different granularities and also preserve the PLM's original representation power. 
+    \item \textbf{Downstream Supervised Learning:} After such pre-training, the PLM is enriched by the useful property information within biomedical texts. For downstream tasks with labeled proteins, we can employ the PLM individually to solve the tasks by supervised learning.
+    \item \textbf{Zero-shot Protein Classification:} When a protein classification task occurs without any labeled data, {\method} enables zero-shot classification. Specifically, the classification result can be determined by the representation similarity comparison between the query protein and all labels, thanks to the aligned representation space of protein sequences and label descriptions. 
+    \item \textbf{Zero-shot Text-to-Protein Retrieval:} Based on the aligned representation space, {\method} also allows us to retrieve functional proteins from a large-scale database by using only the text descriptions of protein functions, in which no function annotation is required. 
+\end{itemize}
+\subsection{Pre-training Tasks: Joint Modeling of Protein Sequences and Biomedical Texts} \label{sec:method:pretrain}
+
+During {\method} pre-training, we aim to learn informative protein sequence representations guided by biomedical texts. To start this process with decent representations of protein sequences and biomedical texts, we use pre-trained PLM (\emph{i.e.}, ProtBert~\cite{elnaggar2020prottrans}, ESM-1b~\cite{rives2021biological} or ESM-2~\cite{lin2022language}) and pre-trained BLM (\emph{i.e.}, PubMedBERT~\cite{gu2021domain}) for initialization. During training, we tune the parameters of PLM and freeze those of BLM, since the pre-trained BLM is sufficient for extracting semantically meaningful representations from biomedical texts, and it is computationally expensive to tune both PLM and BLM simultaneously. {\method} involves the following pre-training tasks for representation learning. 
+
+\textbf{Unimodal Mask Prediction:} The PLM for initialization is pre-trained by masked protein modeling (MPM), \emph{i.e.}, predicting masked residues based on the protein sequence context. This task can capture co-evolutionary information by modeling residue type dependency. 
+To preserve such unimodal information when injecting the cross-modality information from biomedical texts, we keep an MPM loss function $\mathcal{L}_{\mathrm{MPM}}$ for {\method} pre-training. Specifically, for each protein sequence, we randomly mask 15\% residue tokens and predict each masked token based on its contextualized representation extracted by the PLM, where $\mathcal{L}_{\mathrm{MPM}}$ is formulated as a cross-entropy loss to measure the cost. 
+
+\textbf{Multimodal Representation Alignment:} The biomedical text representations learned by a pre-trained BLM can well reflect the semantics of the texts~\cite{jin2019probing,gu2021domain}. 
+Therefore, when given protein property descriptions, the BLM can extract semantically meaningful text representations of proteins. 
+Thanks to this capability, by aligning protein sequence representations to their associated text representations, we can naturally inject protein property information into sequence representations. 
+
+To realize such alignment, we perform contrastive learning between protein sequences and their text descriptions. Given a batch of $M$ proteins $\{P_i=(S_i, T_i)\}_{i=1}^M$, we use the PLM to extract protein sequence representations $\{z^S_i\}_{i=1}^M$ and the BLM to derive text description representations $\{z^T_i\}_{i=1}^M$. A standard InfoNCE loss~\cite{oord2018representation} $\mathcal{L}_{\mathrm{GC}}$ is defined to maximize the representation similarity between corresponding sequences and texts and minimize the similarity between negative pairs:
+\begin{equation} \label{eq:infonce}
+\begin{split}
+\mathcal{L}_{\mathrm{GC}} = - \frac{1}{2M} \sum_{i=1}^M \Bigg ( & \log \frac{\exp(z^S_i \cdot z^T_i / \tau)}{\sum_{j=1}^M \exp(z^S_i \cdot z^T_j / \tau)} \\ 
+& + \log \frac{\exp(z^S_i \cdot z^T_i / \tau)}{\sum_{j=1}^M \exp(z^S_j \cdot z^T_i / \tau)} \Bigg ) ,
+\end{split}
+\end{equation}
+where, under multi-GPU data parallelism, 
+we gather whole-batch samples separated on different GPUs to form negative pairs 
+and thus term the loss $\mathcal{L}_{\mathrm{GC}}$ as a \emph{global contrastive (GC) loss} following the convention~\cite{singh2022flava}, and $\tau$ denotes a learnable temperature parameter. 
+
+\textbf{Multimodal Mask Prediction:} Although the general dependency between the whole protein sequences and full text descriptions can be well modeled by $\mathcal{L}_{\mathrm{GC}}$, $\mathcal{L}_{\mathrm{GC}}$ alone does not capture the dependency between the residues in a protein sequence and the words in its text description. 
+Such fine-grained cross-modality interdependency is actually ubiquitous. For example, \emph{a soluble protein} (descriptive words) always co-occurs with charged and polar surface residues~\cite{capaldi1972low}; 
+\emph{high thermostability} (descriptive words) and high amounts of hydrophobic residues are correlated with each other~\cite{kumar2000factors}, \emph{etc.} 
+To capture such interdependency, we propose a novel pre-training task that encourages the model to recover the corrupted protein sequence (or text description) based on the information from both modalities. 
+
+Specifically, given a protein sequence $S=[s_1, s_2, \cdots , s_n]$ and its corresponding text description $T=[t_1, t_2, \cdots , t_m]$, we first randomly mask 15\% residues in the protein sequence and 15\% words in the text description. Upon the corrupted inputs, we employ the PLM to extract residue representations $Z^S = [z^s_1, z^s_2, \cdots , z^s_n]$ and utilize the BLM to extract word representations $Z^T = [z^t_1, z^t_2, \cdots , z^t_m]$. The fusion module produces the fused residue representations $\tilde{Z}^S = [\tilde{z}^s_1, \tilde{z}^s_2, \cdots , \tilde{z}^s_n]$ and the fused word representations $\tilde{Z}^T = [\tilde{z}^t_1, \tilde{z}^t_2, \cdots , \tilde{z}^t_m]$, in which each residue/word representation combines the information from both modalities. Based on $\tilde{Z}^S$ and $\tilde{Z}^T$, we perform \emph{multimodal mask prediction (MMP)} to recover masked residues and words, where a cross-entropy loss $\mathcal{L}_{\mathrm{MMP}}^S$ measures the cost on protein sequence, and another cross-entropy loss $\mathcal{L}_{\mathrm{MMP}}^T$ measures the cost on text description, inducing the overall MMP loss $\mathcal{L}_{\mathrm{MMP}} = \mathcal{L}_{\mathrm{MMP}}^S + \mathcal{L}_{\mathrm{MMP}}^T$. 
+
+\textbf{Overall Pre-training Objective:} During the pre-training process, we seek to minimize the loss functions of all pre-training tasks simultaneously: 
+\begin{equation} \label{eq:overall_obj}
+    \min \limits_{\theta} \, \mathcal{L}_{\mathrm{MPM}} + \mathcal{L}_{\mathrm{GC}} + \mathcal{L}_{\mathrm{MMP}} ,
+\end{equation}
+where $\theta$ denotes all learnable parameters including those of the PLM, the fusion module and all projection/prediction heads. 
+\subsection{Discussion} \label{sec:method:discuss}
+
+Now we discuss the connections of our method with previous works and emphasize its advantages.
+
+\textbf{Advantages over Self-Supervised PLMs:} Previous self-supervised PLMs~\citep{elnaggar2020prottrans,rives2021biological,lin2022language} and the proposed {\method}-induced ones can both capture co-evolutionary information hidden in protein sequences by masked protein modeling. On this basis, {\method}-induced PLMs further utilize the supervision from textual protein property descriptions, and they are guided to acquire whole-protein properties by multimodal representation alignment and acquire residue-level properties by multimodal mask prediction. 
+
+\textbf{Advantages over OntoProtein~\citep{zhang2022ontoprotein}:} Similar to our approach, OntoProtein also seeks to enhance a self-supervised PLM by involving protein property information. In comparison, {\method} could be more effective mainly in two aspects. (1) \textbf{Diversity of considered properties:} OntoProtein retrieves Gene Ontology terms~\citep{zhang2022ontoprotein} to cover protein functions and locations; besides these two kinds of properties, {\method} additionally includes protein names and families which are useful to indicate protein structural and functional similarity~\citep{murzin1995scop}. (2) \textbf{Property modeling manner:} OntoProtein learns a closed set of protein properties under the context of a \emph{fixed biological knowledge graph}, which limits its ability to generalize to unknown properties of new proteins, 
+while {\method} can flexibly model such generalization based on the semantic correlation of text descriptions between known and unknown properties, leading to decent zero-shot prediction capability (studied in Secs.~\ref{sec:exp:zero} and \ref{sec:exp:t2p}). 
+\iffalse
+\textbf{Advantages over Other Property-aware PLMs:} Similar to our approach, several previous methods~\cite{madani2020progen,zhang2022ontoprotein} also seek to enhance a PLM by involving protein property information. They consider using categorical protein properties~\cite{madani2020progen} or relational triplets retrieved from Gene Ontology~\cite{zhang2022ontoprotein} to realize such an enhancement. Compared to these two kinds of data, the biomedical text descriptions used by us cover a broader range of protein properties including protein names, protein functions, subcellular locations and protein families (detailed in Sec.~\ref{sec:exp:pretrain}). Also, our pre-training method involves modeling the fine-grained dependency between the residues in protein sequence and the words in text description, which has not been explored in previous works. 
+
+\textbf{Comparisons with Existing Multimodal Learning Methods:} Incorporating text supervision for multimodal learning has shown great promise in understanding images~\cite{radford2021learning}, videos~\cite{luo2020univl} and speech~\cite{qian2021speech}. However, it is less studied how the incorporation of biomedical texts can benefit protein understanding. OntoProtein~\cite{zhang2022ontoprotein} makes the efforts relevant to this direction by applying a \emph{fixed knowledge graph} to represent a closed set of protein properties, which is limited compared to modeling \emph{textual protein property descriptions} where the generalization from known properties to unknown ones can be flexibly modeled. 
+In this work, we extensively study how biomedical texts can boost protein sequence pre-training and understanding, covering representation learning (Sec.~\ref{sec:exp:repr}), zero-shot protein classification (Sec.~\ref{sec:exp:zero}) and zero-shot text-to-protein retrieval (Sec.~\ref{sec:exp:t2p}). 
+\fi
+
+
+
+Experiments
+
+
+\begin{table}[t]
+\begin{spacing}{1.05}
+\centering
+\caption{Statistics of the {\dataset} dataset.}
+\label{tab:protdescribe}
+\begin{adjustbox}{max width=1\linewidth}
+    \begin{tabular}{l|cccc}
+        \toprule
+        \bf{Field} & \bf{Name} & \bf{Function} & \bf{Location} & \bf{Family} \\
+        \midrule
+        \bf{\#Covered samples} & 553,052 & 460,936 & 350,929 & 512,276 \\
+        \bf{Coverage} & 100\% & 83.3\% & 63.5\% & 92.6\% \\
+        \bottomrule
+    \end{tabular}
+\end{adjustbox}
+\end{spacing}
+\end{table}
+\subsection{Pre-training Setups} \label{sec:exp:pretrain}
+
+\textbf{Pre-training Dataset:} To inject protein property information into PLMs, we build the {\dataset} dataset with 553,052 aligned pairs of protein sequence and property description. Specifically, we employ the Swiss-Prot~\cite{bairoch2000swiss} database to provide annotations of various protein properties, in which we select four property fields: (1) ``\emph{Protein Name}'' gives the full protein name recommended by the UniProt consortium~\cite{uniprot2019uniprot}; (2) ``\emph{Function}'' depicts diverse functions owned by a protein; (3) ``\emph{Subcellular Location}'' describes the location and topology of a mature protein in the cell; (4) ``\emph{Similarity}'' provides information about the protein families that a protein belongs to. Tab.~\ref{tab:protdescribe} presents the statistics of how each field covers the whole dataset. 
+
+\textbf{Protein Language Models:} We seek to enhance three performant PLMs, \emph{i.e.}, ProtBert~\cite{elnaggar2020prottrans}, ESM-1b~\cite{rives2021biological} and ESM-2~\cite{lin2022language}, by tuning their weights through the proposed {\method} pre-training. We name the PLMs after this pre-training phase as \textbf{{\method}-ProtBert}, \textbf{{\method}-ESM-1b} and \textbf{{\method}-ESM-2}. For ProtBert, we employ the ProtBert-BFD version which is trained on the BFD database~\cite{steinegger2018clustering}. For ESM-2, we adopt the ESM-2-650M model so as to fairly compare with ESM-1b under the same model size. 
+
+\textbf{Biomedical Language Models:} By default, we utilize the PubMedBERT-abs~\cite{gu2021domain} trained on PubMed abstracts to extract representations of protein property descriptions. 
+\textbf{Training Configurations:} An Adam optimizer~\cite{kingma2014adam} (learning rate: $1.0 \times 10^{-5}$, weight decay: 0) is used to train the whole model for 20 epochs on 4 Tesla V100 GPUs. 
+\subsection{Representation Learning} \label{sec:exp:repr}
+
+\subsubsection{Experimental Setups} \label{sec:exp:repr:setup}
+
+\textbf{Downstream Benchmark Tasks.} We adopt 11 benchmark tasks within three task types (the ``\emph{Abbr.}'' below denotes the abbreviated task name in Tab.~\ref{tab:loc-fit} and \ref{tab:anno}):
+\begin{itemize}
+    \item \textbf{Protein Localization Prediction} seeks to predict the subcellular locations of proteins. We consider two such problems from DeepLoc~\cite{almagro2017deeploc}, the subcellular localization prediction (\emph{Abbr.}, Sub) with 10 location categories and the binary localization prediction (\emph{Abbr.}, Bin) with 2 location categories. We follow the official dataset splits. 
+    \item \textbf{Fitness Landscape Prediction} aims to predict the effect of residue mutations on protein fitness. We employ the $\beta$-lactamase (\emph{Abbr.}, $\beta$-lac) landscape from PEER~\cite{xu2022peer}, the AAV and Thermostability (\emph{Abbr.}, Thermo) landscapes from FLIP~\cite{dallago2021flip}, and the Fluorescence (\emph{Abbr.}, Flu) and Stability (\emph{Abbr.}, Sta) landscapes from TAPE~\cite{rao2019evaluating}. For AAV, we use the ``two\_vs\_many'' dataset splits; for Thermostability, we adopt the ``human\_cell'' splits; we follow the only default splits on all other tasks. 
+    \item \textbf{Protein Function Annotation} seeks to annotate a protein with multiple functional labels. We employ two standard benchmarks proposed by DeepFRI~\cite{gligorijevic2021structure}, \emph{i.e.}, Enzyme Commission (EC) number prediction and Gene Ontology (GO) term prediction. The GO benchmark is split into three branches to predict molecular function (\emph{Abbr.}, GO-MF), biological process (\emph{Abbr.}, GO-BP) and cellular component (\emph{Abbr.}, GO-CC). Following \citet{zhang2022protein}, we use the dataset splits under 95\% sequence identity cutoff for both EC and GO. 
+\end{itemize}
+
+\textbf{Baselines:} We adopt four protein sequence encoders trained from scratch, \emph{i.e.}, CNN~\cite{shanehsazzadeh2020transfer}, ResNet~\cite{rao2019evaluating}, LSTM~\cite{rao2019evaluating} and Transformer~\cite{rao2019evaluating}, as naive baselines. We focus on comparing with four performant PLMs, \emph{i.e.}, ProtBert~\cite{elnaggar2020prottrans}, OntoProtein~\cite{zhang2022ontoprotein}, ESM-1b~\cite{rives2021biological} and ESM-2~\cite{lin2022language}.
+
+\textbf{Training and Evaluation:} We train with an Adam optimizer for 100 epochs on localization and fitness prediction tasks and for 50 epochs on function annotation tasks. For localization and fitness prediction, all PLMs are evaluated under both fix-encoder learning and full-model tuning settings, and only full-model tuning is used for PLMs on function annotation, since it is hard to solve the multiple binary classification problems on EC and GO with fixed protein representations.
+
+For all models on all tasks, we select the checkpoint for evaluation based on the validation set performance, and all results are reported on the seed 0. We measure the classification accuracy for localization prediction and the Spearman's $\rho$ for fitness prediction. 
+\begin{table}[t]
+\begin{spacing}{1.05}
+\centering
+\caption{Benchmark results on protein localization and fitness landscape prediction. We use three color scales of blue to denote the \textcolor{r1}{first}, \textcolor{r2}{second} and \textcolor{r3}{third} best performance. \emph{Abbr.}, Loc.: Localization; pred.: prediction; Acc: accuracy.}
+\label{tab:loc-fit}
+\begin{adjustbox}{max width=1\linewidth}
+    \begin{tabular}{l|cc|ccccc|c}
+        \toprule
+        \multirow{2}{*}{\bf{Model}} & \multicolumn{2}{c|}{\bf{Loc. pred.} (\emph{Acc\%})} &
+        \multicolumn{6}{c}{\bf{Fitness pred.} (\emph{Spearman's \bm{$\rho$}})} \\
+        \cmidrule{2-3}
+        \cmidrule{4-9}
+        & \bf{Bin} & \bf{Sub} & \bf{$\beta$-lac} & \bf{AAV} & \bf{Thermo} & \bf{Flu} & \bf{Sta} & \bf{Mean \bm{$\rho$}} \\
+        \midrule
+        \multicolumn{9}{c}{\bf{Protein sequence encoders trained from scratch}} \\
+        \midrule
+        CNN & 82.67 & 58.73 & 0.781 & 0.746 & 0.494 & \cellcolor{r1} \textbf{0.682} & 0.637 & 0.668 \\
+        ResNet & 78.99 & 52.30 & 0.152 & 0.739 & 0.528 & 0.636 & 0.126 & 0.436 \\
+        LSTM & 88.11 & 62.98 & 0.139 & 0.125 & 0.564 & 0.494 & 0.533 & 0.371 \\
+        Transformer & 75.74 & 56.02 & 0.261 & 0.681 & 0.545 & 0.643 & 0.649 & 0.556 \\
+        \midrule
+        \multicolumn{9}{c}{\bf{PLMs \emph{w/} fix-encoder learning}} \\
+        \midrule
+        ProtBert & 81.54 & 59.44 & 0.616 & 0.209 & 0.562 & 0.339 & 0.697 & 0.485 \\
+        OntoProtein & 84.87 & 68.34 & 0.471 & 0.217 & 0.605 & 0.432 & 0.688 & 0.483 \\
+        ESM-1b & 91.61 & 79.82 & 0.528 & 0.454 & 0.674 & 0.4
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,295 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{figures/dot.pdf}
+    \caption{\textbf{Inference Speed \emph{vs.} Accuracy.} All models are trained on ImageNet-1K and measured by iPhone 12 with CoreMLTools to get latency. Compared to CNNs, EfficientFormer-L1 runs $40\%$ faster than EfficientNet-B0, while achieves $2.1\%$ higher accuracy. For the latest MobileViT-XS, EfficientFormer-L7 runs $0.2$ ms faster with $8.5\%$ higher accuracy. 
+    }
+    \label{fig:dot_show}
+\end{figure}
+The transformer architecture~\cite{vaswani2017attention}, initially designed for Natural Language Processing (NLP) tasks, introduces the Multi-Head Self Attention (MHSA) mechanism that allows the network to model long-term dependencies and 
+is easy to parallelize. 
+In this context, Dosovitskiy \textit{et al.}~\cite{dosovitskiy2020vit} adapt the attention mechanism to 2D images and propose Vision Transformer (ViT): the input image is divided into non-overlapping patches, and the inter-patch representations are learned through MHSA without inductive bias. ViTs demonstrate promising results compared to convolutional neural networks (CNNs) on computer vision tasks. Following this success, several efforts explore the potential of ViT by improving training strategies~\cite{touvron2021training,touvron2022deit,touvron2022three}, introducing architecture changes~\cite{yu2021metaformer,meng2021adavit}, redesigning attention mechanisms~\cite{liu2021swin,jaszczur2021sparse}, and elevating the performance of various vision tasks such as classification~\cite{liu2021swin2,liu2021video,caron2021emerging}, segmentation~\cite{xie2021segformer,cheng2021masked}, and detection~\cite{carion2020end,li2021improved}.
+
+
+On the downside, transformer models are usually times slower than competitive CNNs~\cite{wang2022towards,mehta2021mobilevit}. There are many factors that limit the inference speed of ViT, including the massive number of parameters, quadratic-increasing computation complexity with respect to token length, non-foldable normalization layers, and lack of compiler level optimizations (\textit{e.g.}, Winograd for CNN~\cite{liu2018efficient}). 
+The high latency makes transformers impractical for real-world applications on resource-constrained hardware, such as augmented or virtual reality applications on mobile devices and wearables. As a result, lightweight CNNs~\cite{howard2017mobilenets,sandler2018mobilenetv2,howard2019searching} remain the default choice for real-time inference.
+
+To alleviate the latency bottleneck of transformers, many approaches have been proposed. For instance, some efforts consider designing new architectures or operations by changing the linear layers with convolutional layers (CONV)~\cite{Graham_2021_ICCV}, combining self-attention with MobileNet blocks~\cite{chen2021mobile}, or introducing sparse attention~\cite{wu2021smart,roh2021sparse,zhu2020deformable}, to reduce the computational cost, while other efforts leverage network searching algorithm~\cite{gong2022nasvit} or pruning~\cite{chavan2022vision} to improve efficiency.
+Although the computation-performance trade-off has been improved by existing works, the fundamental question that relates to the applicability of transformer models remains unanswered:
+\emph{Can powerful vision transformers run at MobileNet speed and become a default option for
+edge applications?}
+This work provides a study towards the answer through the following contributions:
+\begin{itemize}[leftmargin=1em]
+    \item First, we revisit the design principles of ViT and its variants through latency analysis (Sec.~\ref{sec:latency}). Following existing work~\cite{mehta2021mobilevit}, we utilize iPhone 12 as the testbed and publicly available CoreML~\cite{coreml2021} as the compiler, since the mobile device is widely used and the results can be easily reproduced.
+    \item Second, based on our analysis, we identify inefficient designs and operators in ViT and propose a new dimension-consistent design paradigm for vision transformers (Sec.~\ref{sec:network_design}).
+    \item Third, starting from a supernet with the new design paradigm, we propose a simple yet effective latency-driven slimming method to obtain a new family of models, namely, EfficientFormers (Sec.~\ref{sec:search}). We directly optimize for inference speed instead of MACs or number of parameters~\cite{ma2018shufflenet,tan2019mnasnet,wang2020hat}.
+\end{itemize}
+Our fastest model, EfficientFormer-L1, achieves $79.2\%$ top-1 accuracy on ImageNet-1K~\cite{deng2009imagenet} classification task with only $1.6$ ms inference time (averaged over $1,000$ runs), {which runs as fast as MobileNetV2$\times 1.4$ and wields $4.5\%$ \emph{higher} top-1 accuracy}
+(more results in {Fig.~\ref{fig:dot_show}} and Tab.~\ref{tab:comparison}). The promising results demonstrate that latency is no longer an obstacle for the widespread adoption of vision transformers. 
+Our largest model, EfficientFormer-L7, achieves $83.3\%$ accuracy with only $7.0$ ms latency, outperforms ViT$\times$MobileNet hybrid designs (MobileViT-XS, $74.8\%$, $7.2$ms) by a large margin. 
+Additionally, we observe superior performance by employing EfficientFormer as the backbone in image detection and segmentation benchmarks (Tab.~\ref{tab:segmentation}). 
+We provide a preliminary answer to the aforementioned question, \emph{ViTs can achieve ultra fast inference speed and wield powerful performance at the same time. }
+We hope our EfficientFormer can serve as a strong baseline and inspire followup works on the edge deployment of vision transformers.
+
+
+
+
+
+
+
+Related Work
+Transformers are initially proposed to handle the learning of long sequences in NLP tasks~\cite{vaswani2017attention}. 
+Dosovitskiy \textit{et al.}~\cite{dosovitskiy2020vit} and Carion \textit{et al.}~\cite{carion2020end} adapt the transformer architecture to classification and detection, respectively, and achieve competitive performance against CNN counterparts with stronger training techniques and larger-scale datasets. 
+DeiT~\cite{touvron2021training} further improves the training pipeline with the aid of distillation, eliminating the need for large-scale pretraining~\cite{yuan2021tokens}. 
+Inspired by the competitive performance and global receptive field of transformer models, follow-up works are proposed to refine the architecture~\cite{wang2021pyramid,touvron2021going}, explore the relationship between CONV nets and ViT~\cite{guo2021cmt,dai2021coatnet,han2021connection}, and adapt ViT to different computer vision tasks~\cite{xie2021segformer,zhang2022nested,zhang2022topformer,lee2021vision,lee2021vitgan,esser2021taming,zeng2021improving}. Other research efforts explore the essence of attention mechanism and propose insightful variants of token mixer, \textit{e.g.}, local attention~\cite{liu2021swin}, spatial MLP~\cite{touvron2021resmlp,tolstikhin2021mixer}, and pooling-mixer~\cite{yu2021metaformer}. 
+
+Despite the success in most vision tasks, ViT-based models cannot compete with the well-studied lightweight CNNs \cite{sandler2018mobilenetv2,tan2019efficientnet} when the inference speed is the major concern~\cite{tolstikhin2021mlp,chen2021cyclemlp,zhou2021deepvit}, especially on resource-constrained edge devices \cite{wang2022towards}. 
+To accelerate ViT, many approaches have been introduced with different methodologies, such as proposing new architectures or modules~\cite{Nikita2020,chen2021crossvit,hassani2021escaping,fayyaz2021ats,Wei2022,Renggli2022}, re-thinking self-attention and sparse-attention mechanisms~\cite{wang2021crossformer,heo2021rethinking,chen2021regionvit,li2021localvit,chu2021twins,rao2021dynamicvit,Zhengzhong2022}, and utilizing search algorithms that are widely explored in CNNs to find smaller and faster ViTs~\cite{chen2021autoformer,gong2022nasvit,chavan2022vision,zhou2022training}. 
+Recently, LeViT~\cite{Graham_2021_ICCV} proposes a CONV-clothing design to accelerate vision transformer. However, in order to perform MHSA, the $4$D features need to be frequently reshaped into flat patches, which is still expensive to compute on edge resources (Fig.~\ref{fig:speed}). Likewise, MobileViT~\cite{mehta2021mobilevit} introduces a hybrid architecture that combines lightweight MobileNet blocks (with point-wise and depth-wise CONV) and MHSA blocks; the former is placed at early stages in the network pipeline to extract low-level features, while the latter is placed in late stages to enjoy the global receptive field. 
+Similar approach has been explored by several works~\cite{chen2021mobile,gong2022nasvit} as a straightforward strategy to reduce computation.
+
+Different from existing works, we aim at pushing the latency-performance boundary of pure vision transformers instead of relying on hybrid designs, and directly optimize for mobile latency. Through our detailed analysis (Sec.~\ref{sec:latency}), we propose a new design paradigm (Sec.~\ref{sec:network_design}), which can be further elevated through architecture search (Sec.~\ref{sec:search}). 
+
+
+
+
+
+On-Device Latency Analysis of Vision Transformers
+
+
+Most existing approaches optimize the inference speed of transformers through computation complexity (MACs) or throughput (images/sec) obtained from server GPU~\cite{Graham_2021_ICCV,gong2022nasvit}.
+While such metrics do not reflect the real on-device latency. 
+To have a clear understanding of which operations and design choices slow down the inference of ViTs on edge devices, we perform a comprehensive latency analysis over a number of models and operations, as shown in Fig.~\ref{fig:speed}, whereby the following observations are drawn.
+
+\textbf{Observation 1}: \emph{Patch embedding with large kernel and stride is a speed bottleneck on mobile devices.}
+
+Patch embedding is often implemented with a non-overlapping convolution layer that has large kernel size and stride~\cite{touvron2021training,hassani2021escaping}. 
+A common belief is that the computation cost of the patch embedding layer in a transformer network is unremarkable or negligible~\cite{dosovitskiy2020vit,yu2021metaformer}. 
+However, our comparison in Fig.~\ref{fig:speed} between models with large kernel and stride for patch embedding, \textit{i.e.}, DeiT-S~\cite{touvron2021training} and PoolFormer-S24~\cite{yu2021metaformer}, and the models without it, \textit{i.e.}, LeViT-256~\cite{Graham_2021_ICCV} and EfficientFormer, shows that patch embedding is instead a speed bottleneck on mobile devices.
+
+Large-kernel convolutions are not well supported by most compilers and cannot be accelerated through existing algorithms like Winograd~\cite{liu2018efficient}. 
+Alternatively, the non-overlapping patch embedding can be replaced by a convolution stem with fast downsampling~\cite{wu2021cvt,yuan2021incorporating,Graham_2021_ICCV} that consists of several hardware-efficient $3\times3$ convolutions (Fig.~\ref{fig:network}).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\textwidth]{figures/speed.pdf}  
+    \caption{\textbf{Latency profiling.} Results are obtained on iPhone 12 with CoreML. The on-device speed for CNN (MobileNetV2$\times 1.4$, ResNet50, and EfficientNet-B0), ViT-based models (DeiT-Small, LeViT-256, PoolFormer-S24, and EfficientFormer), and various operators are reported. The latency of models and operations are denoted with different color. ($\cdot$) is the top-1 accuracy on ImageNet-1K. \dagger LeViT uses HardSwish which is not well supported by CoreML, we replace it with GeLU for fair comparison. }
+    \label{fig:speed}
+\end{figure}
+\textbf{Observation 2}: 
+\emph{Consistent feature dimension is important for the choice of token mixer. 
+MHSA is not necessarily a speed bottleneck.}
+
+Recent work extends ViT-based models to the MetaFormer architecture~\cite{yu2021metaformer} consisting of MLP blocks and unspecified token mixers. Selecting a token mixer is an essential design choice when building ViT-based models. The options are many---the conventional MHSA mixer with a global receptive field, more sophisticated shifted window attention~\cite{liu2021swin}, or a non-parametric operator like pooling \cite{yu2021metaformer}.
+
+We narrow the comparison to the two token mixers, pooling and MHSA, where we choose the former for its simplicity and efficiency, while the latter for better performance.
+More complicated token mixers like shifted window~\cite{liu2021swin} are currently not supported by most public mobile compilers and we leave them outside our scope. 
+Furthermore, we do not use depth-wise convolution to replace pooling \cite{trockman2022patches} as we focus on building architecture without the aid of lightweight convolutions. 
+To understand the latency of the two token mixers, we perform the following two comparisons:
+\begin{itemize}[leftmargin=1em]
+    \item First, by comparing PoolFormer-s24~\cite{yu2021metaformer} and LeViT-256~\cite{Graham_2021_ICCV}, we observe that the \texttt{Reshape} operation is a bottleneck for LeViT-256. The majority of LeViT-256 is implemented with CONV on $4$D tensor, requiring frequent reshaping operations when forwarding features into MHSA since the attention has to be performed on patchified $3$D tensor (discarding the extra dimension of attention heads). The extensive usage of \texttt{Reshape} limits the speed of LeViT on mobile devices (Fig.~\ref{fig:speed}). On the other hand, pooling naturally suits the $4$D tensor when the network primarily consists of CONV-based implementations, \emph{e.g.}, CONV $1\times1$ as MLP implementation and CONV stem for downsampling. As a result, PoolFormer exhibits faster inference speed. 
+    \item Second, by comparing DeiT-Small~\cite{touvron2021training} and LeViT-256~\cite{Graham_2021_ICCV}, we find that MHSA does not bring significant overhead on mobiles if the feature dimensions are consistent and \texttt{Reshape} is not required. Though much more computation intensive, DeiT-Small with a consistent 3D feature can achieve comparable speed to the new ViT variant, \textit{i.e.}, LeViT-256. 
+\end{itemize}
+In this work, we propose a dimension-consistent network (Sec.~\ref{sec:network_design}) with both $4$D feature implementation and $3$D MHSA, but the inefficient frequent \texttt{Reshape} operations are eliminated.
+
+
+\textbf{Observation 3}: \emph{CONV-BN is more latency-favorable than LN (GN)-Linear and the accuracy drawback is generally acceptable.}
+
+Choosing the MLP implementation is another essential design choice. 
+Usually, one of the two options is selected: layer normalization (LN) with 3D linear projection (proj.) and CONV $1\times1$ with batch normalization (BN). 
+CONV-BN is more latency favorable because BN can be folded into the preceding convolution for inference speedup, 
+{while dynamic normalizations, such as LN and GN,}
+still collects running statistics at the inference phase, thus contributing to latency. 
+From the analysis of DeiT-Small and PoolFormer-S24 in Fig.~\ref{fig:speed} and previous work~\cite{wang2022towards}, the latency introduced by LN constitutes around $10\%-20\%$ latency of the whole network.
+
+~\ref{tab:ablation},
+CONV-BN only slightly downgrades performance compared to 
+GN and achieves comparable results to channel-wise LN. 
+In this work, we apply CONV-BN as much as possible (in all latent $4$D features) for the latency gain with a negligible performance drop,
+while using LN for the $3$D features, which aligns with the original MHSA design in ViT and yields better accuracy. 
+
+\textbf{Observation 4}: \emph{The latency of nonlinearity is hardware and compiler dependent.}
+
+Lastly, we study nonlinearity, including GeLU, ReLU, and HardSwish. Previous work~\cite{wang2022towards} suggests GeLU is not efficient on hardware and slows down inference. 
+However, we observe GeLU is well supported by iPhone 12 and hardly slower than its counterpart, ReLU. 
+On the contrary, HardSwish is surprisingly slow in our experiments and may not be well supported by the compiler (LeViT-256 latency with HardSwish is $44.5$ ms while with GeLU $11.9$ ms).
+We conclude that nonlinearity should be determined on a case-by-case basis given specific hardware and compiler at hand. We believe that most of the activations will be supported in the future. In this work, we employ GeLU activations. 
+
+
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\textwidth]{figures/network.pdf}  
+    \caption{\textbf{Overview of EfficientFormer.} The network starts with a convolution stem as patch embedding, followed by MetaBlock ($\texttt{MB}$). The $\texttt{MB}^{4D}$ and $\texttt{MB}^{3D}$ contain different token mixer configurations, \emph{i.e.}, local pooling or global multi-head self-attention, arranged in a dimension-consistent manner.}
+    \label{fig:network}
+\end{figure}
+
+
+
+Design of EfficientFormer
+
+Based on the latency analysis, we propose the design of EfficientFormer, demonstrated in Fig.~\ref{fig:network}. 
+The network consists of a patch embedding (\texttt{PatchEmbed}) and stack of meta transformer blocks, denoted as \texttt{MB}:
+\begin{equation}
+    \mathcal{Y} = \prod_i^m \texttt{MB}_i(\texttt{PatchEmbed}(\mathcal{X}_0^{B,3,H,W})),
+\end{equation}
+where $\mathcal{X}_0$ is the input image with batch size as $B$ and spatial size as $[H, W]$, $\mathcal{Y}$ is the desired output, and $m$ is the total number of blocks (depth). 
+\texttt{MB} consists of unspecified token mixer (\texttt{TokenMixer}) followed by a \texttt{MLP} block and can be expressed as follows:
+\begin{equation}
+    \mathcal{X}_{i+1} = \texttt{MB}_i(\mathcal{X}_i) = \texttt{MLP}(\texttt{TokenMixer}(\mathcal{X}_i)),
+\end{equation}
+where $\mathcal{X}_{i|i>0}$ is the intermediate feature that forwarded into the $i^{th}$ \texttt{MB}. 
+We further define Stage (or \texttt{S}) as the stack of several MetaBlocks that processes the features with the same spatial size, such as $N_1\times$ in Fig.~\ref{fig:network} denoting $\texttt{S}_1$ has $N_1$ MetaBlocks. The network includes $4$ Stages. 
+Among each Stage, there is an embedding operation to project embedding dimension and downsample token length, denoted as \texttt{Embedding} in Fig.~\ref{fig:network}.
+With the above architecture, EfficientFormer is a fully transformer-based model without integrating MobileNet structures. 
+Next, we dive into the details of the network design, specifically, the architecture details and the search algorithm.
+
+
+\subsection{Dimension-Consistent Design}\label{sec:network_design}
+
+With the observations in Sec.~\ref{sec:latency}, we propose a dimension consistent design which splits the network into a 4D partition where operators are implemented in CONV-net style ($\texttt{MB}^{4D}$), and a 3D partition where linear projections and attentions are performed over 3D tensor to enjoy the global modeling power of MHSA without sacrificing efficiency ($\texttt{MB}^{3D}$), as shown in Fig.~\ref{fig:network}.
+Specifically, the network starts with 4D partition, while 3D partition is applied in the last stages. 
+Note that Fig.~\ref{fig:network} is just an instance, the actual length of 4D and 3D partition is specified later through architecture search. 
+First, input images are processed by a CONV stem with two $3\times 3$ convolutions with stride 2 as patch embedding,
+\begin{equation}
+    \mathcal{X}_1^{B,C_{j|j=1},\frac{H}{4},\frac{W}{4}} = \texttt{PatchEmbed}(\mathcal{X}_0^{B,3,H,W}),
+\end{equation}
+where $C_j$ is the channel number (width) of the $j\hspace{0.05cm}th$ stage. 
+Then the network starts with $\texttt{MB}^{4D}$ with a simple \texttt{Pool} mixer to extract low level features, 
+\begin{equation}
+\begin{gathered}
+    \mathcal{I}_i = \texttt{Pool} (\mathcal{X}_{i}^{B,C_j,\frac{H}{2^{j+1}},\frac{W}{2^{j+1}}}) + \mathcal{X}_{i}^{B,C_j,\frac{H}{2^{j+1}},\frac{W}{2^{j+1}}}, \\
+    \mathcal{X}_{i+1}^{B,C_j,\frac{H}{2^{j+1}},\frac{W}{2^{j+1}}} = \texttt{Conv}_{B}(\texttt{Conv}_{B,G}(\mathcal{I}_i)) + \mathcal{I}_i,
+\end{gathered}
+\end{equation}
+where $\texttt{Conv}_{B,G}$ refers to whether the convolution is followed by BN and GeLU, respectively. 
+Note here we do not employ Group or Layer Normalization (\texttt{LN}) before the \texttt{Pool} mixer as in \cite{yu2021metaformer}, since the 4D partition is CONV-BN based design, thus there exists a BN in front of each \texttt{Pool} mixer. 
+After processing all the $\texttt{MB}^{4D}$ blocks, we perform a one-time reshaping to transform the features size 
+and enter 3D partition. 
+$\texttt{MB}^{3D}$ follows conventional ViT structure, as in Fig.~\ref{fig:network}.  
+Formally, 
+\begin{equation}
+\begin{gathered}
+    \mathcal{I}_i = \texttt{Linear}(\texttt{MHSA}(\texttt{Linear}(\texttt{LN}(\mathcal{X}_i^{B,\frac{HW}{4^{j+1}},C_j})))) + \mathcal{X}_i^{B,\frac{HW}{4^{j+1}},C_j}, \\
+    \mathcal{X}_{i+1}^{B,\frac{HW}{4^{j+1}},C_j} = \texttt{Linear}(\texttt{Linear}_{G}(\texttt{LN}(\mathcal{I}_i))) + \mathcal{I}_i,
+\end{gathered}
+\end{equation}
+where $\texttt{Linear}_{G}$ denotes the $\texttt{Linear}$ followed by GeLU, and 
+\begin{equation}
+  \texttt{MHSA}(Q,K,V) = \texttt{Softmax}(\frac{Q\cdot K^T}{\sqrt{C_j}} + b) \cdot V,
+\end{equation}
+where $Q,K,V$ represents query, key, and values learned by the linear projection, and $b$ is parameterized attention bias as position encodings. 
+
+
+
+\subsection{Latency Driven Slimming}\label{sec:search}
+
+\textbf{Design of Supernet.} Based on the dimension-consistent design, we build a supernet for searching efficient models of the network architecture shown in Fig.~\ref{fig:network} (Fig.~\ref{fig:network} shows an example of searched final network). %To best illustrate such a supernet, we first construct MetaPath (\texttt{MP}), which is the collection of possible blocks:
+In order to represent such a supernet, we define the MetaPath (\texttt{MP}), which is the collection of possible blocks:
+\begin{equation}
+\begin{aligned}
+    \texttt{MP}_{i, j=1,2} &\in \{\texttt{MB}_i^{4D}, I_i\},  \\
+    \texttt{MP}_{i, j=3,4} &\in \{\texttt{MB}_i^{4D}, \texttt{MB}_i^{3D}, I_i\},
+\end{aligned}
+\label{eq:searchspace}
+\end{equation}
+where $I$ represents identity path, 
+$j$ denotes the $j^{th}$ Stage, and
+$i$ denotes the $i^{th}$ block. The supernet can be illustrated by replacing \texttt{MB} in Fig.~\ref{fig:network} with \texttt{MP}. 
+
+As in Eqn.~\ref{eq:searchspace}, in $\texttt{S}_1$ and $\texttt{S}_2$ of the supernet, each block can select from $\texttt{MB}^{4D}$ or $I$, while in $\texttt{S}_3$ and $\texttt{S}_4$, the block can be $\texttt{MB}^{3D}$, $\texttt{MB}^{4D}$, or $I$.
+We only enable $\texttt{MB}^{3D}$ in the last two Stages for two reasons. First, since the computation of MHSA grows quadratically with respect to token length, integrating it in early Stages would largely increase the computation cost. Second, applying the global MHSA to the last Stages aligns with the intuition that early stages in the networks capture low-level features, while late layers learn long-term dependencies. 
+\textbf{Searching Space.} 
+Our searching space includes $C_j$ (the width of each Stage), $N_j$ (the number of blocks in each Stage, \emph{i.e.}, depth), and last $\mathbb{N}$ blocks to apply $\texttt{MB}^{3D}$. 
+
+\textbf{Searching Algorithm.}
+Previous hardware-aware network searching methods generally rely on hardware deployment of each candidate in search space to obtain the latency, which is time consuming \cite{yang2018netadapt}.
+In this work, we propose a simple, fast yet effective gradient-based search algorithm to obtain a candidate network that just needs to train the supernet for once. The algorithm has three major steps.
+
+First, we train the supernet with Gumbel Softmax sampling \cite{liu2018darts} to get the importance score for the blocks within each $\texttt{MP}$, which can be expressed as
+\begin{equation}\label{eqn:gumble}
+\mathcal{X}_{i+1} = \sum_n \frac{e^{({\alpha}^n_i + \epsilon^n_i) / \tau}}{\sum_{n} e^{({\alpha}^n_i + \epsilon^n_i) / \tau}} \cdot  \texttt{MP}_{i, j}({\mathcal{X}_i}),
+\end{equation}
+where $\alpha$ evaluates the importance of each block in $\texttt{MP}$ as it represents the probability to select a block, \emph{e.g.}, $\texttt{MB}^{4D}$ or $\texttt{MB}^{3D}$ for the $i^{th}$ block.
+$\epsilon \sim U(0, 1)$ ensures exploration, $\tau$ is the temperature, and
+$n$ represents the type of blocks in $\texttt{MP}$, \emph{i.e.}, $n\in \{4D, I\}$ for $\texttt{S}_1$ and $\texttt{S}_2$, and $n\in \{4D, 3D, I\}$ for $\texttt{S}_3$ and $\texttt{S}_4$. 
+By using Eqn.~\ref{eqn:gumble}, the derivatives with respect to network weights and $\alpha$ can be computed easily. 
+The training follows the standard recipe (see Sec.~\ref{sec:experiments_classification}) to obtain the trained weights and architecture parameter $\alpha$. 
+
+Second, we build a latency lookup table by collecting the on-device latency of $\texttt{MB}^{4D}$ and $\texttt{MB}^{3D}$ with different widths (multiples of $16$). 
+
+Finally, we perform network slimming on the supernet obtained from the first step through latency evaluation using the lookup table. 
+Note that a typical gradient-based searching algorithm simply select the block with largest $\alpha$~\cite{liu2018darts}, which does not fit our scope as it cannot search the width $C_j$. 
+In fact, constructing a multiple-width supernet is memory-consuming and even unrealistic given that each $\texttt{MP}$ has several branches in our design.
+Instead of directly searching on the complex searching space, we perform a gradual slimming on the single-width supernet as follows.
+
+We first define the importance score for $\texttt{MP}_i$ as $\frac{\alpha_i^{4D}}{\alpha^I_i}$ and $\frac{\alpha^{3D}_i+\alpha^{4D}_i}{\alpha^I_i}$ for $\texttt{S}_{1,2}$ and $\texttt{S}_{3,4}$, respectively. Similarly, the importance score for each Stage can be obtained by summing up the scores for all $\texttt{MP}$ within the Stage.
+With the importance score, we define the action space that includes three options: 1) select $I$ for the least important $\texttt{MP}$, 2) remove the first $\texttt{MB}^{3D}$, and 3) reduce the width of the least important Stage (by multiples of $16$). 
+Then, we calculate the resulting latency of each action through lookup table, and evaluate the accuracy drop of each action. 
+Lastly, we choose the action based on \emph{per-latency accuracy drop ($\frac{-\%}{ms}$)}. 
+This process is performed iteratively until target latency is achieved.
+
+
+
+
+
+Experiments and Discussion
+
+
+\begin{table}[ht]
+\caption{\textbf{Comparison results on ImgeNet-1K.} 
+The latency results are tested on iPhone Neural Engine (NPU), iPhone CPU and Nvidia A100 GPU correspondingly. Note that for mobile speed, we report latency per frame, while on A100 GPU, we report latency per batch size 64 to maximum resource utilization. 
+Hybrid refers to a mixture of MobileNet blocks and ViT blocks. 
+(-) refers to unrevealed or unsupported models.
+\dagger Latency measured with GeLU activation for fair comparison, the original LeViT-256 model with HardSwish activations runs at $44.5$ ms. 
+Different training seeds lead to less than $\pm 0.2\%$ fluctuation in accuracy for EfficientFormer, and the error for latency benchmark is less than $\pm 0.1$ ms. }
+\label{tab:comparison}
+\centering
+\small
+\scalebox{0.9}{
+\begin{tabular}{ccccccccc}
+\toprule
+\multirow{2}{*}{Model}           & \multirow{2}{*}{Type}      & \multirow{2}{*}{Params(M)} & \multirow{2}{*}{GMACs} & \multirow{2}{*}{Train. Epoch} & \multirow{2}{*}{Top-1(\%)} & \multicolumn{3}{c}{Latency (ms)} \\ \cline{7-9}
+    &      &     &    &    &    &  NPU  & CPU  & A100          \\
+\hline
+\hline
+MobileNetV2$\times 1.0$     & CONV      &  3.5    & 0.3   &300& 71.8      & {1.3}    & 8.0 &  5.0    \\
+MobileNetV2$\times 1.4$     & CONV      &  6.1    & 0.6   &300& 74.7      & {1.6}     & 10.7 &  7.3   \\
+ResNet50        & CONV      &    25.5     & 4.1   &300& 78.5      & 3.0      & 29.4 & 9.0      \\
+EfficientNet-B0 & CONV      &  5.3  &  0.4  & 350 &   77.1   &         2.7    & 14.5 & 10.0    \\
+EfficientNet-B3 & CONV      & 12.0        & 1.8   & 350  & 81.6      &    6.6      & 52.6 & 35.0      \\
+EfficientNet-B5 & CONV      &  30.0  &  9.9  & 350  &    83.6   &       23.0   & 258.8 & 141.0       \\
+\hline
+DeiT-T          & Attention & 5.9       & 1.2   &300/1000& 74.5/76.6      & 9.2      & 16.7 & 7.1      \\
+DeiT-S          & Attention & 22.5      & 4.5   &300/1000& 81.2/82.6      & 11.8      & 41.0 & 15.5     \\
+PVT-Small       & Attention &    24.5      & 3.8   &300& 79.8      &    24.4     & 89.5 & 23.8       \\
+T2T-ViT-14      & Attention & 21.5      & 4.8   &310& 81.5      & -        & - & 21.0        \\
+Swin-Tiny       & Attention &    29      & 4.5   &300& 81.3      & -       & - &22.0    \\
+CSwin-T       & Attention &    23      & 4.3   &300& 82.7      & -       & - & 28.7       \\
+\hline
+PoolFormer-s12  & Pool      &    12     & 2.0   & 300 & 77.2      & 6.1      & 59.0 & 14.5      \\
+PoolFormer-s24  & Pool      &    21     & 3.6   & 300 & 80.3      & 6.2      & 126.7 & 28.2      \\
+PoolFormer-s36  & Pool      &    31     & 5.2   & 300 & 81.4      & 6.7     & 192.6 & 41.2       \\
+ResMLP-S24       & SMLP      &  30     & 6.0   &300& 79.4      & 7.6      & 40.2 & 17.4      \\
+\hline
+Convmixer-768   & Hybrid    &  21.1 & 20.7 & 300 &    80.2   &   11.6    & 29.3 & -    \\
+LeViT-256       & Hybrid    & 18.9      & 1.1   & 1000 & 81.6      & 11.9\dagger     & 13.5  & 4.5      \\
+NASViT-A5          & Hybrid    &    -     &    0.76  & 360 &   81.8    &    -      & - & -     \\
+MobileViT-XS       & Hybrid    &    2.3   & 0.7 &300& 74.8      & 7.2   & 26.5  & 11.7   \\
+MobileFormer-508M       & Hybrid    &    14.0   & 0.51 & 450 & 79.3      & 13.2       & 22.2 & 14.6     \\
+\hline
+\hline
+\rowcolor[gray]{.9}
+EfficientFormer-L1  &   MetaBlock   & 12.3      &  1.3  & 300/1000 & \textbf{79.2/80.2}     & \textbf{1.6}      & \textbf{11.5} &  \textbf{6.2}     \\
+\rowcolor[gray]{.9}
+EfficientFormer-L3  &   MetaBlock   & 31.3      &  3.9  & 300 & \textbf{82.4}      & \textbf{3.0}      & \textbf{28.2} &   \textbf{13.9}    \\
+\rowc
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

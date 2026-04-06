@@ -1,0 +1,228 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Image-text matching aims to search the most relevant samples across different modalities, which is fundamental for most cross-modal tasks \cite{malinowski2015ask,vinyals2015show,xu2015show,diao2021similarity,jiang2023cross,9782584}. 
+The core of image-text matching is how to accurately measure the similarity between distinct modalities, however, which is challenging due to the visual-textual discrepancy. To tackle the challenge, numerous deep methods are presented to learn the visual-semantic associations of image-text pairs and achieve remarkable progress, thanks to the powerful representation ability of Deep Neural Networks (DNNs) and some well-designed similarity inference architectures~\cite{faghri2017vse++,lee2018stacked,diao2021similarity,chen2021learning}. They could be roughly divided into two groups, \ie global-level methods \cite{faghri2017vse++,chen2021learning} and local-level methods \cite{lee2018stacked,diao2021similarity}, which aim at learning the image-to-sentence and region-to-word correlation to infer the cross-modal similarity, respectively. 
+Although these methods achieved promising matching performance, most of them implicitly require large-scale well-aligned data for training, which is expensive or even impossible to collect due to ubiquitous noise in real-world scenarios \cite{sharma2018conceptual,jia2021scaling}.
+Therefore, there is inevitably imperfect alignment luring in the data, \ie noisy correspondence (NC)~\cite{huang2021learning}, resulting in inferior performance.
+
+To handle the NC problem, some prior arts are presented to alleviate the adverse impact of NC in various tasks, \eg partially view-aligned clustering~\cite{yang2022robust,yang2021partially,wen2023deep,yang2020adversarial}, video-text retrieval~\cite{zhang2023robust}, visible-infrared person re-identification~\cite{yang2022learning}, and image-text matching~\cite{huang2021learning,qin2022deep,hu2023cross}. Specifically, inspired by learning with noisy labels~\cite{li2020dividemix,han2018co}, some works~\cite{huang2021learning,yang2023bicro,han2023noisy} are proposed to alleviate the negative impact brought by NC. These works attempt to leverage the memorization effect of DNNs~\cite{arpit2017closer} to gradually distinguish the noisy image-text pairs for robust learning in a co-teaching manner. Furthermore, the predicted soft correspondence is used to recast a soft margin to replace the scalar margin of triplet ranking loss~\cite{faghri2017vse++}, which helps to avoid misleading the model by mismatched pairs.
+However, the soft-margin ranking loss is experimentally found to provide only limited robustness against NC, especially under high noise (as shown in \Cref{tb1}), due to unstable division based on inaccurate predictions.
+In contrast, some works~\cite{qin2022deep,hu2023cross} aim to enhance the robustness of cross-modal methods against NC by starting with a robust loss function, \ie avoiding over-amplification of wrong supervision information to reduce misleading risk. However, the lack of explicitly mitigating the effect of easily separable noise makes them hard to further improve the performance.
+
+To address the aforementioned issues, we propose a generalized robust framework, dubbed CRCL, for learning with noisy correspondences. CRCL could be easily migrated into existing image-text matching methods to enhance their robustness against NC. Our framework introduces a novel Active Complementary Loss (ACL) that applies active and complementary learning to mutually boost robustness against NC. Specifically, we present a robust complementary learning loss that employs complementary pairs, such as ``input image-text pairs are irrelevant'', to conduct indirect cross-modal learning with exponential normalization.
+Due to the low likelihood of selecting incorrect complementary pairs, robust complementary learning could reduce the risk of providing incorrect supervision and smooth the losses, thus embracing robustness against NC. However, the robust loss will face the underfitting problem, leading to suboptimal performance. To overcome this issue, a weighted Active learning loss is proposed to enforce the model focus on more reliable positive pairs in addition to only complementary pairs. In addition, we propose a Self-refining Correspondence Correction paradigm (SCC) to obtain stable and accurate correspondence correction. SCC utilizes Momentum Correction (MC) to aggregate historical predictions for stable and accurate correspondence corrections. By combining multiple Self-Refining processes (SR) throughout the entire training process, we alleviate over-memorization for NCs. In summary, the key contributions and innovations of this work are as follows:
+
+\begin{itemize}
+    \item We propose a generalized Cross-modal Robust Contrastive Learning framework (CRCL) to address a pressing and widely-exist problem in image-text matching, \ie noisy correspondence. CRCL empowers existing methods with strong robustness through the perspectives of robust loss and correction techniques.
+    \item A novel Active Complementary Loss (ACL) is presented to balance active and complementary learning, mutually enhancing robustness against NC while encapsulating correct cross-modal associations in the latent common space.
+    \item We design an effective Self-refining Correspondence Correction paradigm (SCC) to achieve accurate and stable soft correspondences, which enables the prediction-based corrections to perceive larger fields and self-refine from the historically learned knowledge.
+    \item Extensive experiments verify the effectiveness and superiority of our framework on three benchmark image-text datasets: Flickr30K, MS-COCO, and CC152K. Additionally, comprehensive ablation studies and insightful analyses demonstrate the reliability and practicability of the proposed CRCL.
+\end{itemize}
+
+
+
+The Proposed Method
+\subsection{Preliminaries and Problem Statement}
+
+To be specific, we first provide some definitions of instance-level image-text matching so as to conveniently study noisy correspondence. Let $\mathcal{D}=\{\mathcal{I},\mathcal{T},\mathcal{Y}\}$ be an image-text dataset, where $\mathcal{I}=\left\{ I_i \right\}^N_{i=1}$ and $\mathcal{T}=\left\{ T_i \right\}^N_{i=1}$ are the training image and text set with size of $N$. The correspondence label space is defined as $\mathcal{Y} = \left\{ y_{ij}|i=1,\cdots,N;j=1,\cdots,N \right\}$, where $y_{ij}$ represents the correspondence of pair $(I_i,T_j)$, \ie if $I_i$ and $T_j$ are matched (\ie positive pair), $y_{ij}=1$ otherwise $y_{ij}=0$. We assume each pair with the same indices has matched correspondence, \ie $y_{ii} = 1, i=1,\cdots, N$. However, due to the ubiquitous noise during data collection, some negative pairs are mismatched as positives, \aka noisy correspondence (NC)~\cite{huang2021learning,qin2022deep}, which would introduce wrong supervisory information and misguide model training, leading to performance degradation. Mathematically, we define NC as shown in~\Cref{def1}.
+
+\begin{definition}
+    Due to the existence of NC, the learner only has access to the noisy training data ($\mathcal{D}_\eta$), instead of clean data ($\mathcal{D}$). Thus, the correspondence label for pair $(I_i,T_j)$ is reconsidered as
+\begin{equation}
+    \tilde{y}_{ij} = \left\{ \begin{array}{ll}
+         y_{ij}&  \text{with probability }(1-\eta_{ij} ), \\
+          1 - y_{ik}& \text{with probability }  \bar{\eta}_{ik}, \forall k\neq j.\\
+    \end{array}\right.
+\end{equation}
+
+For all pairs,  conditioned on that  if $i=j$ then $y_{ij} = 1$ else $y_{ij} = 0$, we have $\sum_{j \neq k} \bar{\eta}_{ik} =  {\eta}_{ij}$. Similar to the definitions of noisy labels~\cite{ghosh2017robust},  we assume that NC is uniform, \ie $\eta_{ij} = \eta$ and $\bar{\eta}_{ik} = \frac{\eta}{N-1}, \forall k\neq j$, where $\eta$ is a constant to represent the noise rate. 
+
+\label{def1}
+\end{definition}
+
+The key to learning with noisy correspondence is to alleviate the misguiding impact and rectify the mismatched pairs. One direct solution is to enhance the robustness of loss function $\mathcal{L}$ against noisy pairs, which can help prevent overfitting on mismatched pairs. The second aims at using the memorization effect of DNNs~\cite{arpit2017closer} to discriminate the mismatched pairs, thus removing unreliable supervision from the training data.
+
+For image-text matching, images and texts are first projected into a shared representation space by two modality-specific networks, denoted as $v$ and $g$, respectively. The cross-modal similarity of a given pair $(I_i,T_j)$ is then computed as $S\left(v(I_i), g(T_j)\right)$, where $S(*)$ could be the cosine function~\cite{faghri2017vse++,chen2021learning} or a relevance inference module~\cite{lee2018stacked,diao2021similarity}. For brevity, $S\left(v(I_i), g(T_j)\right)$ is denoted as $S\left(I_i, T_j\right)$ or $S_{ij}$ in the following. The computed similarities could be considered as supporting evidence for retrieved results. Thus, the learning objective of image-text matching is to maximize the cross-modal similarities of positive pairs while minimizing those of negatives in the latent common space, which is commonly achieved by using contrastive learning~\cite{faghri2017vse++,lee2018stacked,diao2021similarity}.
+
+The widely-used triplet ranking loss~\cite{faghri2017vse++} has shown excellent performance in cross-modal contrastive learning tasks~\cite{faghri2017vse++,dong2019dual}. However, recent research~\cite{qin2022deep} has demonstrated that this loss function fails to perform well in image-text data with NCs, especially when using the hardest negative samples as comparison items. To address this issue, some works proposed an adaptive soft margin approach to improve the robustness of the ranking loss~\cite{huang2021learning,han2023noisy, yang2023bicro}, which is defined as follows:
+\begin{equation}
+    \mathcal{L}_{soft}\left(I_i, T_i\right)=\left[\hat{\alpha}_i-S\left(I_i, T_i\right)+S\left(I_i, \hat{T}_h\right)\right]_{+}+\left[\hat{\alpha}_i-S\left(I_i, T_i\right)+S\left(\hat{I}_h, T_i\right)\right]_{+},
+\end{equation}
+where $\hat{T}_h$ and $\hat{I}_h$ denote the hardest cross-modal samples in a mini-batch, $\hat{\alpha}_i$ is a soft margin adaptively computed by $\hat{\alpha}_i=\frac{m^{\hat{y}_{ii}}-1}{m-1} \alpha$, $\alpha$ is a constant margin, $m$ is a curve parameter, and $\hat{y}_{ii}$ is the rectified correspondence between $I_i$ and $T_i$. However, this approach has two disadvantages: 1) The margin setting $\alpha$ may not be consistent with the empirical setting under NC scenarios. 2) The inaccurate prediction $\hat{y}_{ii}$ can still easily produce the risk of misleading gradient, which can cause trivial solutions to fail, especially in the case of high noise (\eg the results of NCR~\cite{huang2021learning} and BiCro~\cite{yang2023bicro} on Flickr30K with 80\% noise). To overcome these limitations, we propose a novel Active Complementary Loss (ACL) under the risk minimization theory~\cite{manwani2013noise,ghosh2017robust} to provide noise tolerance for noisy pairs while ensuring discriminative learning.
+
+\subsection{Active Complementary Loss}
+
+For the image-text dataset $\mathcal{D}$, our goal is to learn a cross-modal model ($\mathcal{M}$) that can discriminatively identify the positive (matched) and negative (unmatched) pairs well for retrieval, which is intuitively equivalent to maximizing bidirectional matching probabilities of positives. The bidirectional matching probabilities for pair $(I_i, T_j)$ are defined as:
+
+\begin{equation}
+{p}^{\circ}_{ij} =
+ f(I_i, T_j)
+= \frac{e^{(S_{ij}/\tau)}}{\sum ^N_{l=1} e^{(S_{il}/\tau)}},\ \ \ 
+{p}^{\diamond}_{ij} =
+ f(T_j, I_i)
+= \frac{e^{(S_{ij}/\tau)}}{\sum ^N_{l=1} e^{(S_{lj}/\tau)}},
+\label{eq.3}
+\end{equation}
+
+where $\tau$ is a temperature parameter \cite{wu2018unsupervised,caron2020unsupervised,hu2021learning}, $f$ is regarded as the cross-modal decision function, and ``$\circ$, $\diamond$ '' means the two retrieval directions, \ie image-to-text and text-to-image, respectively. For any loss function $\mathcal{L}$, the matching risk of $f$ for image-text matching can be defined as
+\begin{equation}
+    R_\mathcal{L}(f) = \mathbb{E}_{(I_i,y_{i\cdot})\sim\mathcal{D}}\left[ \mathcal{L}(f(I_i,T_\cdot),y_{i\cdot}) \right] + \mathbb{E}_{(T_i,y_{\cdot i})\sim\mathcal{D}}\left[ \mathcal{L}(f(T_i,I_\cdot),y_{\cdot i}) \right],
+\end{equation}
+where $\mathbb{E}[\cdot]$ represents the expectation operator. Considering noisy correspondences, the risk of $f$ in noisy data $\mathcal{D}_\eta$ could be formulated as follows:
+\begin{equation}
+    R^\eta_\mathcal{L}(f) = \mathbb{E}_{(I_i,\tilde{y}_{i\cdot})\sim\mathcal{D}_\eta}\left[ \mathcal{L}(f(I_i,T_\cdot),\tilde{y}_{i\cdot}) \right] + \mathbb{E}_{(T_i,\tilde{y}_{\cdot i})\sim\mathcal{D}_\eta}\left[ \mathcal{L}(f(T_i,I_\cdot),\tilde{y}_{\cdot i}) \right],
+\end{equation}
+where $\tilde{y}_{ij}$ is the noisy correspondence label as shown in~\Cref{def1}. Thus, the cross-modal learning objective is to learn a model $\mathcal{M}^*_{\mathcal{L}}$ with a global minimizer $f^*_\eta$ of $R^\eta_\mathcal{L}(f)$. To achieve robustness, $f^*_\eta$ should be also the global minimizer of ${R}_\mathcal{L}(f)$ on the noise-free data.
+
+
+ Inspired by complementary contrastive learning~\cite{hu2023cross}, we propose to optimize the matching probabilities of all negative pairs for learning with noisy data indirectly, thereby avoiding fast overfitting to NC. Simultaneously, to further improve the noise tolerance, we introduce an exponential normalization to smooth the complementary loss. Hence, the robust complementary loss for pair $(I_i,T_i)$ could be formulated as: 
+\begin{equation}\label{rcl}
+    \begin{aligned}
+    \mathcal{L}_{r} (I_i,T_i,q) &=  \mathcal{L}^\circ_{r} (I_i,T_i,q) +  \mathcal{L}^\diamond_{r} (T_i,I_i,q) \\
+    &=\sum^N\limits_{j \neq i}\tan  (p^\circ_{ij})/\Big(\sum^N\limits_{k = 1} \tan ( p^\circ_{ik} ) \Big)^q + \sum^N\limits_{j \neq i} \tan ( p^\diamond_{ji})/\Big(\sum^N\limits_{k = 1} \tan  (p^\diamond_{ki} )\Big)^q ,
+    \end{aligned}
+\end{equation}
+where $\tan(\cdot)$ is the tan function and $q\in[0,1]$ is a regulatory factor. Theoretically, for any input $(I_i,T_i)$ under noise rate $\eta\leq\frac{N-1}{N}$, we can show (see proofs in supplementary material)
+\begin{equation}
+    C \leq R_{\mathcal{L}_r}(f^*) - R_{\mathcal{L}_r}(f^*_\eta)\leq 0,
+     \label{eqbd}
+\end{equation}
+where $C = 2\eta (A^{(1-q)}_{\min} - A^{(1-q)}_{\max})/(1-\frac{N\eta}{N-1})
+\leq 0$.
+$C$ increases as $q$ increases and when $q=1$,  $C$ takes the maximum value $0$. $A_{\min}$ and $A_{\max}$ are the maximum and minimum values of $\sum^N_{j=1}\tan(p_{ij})$ under the condition $\sum^N_{j=1}p_{ij}=1$, where $1 < A_{\min} < A_{\max}$, and $0\leq p_{ij} \leq 1$ ($p_{ij} = p^\circ_{ij}\text{ or } p_{ij}^\diamond$). $f^*$ and $f^*_\eta$ are the global minimizers of ${R}_{\mathcal{L}_{r}}(f)$ and ${R}^\eta_{\mathcal{L}_{r}}(f)$, respectively. 
+\textbf{Analysis:} The larger the $q$ is, $C\rightarrow0$, the tighter the bound of \Cref{eqbd} is. When $q=0$, $\mathcal{L}_r$ is a standard complementary contrastive loss~\cite{hu2023cross}.  
+In the extreme case of $q = 1$, ${R}_{\mathcal{L}_{r}}(f^*) = {R}_{\mathcal{L}_{r}}(f^*_\eta)$,
+\ie $\mathcal{L}_r$ is noise tolerant since $f^*_\eta$ and $f^*$ are simultaneously the minimizers of ${R}_{\mathcal{L}_{r}}(f)$ (It can also be obtained from \Cref{th2} that $\mathcal{L}_r$ is robust under $q=1$). Put another way, as $q$ approaches 1, the optimum $f^*_\eta$ of the noisy risk will be close to $f^*$ on the clean data more likely, which implies noise tolerance. 
+Like most robust learning methods~\cite{ma2020normalized,zhang2018generalized}, we should focus more on reliable data, while less on unreliable data. In other words, a smaller value of $q$ is used for more convincing pairs (with larger $\hat{y}_{ii}$), while a larger value of $q$ is for less convincing pairs (with smaller $\hat{y}_{ii}$). Thus, we could empirically utilize the soft corrected label $\hat{y}_{ii}$ to recast $q$ like the soft margin used in NCR~\cite{huang2021learning}, \ie $q = 1-\hat{y}_{ii}$. However, indirect learning will face the underfitting problem, resulting in suboptimal/insufficient performance. To address this issue, we introduce a weighted active learning loss $\mathcal{L}_{d}$ to make the model pay more attention to positive/matched pairs, \ie $ \mathcal{L}_{d}(I_i,T_i,\tilde{y}_{ii}) = - \tilde{y}_{ii} \left( \log p^\circ_{ii} + \log p^\diamond_{ii} \right)$. This positive learning will mine discrimination from direct supervision, which complements the complementary learning loss. By combining active and complementary learning losses, our active complementary loss is defined as:
+\begin{equation}
+    \mathcal{L}_{acl}(I_i,T_i,\hat{y}_{ii}) =  \mathcal{L}_{d}(I_i,T_i, \hat{y}_{ii}) + \lambda \mathcal{L}_{r}(I_i,T_i, 1-\hat{y}_{ii}),
+    \label{eq8}
+\end{equation}
+where $\lambda$ is a scale factor to prevent $\mathcal{L}_d$ from dominating the cross-modal training and quickly overfitting NC. As shown in \Cref{eq8}, when $(I_i, T_i)$ is a noisy pair and $\hat{y}_{ii}$ ideally approaches 0, the loss emphasizes robust complementary learning, thus mitigating overfitting to NC. Conversely, when $(I_i, T_i)$ is a clean pair and $\hat{y}_{ii}$ ideally approaches 1, the loss focuses on discriminative learning, thereby facilitating the accurate acquisition of visual-semantic associations. However, due to computational resource constraints, we cannot use the entire training set to perform cross-modal learning. Therefore, we relax $N$ to the size $K$ of the mini-batch $\mathbf{x}$ by Monte Carlo sampling. Without loss of generality, the final loss for cross-modal learning is given by:
+\begin{equation}
+    \mathcal{L}_{acl}(\mathbf{x}) = \frac{1}{K} \sum^K_{i=1} \mathcal{L}_{acl}(I_i,T_i,\hat{y}_{ii}).
+    \label{cnlloss}
+\end{equation}
+\begin{lemma}
+     In an instance-level cross-modal matching problem, under uniform NC with noise rate $\eta \leq \frac{N-1}{N}$,  when $q=1$, $\mathcal{L}_r$ is noise tolerant.
+     \label{th2}
+\end{lemma}
+\begin{proof}
+    The proofs of \Cref{eqbd} and \Cref{th2} can be found in the supplementary material.
+\end{proof}
+
+
+
+
+
+
+
+\subsection{Self-refining Correspondence Correction \label{sec3.4}}
+Another key to solving NC is how to obtain accurate correspondence estimations so as to reduce the adverse effects of NC.
+To this end, we propose an effective Self-refining Correspondence Correction paradigm (SCC). SCC leverages Momentum Correction (MC) to aggregate historical predictions, providing stable and accurate correspondence estimations while alleviating the over-memorization to NC. To eliminate the error accumulation against NC, we combine multiple independent Self-Refining (SR) in the entire training process. Specifically, the MC for the correspondence of $(I_i,T_i)$ at the $t$-th epoch is defined as follows:
+\begin{equation}
+    {y}_{ii}^t =  
+        \beta {y}^{t-1}_{ii} + (1-\beta) \hat{p}^t(I_i,T_i),
+        \label{eq.9}
+\end{equation}
+where $\beta \in (0,1)$ represents the momentum coefficient, $ \hat{p}^t(I_i,T_i) = (p^\circ_{ii} +  p^\diamond_{ii})/2$ denotes the average matching probability at the $t$-th epoch. Through adequate cross-modal training, our CRCL will obtain a more stable and accurate soft correspondence label by smoothly evolving and expanding the receptive field of correction based on historical predictions with MC. Notably, as training progresses, some pairs would always be incorrectly distinguished as clean or noisy ones, resulting in the error accumulation of the estimated labels (see \Cref{fig1c}). Additionally, even though the updates performed by MC help reduce the negative influence of NC, the initial correspondence label $\left(y^0_{ii}\right)$ still greatly affects the quality of subsequent smooth corrections. In other words, providing more accurate initial correspondences weakens the DNN's memorization against NC, thereby reducing the risk of error accumulation.
+
+\begin{algorithm}[!htb] 
+   \caption{The pseudo-code of CRCL}  
+   \textbf{Input:} A noisy training dataset $\mathcal{D}_\eta$, image-text matching model $\mathcal{M}(\Theta)$;\\  
+   \textbf{Initialize:} $\Theta$;\\
+   \For{$e^j$ in $\left[e_1,e_2,\cdots,e_m\right]$}{
+        \For{$t$ in $[1,2,\cdots,e^j]$}{
+            \For {$\mathbf{x}$ in batches}{
+                Obtain the bidirectional matching probabilities of $\mathbf{x}$ with \Cref{eq.3};\\ 
+                Update the correspondence labels with \Cref{eq.11};\\
+                Obtain the corrected labels with \Cref{eq.12};\\
+                Compute the overall loss $\mathcal{L}_{acl}(\mathbf{x})$ with \Cref{cnlloss};\\
+                ${\Theta}=\text{Optimizer}\left(\Theta,\mathcal{L}_{acl}(\mathbf{x})\right)$;\\
+            }
+        }
+        Re-initialize  $\Theta$;\\
+   }
+   \textbf{Output:} The learned parameters $\hat{\Theta}$;  
+   \label{alg1}
+\end{algorithm}
+
+To achieve accurate initial correspondence estimations, SCC refines updated correspondence labels historically in epochs using MC through multiple concatenated SR pieces during the entire training process. Subsequent SR pieces could gradually aggregate the learned correspondence knowledge from previous pieces, thus improving the quality of estimated correspondences progressively. Furthermore, each SR piece is trained from scratch, which aims to clear accumulated error/noise that has been memorized, thus providing more accurate correspondence predictions for subsequent training. Mathematically, SCC consists of multiple SR pieces ($[e_1,\cdots,e_m]$) based on MC, where each piece undergoes robust learning for $e_{j}$ ($j\in\{1,\cdots,m\}$) epochs. Thus, during the $j$-th SR training, the estimated soft label of the $i$-th pair at $t$-th epoch is reconsidered as follows:
+\begin{equation}
+y^{(j,t)}_{ii} = \left\{ \begin{array}{ll}
+y^{{(j-1,e_{j-1})}}_{ii},&\text{if $t\leq e_f$}, \\ 
+\hat{p}^{(j,t-1)}(I_i,T_i), &\text{if $j = 1$ and $t=(e_f+1)$}, \\ 
+\beta y^{(j,t-1)}_{ii} + (1-\beta) \hat{p}^{(j,t-1)}(I_i,T_i), & \text{otherwise},
+\end{array}\right.
+ \label{eq.11}
+\end{equation}
+where $\hat{p}^{(j,t-1)}(*)$ is the average matching probability of pair $(I_i,T_i)$ at the $(t-1)$-th epoch during the $j$-th training piece, $e_f$ denotes the number of epochs to freeze the correspondence label, preventing insufficient model training in the early stage from affecting the correction quality. In our experiments, we set all initial labels to 1, assuming that all training pairs are matched at the beginning of the first SR piece. In practice, we assign the label of the confident noisy pair as 0 to reduce the risk of producing erroneous supervision information. Therefore, the final corrected correspondence label used for $\mathcal{L}_{acl}$ is defined as:
+\begin{equation}
+     \hat{y}_{ii} = \left\{ \begin{array}{ll}
+        0,&\text{if $ y^{(j,t)}_{ii}< \epsilon$}, \\ 
+        y^{(j,t)}_{ii},&\text{otherwise},
+\end{array}\right.
+     \label{eq.12}
+\end{equation}
+where $\epsilon=0.1$ is a fixed threshold used to filter the confident noisy pairs in experiments. 
+
+
+Experiments
+In this section, comprehensive experiments are conducted on three widely used benchmarks to demonstrate the robustness and effectiveness of our CRCL under multiple scenarios, including synthetic noise, real-world noise, and well-annotated correspondence.
+
+\subsection{Datasets and Protocols}
+
+\textbf{Datasets:} For an extensive evaluation, we use three benchmark datasets (\ie Flickr30K \cite{young2014image}, MS-COCO \cite{lin2014microsoft} and CC152K \cite{huang2021learning}) in our experiments. More specifically, Flickr30K is a widely-used image-text dataset collected from the Flickr website, which comprises 31,000 images and each one has 5 corresponding textual descriptions. Following \cite{karpathy2015deep}, 30,000 images are employed for training, 1,000 images for validation, and 1,000 images for testing in our experiments. MS-COCO is a large-scale image-text dataset, which has 123,287 images, and 5 captions are given to describe each image. We follow the split of \cite{karpathy2015deep,lee2018stacked} to carry out our experiments, \ie 5000 validation images, 5000 test images, and the rest for training. CC152K is a subset of Conceptual Captions (CC) \cite{sharma2018conceptual} collected in the real world, which is selected by \cite{huang2021learning}. Due to the absence of manual annotation, there are about 3\% $\thicksim$ 20\% incorrect correspondences in CC, \ie real-world noisy correspondences. CC152K contains 150,000 image-text pairs for training, 1,000 pairs for validation, and 1,000 pairs for testing.
+
+\textbf{Evaluation Protocols:} Recall at K (R@K=1, 5, and 10) is used to measure the performance of bidirectional retrievals, which is defined as the proportion of the queries with the correct item in the top K retrieved results. Besides, flowing~\cite{qin2022deep}, we also take the sum of all Recalls to evaluate the overall performance, \ie rSum. 
+\subsection{Implementation Details}
+Our CRCL is a generalized robust framework that could extend existing methods to confront noisy correspondences. To demonstrate the effectiveness and robustness of CRCL, we extend two representative methods, \ie  VSE$\infty$\cite{chen2021learning} and SGRAF (SGR and SAF) \cite{diao2021similarity}, to perform robust image-text matching, respectively. Specifically, the shared hyper-parameters are set as the same as the original works \cite{diao2021similarity,chen2021learning}, \eg the batch size is 128, the word embedding size is 300, and the joint embedding dimensionality is 1,024. More specific hyper-parameters and implementation details are given in our supplementary material due to the space limitation.
+
+\subsection{Comparison with State-of-the-Arts \label{sec4.3}}
+In this section, we evaluate our CRCL by comparing it with 7 state-of-the-art methods on three benchmarks, \ie SCAN (ECCV'18) \cite{lee2018stacked}, SGRAF (SGR and SAF, AAAI'21) \cite{diao2021similarity}, VSE$\infty$ (CVPR'21) \cite{chen2021learning}, NCR (NeurIPS'21) \cite{huang2021learning}, DECL (ACM MM'22) \cite{qin2022deep}, BiCro (CVPR'23)~\cite{yang2023bicro} and 
+MSCN (CVPR'23)~\cite{han2023noisy}. For a fair comparison, all tested approaches adopt the same visual features (BUTD features)~\cite{lee2018stacked} and textual backbone Bi-GRU~\cite{schuster1997bidirectional}. To comprehensively investigate the robustness of our method, we artificially inject synthetic false correspondence of different ratios by proportionally shuffling the captions on Flickr30K and MS-COCO like \cite{huang2021learning}, \ie 20\%, 40\%, 60\%, and 80\% noise rates. In addition to synthetic noise, we also evaluate the robustness of tested methods against the real-world noisy correspondences on CC152K. Due to the space limitation, we only provide the results on MS-COCO 5K under well-annotated correspondences in~\Cref{tb5k}. For fairness, like~\cite{qin2022deep,yang2023bicro}, the ensemble results of CRCL-SGRAF are reported in the paper. More extensive comparison results are provided in the supplementary material to fully demonstrate the superiority of CRCL.
+
+\begin{table}[h]
+\caption{Performance comparison (R@K(\%) and rSum) of image-text matching on Flickr30K and MS-COCO 1K. The highest scores are shown in \textbf{bold}. `*' means robust methods.}
+\label{tb1}
+\Large
+\centering
+\setlength{\abovedisplayskip}{5pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{c|l|ccc|ccc|c|ccc|ccc|c}
+\toprule
+\multicolumn{2}{c|}{}&\multicolumn{7}{c|}{\centering Flickr30K}&
+\multicolumn{7}{c}{\centering MS-COCO 1K}\\
+\multicolumn{2}{c|}{}&\multicolumn{3}{c|}{\centering Image $\rightarrow$ Text}&
+\multicolumn{3}{c|}{\centering Text $\rightarrow$ Image}&&
+\multicolumn{3}{c|}{\centering Image $\rightarrow$ Text}&
+\multicolumn{3}{c|}{\centering Text $\rightarrow$ Image}&
+\\\midrule
+Noise                &        Methods      & R@1  & R@5  & R@10 & R@1  & R@5  & R@10 & rSum  & R@1  & R@5  & R@10 & R@1  & R@5  & R@10 & rSum  \\ \midrule
+\multirow{8}{*}{20\%} 
+& SCAN&56.4&81.7&89.3&34.2&65.1&75.6&402.3&28.9&64.5&79.5&20.6&55.6&73.5&322.6\\
+& SAF& 51.8&79.5&88.3&38.1&66.8&76.6&401.1&41.0&78.4&89.4&38.2&74.0&85.5&406.5\\
+& SGR& 61.2&84.3&91.5&44.5&72.1&80.2&433.8&49.1&83.8&92.7&42.5&77.7&88.2&434.0\\
+& VSE$\infty$& 69.0 & 89.2&  94.8&  48.8 & 76.3 & 83.8&461.9&73.5&93.3& 97.0&  57.4 &86.5 &92.8&500.5 \\
+& NCR* &76.7&93.9&96.9&57.5&82.8&89.2&497.0&77.0&95.6&98.1&61.5&89.3&95.1&516.6\\
+& DECL* &75.6&93.8&97.4&58.5&82.9&89.4&497.6&77.1&95.9&98.4&61.6&89.1&95.2&517.3\\
+& BiCro*&\textbf{78.1} &94.4& {97.5} &{60.4}& {84.4}& {89.9}& {504.7}& {78.8} &{96.1} &98.6 &63.7 &90.3& 95.7& 523.2\\
+& MSCN*& {77.4}&{94.9}&{97.6}&59.6&83.2&89.2&501.9&78.1&\textbf{97.2}&\textbf{98.8}&{64.3}&{90.4}&{95.8}&{524.6}\\
+& \textbf{CRCL}*& {77.9}&\textbf{95.4}&\textbf{98.3}&\textbf{60.9}&\textbf{84.7}&\textbf{90.6}&\textbf{507.8}&\textbf{79.6}& {96.1}& {98.7}& \textbf{64.7}& \textbf{90.6} &\textbf{95.9} &\textbf{525.6} \\\midrule
+\multirow{8}{*}{40\%} 
+& SCAN&29.9& 60.5& 72.5& 16.4& 38.5& 48.6& 266.4&30.1&65.2&79.2&18.9&51.1&69.9&314.4\\
+& SAF& 34.3& 65.6& 78.4& 30.1& 58.0& 68.5& 334.9&36.0&74.4&87.0&33.7&69.4&82.5&383.0\\
+& SGR& 47.2& 76.4& 83.2& 34.5& 60.3& 70.5& 372.1&43.9&78.3&89.3&37.0&72.8&85.1&406.4\\
+& VSE$\infty$& 30.2 &58.3 &70.2 &22.3 &49.6 &62.7&293.3&53.3& 84.3 &92.1&31.4& 63.8& 75.0&399.9\\
+& NCR* &75.3& 92.1& 95.2& 56.2& 80.6& 87.4& 486.8&76.5&95.0&98.2&60.7&88.5&95.0&513.9\\
+& DECL*&72.5 &93.1 &97.0& 55.8 &81.2& 88.1& 487.7&77.1&95.7&\textbf{98.3}&61.5&89.2&95.3&517.1\\
+& BiCro*&74.6 &92.7& 96.2& 55.5& 81.1& 87.4 &487.5 &77.0 &\textbf{95.9} &\textbf{98.3}& 61.8 &89.2 &94.9 &517.1\\
+& MSCN*& 74.4& 94.4 &96.9 &57.2 &81.7& 87.6& 492.2&74.8&94.9&98.0&60.3&88.5&94.4&510.9\\
+&\textbf{CRCL}*&\textbf{77.8}&\textbf
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

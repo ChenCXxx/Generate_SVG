@@ -1,0 +1,156 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Graph neural networks (GNNs)~\citep{gcn-kipf2017semi, gat-vel2018graph, gin-xu2018how} have achieved remarkable success in learning from real-world graph-structured data due to their unique ability to capture both feature-wise and topological information. Extending their success, GNNs are widely applied in various research fields and industrial applications including quantum chemistry~\citep{gilmer2017neural, wang2022comenet}, drug discovery~\citep{luo2021graphdf, wang2020advanced, wu2018moleculenet}, large-scale social networks~\citep{pmlr-v162-xie22e, yu2022GraphFM}, and recommender systems~\citep{fan2019graph, ying2018graph}. While multiple approaches have been proposed and studied to improve GNN performance, GNN explainability is an emerging area and has a smaller body of research behind it. Recently, explainability has gained more attention due to an increasing desire for GNNs with more security, fairness, and reliability. Being able to provide a good explanation to a GNN prediction increases model reliability and reduces the risk of incorrect predictions, which is crucial in fields such as molecular biology, chemistry, fraud detection, etc. 
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{figures/pipeline.pdf}
+    \caption{A comparison between typical end-to-end task-specific GNN explainers and the proposed task-agnostic explanation pipeline. To explain a multitask model, typical explanation pipelines need to optimize multiple explainers, whereas the two-stage explanation pipeline only learns one embedding explainer that can cooperate with multiple lightweight downstream explainers.}\label{fig:pipeline}
+\end{figure*}
+
+Existing methods adapting the explanation methods for convolutional neural networks (CNNs) or specifically designed for GNNs have shown promising explanations on multiple types of graph data.
+A recent %concrete 
+survey~\citep{yuan2020explainability} categorizes existing explanation methods into gradient-based, perturbation, decomposition, and surrogate methods.
+In particular, perturbation methods involve learning or optimization~\citep{wanyu-icml21, lin2022orphicx, luoparameterized, ying2019gnnexplainer, yuan2021explainability} and, while bearing higher computational costs, generally achieve state-of-the-art performance in terms of explanation quality. These methods train \textit{post-hoc} explanation models on top of the prediction model to be explained. Earlier approaches like GNNExplainer~\citep{ying2019gnnexplainer} require training or optimizing an individual explainer for each data instance, i.e., a graph or a node to be explained. In contrast, PGExplainer~\citep{luoparameterized} performs inductive learning, i.e., it only requires a one-time training, and the explainer can be generalized to explain all data instances without individual optimization. Compared to other optimization-based explanation methods, PGExplainer significantly improves efficiency in terms of time cost without performance loss by learning. Following a similar inductive learning paradigm, more recent work ReFine~\cite{wang2021towards} and GSAT~\cite{miao2022interpretable} aim to provide multi-grained explanations and jointly learned explanations with GNNs, respectively. 
+
+However, even state-of-the-art explanation methods like PGExplainer are still task-specific at training and hence suffer from two crucial drawbacks. 
+First, current methods are inefficient in explaining multitask prediction for graph-structured data. For example, one may need to predict multiple chemical properties in drug discovery for a molecular graph. In particular, ToxCast from MoleculeNet has $167$ prediction tasks. In these cases, it is common to apply a single GNN model with multiple output dimensions to make predictions for all tasks. However, one is unable to employ a single explainer to explain the above model, since current explainers are trained specifically to explain one prediction task. As a result, in the case of ToxCast, one must train 167 explainers to explain the GNN model.
+Second, in industry settings, it is common to train GNN models in a two-stage fashion due to scaling, latency, and label sparsity issues. The first stage trains a GNN-based embedding model with a massive amount of unlabeled data in an unsupervised manner to learn embeddings for nodes or graphs. The second stage trains lightweight models such as multilayer perceptrons (MLPs) using the frozen embeddings as input to predict the downstream tasks. In the first stage, the downstream tasks are usually unknown or undefined, and existing task-specific explainers cannot be applied. Also, there can be tens to hundreds of downstream tasks trained on these GNN embeddings, and training a separate explainer for each task is undesirable and downright impossible.
+
+To address the above limitations, we present a new task-agnostic explanation pipeline, where the learned explainer is independent from downstream tasks and can take downstream models as input conditions, as shown in Figure~\ref{fig:pipeline}. Specifically, we decompose a prediction model into a GNN embedding model and a downstream model, designing separate explainers for each component. We design the downstream explainers to cooperate with the embedding explainer. The embedding explainer is trained using a self-supervised training framework, which we dub Task-Agnostic GNN Explainer (\ours), with no knowledge of downstream tasks, models, or labels. In contrast to existing explainers, the learning objective for \ours is computed at the graph or node embeddings without involving task-related predictions. In addition to eliminating the need for downstream tasks in \ours, we argue that the self-supervision performed on the embeddings can bring an additional performance boost in terms of the explanation quality compared to existing task-specific baselines such as GNNExplainer and PGExplainer. %due to the non-injective property of the fully-connected layer-based prediction head.
+
+We summarize our contributions as follows: 1) We introduce the task-agnostic explanation problem and propose a two-stage explanation pipeline involving an embedding explainer and a downstream explainer. This enables the explanation of multiple downstream tasks with a single embedding explainer. 2) We propose a self-supervised training framework \ours, which is based on conditioned contrastive learning to train the embedding explainer. The training of \ours requires no knowledge of downstream tasks. 3) We perform experiments on real-world datasets and observe that \ours outperforms existing learning-based explanation baselines in terms of explanation quality, universal explanation ability, and the time required for training and inference.
+
+\paragraph{Relations with Prior Work} Our work studies a novel explanation problem under the two-stage and multi-task settings. The settings are important in both industrial and academic scenarios but have not been studied by prior work. Whereas existing studies focus on designing optimization approaches~\cite{ying2019gnnexplainer, yuan2021explainability} and explainer architectures~\cite{luoparameterized} under the typical task-specific setting, our work focuses on an orthogonal problem to enable task-agnostic explanations with the proposed framework including the universal embedding explainer and conditioned learning objectives. 
+
+
+Task-Agnostic Explanations
+
+\begin{table*}[]
+\centering\label{tab:agno}
+\small
+\caption{Comparisons on properties of common GNN explainers. Inductivity and task-agnosticism are inapplicable for gradient/rule-based methods as they do not require learning. In the last column, we show the number of required explainers for a dataset with $N$ samples and $M$ tasks.}
+\begin{tabular}{lcccc}
+\toprule
+                         & \multicolumn{1}{l}{Learning} & \multicolumn{1}{l}{Inductive} & \multicolumn{1}{l}{Task-agnostic} & \multicolumn{1}{l}{\# explainers required} \\ \hline
+Gradient- \& Rule-based                & No                           & -                             & -                                 & $1$                                             \\\hline
+GNNExplainer~\citep{ying2019gnnexplainer}             & Yes                          & No                            & No                                & $M*N$                                           \\
+SubgraphX~\citep{yuan2021explainability}                & Yes                          & No                            & No                                & $M*N$                                           \\
+PGExplainer~\citep{luoparameterized}              & Yes                          & Yes                           & No                                & $M$                                             \\
+Task-agnostic explainers & Yes                          & Yes                           & Yes                               & $1$                                             \\ \bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Notations and Learning-based GNN explanation}
+Our study considers the attributed graph $G$ with node set $V$ and edge set $E$. We formulate the attributed graph as a tuple of matrices $(\bm A, \bm X)$, where $\bm A\in\{0,1\}^{|V|\times|V|}$ denotes the adjacency matrix and $\bm X\in\mathds{R}^{|V|\times d_f}$ denotes the feature matrix with feature dimension of $d_f$. We assume that the prediction model $F$ that is to be explained operates on graph-structured data through two components: a GNN-based embedding model and lighter downstream models. Denoting the input space by $\mathcal{G}$, a node-level embedding model $\mathcal{E}_n:\mathcal{G}\to\mathds{R}^{|V|\times d}$ takes a graph as input and computes embeddings of dimension $d$ for all nodes in the graph, whereas a graph-level embedding model $\mathcal{E}_g:\mathcal{G}\to\mathds{R}^{1\times d}$ computes an embedding for the input graph. Subsequently, the downstream model $\mathcal{D}: \mathds{R}^{d}\to\mathds{R}$ computes predictions for the downstream task based on the embeddings.
+
+Typical GNN explainers consider a task-specific GNN-based model as a complete unit, \textit{i.e.}, $F:=\mathcal{D}\circ\mathcal{E}$. Given a graph $G$ and the GNN-based model $F$ to be explained
+, our goal is to identify the subgraph $G_{sub}$ that contributes the most to the final prediction made by $F$. In other words, we claim that a given prediction is made because $F$ captures crucial information provided by some subgraph $G_{sub}$. The learning-based (or optimization-based) GNN explanation employs a parametric explainer $\mathcal{T}_\theta$ associated with the GNN model $F$ to compute the subgraph $G_{sub}$ of the given graph data. Concretely, the explainer $\mathcal{T}_\theta$ computes the importance score for each node or edge, denoted as $w_i$ or $w_{ij}$, or masks for node attributes denoted as $m$. 
+It then selects the subgraph $G_{sub}$ induced by important nodes and edges, \textit{i.e.}, whose scores exceed a threshold $t$, and by masking the unimportant attributes. In our study, we follow~\cite{luoparameterized}, focusing on the importance of edges to provide explanations to GNNs.
+Formally, we have $G_{sub}:= (V, E_{sub}) = \mathcal{T}_\theta(G)$, where $E_{sub}=\{(v_i, v_j):(v_i, v_j)\in E, w_{ij}\ge t\}$.
+
+\subsection{Task-Agnostic Explanations}
+As introduced in Section~\ref{sec:intro}, all existing learning-based or optimization-based explanation approaches are task-specific and hence suffer from infeasibility or inefficiency in many real-application scenarios. In particular, they %become unavailable 
+are of limited use when downstream tasks are unknown or undefined, and fail to employ a single explainer to explain a multitask prediction model. 
+
+To enable the explanation of GNNs in two-stage training and multitask scenarios, we introduce a new explanation paradigm called the task-agnostic explanation. The task-agnostic explanation considers a whole prediction model as an embedding model followed by any number of downstream models. It focuses on explaining the embedding model regardless of the number or the existence of downstream models. In particular, the task-agnostic explanation trains only one explainer $\mathcal{T}^{(tag)}_\theta$ to explain the embedding model $\mathcal{E}$, which should satisfy the following features. First, given an input graph $G$, the explainer $\mathcal{T}^{(tag)}_\theta$ should be able to provide different explanations according to specific downstream tasks being studied. Table~1 compares the properties of common GNN explanation methods and the desired task-agnostic explainers in multitask scenarios. Second, the explainer $\mathcal{T}^{(tag)}_\theta$ can be trained when only the embedding model is available, \textit{e.g.}, at the first stage of a two-stage training paradigm, regardless of the presence of downstream tasks. When downstream tasks and models are unknown, $\mathcal{T}^{(tag)}_\theta$ can still identify which components of the input graph are important for certain embedding dimensions of interest.
+
+
+
+The \ours Framework
+Our explanation framework \ours follows the typical scheme of GNN explanation introduced in the previous section. It provides explanations by identifying important edges in a given graph and removing the edges that lead to significant changes in the final prediction. Specifically, the goal of the \ours is to predict the importance score for each edge in a given graph. Different from existing methods, the proposed \ours breaks down typical end-to-end GNN explainers into two components. We now provide general descriptions and detailed formulations to the proposed framework.
+
+\subsection{Task-Agnostic Explanation Pipeline}
+Following the principle of the desired task-agnostic explanations, we introduce the task-agnostic explanation pipeline, where a typical explanation procedure is performed in two steps. In particular, we decompose the typical end-to-end learning-based GNN explainer into two parts: the embedding explainer $\mathcal{T}_\mathcal{E}$ and the downstream explainer $\mathcal{T}_{down}$, corresponding to the two components in the two-stage training and prediction procedure. We compare the typical explanation pipeline and the two-stage explanation pipeline in Figure~\ref{fig:pipeline}. The embedding explainer and downstream explainers can be trained or constructed independently from each other. In addition, the embedding explainer can cooperate with any downstream explainers to perform end-to-end explanations on input graphs.
+The downstream explainer aims to explain task-specific downstream models. As downstream models are usually lightweight MLPs, we simply adopt gradient-based explainers for downstream explainers without training. The downstream explainer takes a downstream model and the graph or node embedding vector as inputs and computes the importance score of each dimension on the embedding vector. The importance scores then serve as a condition vector input to the embedding explainer. Given the condition vector, the embedding explainer explains the GNN-based embedding model by identifying an important subgraph from the input graph data. In other words, given different condition vectors associated with different downstream tasks or models, the embedding explainer can provide corresponding explanations for the same embedding model.
+Formally, we denote the downstream explainer for models from $\mathscr{D}$ by $\mathcal{T}_{down}:\mathscr{D}\times\mathds{R}^d\to\mathds{R}^d$, which maps input models and embeddings into importance scores $\bm m$ for all embedding dimensions. We denote the embedding explainer associated with the embedding model $\mathcal{E}$ by $\mathcal{T}_\mathcal{E}: \mathds{R}^d\times\mathcal{G}\to\mathcal{G}$, which maps a given graph into a subgraph of higher importance, conditioned on the embedding dimension importance $\bm m\in\mathds{R}^d$.
+
+The training procedures of the embedding explainer are independent of downstream tasks or downstream explainers. In particular, the downstream explainer is obtained from the downstream model only, and the training of the embedding explainer only requires the embedding model and the input graphs. As downstream models are usually constructed as stacked fully connected (FC) layers and the explanation of FC layers has been well studied, our study mainly focuses on the non-trivial training procedure and design of the embedding explainer. 
+
+\subsection{Training embedding explainer under Self-supervision}
+A straightforward idea of explaining an embedding model with no knowledge of downstream tasks is to employ existing explainers and perform explanation on the pretext task, such as graph reconstruction~\citep{kipf2016variational} or context prediction~\citep{Hu2020Strategies}, used during the pre-training of GNNs. However, such explanations cannot be generalized to future downstream tasks as there are limited dependencies between the pretext task and downstream tasks. Therefore, training an embedding explainer without downstream models or labels is challenging, and it is desirable to develop a generalizable training approach for the embedding explainer. To this end, we propose a self-supervised learning framework for the embedding explainer.
+
+The learning objective of the proposed framework seeks to maximize restricted mutual information (MI) between two embeddings, i.e., one of the given graph and one of the corresponding subgraph of high importance induced by the explainer, in a conditioned subspace. We introduce a masking vector $\bm p\in\mathds{R}^d$ as the condition to indicate specific dimensions of embeddings on which to maximize the MI. During the explanation, we obtain the masking vector from the importance vector computed by any downstream explainer $\mathcal{T}_{down}$. As no downstream importance vector is available at training, we sample the masking vector $\bm p$ from a multivariate Laplace distribution due to the sparse gradient, \textit{i.e.}, only a few dimensions are of high importance, assuming embeddings from well-trained models are informative with low dimension redundancy.
+Formally, the learning objective based on the restricted MI is
+\begin{equation}
+    \max_\theta \mathrm{E}_{\bm p} [\mathbf{MI}(\bm p\otimes \mathcal{E}(G), \bm p\otimes \mathcal{E}(\mathcal{T}_\theta(\bm p, G)))],
+\end{equation}
+where $\mathbf{MI}(\cdot,\cdot)$ computes the mutual information between two random vectors, $\bm p$ denotes the random masking vector sampled from a certain distribution, $\mathcal{T}_\theta(\bm p, G)$ computes the subgraph of high importance, and $\otimes$ denotes the element-wise multiplication, which applies masking to the embeddings $\mathcal{E}(\cdot)$. Figure~\ref{fig:obj} outlines the training framework and objective. Intuitively, given an input graph and the desired embedding dimensions to be explained, the explainer $\mathcal{T}_\theta$ predicts the subgraph whose embedding shares the maximum mutual information with the original embedding on the desired dimensions.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{figures/explainer_training.pdf}
+    \caption{Overviews of the self-supervised training framework for the embedding model (right) and the architecture of the parametric explainers (left). During training, we generate random condition vectors $\bm p$ as an input to the embedding explainer and mask the embeddings. The learning objective seeks to maximize the mutual information between two embeddings on certain dimensions.}\label{fig:obj}
+\end{figure*}
+
+Practically, the mutual information is intractable and is hence hard to directly compute. A common approach to achieving efficient computation and optimization is to adopt the upper bound estimations of mutual information~\cite{xie2022self}, namely, the Jenson-Shannon Estimator (JSE)~\citep{nowozin2016f} and the InfoNCE~\citep{gutmann2010noise}. These upper bound estimations are also referred to as contrastive loss and are widely applied in self-supervised representation learning~\citep{hjelm2018learning, sun2019infograph, velikovi2019deep} for both images and graphs. Adopting these estimators, the objectives are efficiently computed as
+\begin{equation}
+\begin{split}
+    \min_\theta\frac{1}{N}\sum_{i=1}^N \log\big[\sigma\big((\bm p\otimes \bm z_i)^T(\bm p\otimes \bm z_{i,\theta})\big)\big]
+    +\frac{1}{N^2-N}\sum_{i\ne j}\log\left[1-\sigma\left((\bm p\otimes \bm z_i)^T(\bm p\otimes \bm z_{j,\theta})\right)\right],\\
+\end{split}
+\end{equation}
+\begin{equation}
+    \min_\theta -\frac{1}{N}\sum_{i=1}^N\left[\log\frac{\exp\{(\bm p\otimes \bm z_i)^T(\bm p\otimes \bm z_{i,\theta})\}}{\sum_{j\ne i}\exp\{(\bm p\otimes \bm z_i)^T(\bm p\otimes \bm z_{j,\theta})\}}\right],
+\end{equation}
+for JSE and InfoNCE, respectively, where $N$ denotes the number of samples in a mini-batch, $\sigma$ denotes Sigmoid function, $\bm z_i$ and $\bm z_{i, \theta}$ are embeddings of the original graph $G_i$ and its subgraph $\mathcal{T}_\theta(G_i)$, or target nodes of the two graphs. Our objective involves condition vectors as masks on the embeddings, which differs from typical contrastive loss used in self-supervised representation learning. We hence call the proposed objective the conditioned contrastive loss. 
+
+To restrict the size of subgraphs given by the explainer, we follow previous studies~\citep{luoparameterized} to add a size regularization term $R$, computed as the averaged importance score, to the above objectives. In the case where edge importance scores $w_{ij}\in[0,1]$ are computed, the regularization term is computed as
+\begin{equation}
+    R(G) = \sum_{(v_i, v_j)\in E}\lambda_s|w_{ij}|-\lambda_e\left[w_{ij}\log w_{ij}-(1-w_{ij})\log (1- w_{ij})\right],
+\end{equation}
+where $\lambda_s$ and $\lambda_e$ are hyper-parameters controlling the size and the entropy of edge importance scores, respectively.
+
+\subsection{Explainer Architectures}
+\textbf{Embedding explainers}. To be consistent with PGExplainer, we adopt the multilayer perceptron (MLP) as the base architecture to predict the importance score $w_{ij}$ for each edge $(u_i, u_j)\in E$, on top of learned embeddings $\bm z_i$ and $\bm z_j$ of the two nodes connected by the edge. Edges with scores higher than a threshold are considered important edges that remain in the selected subgraph. In order for the embedding explainer to cooperate with different downstream explainers and provide diverse explanations for different tasks, it additionally requires a condition vector as input indicating the specific downstream task to be explained. 
+Formally, the graph-level embedding explainer takes the embeddings, $\bm z_i$ and $\bm z_j$, and the condition vector $\bm p$ as inputs and computes the importance score by
+\begin{equation}
+    w_{ij}=\mbox{MLP}_g\big([\bm z_i;\bm z_j]\otimes \sigma(f_{g}(\bm p))\big),
+\end{equation}
+where $[\cdot;\cdot]$ denotes the concatenation along the feature dimension, $\otimes$ denotes the element-wise multiplication, $\sigma$ denotes the activation function, and $f_{g}:\mathds{R}^d\to \mathds{R}^{2d}$ is a linear projection. The node-level embedding explainer takes an additional node embedding as its input, as the explainers are expected to predict different scores for the same edge when explaining different target nodes. The formulation of computing the importance score is as follows,
+\begin{equation}
+    w_{ij}=\mbox{MLP}_n\big([\bm z_i;\bm z_j;\bm z_{target}]\otimes \sigma(f_{n}(\bm p))\big),
+\end{equation}
+where $f_{g}:\mathds{R}^d\to \mathds{R}^{3d}$ is a linear projection, and $z_{target}$ denotes the embedding of the target node whose prediction is to be explained. 
+
+\textbf{Downstream explainers}. We use the following gradient-based explainer to compute condition vectors for different downstream models. Formally, given an input embedding $\bm z$ and its prediction probabilities $\mathcal{D}(\bm z)\in[0,1]^C$ among all $C$ classes, we compute the gradient of the maximal probability w.r.t. the input embedding:
+$$\bm g = \frac{\partial \max_{c\le C}\mathcal{D}(\bm z)[c]}{\partial \bm z}\in\mathds{R}^{1\times d},$$
+where $\mathcal{D}(\bm z)[c]$ denotes the probability for class $c$. To convert the gradient into the condition vector, we further perform normalization and only take positive values reflecting only positive influence to the predicted class probability, \textit{i.e.}, $\bm p = \mbox{ReLU}(\mbox{norm}(\bm g^T))$.
+
+
+Experimental Studies
+We conduct two groups of quantitative studies evaluating the explanation quality and the universal explanation ability, \textit{i.e.}, training a single explainer to explain all downstream tasks, of \ours. We then compare the efficiency of multiple learning-based GNN explainers in terms of training and explanation time costs. We further provide visualizations to demonstrate the explanation quality as well as the ability to explain GNN models without downstream tasks.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{figures/results.pdf}
+    \caption{Quantitative performance comparisons on six tasks from MoleculeNet (top row) and PPI (bottom row). The curves are obtained by varying the threshold for selecting important edges.}
+    \label{fig:results}
+\end{figure*}
+
+\subsection{Datasets}
+To demonstrate the effectiveness of the proposed \ours on both node-level and graph-level tasks, we evaluate \ours on three groups of real-world datasets that contain potentially multiple tasks.
+
+\textbf{MoleculeNet}. The MoleculeNet~\citep{wu2018moleculenet} library provides a collection of molecular graph datasets for the prediction of different molecule properties. In a molecular graph, each atom in the molecule is considered a node, and each bond is considered an edge. The prediction of molecule properties is a graph-level task. We include three graph classification tasks from MoleculeNet to evaluate the explanation of graph-level tasks: HIV, SIDER, and BACE.
+
+\textbf{Protein-Protein Interaction}. The Protein-Protein Interaction (PPI)~\citep{zitnik2017predicting} dataset documents the physical interactions between proteins in 24 different human tissues. In PPI graphs, each protein is considered as a node with its motif and immunological features, and there is an edge between two proteins if they interact with each other. Each node in the graphs has 121 binary labels associated with different protein functions. As different protein functions are not exclusive to each other, the prediction of each protein function is considered an individual task instead of a multi-class classification. And hence typical approaches require individual explainers for the 121 tasks. We utilize the first five out of 121 tasks to evaluate the explanation of node-level tasks.
+
+\textbf{E-commerce Product Network}. The E-commerce Product Network (EPN)\footnote{Proprietary dataset} is constructed with subsampled, anonymized logs from an e-commerce store, where entities including buyers, products, merchants, and reviews are considered as nodes, and interactions between entities are considered as edges. We subsample the data for the sake of experimental evaluations and the dataset characteristics do not mirror actual production traffic. We study the explanation of the classification of fraudulent entities (nodes), where the predictions for different types of entities are considered individual tasks. We evaluate our framework specifically on classifications of the buyer, merchant, and review nodes.
+
+\subsection{Experiment Settings and Evaluation Metrics}
+
+For each real-world dataset, we evaluate explainers on multiple downstream tasks that share a single embedding model. For consistency with industrial use cases, we perform the two-stage training paradigm to obtain GNN models to be explained. In particular, we first use unlabeled graphs to train the GNN-based embedding model in an unsupervised fashion. We then freeze the embedding model and use the learned embeddings to train individual downstream models structured as 2-layer MLPs. Specifically, for graph-level classification tasks in MoleculeNet, we employ the GNN pretraining strategy context prediction~\citep{Hu2020Strategies} to train a 5-layer GIN~\citep{gin-xu2018how} as the embedding model on ZINC-2M~\citep{sterling2015zinc} containing 2 million unlabeled molecules. For the node-level classification on PPI, we employ the self-supervised training method GRACE~\citep{grace-zhu2020deep} to train a 2-layer GCN~\citep{gcn-kipf2017semi} on all 21 graphs from PPI without using labels. For the larger-scale node-level classification on EPN, we use graph autoencoder (GAE)~\citep{kipf2016variational} to train the embedding model on sampled subgraphs of EPN.
+
+As the involved real-world datasets do not have ground truth for explanations, we follow previous studies~\citep{pope2019explainability, yuan2020explainability, yuan2021explainability} to adopt a fidelity score and a sparsity score to quantitatively evaluate the explanations. Intuitively, the fidelity score measures the level of change in the probability of the predicted class when removing important nodes or edges, whereas the sparsity score measures the relative amount of important nodes or nodes associated with important edges.
+Note that compared to explanation evaluation with ground truths, the fidelity score is considered more faithful to the model, especially when the model makes incorrect predictions, in which case the explanation ground truths become inconsistent with the evidence of making the wrong predictions. In practice, one needs to trade-off between the fidelity score and the sparsity score by selecting the proper threshold for the importance.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\caption{Fidelity scores with controlled sparsity on graph-level molecule property prediction tasks. Each column corresponds to an explainer model trained on (or without) a specific downstream task. Underlines highlight 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

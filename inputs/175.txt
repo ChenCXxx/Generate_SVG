@@ -1,0 +1,294 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Significant achievements in multimodal large language models (MLLMs) have been witnessed due to their remarkable proficiency in solving open-world tasks.
+MLLMs acquire visual perception capacity while inheriting sophisticated reasoning abilities and knowledge from large language models (LLMs).
+The core idea behind MLLMs is projecting the vision encoder representation into an LLM through a projector, facilitating a general-purpose multimodal understanding.
+
+General multimodal understanding requires comprehending complex image contexts across various tasks and scenarios.
+The CLIP~\cite{clip} vision encoder, pre-trained on large-scale image-text pairs with a contrastive loss, is widely considered as a flexible and popular choice among the latest leading MLLMs.
+However, training data and optimization target of the vision encoder determine its inconsistent performance across tasks and scenarios, which will bias the generalization of multimodal large language models.
+For instance, MLLMs with a single CLIP vision encoder usually perform poorly on fine-grained tasks such as grounding and optical character recognition~(OCR)~\cite{vary}.
+Several works have attempted to incorporate extra state-of-the-art vision encoder experts to cope with the challenge.
+For example, both SPHINX~\cite{sphinx} and MoF~\cite{mof} integrate vision self-supervised learning features of DINOv2~\cite{dinov2} with MLLMs to enhance their visual grounding capabilities.
+Vary~\cite{vary} introduces a new vision encoder expert for improved fine-grained document and chart parsing ability.
+Intuitively, it is necessary to explore the utilization of more task-specific vision encoder experts in MLLMs to promote model generalization across various domains.
+
+\input{tab/intro_exp}
+ 
+We aim to start the exploration through empirical analysis of readily available vision experts. 
+In particular, we focus on the multimodal capabilities of seven distinct state-of-the-art vision encoders based on LLaVA-1.5-7B~\cite{llava15}.
+The results in~\cref{tab:intro_exp} reveal that MLLMs with these task-specific vision encoders achieve optimal performance in their respective area.
+Concurrently, we note that the plain fusion~(concatenation) of vision encoder experts adopted in previous works (\eg, SPHINX) would not bring consistent improvement compared with the single task-specific vision expert in its proficient task.
+The inherent bias of each expert introduces biased information and leads to performance degradation in the plain fusion paradigm. 
+For example, DINOv2 serves as an expert in visual grounding but performs poorly at text-oriented tasks.
+Representation of DINOv2 would be regarded as biased information in text-related scenarios so incorporating DINOv2 for these tasks would inevitably cause performance decrease.
+Consequently, a flexible method of vision encoder ensemble that dynamically activates and weights context-relevant task-specific vision experts can fully unleash the capacity of these models while avoiding model bias.
+In this paper, we propose MoVA, a powerful MLLM, adaptively routing and fusing task-specific vision experts with a coarse-to-fine mechanism.
+Inspired by the powerful tool-use capabilities of LLM\cite{toolllm}, the coarse-grained context-aware expert routing aims to employ LLM to select vision experts with strong relevance to the user's image and instruction from the expert model pool.
+To improve the efficiency and effectiveness of context-aware expert routing, 
+we integrate expert-routing low-rank adaptation (LoRA)~\cite{lora} into the LLM component of MoVA.
+The fine-grained expert fusion facilitates better extraction and integration of expert representations based on multimodal context.
+Specifically, the expert knowledge extractor in the mixture-of-vision-expert adapter (MoV-Adapter) will extract diverse task-specific knowledge from various vision experts through mixture-of-expert (MoE) cross-attention layers.
+The dynamic gating network can allocate precise expert-wise soft weights for the integration of extracted task-specific knowledge.
+Under the coarse-to-fine paradigm, we provide a flexible and effective manner of leveraging representation from experts based on multimodal context and model expertise, further enhancing the model generalization ability.
+
+We conduct comprehensive experiments on various benchmarks to evaluate the effectiveness of MoVA, including MLLM benchmarks, visual question answering~(VQA), visual grounding, image segmentation, and biomedical understanding.
+Without any bells and whistles, MoVA can achieve significant performance gains over current state-of-the-art methods.
+
+To sum up, the key contributions of this paper are as follows:
+
+(1) By analyzing the performance of individual vision encoders versus the plain fusion of multiple encoders across various tasks, we reveal that the inherent bias of each vision encoder can diminish its generalization ability across other irrelevant domains.
+
+(2) We propose MoVA, a powerful MLLM composed of coarse-grained context-aware expert routing and fine-grained expert fusion with MoV-Adapter.
+Based on multimodal context and model expertise, MoVA fully leverages representation from multiple context-relevant vision encoder experts flexibly and effectively while avoiding biased information brought by irrelevant experts.
+
+(3) We demonstrate the effectiveness of each component in MoVA by elaborate ablation studies. 
+Without any bells and whistles, MoVA can achieve significant performance gains over current state-of-the-art methods in a wide range of challenging benchmarks.
+
+
+Related Work
+\subsection{Large Language Models}
+Large language models (LLMs) have achieved remarkable progress in Natural Language Processing~(NLP).
+The emergence of GPT-3~\cite{gpt3} demonstrates that models will manifest profound capabilities in few-shot learning and zero-short learning with increasing model parameters, training data, and training computation~\cite{powerlaw}.
+The powerful conversational and comprehension ability of ChatGPT and GPT4~\cite{gpt4} is also attributed to the generalization of LLMs.
+Meanwhile, many institutions are involved in the research on LLM pretraining and fine-tuning, bringing a series of open-source LLMs, including LLaMA~\cite{llama,llama2}, Vicuna~\cite{vicuna}, Baichuan~\cite{baichuan}, Yi~\cite{yi}, Qwen~\cite{qwen}, ChatGLM~\cite{glm}, InternLM~\cite{internlm}, etc.
+Apart from the traditional dense causal transformer~\cite{attention} paradigm, mixture-of-expert~(MoE) is also a popular LLM architecture design.
+Switch Transformer~\cite{switch} leverages sparse experts to scale up LLMs into trillion parameters, where a router will choose the most appropriate experts from the expert pool based on each input token.
+Considering only part of the experts will be involved in model training and inference, LLM with MoE can benefit from both large parameter complexity and low computation cost.
+Mistral $8$$\times$$7$B model outperforms the LLaMA2-70B model on multiple benchmarks, further verifying the effectiveness of the MoE.
+
+\subsection{Multimodal Large Language Models}
+Recent multimodal large language models (MLLMs)~\cite{blip2, flamingo, llava, qwenvl, internvl, vary, cogvlm, shikra, lmdrive, visualcot} usually leverage the alignment from visual features to the linguistic feature space to achieve superior vision-language understanding capabilities based on off-the-shelf LLMs and vision encoders.
+CLIP vision encoder~\cite{clip}, which is trained in contrastive learning from billions of diverse image-text pairs~\cite{laion400m, laion5b}, is widely used among these works.
+For example,
+LLaVA~\cite{llava} adopts an MLP projector to align visual tokens from the frozen CLIP vision encoder to the embedding layer of LLM.
+However, The representation from CLIP exhibits strong discriminative abilities in classification and recognition but only has limited performance on downstream tasks like location and relation understanding~\cite{t2ibench}.
+To break through this bottleneck, some works~\cite{internvl,sharegpt4v} turn to unlock the CLIP vision encoder and further fine-tune the parameter with training data for downstream tasks.
+For instance,
+Qwen-VL~\cite{qwenvl} collected massive training data for grounding and OCR to jointly optimize the CLIP vision encoder and LLM.
+Recent works propose to involve an extra frozen vision encoder to enhance the performance of MLLMs.
+SPHINX~\cite{sphinx} is one of the pioneers, where grounding capabilities have been significantly improved with the assistance of the DINOv2~\cite{dinov2}.
+Vary~\cite{vary} introduces an extra encoder training on large-scale charts and document data to improve the performance on related downstream tasks.
+
+
+
+MoVA Methodology
+\label{sec:method}
+
+\begin{figure*}[tp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{pic/framework.pdf}
+    \caption{\textbf{The pipeline of MoVA.} MoVA performs coarse-to-fine routing to solve a given question. The coarse context-aware expert routing is performed in the first stage to select context-relevant experts. Next, we adopt the MoV-Adapter to extract and fuse the task-specific knowledge from these selected experts in a fine-grained manner.}
+    \label{fig:framework}
+\end{figure*}
+
+\subsection{Overview}
+MoVA comprises five key components: 1) a pre-trained large language model (LLM) that generates accurate responses given the image tokens and instructions; 2) a base vision encoder; 3) vision experts that generate task-specific vision latent features; 4) an auxiliary expert-routing low-rank adaption (LoRA) module that helps LLM select appropriate experts based on images and instructions; 5) mixture-of-vision-expert adapter (MoV-Adapter) that performs fine-grained expert fusion based on the multimodal context.
+As illustrated in~\cref{fig:framework}, MoVA consists of two stages: coarse-grained context-ware expert routing and fine-grained expert fusion with MoV-Adapter.
+First, our coarse-grained context-ware expert routing leverages the tool-use capabilities of LLM, routing the most appropriate experts from $N$ expert candidates via LLM to help the model answer the user's question.
+We incorporate the expert-routing LoRA module into the LLM to improve the efficiency and effectiveness of expert routing.
+This expert-routing LoRA module is trained with expert routing annotations and can better align the LLM and the routing task.
+In the second stage, we turn to enhance the visual representation with a novel MoV-Adapter module in a fine-grained manner.
+More specifically, we leverage the cross-attention mechanism to extract the task-specific knowledge of representations from chosen experts.
+Meanwhile, the dynamic gating network in MoV-Adapter can allocate soft weights to the extracted knowledge of each expert according to the input image and instruction.
+Then the extracted knowledge can be effectively integrated into the foundational representation of the base vision encoder.
+Finally, the enhanced visual representation with instruction tokens is fed to the LLM to generate an accurate response.
+In \cref{sec:context_routing} and \cref{sec:mov_adapter}, we will focus on our core contributions, the context-aware expert routing strategy, and the expert fusion with MoV-Adapter.
+In \cref{sec:training}, we will introduce the training process.
+\input{tab/prompt.tex}
+\subsubsection{Pretrained Vision Encoders and LLM.}
+The vision encoders in MoVA consist of a base encoder and multiple task-specific vision encoder experts.
+We choose the pre-trained CLIP ViT-L-336px as the base encoder.
+Our vision experts include several state-of-the-art task-specific encoders: DINOv2, Co-DETR, SAM, Pix2Struct, Deplot, Vary, and BiomedCLIP.
+The corresponding expertise is presented in~\cref{tab:intro_exp}.
+For example, both Pix2Struct and Vary will be used when the user asks the MLLM to scan the document image.
+MoVA is flexible and easy to generalize to all decoder-only LLMs.
+We mainly consider Vicuna-7B and Yi-34B as our language model in this work.
+\subsection{Coarse-grained Context-aware Expert Routing} 
+\label{sec:context_routing}
+The context-aware expert routing strategy aims to employ the impressive reasoning capacity of LLM to select vision experts with strong relevance to the user's image and instruction from the expert model pool.
+\subsubsection{Pipeline of Context-aware Routing.}
+Specifically, we perform the context-aware expert routing in three steps during inference.
+First, the input image, user questions, and descriptions of expert models are converted into appropriate instructions that prompt the MLLM to perform expert selection.
+An example of the prompt instruction input and selection output is shown in~\cref{tab:example_prompt}.
+Such a routing task does not require high-resolution input images, hence we directly downsample the base encoder's visual feature to obtain a coarse image embedding (\eg, $64$ image tokens).
+Considering the difference between routing instructions and conventional multimodal data, avoiding task conflict is necessary.
+We integrate additional lightweight expert-routing LoRA layers into the LLM for accurate expert routing and further disentangle the routing task from original multimodal tasks (\eg, conversation about natural scenes).
+The downsampled image tokens and instruction tokens are then fed to the LLM as inputs.
+Finally, the LLM generates the output text and we parse it to determine which vision expert should be selected for fine-grained knowledge extraction in the second stage.
+For instance, as depicted in~\cref{tab:example_prompt}, the LLM directly outputs the option's letter of DINOv2 and Pix2Struct, thus we only utilize them for the subsequent extraction.
+During training, we do not perform context-aware expert routing and replace the routing outputs with our routing annotations to improve efficiency.
+
+\subsubsection{Routing Data Construction.}
+\label{sec:routing_data}
+Compared with other MLLMs, MoVA requires additional routing annotations.
+We first introduce the formal definition of the data structure for an unambiguous understanding of the routing data.
+The data structure for expert routing introduces additional routing annotation $\mathcal{R}$ to the conventional multimodal data $(\mathcal{I},\mathcal{Q},\mathcal{A})$.
+Here, $\mathcal{I}$ represents the image, $\mathcal{Q}$ and $\mathcal{A}$ refer to the question-answer pair, and $\mathcal{R}$ refers to the expert set which contains the most appropriate ones to solve this question.
+Then the construction process for routing data can be formulated as $(\mathcal{I},\mathcal{Q},\mathcal{A}) \rightarrow \mathcal{R}$, with the primary objective being to derive vision experts that optimally align with the sample $(\mathcal{I},\mathcal{Q},\mathcal{A})$.
+Intuitively, the language modeling loss can serve as an effective metric for evaluating how a data sample aligns with the vision expert.
+Specifically, we can reuse the LLaVA-1.5-7B models with various vision encoders presented in~\cref{sec:intro} to perform loss computation.
+Here, we denote the model with the base encoder as $\mathcal{M}_0$  and the model with $j$-th expert among $N$ experts as $\mathcal{M}_j$.
+For the $i$-th sample $(\mathcal{I}_{i},\mathcal{Q}_{i},\mathcal{A}_{i})$, we send it to models~$\{\mathcal{M}_j|j \in \{0, 1, \ldots, N\}\}$ and calculate the language modeling loss~$\{\mathcal{L}_{i,j}|j \in \{0, 1, \ldots, N\}\}$.
+The $j$-th expert is regarded as a useful expert for the $i$-th sample only if $\mathcal{L}_{i, j} < \mathcal{L}_{i, 0}$ and will be added to the routing set $\mathcal{R}_{i}$.
+Note that we only keep up to 3 vision experts to avoid the increasing computation costs brought by too many additional experts.
+All the routing annotations of our training data are generated offline.
+We can directly parse and input these offline results to the subsequent expert fusion component and LLM during training.
+\subsection{Fine-grained Expert Fusion with MoV-Adapter}
+\label{sec:mov_adapter}
+We propose the MoV-Adapter to facilitate fine-grained expert representation extraction and integration based on multimodal context.
+As shown in~\cref{fig:adapter}, the MoV-Adapter consists of~$L$ adapter blocks and a text encoder.
+Each block contains an expert knowledge extractor, a dynamic gating network, and a transformer block.
+For the $i$-th block, the input feature is denoted as $\mathbf{X}^{i} \in \mathbb{R}^{C \times H \times W}$ and we take the CLIP base encoder feature $\mathbf{X} \in \mathbb{R}^{C \times H \times W}$ as the input feature $\mathbf{X}^{1}$ of the first block.
+We use $\mathbf{G}$ to indicate the indices of chosen $K$ experts.
+The expert feature set is $\{\mathcal{F}_j|j \in \mathbf{G}\}$.
+The final output feature of the MoV-Adapter is connected to the LLM text embedding space by an MLP layer.
+\subsubsection{Text Encoder.}
+We introduce a pre-trained BERT as the text encoder to extract language context information from the user's instruction. 
+We take the [CLS] token from the output of the text encoder as the text token $\mathbf{X}_{T}  \in \mathbb{R}^{C_{T}}$.
+It is worth noting that all the adapter blocks share the same text token.
+\begin{wrapfigure}[13]{r}{0.4\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{pic/adapter.pdf}
+    \caption{The architecture of MoV-Adapter.
+    }
+    \label{fig:adapter}
+\end{wrapfigure}
+
+\subsubsection{Expert Knowledge Extractor.}
+We adopt $N$ cross-attention layers as the expert knowledge extractor to achieve efficient knowledge extraction.
+Note that only the expert features $\{\mathcal{F}_j|j \in \mathbf{G}\}$ and their corresponding cross-attention layers are involved in the extraction.
+For each selected expert feature $\mathcal{F}_{j} \in \mathbb{R}^{C_{j} \times H_{j} \times W_{j}}$, we first align its resolution to $\mathbf{X}^{i}$ with bilinear interpolation:
+\begin{equation}
+  \hat{\mathcal{F}}_{j} = {\rm Interpolate}({\mathcal{F}}_{j}, H, W).
+\end{equation}
+For the $i$-th MoV-Adapter block and the $j$-th cross-attention layer, we take input feature $\mathbf{X}^{i}$ as query, and the aligned expert feature $\hat{\mathcal{F}}_{j}$ as the key and value:
+\begin{equation}
+  \mathbf{Y}_{j}^{i} = \mathbf{X}^{i} + {\rm Attention}(\mathbf{X}^{i}, \hat{\mathcal{F}}_{j}).
+\end{equation}
+\subsubsection{Dynamic Gating Network.}
+We employ a dynamic gating network to contribute to a fine-grained knowledge integration process for the conditional representation $\{\mathbf{Y}_{j}^{i}|j \in \mathbf{G}\}$.
+It is implemented with the softmax over the logits of an MLP layer, processing multimodal representation to generate expert-wise soft weight $\mathbf{P}^{i} \in \mathbb{R}^{K}$ for the output of each cross-attention layer in the extractor.
+Specifically, the input to the gating network is the concatenated vector of a visual token $\mathbf{X}^{i}_{V} \in \mathbb{R}^{C}$ and the text token $\mathbf{X}_{T}  \in \mathbb{R}^{C_{T}}$.
+We obtain $\mathbf{X}^{i}_{V}$ with a global average pooling operation to $\mathbf{X}^{i}$.
+Then we concatenate them to compute the gating weights and the expert-wise outputs by computing the weighted sum:
+\begin{equation}
+  \hat{\mathbf{X}}^{i} = \sum_{j\in \mathbf{G}} \mathbf{Y}_{j}^{i} \cdot \mathbf{P}^{i}_{j},
+\end{equation}
+where $\mathbf{P}^{i}_{j} \in (0, 1)$ is the soft weight for the $j$-th expert in the $i$-th block.
+
+\subsubsection{Transformer Block.}
+The transformer block in the adapter block follows the vanilla design, consisting of a self-attention layer and an FFN layer.
+Taking the fused visual representation $\hat{\mathbf{X}}^{i}$, its output will serve as the input feature $\mathbf{X}^{i+1}$ for the next adapter block.
+
+\begin{figure*}[tp]
+    \centering
+    \includegraphics[width=0.99\textwidth]{pic/training.pdf}
+    \caption{\textbf{The training strategy of MoVA.} We enhance the task-specific knowledge extraction capacity of the MoV-Adapter in the first stage. Then, we excite model multimodal capacities in the supervised finetuning stage. The expert routing ability is unlocked in the last stage.}
+    \label{fig:training}
+\end{figure*}
+
+\subsection{Training Paradigm}
+\label{sec:training}
+As depicted in~\cref{fig:training}, the training process of MoVA consists of three stages: MoV-Adapter pretraining, supervised finetuning, and expert-routing LoRA training.
+
+\subsubsection{Pretraining.}
+To improve multimodal generalization, we first construct 15M visual instruction samples across diverse public datasets for different downstream tasks as the training data:
+\begin{itemize}
+    \item \textbf{Image Caption:}   DataComp-1B~\cite{datacomp}~\footnote{Only 4M image-text pairs are randomly selected for the efficiency}, ShareGPT4V-PT~\cite{sharegpt4v}, and ALLaVA-4V~\cite{allava}.
+    \item \textbf{Visual Grounding and Localization:} Objects365~\cite{objects365},  RefCOCO~\cite{refcoco}, VisualGenome~\cite{visualgenome}, PointQA~\cite{pointqa}, and Flickr30K~\cite{flickr30k}.
+    \item \textbf{Chart Understanding:} MMC-Instruction~\cite{mmc}, Chart2Text~\cite{chart2text}, DVQA~\cite{dvqa}, and SciGraphQA~\cite{scigraphqa}.
+    \item \textbf{Text Recognition and Document Parsing:} LLaVAR-PT~\cite{llavar} and 3M English document images from Common Crawl~\footnote{https://commoncrawl.org}.
+    \item \textbf{Biomedical Image Understanding:} LLaVA-Med~\cite{llava_med}.
+\end{itemize}
+Note that for each dataset, we add the annotations of coarse-grained expert routing via the method proposed in~\cref{sec:routing_data}.
+During the pretraining phase, we only optimize the MoV-Adapter along with the base vision encoder while preserving the capabilities of the initial large language model.
+Meanwhile, we leverage the routing annotations to choose experts and ignore representations from irrelevant ones during training.
+\subsubsection{Supervised Finetuning.}
+We utilize high-quality visual instruction tuning data that build upon LLaVA-665K~\cite{llava15} for finetuning.
+Additionally, we integrate several visual question answering datasets across various domains, such as DocVQA~\cite{docvqa}, ChartQA~\cite{chartqa}, InfographicVQA~\cite{infographicvqa}, AI2D~\cite{ai2d}, ST-VQA~\cite{stvqa}, TextVQA~\cite{textvqa}, SynthDoG-en~\cite{donut}, Geometry3K~\cite{geo3k}, PGPS9K~\cite{pgps9k}, Geo170K~\cite{gllava}, VQA-RAD~\cite{vqa_rad}, and SLAKE~\cite{slake}.
+
+We also encompass equivalent comprehensive captions~\cite{sharegpt4v,allava,laion4v,textocr4v} generated by the advanced GPT4-V~\cite{gpt4} for improved world knowledge.
+In the supervised fine-tuning stage, task-specific vision experts are frozen and we jointly optimize the base vision encoder, MoV-Adapter, and LLM.
+The objective of supervised fine-tuning is to align the enhanced visual representation and the embedding of LLM, boosting its visual instruction-following capabilities.
+The coarse-grained routing annotations are also directly used in this training phase.
+\subsubsection{Expert-routing LoRA Training.}
+We introduce the expert-routing LoRA layers into the LLM and only train these LoRA layers in the final stage.
+We use the same instruction tuning data as the second stage for routing task tuning. 
+
+
+
+Experiments
+\label{sec:experiments}
+
+\subsection{Implementation Details}
+As mentioned in~\cref{sec:training}, our training pipeline consists of three stages. 
+In the pretraining stage, we use the AdamW optimizer with an initial learning rate of $2$$\times$$10^{-4}$, a batch size of 1024, and train the model for 1 epoch.
+We jointly finetune the weights of the base vision encoder, MoV-Adapter, and LLM with a batch size of 128 and an initial learning rate of $2$$\times$$10^{-5}$ during supervised fine-tuning.
+In the last stage, only the LoRA layers are trained and we keep the same hyperparameter setting as the supervised fine-tuning phase.
+We use 3 transformer blocks ($L$$=$$3$) in the MoV-Adapter and its hidden dimension is 1024, which is consistent with the base vision encoder CLIP.
+The input resolution of the base vision encoder is set as 672$\times$672.
+Two residual blocks with an average pooling are employed in the MoV-Adapter to reduce the number of output image tokens from 2304 to 576.
+For the proxy setting performed in~\cref{tab:intro_exp}, we follow the default setting of LLaVA-1.5 but incorporate several additional datasets, including DocVQA~\cite{docvqa}, ChartQA~\cite{chartqa}, RefCOCO referring segmentation data~\cite{refcoco}, LLaVA-Med~\cite{llava_med}, VQA-RAD~\cite{vqa_rad}, and SLAKE~\cite{slake}.
+\subsection{MLLM Benchmarks}
+\input{tab/main_results.tex}
+We empirically analyze the multimodal capacity and generalization ability of MoVA on a wide range of challenging MLLM benchmarks in~\cref{tab:main_exp}.
+Specifically, this comprehensive assessment is conducted on MME~\cite{mme}, MMBench~\cite{mmbench}, QBench~\cite{qbench}, MathVista~\cite{mathvista}, MathVerse~\cite{mathverse}, and POPE~\cite{pope}.
+
+Compared to other open-source MLLMs with similar model complexity, MoVA with Vicuna-7B achieves the best performance across 7 MLLM benchmarks while offering a more favorable balance between training efficiency and performance.
+For instance, MoVA-7B surpasses the recent state-of-the-art LLaVA-NeXT-7B~\cite{llavanext} with a dynamic high resolution design, processing only 20\% image tokens.
+
+Furthermore, we adopt Hermes-Yi-34B~\cite{yi} as the LLM to validate the scaling property of MoVA.
+As depicted in~\cref{tab:main_exp}, the performance of MoVA-34B is on par with popular proprietary MLLMs (\eg, Gemini-Pro~\cite{gemini}) and outperforms Qwen-VL-Plus~\cite{qwenvl} on 5 MLLM benchmarks.
+For example, MoVA establishes new records on MMBench and MMBench-CN, even surpassing the GPT-4V~\cite{gpt4} by a clear margin.
+These results suggest that the ensemble of vision experts with adaptive expert routing can serve as an effective dimension for MLLM model scaling.
+\subsection{Visual Question Answering}
+\input{tab/vqa.tex}
+The evaluation results on VQA benchmarks are presented in~\cref{tab:vqa}.
+In this section, we divide these benchmarks into general VQA benchmarks~\cite{vqav2,gqa,scienceqa} and text-oriented VQA benchmarks~\cite{textvqa,chartqa,docvqa,ai2d}.
+
+Thanks to the dynamic and efficient task-specific knowledge extraction, MoVA achieves state-of-the-art performances across diverse VQA benchmarks.
+For general VQA benchmarks, MoVA-7B outperforms InternVL-Chat~\cite{internvl} equipped with InternViT-6B on VQAv2~\cite{vqav2} and GQA by 4.2\% and 1.9\%, respectively.
+Besides, MoVA shows its proficiency in text recognition in various scenarios, including scene text, chart, document, and diagram.
+For instance, MoVA-7B catches up to the current state-of-the-art generalist CogAgent~\cite{cogagent} with 18 billion parameters on these text-oriented benchmarks with smaller model size.
+The MoVA model with 38B parameters even surpasses the well-established specialist model PALI-X-55B~\cite{palix} by clear margins.
+The outstanding performances on distinct VQA benchmarks demonstrate MoVA’s robust generalization capabilities across diverse domains.
+\subsection{Visual Grounding}
+\input{tab/rec.tex}
+We conduct experiments on Referring Expression Comprehension (REC) benchmarks~\cite{refcoco} to evaluate the visual grounding ability of MoVA.
+The results are presented in~\cref{tab:rec}.
+Compared with the previous leading generalist CogVLM with 17B parameters, MoVA-7B attains higher scores on 6 of 8 splits while reducing the model size by 40\%.
+Besides, the performance of MoVA-7B is on par with the state-of-the-art specialist models that are elaborately designed for grounding tasks.
+For example, MoVA-7B achieves a score of 90.22\% on RefCOCO+ val, which is 2.46\% higher than the score of UNINEXT-H~\cite{uninext}.
+Our largest model MoVA-34B further pushes the performance bound of visual grounding on these benchmarks.
+These impressive results demonstrate MoVA's remarkable visual grounding capacity.
+\subsection{Medical Visual Question Answering}
+This experiment is conducted on popular medical VQA benchmarks VQA-RAD and SLAKE.
+We directly leverage the medical VQA evaluation metric adopted by LLaVA-Med.
+Each sample of VQA-RAD and SLAKE is observed only once during the training process of MoVA and LLaVA-1.5.
+For a fair comparison, we compare MoVA with the LLaVA-Med variant that is finetuned with only 1 epoch on the benchmark.
+The performance of the LLaVA-Med specialist that is fully finetuned on downstream tasks is also reported. 
+As presented in~\cref{tab:ablation_med}, MoVA-7B consistently yields higher scores than LLaVA-Med and LLaVA-1.5 on both medical VQA benchmarks, exhibiting its medical visual chat ability.
+\subsection{Image Segmentation}
+In this experiment, we aim to investigate if task-specific knowledge can improve MoVA on the segmentation task.
+Therefore, we introduce a simple design to extend MoVA to segmentation tasks.
+Unlike segmentation generalists~\cite{lisa} that adopt an additional pixel decoder with high-resolution images for high-quality mask generation, we just formulate the referring segmentation task as sequential polygon generation~\cite{visionllm}.
+We finetune MoVA and the baseline with a SAM-Huge~\cite{sam} backbone on the RefCOCO referring segmentation datasets.
+MoVA achieves 57.1\% gIoU on the testA benchmark, which is 2.6\% higher than the 54.5\% of baseline.
+This result indicates that MoVA is capable of exploiting task-specific knowledge to solve segmentation tasks.
+\input{tab/ablation0}
+\input{tab/ablation1}
+\subsection{Ablation Study}
+\subsubsection{Component-wise analysis.}
+As presented in~\cref{tab:component}, we perform an ablation to thoroughly delve into the effect of each component.
+First, we try to replace the context-aware routing with random routing.
+Without task-relevant vision experts, the performance drops by a large margin, especially on the text-oriented ChartQA and DocVQA benchmarks.
+Removing context-aware routi
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

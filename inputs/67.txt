@@ -1,0 +1,266 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: MSPE: Multi-Scale Patch Embedding Prompts Vision Transformers to Any Resolution
+
+% ArXiv ID: 2405.18240
+
+
+
+
+
+\maketitle
+
+
+\begin{abstract}
+Although Vision Transformers (ViTs) have recently advanced computer vision tasks significantly, an important real-world problem was overlooked: adapting to variable input resolutions. Typically, images are resized to a fixed resolution, such as 224$\times$224, for efficiency during training and inference. However, uniform input size conflicts with real-world scenarios where images naturally vary in resolution. Modifying the preset resolution of a model may severely degrade the performance. In this work, we propose to enhance the model adaptability to resolution variation by optimizing the patch embedding. The proposed method, called Multi-Scale Patch Embedding (MSPE), substitutes the standard patch embedding with multiple variable-sized patch kernels and selects the best parameters for different resolutions, eliminating the need to resize the original image. Our method does not require high-cost training or modifications to other parts, making it easy to apply to most ViT models. Experiments in image classification, segmentation, and detection tasks demonstrate the effectiveness of MSPE, yielding superior performance on low-resolution inputs and performing comparably on high-resolution inputs with existing methods.
+
+
+\end{abstract}
+
+
+
+
+
+\section{Introduction}
+\label{sec:intro}
+
+Vision Transformers (ViTs) \cite{liu2021swin, dosovitskiyimage,touvron2021training,wang2021pyramid} have achieved significant success in various computer vision tasks, becoming a viable alternative to traditional convolutional neural networks \cite{huang2017densely, sandler2018mobilenetv2, xie2017aggregated, tan2019efficientnet}. ViT divides an image into multiple patches, converts these patches into tokens via the patch embedding layer, and feeds them into the Transformer model \cite{vaswani2017attention, han2022survey}. 
+The token representations are usually obtained using a convolutional neural network (CNN).
+Early CNN architectures like AlexNet \cite{krizhevsky2012imagenet} were designed for fixed-size images (e.g., 224$\times$224). For easy comparison, this setting has been maintained by subsequent image recognition models, including ViT \cite{dosovitskiyimage}. 
+For fitting neural network input layer size, ViTs typically resize the input image to a fixed resolution \footnote{The term {\em resolution} refers to the width and height of images input into neural networks. In this paper, {\em resolution} and {\em image size} are used interchangeably.} and divide it into a specific number of patches \cite{yuan2021hrformer, zhai2022scaling, gu2022multi}. This practice restricts ViT models to processing single-resolution inputs. However, fixed input sizes conflict with real-world scenarios where image resolution varies due to camera devices/parameters, object size, and distance. This discrepancy can significantly degrade ViT's performance on different-resolution images. Changing the preset size requires retraining, and every resolution necessitates an individual model. Therefore, a natural question arises: \textbf{\textit{Is it possible for a single ViT model to process different resolutions directly?}}
+
+
+A few recent methods have been proposed for this problem: FlexiViT \cite{beyer2023flexivit} uses a novel resizing method allowing flexible patch size and token length in ViT. ResFormer \cite{tian2023resformer} enhances resolution adaptability through multi-resolution training and a global-local positional embedding strategy. NaViT \cite{dehghani2024patch} leverages example packing \cite{krell2021efficient} to adjust token lengths during training, boosting efficiency and performance.
+However, these methods have two limitations. \textbf{First}, some of them are incompatible with existing transformer models, preventing the effective use of pre-trained ViTs, and thus lead to high re-training costs when applied.
+For example, models like NaViT and ResFormer require training the entire model to achieve multi-resolution performance.
+\textbf{Second}, their multi-resolution performance is insufficient. For example, FlexiViT demonstrates only slight performance improvement when the input images are smaller than the preset size.
+
+
+We intuitively believe that an ideal solution should be compatible with most existing  ViT models and perform well at any size and aspect ratio. 
+To this end, we propose a method called \textbf{M}ulti-\textbf{S}cale \textbf{P}atch \textbf{E}mbedding (MSPE). It replaces the patch embedding layer in standard ViT models without altering the other parts of the model. This design makes MSPE compatible with most ViT models and allows for low-cost, direct application. Specifically, our method uses a set of learnable adaptive convolution kernels instead of fixed ones, which can automatically adjust the size and aspect ratio of the kernels based on the input resolution. It directly converts images into patch embeddings without modifying the input size or aspect ratio.
+The results in Figure \ref{fig:1} show that this simple method significantly improves performance, for example, increasing ImageNet-1K accuracy up to 47.9\% across various resolutions.
+Our contributions are as follows:
+\begin{itemize}
+	\item By analyzing resolution adaptability in ViT models, we identify the patch embedding layer as the crucial component and provide a low-cost solution.
+	\item We propose Multi-Scale Patch Embedding (MSPE), which enhances ViT models by substituting the standard patch embedding layer with learnable, adaptive convolution kernels, enabling ViTs to be applied on any input resolution.
+	\item Experiments demonstrate that with minimal training (only five epochs), MSPE significantly enhances performance across different resolutions on classification, segmentation, and detection tasks.
+\end{itemize}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.7\linewidth]{figure/intro.pdf}
+\vskip -0.1in
+\caption{\textbf{MSPE results on ImageNet-1K.} We loaded a ViT-B model pre-trained on ImageNet-21K from \cite{steiner2022how} and evaluated: (a) Height equals width, ranging from 28$\times$28 to 896$\times$896, and (b) Fixed height=128, width ranging from 28 to 896. Vanilla ViT performance drops with size/aspect ratio changes; FlexiViT \cite{beyer2023flexivit} significantly improves performance, and our method surpasses FlexiVIT.}
+\vskip -0.1in
+\label{fig:1}
+\end{figure}
+
+\section{Preliminaries and Analysis}
+\label{sec:2}
+\subsection{Vision Transformer Models}
+
+{
+Vision Transformers (ViTs) leverage the capabilities of the transformer model \cite{jaderberg2015spatial, si2022inception}, initially developed for natural language processing, to address vision tasks \cite{arnab2021vivit, yin2022vit, xu2022vitpose}. ViTs primarily consist of the patch embedding layer and Transformer encoder.
+
+
+\noindent\textbf{Patch Embedding} converts an image $\bm{x} \in \mathbb{R}^{h \times w \times c}$ in the input space $\mathcal{X}$ into a sequence of tokens $\{\bm{z}_i\}_{i=1}^N$, where $\bm{z}_i \in \mathbb{R}^{d}$ is a vector in patchification space $\mathcal{Z}$. This transformation is achieved via patch embedding layer $g_{\bm{\theta}}: \mathcal{X} \rightarrow \mathcal{Z}$, parameterized by $\bm{\theta}$. 
+Specifically, the function $g_{\bm{\theta}}$ is implemented as convolution $\text{conv}_{\bm{\theta}}$, using kernel $\bm{w}_{\bm{\theta}} \in \mathbb{R}^{h_k \times w_k \times d}$ and bias $\bm{b}_{\bm{\theta}} \in \mathbb{R}^{d}$. The kernel size is $(h_k, w_k)$ and the stride is $(h_s, w_s)$.
+In existing ViTs, patch embedding methods are categorized into non-overlapping and overlapping types:
+\begin{itemize}
+	\item \textbf{Non-overlapping patch embedding:} In standard Vision Transformers (e.g., ViT \cite{dosovitskiyimage}), the stride of $\text{conv}_{\bm{\theta}}$ matches the kernel size, \emph{i.e.}, $h_s = h_k$ and $w_s = w_k$. The number of tokens $N$ is calculated by $\left\lfloor \frac{h}{h_k} \right\rfloor \times \left\lfloor \frac{w}{w_k} \right\rfloor$.
+	\item \textbf{Overlapping patch embedding:} In models like PVT \cite{wang2021pyramid} and MViT \cite{li2022mvitv2}, the stride is smaller than the kernel size, \emph{i.e.}, $h_s < h_k$, $w_s < w_k$. The number of tokens $N$ is calculated by $\left\lceil \frac{h - h_k}{h_s} + p \right\rceil \times \left\lceil \frac{w - w_k}{w_s} + p \right\rceil$, where $p$ is the padding size.
+\end{itemize}
+
+\noindent\textbf{Transformer Encoder} adds position encodings $\text{pos}_i$ to the token sequence, modifying it to $\{\bm{z}'_i\}_{i=1}^N = \{\bm{z}_i + \text{pos}_i\}_{i=1}^N$. A class token $\bm{z}_{\text{cls}}$ for global semantics is added to the front, \emph{i.e.}, $\{\bm{z}_{\text{cls}}, \bm{z}'_1, \ldots, \bm{z}'_N\}$.  This sequence feeds into the Transformer Encoder $\text{Enc}_{\bm{\phi}}(\bm{z})$, parameterized by $\bm{\phi}$. For classification, only the class token $\bm{z}_{\text{cls}}$ is used to produce a probability distribution, and other tokens $\{\bm{z}_1', ..., \bm{z}_N'\}$ are discarded. 
+
+
+
+\subsection{Problem Formulation}
+In real-world scenarios, images have variable resolutions due to variations in camera devices, parameters, object scale, and imaging distance.
+Our task is to ensure the model adapts to different resolutions. To this end, we resize the same image to multiple resolutions and optimize the model for these diverse inputs. Here is the formal definition of this task:
+
+Firstly, the process of resizing (e.g. bilinear reize) is formally defined as a linear transformation:
+\begin{equation}
+\small
+\label{eq1}
+\text{resize}_{r}^{r*}(\bm{o}) = B_{r}^{r*} \text{vec}(\bm{o}).
+\end{equation}
+where $\bm{o} \in \mathbb{R}^{h \times w}$ is any input, the resolution $r$ of $(h, w)$ transforms to $r*$ of $(h*, w*)$ after resizing, using the transformation matrix $B_{r}^{r*} \in \mathbb{R}^{h*w* \times hw}$. Each channel of $\bm{x}$ is resized independently.
+
+For input $(\bm{x},y)$ in dataset $\mathcal{D}$, the learning objective is to minimize the loss function $\ell$ (e.g., cross-entropy loss) across a series of resolutions $\{r_i\}_{i=1}^M$, optimizing performance at each resolution from $r_1$ to $r_M$:
+\begin{equation}
+\small
+\label{eq2}
+\begin{aligned}
+\min_{\bm{\widehat{\theta}}, \bm{\widehat{\phi}}} \mathbb{E}_{(\bm{x}, y) \sim \mathcal{D}} [&\ell (\text{Enc}_{\widehat{\phi}}(g_{\widehat{\theta}}(B_{r}^{r_i}\bm{x})), y ] \quad \forall r_i \in \{r_i\}_{i=1}^M \\ \text{s.t.}~~ \mathbb{E}_{(\bm{x},y) \sim \mathcal{D}}&[\ell(\text{Enc}_{\widehat{\phi}}(g_{\widehat{\theta}}(\bm{x})), y)] \leqslant \mathbb{E}_{(\bm{x},y) \sim \mathcal{D}}[\ell(\text{Enc}_{\phi}(g_{\bm{\theta}}(\bm{x})), y)]+\epsilon,\epsilon \geqslant 0,
+\end{aligned}
+\end{equation}
+where $Enc_{\hat \phi}(\bm{z})$ and $g_{\hat \theta}(\bm{x})$ are Transformer encoder and patch embedding layer, respectively. The slack variable $\epsilon$ allows minor loss increments in the well-trained model $\text{Enc}_{\phi}(g_{\bm{\theta}}(\bm{x}))$.
+
+The central challenge is maintaining acceptable performance across different resolutions from $r_1$ to $r_M$ but keeping the performance of original resolution $r$, which means adjustments of $\theta$ and $\phi$ must be careful. In this work, we confirm the key role of patch embedding and only optimizing $g_{\bm{\theta}}$:
+
+\begin{equation}
+\small
+\label{eq3}
+\begin{aligned}
+\bm{\widehat{\theta}}\in \arg\min_{\bm{\widehat{\theta}}} \mathbb{E}_{(\bm{x}, y) \sim \mathcal{D}} [&\ell (\text{Enc}_{\phi}(g_{\widehat{\theta}}(B_{r}^{r_i}\bm{x})), y ] \quad \forall r_i \in \{r_i\}_{i=1}^M .
+\end{aligned}
+\end{equation}
+
+
+
+
+\subsection{Pseudo-inverse Resize}
+To solve the optimization problems stated in Eq. (\ref{eq2}) and (\ref{eq3}),  an intuitive solution appears to ensure that embedding layer $g_{\bm{\theta}}$ produces consistent features on different resolutions. For this purpose, FlexiViT  \cite{beyer2023flexivit} proposed PI-resize, which adjusts the embedding kernel to ensure uniform outputs: 
+\begin{equation}
+\small
+\label{eq4}
+\begin{aligned}
+\{\bm{\widehat{\omega_\theta}},\bm{\widehat{b_\theta}}\} = \bm{\widehat{\theta}}\in \arg\min_{\bm{\widehat{\theta}}} \mathbb{E}_{\bm{x} \sim \mathcal{X}} [&(g_{\widehat{\theta}}(B_{r}^{r_i}\bm{x})-g_{\bm{\theta}}(\bm{x}))^2 ] \quad \forall r_i \in \{r_i\}_{i=1}^M , \\
+\bm{\widehat{\omega_\theta}} \in \arg \min_{\bm{\widehat{\omega_\theta}}} \mathbb{E}_{\bm{x} \sim \mathcal{X}}& [ (\langle \bm{x}, \bm{\omega_\theta} \rangle - \langle B_{r}^{r_i}\bm{x}, \bm{\widehat{\omega_\theta}} \rangle)^2 ].
+\end{aligned}
+\end{equation}
+When upscaling with $r_i > r$, the analytic solution for Eq. (\ref{eq4}) is $\bm{\widehat{\omega_\theta}}=B_{r}^{r_i}({B_{r}^{r_i}}^T B_{r}^{r_i})^{-1} \bm{\omega_\theta}$, denote as $({B_{r}^{r_i}}^T)^+\bm{\omega_\theta}$:
+\begin{equation}
+\small
+\label{eq5}
+\begin{aligned}
+\langle B_{r}^{r_i}\bm{x}, \bm{\widehat{\omega_\theta}} \rangle = \bm{x}^T {B_{r}^{r_i}}^T {B_{r}^{r_i}}({B_{r}^{r_i}}^T {B_{r}^{r_i}})^{-1} \bm{\omega_\theta} = \bm{x}^T \bm{\omega_\theta} = \langle \bm{x}, \bm{\omega_\theta} \rangle.
+\end{aligned}
+\end{equation}
+When downscaling with $r_i < r$, the matrix ${B_{r}^{r_i}}^T B_{r}^{r_i}$ is non-invertible. Under the assumption $\mathcal{X} = \mathcal{N}(0, 1)$, it is proven that $({B_{r}^{r_i}}^T)^+\bm{\omega_\theta}$ is the optimal solution. In summary, Pseudo-inverse resize (PI-resize) is defined as follows:
+\begin{equation}
+\small
+\label{eq6}
+\begin{aligned}
+\text{PI-resize}_r^{r*}(\bm{w}) = ({B_{r}^{r_i}}^T)^+ \text{vec}(\bm{w}).
+\end{aligned}
+\end{equation}
+
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\linewidth]{figure/intro-2.pdf}
+\vskip -0.1in
+\caption{Similarity in patch embeddings does not guarantee optimal performance (a). We confirm this by evaluating the accuracy and cosine similarity of: (b) patch embeddings $\{\bm{z}_i\}_{i=1}^N$from 56$\times$56 and 224$\times$224 images, and (c) class tokens $\bm{z}_{\text{cls}}$ from 56$\times$56 and 224$\times$224 images.}
+\vskip -0.1in
+\label{fig:2}
+\end{figure}
+
+
+\subsection{Motivation}
+\label{motivation}
+However, is this optimization target in FlexiViT \cite{beyer2023flexivit} truly appropriate?
+We suggest that there are two problems with Equation 4:  \textbf{First}, it is a stricter sufficient condition of Eq. (\ref{eq3}), but it ignores the impact of the encoder $\text{Enc}_{\bm{\phi}}(\bm{z})$ and the objective function $\ell$. \textbf{Second}, at lower resolutions, \emph{i.e.} $r_i < r$,  this goal has no analytical solution; PI-resize is just an approximation assuming $\bm{x} \sim \mathcal{N}(0,1)$, resulting in significant performance degradation.
+
+Moreover, we intuitively suspect that similarity in patch embeddings does not ensure the best performance.
+As Figure \ref{fig:2}(a) illustrates, features derived from patch embeddings are transformed into the classification feature space, namely the class token space, through the Transformer encoder $\text{Enc}_{\bm{\phi}}$. The gradient directions of these two feature spaces may not align, resulting in image features that are close to optimal in patch embedding being far from the optimal class token after encoder processing.
+
+A more effective method is directly adjusting the weights $w_{\theta}$ of embedding layer using the objective function $\ell$ (Eq. (\ref{eq3})).
+To verify this idea and our assumptions, we evaluate a well-trained ViT-B/16 model \cite{dosovitskiyimage} (pre-trained on ImageNet-21K, 224$\times$224, 85.10\% accuracy). We measure the cosine similarity between patch embeddings $\{\bm{z}_i\}_{i=1}^N$ and the class token $\bm{z}_{cls}$ at resolutions of 56$\times$56 and 224$\times$224.
+The results in Figures \ref{fig:2} (b) and (c) show that FlexiViT has higher patch embedding similarity and classification accuracy compared to the vanilla model; however, our method significantly outperforms FlexiViT with even lower patch embedding similarity. These results confirm that our analysis is reasonable.
+
+
+
+\section{Method}
+As discussed in Section \ref{motivation}, optimizing patch embedding layers through objective function is simple but effective. 
+Motivated by this, we propose \textbf{M}ulti-\textbf{S}cale \textbf{P}atch \textbf{E}mbedding (MSPE). 
+It divides the resolution domain into different ranges $\{r_i\}_{i=1}^M$, each using a shared-weight patch embedding layer that adjusts size through PI-resize. MSPE can replace the patch embedding layers in most ViT models, including overlapping and non-overlapping types.
+Our method is illustrated in Figure \ref{fig:3} and presented below.
+
+
+
+\subsection{Architecture of MSPE}
+\label{sec:3.1}
+MSPE only changes the patch embedding layer of the ViT model, making it directly applicable to a well-trained ViT model. As demonstrated in Figure \ref{fig:3}, we introduce the following architectural modifications.
+
+\textbf{Multiple patching kernels.} The typical patch embedding layer $g_{\bm{\theta}}$ employs a single convolution size with parameters $(\bm{\omega_\theta}, \bm{b_\theta})$, making it unsuitable for varying image resolutions.
+To overcome this, MSPE incorporates $K$ convolutions with differenet kernel sizes $\{g_{\bm{\theta}}^1, \dots, g_{\bm{\theta}}^K\}$, where each $g_{\bm{\theta}}^i$ is parameterized by $(\bm{w}_{\bm{\theta}}^i, \bm{b}_{\bm{\theta}}^i)$, to support a broader range of input image sizes.
+
+\textbf{Adaptive patching kernels.} Although $K$ convolutions of different kernel sizes improve adaptability, they cannot cover all possible resolutions.
+Setting a unique size convolution kernel for each resolution is unrealistic.
+In MSPE, the size and ratio of the kernel $(\bm{w}_{\bm{\theta}}^i, \bm{b}_{\bm{\theta}}^i)$ are adjustable rather than fixed. Specifically, for input $\bm{x}$ of any resolution $(h, w)$, the corresponding kernel  size $(h_k, w_k)$ is $(\left\lfloor h/N \right\rfloor, \left\lfloor w/N \right\rfloor)$. Using Eq. (\ref{eq6}), we adjust $\bm{w}_\theta^i$ to the corresponding size $\widehat{\bm{w}}_\theta^i \in \mathbb{R}^{h_k \times w_k}$. As shown in Figure \ref{fig:3}(b), it can be directly convolved with the image patch.
+
+Another module requiring careful design is the position embedding, which must correspond to the feature map size after patch embedding. In ViT \cite{dosovitskiyimage} and DeiT \cite{touvron2021training}, the position embedding is bilinearly interpolated to match the feature map size, a method known as \textit{resample absolute pos embed}, and it has proven effective during fine-tuning \cite{touvron2021training}. In MSPE, we discover that bilinear interpolation of position embedding satisfies our requirements. To simplify the architecture and minimize changes to the vanilla model, we follow this dynamic positional embedding method.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\linewidth]{figure/fig3.pdf}
+\vskip -0.05in
+
+\caption{Illustration of the ViT model \cite{dosovitskiyimage,touvron2021training} with MSPE. MSPE only replaces the patch embedding layer in the vanilla model, making well-trained ViT models to be directly applied to any size and aspect ratio. In our method, the patch embedding layer has several variable-sized kernels. The Transformer encoder is shared and frozen.}
+\vskip -0.15in
+\label{fig:3}
+\end{figure}
+\subsection{Learning Objectives}
+MSPE optimizes the patch embedding layer $g_{\bm{\theta}}$ through the objective function but does not explicitly constrain the embedded tokens $\{\bm{z}_i\}_{i=1}^N$ across different resolutions. Specifically, MSPE is based on multi-resolution training (mixed resolution training), similar to methods like ResFormer and NaViT. The training process is as follows.
+
+Firstly, the mixed resolution $\{r_i\}_{i=1}^M$ is divided into $K$ subsets $\{S_k\}_{k=1}^K$, i.e. $\bigcup_{k=1}^{K} S_k = \{r_i\}_{i=1}^M$, and $r_k$ is randomly sampled from $S_k$. The patching kernel weights $\bm{\theta}_k$ are shared within $S_k$ and transformed into the corresponding weights $\bm{\widehat{\theta}_k}$ for each $r_i$ according to Eq. (\ref{eq6}), The loss function is defined as:
+\begin{equation}
+\small
+\label{eq7}
+\begin{aligned}
+\mathcal{L}_{\bm{\theta}}(\bm{x},y)=\sum_{i=1}^K\ell [(\text{Enc}_{\phi}(g_{\bm{\widehat{\theta}_i}}(B_{r}^{r_i}\bm{x})), y ] + \lambda \cdot \ell [(\text{Enc}_{\phi}(g_{\bm{\theta}}(\bm{x})), y ] ,
+\end{aligned}
+\end{equation}
+where $\ell$ is the task loss function (e.g., cross-entropy loss), and $\lambda$ is a hyperparameter to prevent performance degradation. We optimize only the patch embedding parameters $\bm{\theta}$ during training, setting the learning rate of $\bm{\phi}$ to zero. Algorithm \ref{alg:code} in Appendix \ref{app:code} details the training procedure of MSPE and PyTorch-style implementation.
+
+
+\subsection{Inference on Any Resolution}
+For an input $\bm{x}$} with any resolution $r^*$, previous models resize the image to a fixed resolution $r$. The inference procedure is:
+\begin{equation}
+\small
+\label{eq8}
+\begin{aligned}
+\hat{y} = \text{Enc}_{\phi}(g_{\bm{\theta}}(B_{r^*}^{r}\bm{x})),
+\end{aligned}
+\end{equation}
+With MSPE, the model can infer directly from the original image without resizing or altering its aspect ratio. The process is:
+\begin{equation}
+\small
+\label{eq9}
+\begin{aligned}
+\hat{y} = \text{Enc}_{\phi}(g_{\bm{\theta^*}}(\bm{x})),
+\end{aligned}
+\end{equation}
+where $\theta^*$ is the patching weight that matches the resolution $r^*$. Details on the computation of $\theta^*$ are provided in Appendix \ref{app:inf} and Eq.(\ref{eq10}).
+
+
+
+\section{Experiments}
+\label{sec:4}
+\noindent\textbf{Datasets.} We conduct experiments on 4 benchmark datasets: ImageNet-1K \cite{deng2009imagenet} for classification tasks, ADE20K \cite{zhou2019semantic} and Cityscapes \cite{cordts2016cityscapes} for semantic segmentation, and COCO2017 \cite{lin2014microsoft} for object detection.
+
+\noindent\textbf{Backbone networks.} Our method is assessed on three ViT models, including ViT-B \cite{dosovitskiyimage} and DeiT-B III \cite{touvron2022deit} (non-overlapping patches); PVT v2-B3 \cite{wang2022pvt} (overlapping patches). ViT and DeiT III are pre-trained using the ImageNet-21K and ImageNet-22K datasets.
+
+\noindent\textbf{Implementation details.} MSPE is trained using SGD optimizer for \textbf{\textit{five epochs}}, with a learning rate of 0.001, momentum of 0.9, weight decay of 0.0005, and batch size of 64 per GPU. To validate our model, we implement ViT \cite{dosovitskiyimage} and other networks \cite{touvron2022deit, wang2021pyramid, li2022mvitv2} via open-sourced \texttt{timm} library for classification, ViTDet \cite{li2022exploring} via MMDetection \cite{chen2019mmdetection} for object detection, and SETR \cite{zheng2021rethinking} via MMSegmentation \cite{mmseg2020} for segmentation; additional details are available in Appendix \ref{app:details}.
+
+
+
+
+\begin{table*}[t]
+\caption{ImageNet-1K Top-1 accuracy across 28$\times$28 to 448$\times$448 resolutions: Our method was only trained for 5 epochs, while ResFormer \cite{tian2023resformer} was trained for 200 epochs, all methods based on the same well-trained model.}
+\vskip 0.05in
+\label{table:1}
+\small
+\centering 
+\renewcommand{\arraystretch}{1.1}
+\resizebox{0.99\textwidth}{!}{	
+\begin{tabular}{cl|cccccccccccc}
+\toprule[1pt] 
+\multicolumn{2}{c|}{\multirow{2}{*}{\textbf{Method}}}                                           & \multicolumn{12}{c}{\textbf{Resolution}}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   \\
+\multicolumn{2}{c|}{}                                                                           & 28                                                 & 42                                                 & 56                                                 & 70                                                 & 84                                                 & 98                                                 & 112                                                & 126                                                & 140                                                & 168                                                & 224                                                & 448                                                 \\ 
+\cmidrule(r){2-14}
+\multirow{4}{*}{\rotcell{{\textit{ViT}}}}     & Vanilla \cite{dosovitskiyimage}          & 8.52                                               & 37.86                                              & 54.67                                              & 65.94                                              & 72.58                                              & 76.29                                              & 78.75                                              & 80.62                                              & 82.00                                              & 83.66                                              & 85.10                                              & 53.81                                               \\
+                                                     & ResFormer \cite{tian2023resformer}       & 2.21                                               & 19.29                                              & 45.41                                              & 59.92                                              & 69.30                                              & 74.34                                              & 77.92                                              & 77.48                                              & 79.61                                              & 81.30                                              & 83.04                                              & 81.06                                               \\
+                                                     & FlexiViT \cite{beyer2023flexivit}        & \underline{14.86}                                      & \underline{48.52}                                      & \underline{63.44}                                      & \underline{70.53}                                      & \underline{74.47}                                      & \underline{78.03}                                      & \underline{80.24}                                      & \underline{82.28}                                      & \underline{83.10}                                      & \underline{84.70}                                      & \underline{85.10}                                      & \underline{85.11}                                       \\
+                                                     & {\cellcolor[rgb]{0.949,0.949,0.949}}MSPE & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{56.41} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{71.02} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{77.94} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{79.54} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{81.63} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{82.51} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{83.75} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{83.81} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{83.94} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{84.70} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{85.10} & {\cellcolor[rgb]{0.949,0.949,0.949}}\textbf{85.11}  \\ 
+\cmidrule(r){2-14}
+\multirow{4}{*}{\rotcell{{\textit{DeiTIII}}}} & Vanilla \cite{touvron2022deit}           & 0.14                                               & 2.45                                               & 17.93                                              & 40.30                                              & 57.23                                              & 67.01                                              & 72.80                                              & 76.20                                              & 79.62                                              & 83.51                                              & 85.66                                              & 62.29                                               \\
+                                                     & ResFormer \cite{tian2023resformer}       & 1.08                                               & 20.27                                              & 46.52                                              & 60.78                                              & 70.28                                              & \underline{75.28}                                      & \underline{78.80}                                      & 78.79                                              & 80.48                                              & 82.13                                              & 83.47                                              & 82.53                                               \\
+                                                     & FlexiViT \cite{beyer2023flexivit}        & \underline{3.76}                                       & \underline{26.44}                                      & \underline{49.99}                                      & \underline{62.72}                                      & \underline{70.47}                                      & 74.55                                              & 77.57                                              & \underline{79.22}                                      & \underline{80.69}                                      & \underline{83.51}                                      & \underline
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

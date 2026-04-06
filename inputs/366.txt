@@ -1,0 +1,185 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: ReasonNet: End-to-End Driving with Temporal and Global Reasoning
+
+% ArXiv ID: 2305.10507
+
+
+
+
+\title{ReasonNet: End-to-End Driving with Temporal and Global Reasoning}
+
+\author{%
+Hao Shao$^{1}$~~~~~~ Letian Wang$^{2}$~~~~~~ Ruobing Chen$^1$ \\ \vspace{0.5em}Steven L. Waslander$^{2}$~~ Hongsheng Li$^3$~~ Yu Liu$^{1,4}$\thanks{Corresponding author}\\ 
+$^1$SenseTime Research ~~~ $^2$University of Toronto ~~~  $^3$CUHK MMLab \\   $^4$Shanghai Artificial Intelligence Laboratory
+}
+
+
+
+\maketitle
+
+\begin{abstract}
+The large-scale deployment of autonomous vehicles is yet to come, and one of the major remaining challenges lies in urban dense traffic scenarios. In such cases, it remains challenging to predict the future evolution of the scene and future behaviors of objects, and to deal with rare adverse events such as the sudden appearance of occluded objects. In this paper, we present ReasonNet, a novel end-to-end driving framework that extensively exploits both temporal and global information of the driving scene. By reasoning on the temporal behavior of objects, our method can effectively process the interactions and relationships among features in different frames. Reasoning about the global information of the scene can also improve overall perception performance and benefit the detection of adverse events, especially the anticipation of potential danger from occluded objects. For comprehensive evaluation on occlusion events, we also release publicly a driving simulation benchmark DriveOcclusionSim consisting of diverse occlusion events. We conduct extensive experiments on multiple CARLA benchmarks, where our model outperforms all prior methods, ranking first on the sensor track of the public CARLA Leaderboard\cite{leaderboard}.
+\end{abstract}
+
+
+\section{Introduction}
+Despite significant recent progress in the field of autonomous driving, truly large-scale deployment of autonomous vehicles (AVs) on public roads has yet to be established. The majority of the remaining issues lie in navigating dense urban traffic scenes, where a large number of different dynamic objects (e.g. vehicles, bicycles, pedestrians), complex road geometries and road user interactions are involved. In such circumstances, currently deployed or tested solutions could make incorrect or unexpected decisions , resulting in severe accidents or traffic infractions~\cite{tesla, uber, leaderboard}. Two of the major challenges behind such autonomous incompetence include 1) how to achieve a comprehensive understanding of the driving scene and, more importantly, how to make high-fidelity predictions on the future evolution of the driving scene; 2) how to deal with rare adverse events in long-tail distributions, such as undetected but relevant objects in occluded regions.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.45\textwidth]{figure/motivation.pdf}
+    \vspace{-0.5em}
+    \caption{Temporal reasoning on the historic behaviors of surrounding objects can benefit the prediction of the scene evolution and objects' future behaviors. Global reasoning on the interaction among objects and the environment allows for inference about unobservable space and occluded objects, anticipating potential danger and enhancing perception/driving performance.}
+    \label{fig:pipeline}
+    \vspace{-1em}
+\end{figure}
+
+Comprehensive scene understanding and high-fidelity prediction of how objects in the scene will move in the future are vital for autonomous vehicles to take safe and reliable actions. Toward this end, modularized methods were proposed to decompose the task into three sequential sub-tasks: detection~\cite{li2022bevformer, liu2022bevfusion, lian2022semi, lian2022monojsg, lian2022exploring}, tracking~\cite{zhang2022bytetrack,cao2022observation}, and forecasting~\cite{jia2022hdgt,gu2021densetnt,wang2022transferable,wang2021socially,casas2020implicit,hu2021fiery,wei2021perceive,jia2023towards}. While more interpretability is provided by developing each module independently, these sub-tasks are still regarded as open research questions and errors in each sub-task can propagate and accumulate, leading to unstable overall performance. In contrast, end-to-end driving methods~\cite{shao2022safety, chen2022learning, chen2021learning} have recently emerged as a promising method to solve these subtasks in a monolithic manner directly. However, a high-fidelity future prediction necessitates sufficient \textbf{temporal reasoning} over the historic information of the scene~\cite{feichtenhofer2019slowfast,shao2020temporal}, which is usually only somewhat considered in previous end-to-end driving methods if not completely ignored. For example, \cite{chitta2022transfuser,chen2022learning} only exploited scene information in the current frame, and~\cite{toromanoff2020end} simply concatenated features in historic frames for temporal reasoning. In such cases, the interactions and relationships amongst features in different frames and objects cannot be sufficiently modeled. Thus in this paper, we propose a temporal reasoning module to effectively fuse information from different frames for better driving performance.
+
+
+On the other hand, rare adverse events in long-tail distributions remain a notoriously challenging issue on the way toward large scale deployment of autonomous vehicles. For example, one such challenge is the difficulty in detecting occluded but relevant objects in the scene. While a large amount of research has focused on improving perception performance~\cite{li2022bevformer, vora2020pointpainting}, the occluded objects essentially lie out of the scope of observable elements, and failure to consider such objects can result in either dangerous or overly cautious driving behavior. Our observation is that, while humans also suffer from similar limitations to autonomous vehicles regarding occluded objects, they are able to reason about these unobservable spaces by exploiting global information of the scene such as road geometry and driving interaction patterns, to anticipate potential danger even under occlusion. For example, when one human driver notices another vehicle braking abruptly, the driver may reason the presence of an occluded object (e.g., a pedestrian) ahead, reminding himself to drive cautiously. Thus, our insight is that, a safe and intelligent autonomous vehicle should also master the \textbf{global reasoning} capability to have a better perception of the scene. In this paper, we propose a transformer-based global reasoning module to sufficiently fuse information of the environment and objects, and  analyze  their interactions for better scene understanding. Such global reasoning capability not only benefits interaction modeling with occluded objects, but also improves overall perception performance. Examples of such performance gains include better traffic light status identification by reasoning over other vehicles' actions and more accurate future trajectory forecasting by reasoning over interactions among objects.
+Besides, considering the fact that the occlusion events lie in the long-tail distribution and have been rare in currently available datasets, we also construct a Driving in Occlusion Simulation benchmark (DOS) consisting of 4 occlusion scenarios, each with 25 cases, as a comprehensive occlusion event evaluation benchmark in the field of end-to-end autonomous driving.
+
+
+In this paper, we propose a novel end-to-end driving framework named temporal and global reasoning network (ReasonNet), which provides enhanced reasoning on the temporal evolution and the global information of the scene, for better perception performance and driving quality. Our contributions are three-fold:
+
+\begin{itemize}
+    \item We propose a novel temporal and global reasoning Network (ReasonNet) to enhance historic scene reasoning for high-fidelity prediction of the scene's future evolution and improve global contextual perception performance even under occlusion.
+    \item We present a new benchmark called \textbf{D}riving in \textbf{O}cclusion \textbf{S}imulation benchmark (DOS), which consists of diverse occlusion scenarios in urban driving for systematic evaluation in occlusion events, and make the benchmark publicly available.
+    \item We experimentally validate our method on multiple benchmarks with complex and adversarial urban scenarios. Our model ranks first on the sensor track of the CARLA autonomous driving leaderboard.
+\end{itemize}
+
+
+
+\section{Related work}
+\label{sec: related work}
+\noindent\textbf{End-to-end Autonomous Driving}
+End-to-end autonomous driving in urban scenarios has become more studied recently thanks to the CARLA simulator and leaderboard~\cite{dosovitskiy2017carla}. 
+Recent works mainly consist of reinforcement learning (RL) and imitation learning (IL) methods. 
+The reinforcement Learning methods train the agents by constantly interacting with simulated environments and learning from these experiences. 
+Latent DRL~\cite{toromanoff2020end} first trains an embedding space as a latent representation of the environment observation, and then conducts reinforcement learning with the latent observation. 
+Roach~\cite{zhang2021end} utilizes an RL agent with privileged information of the environment to distill a model only with regular information (e.g. sensor) as the final agent.
+WOR~\cite{chen2021learning} builds a model-based RL agent along with the world model and reward model. The final agent is distilled from the expert knowledge acquired from these pretrained models.
+Imitation learning methods aim at learning from an expert agent to bypass interacting with the environment. Early IL methods include CIL~\cite{codevilla2018end} and CILRS~\cite{codevilla2019exploring}, which apply a conditional architecture with different network branches for different navigation commands. 
+LBC~\cite{chen2020learning} first trains an imitation learning agent with privileged information, which is then distilled into a model using sensor data.
+Transfuser~\cite{prakash2021multi, chitta2022transfuser} designs a multi-modal transformer to fuse information between the front camera image and LiDAR data.
+LAV~\cite{chen2022learning} exploits data of not only the ego vehicle but also surrounding vehicles for data augmentation by learning a viewpoint-invariant spatial intermediate representation. 
+TCP~\cite{wu2022trajectory} proposes a network with two branches which generates the control signal and waypoints respectively. An adaptive ensemble is applied to fuse the two output signals.
+InterFuser~\cite{shao2022safety} uses a transformer to fuse and process multimodal multi-view sensors for comprehensive scene understanding.
+
+
+\noindent\textbf{Attention for Autonomous Driving}
+The attention mechanism has been demonstrated to be a powerful module in many areas of deep learning, including the context of driving. The classic attention-based Transformer architecture~\cite{vaswani2017attention} was originally established in Natural Language Processing. Transformer (VIT) was then applied in Computer Vision (vision Transformer, VIT~\cite{dosovitskiy2020image, qian2021blending}) and attains excellent performance on Imagenet classification.
+Later generations move on to generalize the attention mechanism to the driving domain, including motion forecasting~\cite{li2020end,gao2020vectornet,wang2021hierarchical}, driver attention prediction~\cite{gou2022driver, kim2019grounding} and object tracking~\cite{sun2020transtrack, meinhardt2022trackformer}. In the field of end-to-end autonomous driving, TransFuser~\cite{prakash2021multi, chitta2022transfuser} exploits several transformer modules for the fusion of data from the front view camera and LiDAR.  NEAT~\cite{chitta2021neat} uses intermediate attention maps to iteratively compress 2D image features into a compact bird-eye-view (BEV) representation for driving.  InterFuser~\cite{shao2022safety} utilizes a transformer encoder and decoder to fuse information and decode the feature into interpretable embeddings. 
+
+\noindent\textbf{Multi-task Learning} Our end-to-end driving framework adopts multi-task learning, with a joint objective of object detection, occupancy forecasting, traffic sign prediction and waypoint prediction. MotionNet~\cite{wu2020motionnet} proposes a spatio-temporal pyramid network  for joint perception and motion prediction based on BEV maps. PnPNet~\cite{liang2020pnpnet} proposes a new object trajectory representation and multi-object tracker to handle occlusion and false positives. IntentNet~\cite{casas2018intentnet} predicts the high-level intentions of each agent from semantic HD maps building. ST-P3~\cite{hu2022st} proposes an egocentric-aligned accumulation technique to preserve geometry information in 3D space and utilize a dual pathway modeling to consider past motion variations.
+
+
+\section{Method}
+\label{sec: method}
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.925\textwidth]{figure/pipeline.pdf}
+    \vspace{-0.5em}
+    \caption{The proposed ReasonNet consists of three modules: 1) the perception module fuses  different sensor data to generate the BEV feature, traffic sign feature, and waypoints in the early stage of our framework; 2) the temporal reasoning module processes current and historic features and maintains a memory bank to store historic features; 3) the global reasoning module models the interaction and relationship among objects and the environment to detect adverse events (e.g. occlusion) and improve overall perception performance.}
+    \label{fig:pipeline}
+    \vspace{-1em}
+\end{figure*}
+
+
+We aim at learning a driving policy $\pi$ that generates raw control commands by taking multi-view multi-modal sensor readings, vehicle measurements, and navigation commands as inputs. As shown in Figure~\ref{fig:pipeline}, the proposed ReasonNet consists of three parts: 1) a perception module that extracts bird's-eye-view (BEV) features from LiDAR and RGB data; 2) a temporal reasoning module that processes temporal information and maintains a memory bank storing historic features; 3) a global reasoning module that captures the interaction/relationship amongst objects and the environment, to detect adverse events (e.g. occlusion) and improve overall perception performance. This section will introduce these modules in detail.
+
+\subsection{Perception Module}
+\label{sec:perception}
+
+The perception module is responsible for processing and fusing different sensor data at the early stage of our framework, based on which temporal and global reasoning can be conducted by later modules. Specifically, five sensors are utilized: four RGB cameras (left, front, right and rear) $I_{\text{rgb}} = I_{0, 1, 2, 3}$ and one LiDAR sensor $I_{\text{lidar}} = I_{4}$. Four image inputs are obtained from the four cameras, and an additional focus-view image input is center-cropped from the front image to capture distant traffic lights. Point cloud data is retrieved from the LiDAR sensor. Our perception module includes a 2D backbone to embed image input into keys and values, a 3D backbone to embed LiDAR input into queries, and a BEV decoder that utilizes these keys, values, and queries to obtain features of the bird's-eye view (BEV) map, waypoints, and traffic signs.
+
+ 
+
+\noindent\textbf{Image Input} For each image input of $I_{rgb}$, a 2D CNN backbone ResNet~\cite{he2016deep} is applied to generate a feature map $f_{i}$. Then, we use a convolution layer to map the channels of $f_{i}$ to $C_{v}$ and flatten it to one-dimensional tokens. A sinusoidal positional encoding and learnable sensor embeddings are added to the tokens, so that the following network can distinguish them from different cameras and relative positions. Finally, tokens of different images are passed through a standard transformer encoder with $K_e$ layers. Each layer consists of Multi-Headed Self-Attention~\cite{vaswani2017attention}, MLP blocks and layer normalization~\cite{ba2016layer}. This image fusion operation can contribute to a better perception of global context from multi-view inputs, generating keys and values for the image-LiDAR fusion in BEV decoder. 
+
+
+\noindent\textbf{LiDAR Input} For the LiDAR input, we use  PointPillars~\cite{lang2019pointpillars} as our 3D perception backbone to process points in the ego-vehicle-centered area $x \in [- H_{b}, H-H_{b}]$ and $y \in [-W/2, W/2]$. Specifically, we use a simplified version of PointNet\cite{qi2018frustum} to encode the information of raw LiDAR points. Each pillar includes the points in a 0.25m$\times$0.25m area. The extracted feature map is downsampled to $ C_{v} \times H \times W$ for computation reduction and then serves as BEV queries used in the BEV decoder and memory bank.
+
+\noindent\textbf{Sensor-Fusion BEV Decoder} The BEV decoder follows a standard transformer architecture design with $K_{bev}$ layers to fuse tokens from different sensors.
+Tokens from the RGB images are fed as values and keys into the decoder, and tokens from the LiDAR points are fed as the $H \times W$ queries to generate BEV features. In addition, two other kinds of queries for the prediction of traffic signs and waypoints $\mathbf{w}$ are also fed into the decoder. Following InterFuser~\cite{shao2022safety}, we use a 2-layer MLP as the traffic sign classifier to predict the traffic light state and whether there is a stop sign ahead; we then use a single-layer GRU~\cite{cho2014learning} to auto-regressively generate consecutive waypoints $\{\mathbf{w}_{t}\}_{t=1}^{T_{f}}$ conditioned on the goal location of the ego vehicle. $T_{f}$ denotes the number of the predicted time steps. To pretrain the perception module in the first training stage, the generated BEV feature is passed through a one-stage CenterPoint~\cite{yin2021center} to generate the $H \times W \times 7$ BEV map covering an $H$m $\times$ $W$m spatial region, where the seven channels represent object existence probability, offset from grid center, bounding box extent, heading angle and velocity for objects at each grid cell. 
+
+
+
+\subsection{Temporal Reasoning module}
+\label{sec:temporal reasoning}
+
+Compared to existing end-to-end driving methods that only exploit scene information of the current frame~\cite{chitta2022transfuser,chen2022learning} or simply concatenate features of historic frames~\cite{toromanoff2020end}, we propose a temporal reasoning module that can sufficiently store and fuse temporal information to benefit the motion forecasting of traffic participants and the tracking of intermittently occluded objects. As shown in Figure~\ref{fig:pipeline}, our temporal reasoning module includes temporal processing to fuse current and historic features through an attention mechanism, and maintains a memory bank which stores historic short-term and long-term feature keys and values.
+
+
+\noindent\textbf{Temporal Processing} Considering that information in different historic frames could have different relevance to the current scene, we apply an attention-based memory reading from the historic features. Specifically, for each historic frame $t$ stored in the memory, we first measure its relevance by calculating the normalized similarity $\mathbf{S}$ between the historic-frame feature key $\mathbf{k} \in \mathbb{R}^{C_{k} \times T_h \times H \times W}$\footnote{$C$, $H$, $W$ denotes the channel, height, and width of the feature respectively, $T_h$ denotes the number of the frames stored in the memory bank.} and the current-frame feature query $\mathbf{q}\in \mathbb{R}^{C_{k} \times H \times W}$: 
+\begin{equation}
+\label{equ:similarity}
+S(\mathbf{q}_{h, w}, \mathbf{k}_{t, i, j}) = \frac{(\mathbf{k}_{t, i, j} - \mathbf{q}_{h, w})^{2}}{\sum_{i=0,j=0}^{i=H-1,j=W-1} (\mathbf{k}_{t, i, j} - \mathbf{q}_{h, w})^{2}}  
+\end{equation}
+
+We map every query element to a distribution over $H \times W$ memory elements and correspondingly aggregate their values v to obtain the readout feature $\mathbf{M} \in \mathbb{R}^{C_{v} \times T_h \times H \times W}$ for each frame $t$ stored in the memory:
+
+
+\begin{equation}
+\label{equ:readout}
+\mathbf{M}_{t,h,w} = \sum_{i=0,j=0}^{i=H-1,j=W-1} \mathbf{v}_{t, i, j} S(\mathbf{q}_{h, w}, \mathbf{k}_{t, i, j})
+\end{equation}
+
+The aggregated features from all historic frames are then concatenated with the current-frame feature value to get $\mathbf{M}^{'} \in \mathbb{R}^{C_{v} \times (T_h+1) \times H \times W}$, which is then passed through a GRU to progressively fuse temporal information and get $\mathbf{M}_{fused} \in \mathbb{R}^{C_{v} \times H \times W}$ as the final output of the module. Technically, we take the L2 similarity proposed in STCN\cite{cheng2021rethinking} as the similarity measure function, which is more stable than the dot product\cite{patrick2021keeping}. The current-frame feature query $\mathbf{q}$ is obtained by passing the features from the 3D backbone $\mathbf{F} \in \mathbb{R}^{C_{v} \times H\times W}$ through a query encoder (several convolution layers). The historic-frame feature key $\mathbf{k}$ and value $\mathbf{v}$ are taken from the temporal memory bank.
+
+
+\noindent\textbf{Memory Bank Maintaining} As above, we have introduced the temporal processing at one single frame. After every $\tau$ frame, the obtained feature key and value at that frame will be used to update the memory bank. Specifically, the current-frame feature query $\mathbf{q}$ is directly copied and fed into the memory bank as the memory key without extra computation. The final output $\mathbf{M}_{fused}$ will first be encoded to a BEV map $\mathbf{M}_p$. The BEV map $\mathbf{M}_p$ will be concatenated with the final output $\mathbf{M}_{fused}$ and passed through a value encoder to obtain the memory value $\mathbf{v}$, which is fed into the memory back. With the above key-value pairs, the memory bank maintains two kinds of buffer:  the short-term and long-term buffer. On the one hand, the new key-value pair will be appended to the short-term buffer, as a high-resolution memory of the scene in the past few seconds for accurate feature matching. Considering the limited GPU memory resources, we limit the buffer size and older key-value pairs will be discarded when the limit number $T_{s}$ is reached. However, when these older features are discarded, the long-term behavior of the traffic participants is missing, which can be crucial for motion forecasting in complex traffic scenarios. Thus on the other hand, inspired by XMem\cite{cheng2022xmem}, the memory bank also maintains a long-term buffer that selectively stores important/representative key-value feature pairs discarded by the short-term buffer. Considering the fact that the objects surrounding the ego vehicle are sparse most of the time\footnote{Based on the data collected from the CARLA simulator, only 7\% of the ego-vehicle-centered BEV map area is occupied by active objects.}, the long-term buffer selectively stores key-value features ($\mathbf{k}$ and $\mathbf{v}$) which meet one of the two criteria: 1) their corresponding location in the BEV map $\mathbf{M}_p$ has a high probability of object existence; 2) their usage frequency is in top-\textit{K} of all candidate key-value features. The usage frequency is defined by its cumulative normalized similarity (Eq. \ref{equ:similarity}).
+The features selected by the above criteria are appended to the last frame of memory. And if the last memory frame is full, we will initialize one new frame with the zero vector and set it as the last frame to store new features. When the number of frames reaches the limit $T_{l}$, the obsolete memory will be removed.
+Such a compact storing strategy can efficiently track long-term representative features and intermittently occluded objects, while balancing the resources required. 
+
+\subsection{Global Reasoning module}
+\label{sec:global reasoning}
+
+Rare adverse events such as occluded objects are a notorious issue for the practical deployment of AVs. Our insight is that humans perceive their surroundings not only through sensors, but also by exploiting global information on the scene to reason over the unobservable spaces. For instance, when a vehicle performs an emergency stop without a clear reason, humans can infer that there is potentially an occluded object ahead of the vehicle and will drive more cautiously. Thus we propose the global reasoning module to capture the interaction and relationship between objects and the environment to detect adverse events (e.g. occlusion) and improve overall perception performance. The module consists of three parts: 1) an object-environment and object-object interaction modeling process; 2) an occupancy decoder to generate the occupancy map; 3) a consistency loss to encourage consistent prediction of waypoints and the occupancy map.
+
+
+\noindent\textbf{Interaction Modeling} The object-environment and object-object interaction modeling process aims at reasoning about the relationship among objects and the environment. On the one hand, $\mathbf{M}_{fused}$ features whose corresponding location in the BEV map $\mathbf{M}_p$ has a high probability of object existence will be extracted to represent object features. On the other hand, $\mathbf{M}_{fused}$ features will also be downsampled to represent the environment features. All object and environment features are used to construct a graph, which is passed through a graph attention network (GAT)~\cite{velickovic2017graph} for interaction modeling.
+
+\noindent\textbf{Occupancy Decoder} Taking the features outputted by the GAT as keys and values, and the learnable positional embeddings as queries, the occupancy decoder utilizes a transformer decoder with $K_{opy}$ layers to generate: 1) the traffic sign feature, which is then concatenated with the traffic sign feature from the BEV decoder to generate the final traffic sign prediction; 2) the occupancy map feature, which is then applied with convolution operation to generate the occupancy map $\mathbf{O}_{t} \in \mathbb{R}^{T_f \times H \times W}$. At a future time $t$, each cell in the occupancy map contains a value in the range [0,1] representing the probability that the cell is occupied.
+
+\noindent\textbf{Consistency Loss} Currently, our framework predicts the waypoints and the occupancy map independently, which are not necessarily consistent. For example, the waypoints could overlap some obstacles in the occupancy map. Thus we propose a consistency loss to discourage waypoints' crossing the high-probability region of the occupancy map. Further, the consistency loss also encourages generating longer waypoint trajectories for efficient driving. Specifically, the consistency loss aims at minimizing the average object existence probability of the cells that cover the predicted waypoints, and maximizing the average $l_2$ length of the waypoint trajectory $\mathbf{w}$:
+
+\begin{equation}
+    \mathcal{L}_{\text{consistency}} = \frac{1}{T_f}\Bigg( \sum_{t=0}^{T_f} \frac{\sum_{i=0}^{N_{c}^{t}} \mathbf{O}_{t, i}}{N_{c}^{t}} - \lambda  \sum_{t=0}^{T_f}\| \mathbf{w}_{t} \|_{1} \Bigg)
+\end{equation}
+,where $N_c^t$ denotes the number of covered cell at step $t$, $\mathbf{O}_{t, i}$ denotes the object existence probability at cell $i$ at time $t$.
+
+
+\subsection{Control}
+\label{sec:control}
+Following~\cite{chen2020learning}, we use two PID controllers for latitudinal and longitudinal control, to track the heading and velocity of predicted waypoints respectively. If a red traffic light or stop sign is detected, the ego-vehicle will brake. Additionally, an emergency stop will also be performed if the ego vehicle's current bounding box crosses the area in the occupancy map that has a high object existence probability or if the future waypoints overlap with objects in the BEV map.
+
+
+
+\subsection{Training Setup}
+\label{sec:training setup}
+The training of our framework consists of two stages. In the first stage, we train the perception module to predict BEV features, traffic sign features, and waypoints. Specifically, the loss of BEV features and traffic sign features is computed with additional prediction heads, which are discarded in the next stage. In the second stage, we freeze the perception module and train the other two modules. Five loss terms are considered: 1) the waypoints loss $\mathcal{L}_{w}$ that minimizes the error between predicted waypoints and expert waypoints; 2) the BEV map loss $\mathcal{L}_{BEV}$ that follows~\cite{yin2021center,chen2022learning} to minimize the current-frame BEV map prediction error; 3) the traffic sign loss $\mathcal{L}_{sign}$ for the traffic regulation prediction; 4) occupancy map loss $\mathcal{L}_{opy}$ that minimizes the occupancy prediction error in a future horizon; 5) the consistency loss $\mathcal{L}_{\text{consistency}}$ which encourages a consistent generation of the waypoints and occupancy map. These loss terms are balanced by corresponding loss weights.
+
+
+
+\section{Drive in Occlusion Sim (DOS) Benchmark}
+\label{sec:dos}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.45\textwidth]{figure/cases.pdf}
+    \vspace{-1em}
+    \caption{An illustration for the four types of occlusion scenarios included in the proposed DOS benchmark. The orange color denotes the ego car. The blue/green dots denote the occluded/visible trajectory of the occluded dangerous object.}
+    \label{fig:scenarios}
+    \vspace{-1em}
+\end{figure}
+
+In order to address the issue that occlusion events are rare in existing datasets and benchmarks, we present the Drive in Occlusion Simulation benchmark (DOS), a CARLA-based framework providing diverse driving scenarios with occluded objects. As shown in Figure~\ref{fig:scenarios}, the proposed DOS benchmark includes four types of challenging occlusion driving scenarios: 
+
+\vspace{0.4em}
+\noindent\textbf{Parked Cars} (\#1) The ego vehicle is driving in a straight lane with parked cars on the side. Pedestrians can first appear on the sidewalk (visible) and then suddenly emerge through the occluded areas betw
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

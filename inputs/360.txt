@@ -1,0 +1,243 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+\begin{figure*}
+\begin{centering}
+\includegraphics[width=0.9\linewidth]{pics/teaser.pdf} 
+\par\end{centering}
+\caption{QuadTree~\cite{tang2022quadtree} (a,d) vs our CasMTR (b,c,e). Our method achieves more fine-grained matching pairs for both source and target images (b). It is further improved by our NMS detection, which retains reliable matching results located in structural keypoints (c,e). We show an intuitive motivation for our spatially informative keypoints in (f). Best viewed in color.\label{fig:teaser}}
+\end{figure*}
+
+\begin{figure}
+\begin{centering}
+\includegraphics[width=0.75\linewidth]{pics/teaser2.pdf} 
+\par\end{centering}
+\caption{Illustration of CasMTR pipeline; and our novelties compared against the existing steps from detector-free matching methods~\cite{sun2021loftr,tang2022quadtree,chen2022aspanformer} are highlighted in red.\label{fig:teaser_pipeline}
+}
+\end{figure}
+
+\begin{table}
+\footnotesize 
+\caption{\small Summary of test image size, backbones, memory cost (GB), and inference speed (s/image) on MegaDepth~\cite{li2018megadepth} with AUC of different pose errors (\%). Suffixes `-8c', `-4c', and `-2c' denote matching at 1/8, 1/4, and 1/2 of image size. Baseline: QuadTree~\cite{tang2022quadtree} with the same backbone as ours.
+Directly implementing QuadTree-4c causes Out-of-memory (OOM) error in a 32GB GPU, so its inference speed is estimated in brackets.
+\label{tab:ablation_scale_backbone}}
+\centering
+\setlength{\tabcolsep}{0.7mm}{
+\begin{tabular}{c|c|c|ccc|c|c}
+\hline 
+\multirow{2}{*}{Methods} & \multirow{2}{*}{Backbone} & \multirow{2}{*}{Size} & \multicolumn{3}{c|}{Pose Est. AUC} & \multirow{2}{*}{Mem.(G)} & \multirow{2}{*}{s/img}\tabularnewline
+\cline{4-6} \cline{5-6} \cline{6-6} 
+ &  &  & @5° & @10° & @20° &  & \tabularnewline
+\hline 
+Baseline-8c & Twins+FPN & 704 & 51.63 & 68.54 & 80.98 & 3.83 & 0.146\tabularnewline
+CasMTR-4c & Twins+FPN & 704 & 52.59 & 69.78 & 82.31 & 3.99 & 0.212\tabularnewline
+CasMTR-2c & Twins+FPN & 704 & \textbf{54.91} & \textbf{71.27} & \textbf{83.01} & 6.29 & 0.311\tabularnewline
+\hline 
+QuadTree-8c & FPN & 832 & 52.87 & 69.24 & 81.32 & 5.72 & 0.203\tabularnewline
+Baseline-8c & Twins+FPN & 832 & 52.90 & 69.78 & 82.05 & 4.91 & 0.207\tabularnewline
+QuadTree-4c & FPN & 832 & -- & -- & -- & OOM & (0.602)\tabularnewline
+CasMTR-4c & Twins+FPN & 832 & 53.63 & 70.34 & 82.55 & 4.91 & 0.304\tabularnewline
+CasMTR-2c & Twins+FPN & 832 & \textbf{55.61} & \textbf{71.96} & \textbf{83.52} & 7.55 & 0.444\tabularnewline
+\hline 
+QuadTree-8c & FPN & 1152 & 55.09 & 71.31 & 83.20 & 12.62 & 0.424\tabularnewline
+Baseline-8c & Twins+FPN & 1152 & 55.77 & 72.01 & 83.64 & 13.33 & 0.423\tabularnewline
+QuadTree-4c & FPN & 1152 & -- & -- & -- & OOM & (1.442)\tabularnewline
+CasMTR-4c & Twins+FPN & 1152 & 56.34 & 72.11 & 83.55 & 12.40 & 0.649\tabularnewline
+CasMTR-2c & Twins+FPN & 1152 & \textbf{56.90} & \textbf{72.94} & \textbf{84.24} & 14.36 & 0.887\tabularnewline
+\hline 
+\end{tabular}}
+\end{table}
+
+Image matching is an important vision problem that is widely employed for many downstream tasks like Structure-from-Motion~\cite{schonberger2016structure}, Simultaneous Localization and Mapping~\cite{mur2015orb}, and visual localization~\cite{lynen2020large}.
+However, accurately matching two or more images remains difficult due to various factors, such as differences in viewpoints, illuminations, seasons, and surroundings.
+Classical approaches~\cite{lowe2004distinctive,rublee2011orb} address it via the pipeline of \textit{detection, description, and matching of features} by hand-crafted features. 
+Recently, learning Convolutional Neural Network (CNN) based detectors~\cite{detone2018superpoint,revaud2019r2d2,sarlin2020superglue,tian2020d2d,tyszkiewicz2020disk} have been utilized to detect and describe keypoints, leading to significant improvements in this pipeline.
+But such detector-based CNNs suffer from limited receptive fields and search space, as noticed in~\cite{sun2021loftr}. 
+
+To solve this issue, transformer-based detector-free methods have emerged as more robust alternatives, demonstrating impressive matching abilities in texture-less regions~\cite{sun2021loftr,jiang2021cotr,tang2022quadtree,wang2022matchformer,chen2022aspanformer}. 
+However, the high computational cost of attention limits transformer-based methods to `\textit{semi-dense}' matching, where source matching points are spaced apart at intervals of coarse feature space, as shown in Fig.\ref{fig:teaser}(a,d).
+Such semi-dense matching leads to an issue that \textit{keypoint locations are not informative enough}: the spatially restricted source points in coarse feature maps lack the necessary details to express structural information, making it difficult to accurately estimate pose. This problem is especially challenging for low-resolution images, as seen in our pilot study (Tab.~\ref{tab:ablation_scale_backbone}). More experiments based on extreme resolutions are discussed in the supplementary.
+Furthermore, it remains unclear whether transformer-based methods can capture matching points in finer-grained image features rather than coarse ones (1/8) without a substantial increase in computational costs.
+
+To address these challenges, we improve the existing transformer-based matching pipeline~\cite{sun2021loftr,chen2022aspanformer} by efficiently capturing spatially informative keypoints in a cascaded manner.
+Particularly, our key idea is inspired by the coarse-to-fine Multi-View Stereo (MVS)~\cite{gu2020cascade}. We propose enhancing the transformer-based matching pipeline by adding the new stages of cascade matching and Non-Maximum Suppression (NMS) detection as summarized in Fig.~\ref{fig:teaser_pipeline}. Such new stages increase and refine the matching candidates in source views. Thus, we can achieve \emph{dense matching for both source and target views} as in Fig.~\ref{fig:teaser}(f), resulting in more precise matches focusing on more reliable positions with informative structures. Moreover, we elaborate on several novel techniques to support the newly incorporated stages in Fig.~\ref{fig:teaser_pipeline}. Consequently, the proposed method can achieve dense and precise matches on 1/2 image size located in informative space.
+
+Formally, we propose a transformer-based matching method called Cascade feature Matching TRansformer (CasMTR).  It makes a significant contribution by enabling pure transformer-based models to conduct \textit{dense} matching by cascaded capturing spatially informative keypoints without relying on the expensive learning of huge 4D correlations as merely extended from~\cite{sun2021loftr}.
+CasMTR develops several key components as follows.
+Firstly, inherited in MVS, coarse-to-fine cascade matching modules are repurposed with different efficient attention mechanisms~\cite{katharopoulos2020transformers,wang2021pyramid,chu2021twins,tang2022quadtree,guo2022visual,zhao2022global} to overcome the semi-dense matching in coarse features. 
+We present the local non-overlapping~\cite{chu2021twins} and overlapping~\cite{zhao2022global} self-attention for outdoor and indoor cases respectively, due to different illuminations and surroundings.
+Secondly, CasMTR enjoys flexible training by a novel Parameter and Memory-efficient Tuning method (PMT), which is originally derived for NLP tasks~\cite{sung2022lst}. 
+Essentially, PMT can incrementally finetune CasMTR based on off-the-shelf matching models with reliable coarse matching initialization and fast convergence.
+Thirdly, we for the first time introduce the training-free NMS detection to complementarily filter precise matches based on dense matching confidence maps of CasMTR.
+Critically, NMS serves as a simple yet effective post-processing that preserves structurally meaningful keypoints rather than the coarse patch center as in Fig.~\ref{fig:teaser}(e). This improves the pose estimation as in Fig.~\ref{fig:teaser}(c) and has good generalization for various high-resolution matching tasks~\cite{li2018megadepth,balntas2017hpatches,taira2018inloc,zhang2021reference}.
+Finally, in the development of our model, we have learned that the devil is in the details. Consequently, several non-trivial technical improvements have been implemented to our newly proposed matching pipeline (highlighted in Fig.~\ref{fig:teaser_pipeline}), such as pre-training transformer backbones, improving efficient linear attention, and optimizing self and cross attention for high-resolution matching.
+
+The proposed CasMTR is comprehensively evaluated in relative pose estimation~\cite{li2018megadepth,dai2017scannet}, homography estimation~\cite{balntas2017hpatches}, and visual localization~\cite{taira2018inloc,zhang2021reference}, showing its state-of-the-art performance. Additionally, our exhaustive ablation studies show the effectiveness of all newly proposed components. 
+
+
+
+Related Work
+
+\noindent\textbf{Detector-based Matching.}
+Detector-based matching methods following the process of feature detection, description, and matching have dominated this field for a long time. Traditional manners utilize heuristic hand-craft features~\cite{lowe2004distinctive,rublee2011orb} for local feature matching, which enjoy great success and are still used in many 3D tasks nowadays.
+After the wave of deep learning, many learning-based methods~\cite{han2015matchnet,yi2016lift,detone2017toward,dusmanu2019d2,liu2019gift,luo2020aslfeat} were proposed based on the detector-dependent pipeline with better performance. SuperPoint~\cite{detone2018superpoint} proposes to utilize the homographic adaptation for the self-supervised matching training. Then, SuperGlue~\cite{sarlin2020superglue} further improves the performance through the graph neural network. Moreover, DISK~\cite{tyszkiewicz2020disk} leverages reinforcement learning to optimize the end-to-end detector-based pipeline. However, these methods still suffer from limited interest points in indistinctive regions~\cite{sun2021loftr}. 
+On the other hand, D2D~\cite{tian2020d2d} proposes to describe first, and then detect based on deep descriptors~\cite{mishchuk2017working,tian2019sosnet}. 
+Compared with confidence-based NMS detection, feature-based D2D is complicated and slower. Besides, D2D is not compatible with the joint training model because it ignores the correlation between source and target views (Tab.~\ref{tab:ablation_detection}).
+
+\noindent\textbf{Detector-free Matching.}
+Detector-free methods enjoy an end-to-end pipeline to achieve the matching directly without an explicit keypoint detection phase~\cite{liu2010sift,choy2016universal,sun2021loftr}. Learning-based detector-free methods can be generally categorized into Convolutional Neural Network (CNN) based methods~\cite{rocco2018neighbourhood,rocco2020efficient,li2020dual,truong2020glu,truong2021learning,edstedt2022deep} and transformer or attention-based ones~\cite{sun2021loftr,jiang2021cotr,tang2022quadtree,wang2022matchformer,shi2022clustergnn,chen2022aspanformer,tan2022eco}. CNN-based methods produce dense matching results through learning 4D cost volumes or warped features, which are limited by receptive fields. 
+Some transformer-based manners~\cite{sun2021loftr,tang2022quadtree,wang2022matchformer,chen2022aspanformer}, {led by LoFTR~\cite{sun2021loftr},} largely enlarge the receptive fields with interlacing self/cross attention modules, {and enjoy better performance in texture-less regions.
+On the other hand, COTR~\cite{jiang2021cotr} jointly learns both matching images with self-attention together rather than modeling self/cross ones respectively in encoders. Then query points are decoded through cross-attention for the matching results. We focus on the former one in this paper.}
+But matching {density and accuracy} of these approaches are insufficient to tackle many downstream tasks precisely, \textit{e.g.}, pose estimation for low-resolution images. Moreover, it is non-trivial to extend these transformer-based matching solutions into dense and high-resolution cases because of the heavy computation of attention.
+
+\noindent\textbf{Coarse-to-fine Learning.}
+The efficient coarse-to-fine manner plays an important role in learning-based stereo matching~\cite{tonioni2019real,wang2019anytime,yin2019hierarchical,gu2020cascade}, MVS~\cite{gu2020cascade,zhang2020visibility,wang2021patchmatchnet,mi2022generalized}, and optical flow~\cite{ranjan2017optical,sun2018pwc,yang2019volumetric,zhao2020maskflownet}. CasMVSNet~\cite{gu2020cascade} builds coarse cost volume at early stages with large depth ranges and makes later stages refine details. On the other hand, PWC-Net~\cite{sun2018pwc} warps pyramid features into cost volumes to further refine the coarse-to-fine flow estimation. 
+Different from the depth prediction and the optical flow, learning geometric image matching with coarse-to-fine manners is more solid to tackle the error propagation~\cite{teed2020raft}. Because the geometric image matching is usually based on static landmarks with consistent displacements. Thus the coarse matching in low-resolution will not inevitably mislead local details.
+Patch2pix~\cite{zhou2021patch2pix} proposed a coarse-to-fine refinement for pixel-level matching {just for CNNs.
+COTR~\cite{jiang2021cotr} needs to recursively crop finer patches for more precise matching results, which is very time-consuming. ECO-TR~\cite{tan2022eco} proposes to crop coarse-to-fine feature patches and train them end-to-end to improve efficiency. But the feature cropping of ECO-TR still limits the receptive fields across different patches. 
+Hence learning a coarse-to-fine transformer-based matching model with global receptive fields is still challenging.
+}
+
+
+
+Method
+
+\begin{figure*}
+\begin{centering}
+\includegraphics[width=0.8\linewidth]{pics/overview.pdf} 
+\par\end{centering}
+\caption{Overview of CasMTR. Optionally, our model can work as an incremental refinement. Particularly, we could freeze feature encoder and coarse attention modules during training with a lightweight trainable ladder FPN to save the computation and memory footprint.
+Matching scales and loss functions are denoted in the bracket of each matching module, \textcolor{black}{while feature scales are shown in superscripts.
+Softmax matching probabilities $\mathbf{P}(\hat{\mathbf{F}}_A,\hat{\mathbf{F}}_B)$ got from global (1/8) and local (1/4, 1/2 detailed in Eq.~\ref{eq:similarity}) dot products are utilized to decide the next local matching candidates and NMS (test only).}
+\label{fig:overview}}
+
+\end{figure*}
+
+\noindent\textbf{Preliminary and Overview.} 
+We briefly review the transformer-based matching baseline in the example of LoFTR~\cite{sun2021loftr}. LoFTR uses a local feature CNN to extract coarse (1/8) and fine (1/2) feature maps from image pairs. Then interlaced self/cross-attention modules are leveraged to learn coarse-level matching predictions. Additionally, LoFTR utilizes a refinement module to model sub-pixel match prediction in fine-level features. However, the source point of each matched pair is still restricted at the coarse level (1/8), which limits the performance. Some follow-ups~\cite{tang2022quadtree,chen2022aspanformer} improve the linear attention~\cite{katharopoulos2020transformers} of LoFTR while retaining the whole pipeline unchanged.
+Inherited from the LoFTR, we develop a novel coarse-to-fine CasMTR as in Fig.~\ref{fig:overview}.
+Given the matching image pair $\mathbf{I}_A, \mathbf{I}_B$, we first extract their multi-scale features by a feature encoder. Then the self and cross QuadTree attention~\cite{tang2022quadtree} based coarse matching is performed in coarse-level features (Sec.~\ref{sec:feature_extraction}). 
+According to the coarse matches, a couple of local attention-based cascade matching modules are proposed to refine the matching pairs (Sec.~\ref{sec:cascade_matching}). After that, a sub-pixel refinement leverages the spatial expectation to predict exact matching results (Sec.~\ref{sec:refinement}). Finally, the NMS post-process detects local keypoints based on confidence maps, which largely improves the pose estimation in outdoor scenes (Sec.~\ref{sec:nms_posprocess}). 
+
+\subsection{Feature Extraction and Coarse Matching}
+\label{sec:feature_extraction}
+
+\noindent\textbf{Feature Encoder.} 
+We first follow~\cite{sun2021loftr} and use FPN to produce coarse-to-fine features $\mathbf{F}_A^s,\mathbf{F}_B^s$ for the image pair $\mathbf{I}_A,\mathbf{I}_B$, where $s\in\{\frac{1}{2},\frac{1}{4},\frac{1}{8}\}$ indicate the image scale. Inspired by~\cite{huang2022flowformer}, we try to replace $\{\frac{1}{4},\frac{1}{8}\}$ layers with partial pre-trained Twins~\cite{chu2021twins} layers. To balance the computation, the feature encoder's channels are reduced in our CasMTR, which also benefits the efficiency of subsequent cascade modules. The pre-trained attention-based encoder strengthens the matching learning as evaluated in Tab.~\ref{tab:ablation_scale_backbone}.
+
+\noindent\textbf{Parameter and Memory-efficient Tuning (PMT).} 
+Since we pay more attention to the coarse-to-fine matching, our coarse matching is simply based on the state-of-the-art QuadTree attention~\cite{tang2022quadtree}. 
+Essentially, the proposed model is learned independently from the coarse matching, \textit{i.e.}, we can freeze the feature encoder and coarse matching module, and incrementally finetune the cascade matching with the coarse matching initialization. To improve the representation of high-level features, we introduce PMT to incrementally finetune the matching model as shown in Fig.~\ref{fig:overview}. Specifically, a lightweight trainable ladder side FPN is utilized to receive and concatenate features from the frozen feature encoder as $\tilde{\mathbf{F}}_A^{\tilde{s}},\tilde{\mathbf{F}}_B^{\tilde{s}}$, where $\tilde{s}\in\{\frac{1}{2},\frac{1}{4}\}$. 
+Different from other tuning techniques~\cite{houlsby2019parameter,li2021prefix,dong2022incremental}, PMT is not only parameter-efficient but also memory-efficient. 
+Because the FPN of PMT could be well-updated by fine-grained features without any gradients propagated back from frozen models. 
+In practice, we leverage the PMT to finetune our cascade modules based on the off-the-shelf QuadTree matching on the large ScanNet dataset~\cite{dai2017scannet}. Our algorithm can be converged in about two epochs and achieve appreciable improvements as in Tab.~\ref{tab:scannet}.
+
+
+\subsection{Cascade Matching Modules}
+\label{sec:cascade_matching}
+Following the coarse matching results, we additionally propose multi-stage cascade modules to further refine more detailed matching results for both source and target images. For each stage, we first add sinusoidal position encoding as other methods~\cite{sun2021loftr,tang2022quadtree,chen2022aspanformer}. We normalize the position encoding as~\cite{chen2022aspanformer} during the inference, which makes CasMTR robust to various test sizes.
+Then, self and cross-attention layers are interleaved in the cascade module for better local feature learning. 
+Different from 1D-cascade architectures~\cite{gu2020cascade}, extending the cascade mechanism to 2D is non-trivial.
+The main concern about cascade matching learning is the computation for high-resolution features. To address this, we thoroughly compare various efficient self and cross-attention mechanisms and choose the best combination among them. 
+
+\begin{figure}
+\begin{centering}
+\includegraphics[width=0.9\linewidth]{pics/self-attns.pdf} 
+\par\end{centering}
+\caption{Six self-attention modules explored in CasMTR.\label{fig:self_attns}}
+\end{figure}
+\noindent\textbf{Self-Attention.}  %Preliminaries
+Global self-attention suffers from quadratic spatial complexity, especially for high-resolution features. 
+But without the self-attention, the pure cross-attention model performs not well as in Tab.~\ref{tab:ablation_attns}.
+To balance the computation and the performance, we explore six efficient self-attention mechanisms shown in Fig.~\ref{fig:self_attns} and verified in Tab.~\ref{tab:ablation_attns}, including Linear attention~\cite{katharopoulos2020transformers}, Locally-grouped Self-Attention (LSA)~\cite{chu2021twins}, Global Sub-sampled Attention (GSA)~\cite{wang2021pyramid}, simplified top-k attention, Large Kernel Attention (LKA)~\cite{guo2022visual}, and Patch-based OverLapping Attention (POLA)~\cite{zhao2022global}. 
+We list more details of these manners in the supplementary.
+
+\begin{table}
+\footnotesize 
+\caption{Pilot study of AUC and FLOPs about different attention mechanisms based on 1/4 cascade model (Ours-4c) on MegaDepth.  All FLOPs of cascade modules are based on 1152$\times$1152 test images. \textcolor{red!75}{LSA+LW} is adopted on MegaDepth, while \textcolor{blue!75}{POLA+LW} is adopted on ScanNet. \label{tab:ablation_attns}}
+\centering
+\setlength{\tabcolsep}{0.5mm}{
+\begin{tabular}{c|c|ccc|ccc|c}
+\hline 
+\multicolumn{2}{c|}{Cascade (layers)} & \multicolumn{3}{c|}{MegaDepth} & \multicolumn{3}{c|}{ScanNet} & \multirow{2}{*}{FLOPs(G)}\tabularnewline
+\cline{1-8} \cline{2-8} \cline{3-8} \cline{4-8} \cline{5-8} \cline{6-8} \cline{7-8} \cline{8-8} 
+self & cross & @5$^{\circ}$ & @10$^{\circ}$ & @20$^{\circ}$ & @5$^{\circ}$ & @10$^{\circ}$ & @20$^{\circ}$ & \tabularnewline
+\hline 
+Linear(2) & LW(2) & 56.01 & 72.03 & 83.43 & -- & -- & -- & 129.21\tabularnewline
+\cellcolor{red!25}LSA(2) & \cellcolor{red!25}LW(2) & \cellcolor{red!25}56.34 & \cellcolor{red!25}72.11 & \cellcolor{red!25}83.55 & \cellcolor{red!15}26.24 & \cellcolor{red!15}46.45 & \cellcolor{red!15}63.94 & \cellcolor{red!25}142.32 \tabularnewline
+\scriptsize{}{LSA+GSA(2)} & LW(2) & 55.71 & 71.60 & 83.17 & -- & -- & -- & 202.56 \tabularnewline
+LSA(2) & MT(2) & 55.60 & 71.92 & 83.27 & -- & -- & -- & 143.51 \tabularnewline
+LKA(2) & LW(2) & 55.75 & 72.02 & 83.20 & -- & -- & -- & 136.53 \tabularnewline
+-- & LW(4) & 55.16 & 71.48 & 83.01 & -- & -- & -- & 143.28 \tabularnewline
+Top-k(2) & LW(2) & 55.47 & 71.28 & 83.02 & -- & -- & -- & 141.76 \tabularnewline
+LKA(2) & MT(2) & \textbf{56.99} & \textbf{72.56} & \textbf{83.89} & 25.79 & 45.87 & 63.50 & 137.72 \tabularnewline
+\cellcolor{blue!25}POLA(2) & \cellcolor{blue!25}LW(2) & \cellcolor{blue!15}56.31 & \cellcolor{blue!15}72.35 & \cellcolor{blue!15}83.51 & \cellcolor{blue!25}\textbf{27.08} & \cellcolor{blue!25}\textbf{47.02} & \cellcolor{blue!25}\textbf{64.44} & \cellcolor{blue!25}223.42\tabularnewline
+\hline 
+\end{tabular}}
+\end{table}
+
+\begin{figure}
+\begin{centering}
+\includegraphics[width=0.9\linewidth]{pics/cross_attention.pdf} 
+\par\end{centering}
+\caption{Two cross-attentions explored in cascade modules.\label{fig:cross_attns}}
+\end{figure}
+
+\noindent\textbf{Cross-Attention.}
+The cross-attention plays an important role in cascade matching. Two types of attention modules, designed in Fig.~\ref{fig:cross_attns} are Local Window (LW) and Multi-modal Top-k (MT) cross-attention respectively.
+Given the coarse matching result, each query patch in LW intuitively selects neighbor patches around the top-1 matching target from another image as key and value patches. In Fig.~\ref{fig:cross_attns}(a), the LW example is based on window size 6 and 36 neighbors in all. LW dramatically reduces the sequence length of keys and values, which makes the cascade matching for high-resolution features possible. Furthermore, LW is more capable of learning detailed feature correlations.
+On the other hand, to alleviate the intractable error propagation caused by the coarse stage~\cite{yang2022non}, we propose MT to model multi-modal distribution for cascade matching. In particular, MT holds top-k coarse matching patches as candidates. Then they are upsampled as key and value patches for the cross-attention. 
+As in Fig.~\ref{fig:cross_attns}(b), the MT example is on top-36: top-9 in the coarse stage, and each coarse block can be further divided into 4 patches in the cascade stage. MT can potentially address the mismatch from the coarse stage, as long as the top-k candidates can cover the ground truth. 
+Because of the scale upsampling, both source and target features are quadrupled as shown in Fig.~\ref{fig:cross_attns}, which influence the practical kernel size and top-k in LW and MT respectively. 
+Technically, we implement both LW and MT by CUDA to improve efficiency, and their speed is almost the same in practice.
+
+\noindent\textbf{Analysis of Attention Modules.}
+We conduct pilot study to verify the results and FLOPs of all attention combinations in Tab.~\ref{tab:ablation_attns}. Such a pilot thus guides how we  design the  model. 
+Specifically, `LSA+LW' enjoys a good trade-off between performance and efficiency in the outdoor MegaDepth. Furthermore, the extended `LSA+GSA' fails to achieve better results with more computation. We think that local feature learning is more important than global one in our cascade modules.
+Besides, for the indoor scenes from ScanNet with more challenging texture-less matching instances, `POLA+LW' outperforms `LSA+LW' with larger receptive fields.
+Therefore, `LSA+LW' and `POLA+LW' are used to comprise our cascade modules.
+Note that `LKA+MT' can produce superior results in MegaDepth. But we did not choose `LKA+MT' for two reasons. First, the depthwise convolutions used in LKA are not well optimized in PyTorch, which largely slows down the training. Second, `LKA+MT' is not stable enough, as it fails to achieve reliable results in ScanNet.
+
+\noindent\textbf{Matching and Loss.}
+Given $\hat{\mathbf{F}}^{\tilde{s}}_A,\hat{\mathbf{F}}^{\tilde{s}}_B, \tilde{s}\in\{\frac{1}{2},\frac{1}{4}\}$ after the interlaced attention learning of cascade modules, we use the same key candidates from the cross-attention (\textit{i.e.}, LW or MT) for the dot product similarity matrix as
+\begin{equation}
+\label{eq:similarity}
+\mathbf{S}(i,j)=\frac{1}{\tau}\cdot\left\langle\hat{\mathbf{F}}^{\tilde{s}}_A(i),\hat{\mathbf{F}}^{\tilde{s}}_B(j)\right\rangle\in\mathbb{R}^{H^{\tilde{s}}W^{\tilde{s}}\times k}
+\end{equation}
+where $\tau=0.1$ is a scale parameter; the key length $k$ is 100 and 128 for LW and MT respectively. 
+Note that Eq.~\ref{eq:similarity} presents a local correlation with $k$ candidates for each feature point rather than the full correlation in the coarse level.
+Softmax is used to normalize Eq.~\ref{eq:similarity} into local matching probability $\mathbf{P}^{\tilde{s}}(i,j)$. 
+We also adopt cycle-consistent matching to enforce that two features in different images are matched each other.
+Following~\cite{sun2021loftr}, the Focal binary cross-entropy Loss (FL)~\cite{lin2017focal} is used to optimize the cascade matching as
+\begin{equation}
+\label{eq:cascade_loss}
+\mathcal{L}^{\tilde{s}}_{FL}=-\mathbb{E}_{\mathcal{M}^{\tilde{s}}}[(1-\mathbf{P}^{\tilde{s}})^{\gamma}\log(\mathbf{P}^{\tilde{s}})],
+\end{equation}
+where $\gamma=2$; $\mathcal{M}^{\tilde{s}}$ indicates matching queries which satisfy the cycle-consistent and have one ground truth target in $k$ candidates. 
+In cascade stages, the classification loss enjoys the priority because we have to learn proper confidence~\cite{cao2022mvsformer} for the detection (Sec.~\ref{sec:nms_posprocess}). 
+We also tried the vanilla cross-entropy, but it performed slightly worse than FL.
+
+\noindent\textbf{Discussions.} 
+Since cascade matching facilitates pose estimation in limited resolution (Tab.~\ref{tab:ablation_scale_backbone}), our method achieves prominent improvement on 480$\times$640 ScanNet~\cite{dai2017scannet}  without any post-processing (Tab.~\ref{tab:scannet}). When input images become larger, the coarse matching pairs also become dense gradually to alleviate the pose estimation error. 
+Moreover, for large image scales, we find that our cascade matching can be strengthened by a simple yet effective NMS post-processing with negligible cost.
+Besides, our CasMTR is efficient enough compared with the trivial extension (QuadTree-4c).
+
+\subsection{Local Regressive Refinement}
+\label{sec:refinement}
+The patch-wise refinement module in LoFTR~\cite{sun2021loftr} is also incorporated in our work for sub-pixel matching. The refinement module first unfolds all features into $5\times5$ patches. Different from the one in LoFTR, we use the standard attention instead of the linear one in both self and cross attention. Because the refinement module only calculates the attention map with a sequence length $5\times5=25$. Therefore, standard attention even enjoys less computation compared with linear attention and performs better. The refinement module utilizes soft-argmax to regress the residual matching flow. One may ask whether such local refinement can replace cascade modules for dense matching. We should clarify that the patch-wise refinement is extremely limited by the matching range and receptive fields, which discourages the results. We tried the trivial solution to densely match through the refinement module in Tab.~\ref{tab:trivial_solution}, but it worked worse than the baseline. Even NMS failed to make its results competitive.
+
+\subsection{Confidence based Detection with NMS}
+\label{sec:nms_posprocess}
+
+Different from detector-based methods~\cite{dusmanu2019d2,detone2018superpoint,sarlin2020superglue}, latest attention based methods~\cite{sun2021loftr,tang2022quadtree,chen2022aspanformer,wang2022matchformer} achieve good results even  without detector. These detector-free methods only use a confidence threshold to filter unconvinced matching. Moreover, the sparse matching (1/8) is not ready for further keypoint detection. Except for the confidence threshold, we propose to use the simple NMS to detect local keypoints through the cascade confidence maps as shown in Fig.~\ref{fig:teaser}(c). 
+Specifically, we apply the overlapping max-pooling on the confidence map. Then if the local maximal confidence locates in the center of the pooling kernel, we retain this matching pair. 
+So the minimum interval in feature space of two keypoints is equivalent to half of NMS's kernel size.
+The main differenc
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

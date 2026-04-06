@@ -1,0 +1,355 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:introduction}
+A growing interest in continuous learning (CL) involves training the model using continuous data streams. 
+Mostly, CL research has focused on the \textit{offline} scenario that assumes the model can be trained in multiple epochs for the current task~\citep{rebuffi2017icarl, chaudhry2018riemannian, wu2019large}. 
+However, substantial storage and computational complexity are required to store all data to train a model for multiple epochs. 
+Recently, there has been significant interest in \emph{online} CL as a more realistic set-up with a lower computational overhead of allowing a single training pass through the data stream~\citep{aljundi2019task, koh2021online, cai2021online}.
+Learning a model in streamed data by a single training pass is challenging, since the temporal distribution at each intermediate time point is likely imbalanced, even if the overall distribution of a dataset is balanced.
+Imbalanced data distributions would cause several problems, such as bias towards the major classes~\citep{zhao2021energy, kang2021learning} and the hindrance to generalization~\citep{wu2023rethinking}. 
+
+Recently, \emph{minority collapse}~\citep{fang2021exploring}, the phenomenon in which the angles between classifier vectors for minor classes (\ie, the classes that have a relatively small number of samples) become narrow, has been proposed as a fundamental issue in training with imbalanced data, making the classification of minor classes considerably more challenging. 
+In contrast, for balanced data sets, it was proven that classifier vectors and the last layer activations for all classes converge into an optimal geometric structure, named the simplex \emph{equiangular tight frame} (ETF) structure, where all pairwise angles between classes are equal and maximally widened when using cross entropy (CE)~\citep{ji2021unconstrained, lu2020neural, zhu2021geometric, wojtowytsch2020emergence} or mean squared error (MSE)~\citep{zhou2022optimization, mixon2020neural, rangamani2022neural, tirer2022extended} loss. 
+This phenomenon is called \emph{neural collapse}~\citep{papyan2020prevalence}.
+
+Although neural collapse naturally occurs only in balanced training, several recent studies attempted to induce neural collapse in imbalanced training to address the minority collapse problem using a fixed ETF classifier~\citep{yang2022inducing, zhong2023understanding}. 
+When employing a fixed ETF classifier, the output features are pulled toward the corresponding classifier vector during training, since the classifier is fixed.
+More recently, research has also been extended to induce neural collapse in offline CL using a fixed ETF classifier~\citep{yang2023neural}.
+
+However, unlike offline CL, there are a number of challenges in inducing neural collapse in online CL, even with a fixed ETF classifier. 
+The prerequisite for neural collapse is reaching the \emph{terminal phase of training} (TPT) by sufficient training~\citep{papyan2020prevalence}. 
+In offline CL, the model can reach the TPT phase for each task by multi-epoch training. 
+In contrast, a single-pass training constraint often prevents the online CL from reaching TPT. %, except for data stored in episodic memory, and the training data distribution shifts continuously as new samples arrive. 
+As shown in Fig.~\ref{fig:tpt}, the offline CL quickly reaches TPT shortly after the arrival of novel task data, while online CL (vanilla ETF) does not.
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=\linewidth]{figures/tpt.pdf}
+    \caption{
+        Comparison of training error rates between online CL and offline CL in the CIFAR-10 disjoint setup, where two novel classes are added every 10k samples.
+        Vanilla ETF refers to a method where both preparatory data training and residual correction are removed from our proposed EARL.
+    } 
+    \label{fig:tpt}
+\end{figure*}
+
+Recently, the importance of anytime inference in online CL has been emphasized~\citep{pellegrini2020latent, koh2021online, caccia2022anytime, ghunaim2023real}, since a model should be available for inference not only at the end of a task, but also at any point during training to be practical for real-world applications. 
+Hence, not only reaching TPT but also achieving faster convergence is necessary when using neural collapse in online CL.
+However, we observe that the phenomenon in which the features of the new class become biased toward the features of the existing classes~\cite{caccia2021new} hinders fast convergence of the last-layer features into the ETF structure, which we call the `bias problem.'
+When features of old and new classes overlap (\ie, biased) and are trained with the same objective, well-clustered features of old classes disperse (or perturb)~\cite{caccia2021new}, leading to destruction of the ETF structure formed by features of the old classes. 
+
+\paragraph{Contributions.} 
+To address the bias problem, we train the model to distinguish out-of-distribution (OOD) samples from existing classes' samples.
+Specifically, we synthesize \emph{preparatory data} that play the role of OOD data, by applying negative data augmentation~\cite{sinha2021negative, wang2022resmooth, kim2022continual} to samples from existing classes, refer to Sec.~\ref{sec:preparatory} for details.
+Since samples from new classes are OOD in the perspective of existing classes, training with preparatory data encourages the representation of new classes to be distinguished from existing classes in advance, thereby mitigating the bias problem.
+This promotes fast and stable convergence into the ETF structure.
+
+Despite these efforts, however, the continuous stream of new samples cause ongoing data distribution shifts, which prevent the model from reaching the TPT and fully converging to the ETF structure. 
+To address this, we propose to store the residuals between the target ETF classifier and the features during training.
+During inference, we correct the inference output using the stored residual to compensate for insufficient convergence in the training.
+
+By accelerating convergence by preparatory data training and additional correction using residual, we noticeably improve anytime inference performance than state of the arts.
+We name our method \textbf{Equi-Angular Representation Learning} (\textbf{EARL}).
+We empirically demonstrate the effectiveness of our framework on CIFAR-10, CIFAR-100, TinyImageNet, Imagenet-200, and ImageNet-1K. In particular, our framework outperforms various CL methods by a significant margin (+4.0\% gain of $A_\text{auc}$ in ImageNet-1K).
+
+We summarize our contributions as follows:
+\begin{itemize}[leftmargin=15pt]
+\setlength\itemsep{0.1em}
+    \item Proposing to induce neural collapse for online CL.
+    \item Proposing `preparatory data training' to address the `bias problem' that the new classes are biased toward the existing classes, promoting faster induction of neural collapse.
+    \item Proposing `residual correction' scheme to compensate for not fully reaching neural collapse at inference to further improve anytime inference accuracy.
+\end{itemize}
+
+
+
+Related work
+
+\paragraph{Continual learning methods.}
+Various continual learning methods are being researched to prevent forgetting past tasks, broadly categorized into replay, parameter isolation, and regularization.
+Replay methods involve storing a small portion of data from previous tasks in episodic memory~\citep{hayes2020remind, aljundi2019task, koh2021online, bang2021rainbow, yoon2021online} or storing a generative model trained on data from previous tasks~\citep{shin2017continual, pomponi2023continual}. 
+By replaying the samples stored in episodic memory or generated from the stored generative model, the model prevents forgetting past tasks during subsequent learning of novel tasks. 
+Furthermore, ~\citet{boschini2022class, buzzega2020dark, li2017learning, wu2019large} used replay samples to distill information about past tasks.
+
+Regularization methods~\citep{kirkpatrick2017overcoming, lesort2019regularization} apply a penalty to the change of important model parameters during the process of learning new tasks, allowing the model to retain information about previous tasks.
+Parameter isolation methods~\citep{zhou2022model, rusu2016progressive, cheung2019superposition} expand the network by allocating specific layers for each task. This enables the network to store information about individual tasks and preserves their knowledge without forgetting.
+
+
+\paragraph{Neural collapse.}
+Neural collapse is a phenomenon in which the activations of the last layer and the classifier vectors form a simplex \emph{equiangular tight frame} (ETF) structure at the terminal phase of training (TPT) in a balanced dataset.~\citep{papyan2020prevalence}. 
+Neural collapse has been demonstrated as the global optimum of balanced training using cross entropy (CE) loss~\citep{ji2021unconstrained, lu2020neural, zhu2021geometric, wojtowytsch2020emergence} and MSE~\citep{zhou2022optimization, mixon2020neural, rangamani2022neural, tirer2022extended} loss functions, within a simplified model focused solely on last-layer optimization. Inducing neural collapse in imbalanced datasets poses challenges due to minority collapse~\citep{fang2021exploring} where minor classes are not well distinguished. 
+
+However, using a fixed ETF classifier, it is empirically and theoretically shown that neural collapse is induced even in imbalanced datasets~\citep{yang2022inducing}.
+Continual learning also needs to address imbalanced data since there is an imbalance in the data between novel classes and existing classes. 
+Therefore, in offline CL, NC-FSCIL~\citep{pernici2021class, yang2023neural} used a fixed ETF classifier to induce neural collapse.
+Meanwhile, online CL often fails to induce neural collapse compared to offline CL, \eg, FSCIL, since it lacks sufficient training in multiple epochs, causing failure to reach TPT.
+
+Please refer to the supplementary material for more comprehensive literature reviews including topics related to anytime inference.
+
+
+Preliminaries
+We here describe the problem statement for the online continual learning (Sec.~\ref{sec:ps_ocl}), %and provide background knowledge about 
+neural collapse (Sec.~\ref{sec:nc_define}), and the equiangular tight frame classifier (Sec.~\ref{sec:etf_classifier}). % respectively).
+
+\subsection{Problem Statement of Online CL}
+\label{sec:ps_ocl}
+Continual learning (CL) aims to learn from a stream of data, rather than a fixed dataset as in standard learning.
+Formally, given a sequence of tasks $\mathcal{T} = (T_1, T_2, \ldots)$ where each task $T_i$ is a training dataset 
+$D_i=\{(x^{(i)}_1, y^{(i)}_1), (x^{(i)}_2, y^{(i)}_2),\ldots\}$,
+an offline CL algorithm $A_\text{CL}$ updates the model parameter $\theta$ based on the current task $D_k$, \ie, $\theta_k = A_\text{CL}(\theta_{k-1}, D_k)$, starting from the initial parameter $\theta_0$.
+
+To avoid the forgetting issue in CL, many CL setups allow the use of episodic memory $M_k$, which is a limited-size subset of training data from previous tasks, \ie, $(\theta_k, M_k) = A_\text{CL}(\theta_{k-1}, M_{k-1}, D_k)$.
+The objective is to minimize the error of $\theta_k$ in all observed tasks $\{T_i\}_{i=1}^k$. % $\bigcup_{i=1}^{k}T_i$.
+
+Unlike offline CL where all training samples in $D_k$ are given as input, in online CL, the input is provided as a stream of samples $(x^{(k)}_1, y^{(k)}_1), (x^{(k)}_2, y^{(k)}_2),\cdots$.
+Therefore, an online CL algorithm $A_\text{OCL}$ is defined as: 
+\begin{equation}
+(\theta_{k, t}, M_{k, t}) = A_\text{OCL}\left(\theta_{k, t-1}, M_{k, t-1}, (x^{(k)}_t, y^{(k)}_t)\right),
+\end{equation}
+with the same objective of minimizing the error of $\theta_{k, t}$ on $\{T_i\}_{i=1}^k$. % $\bigcup_{i=1}^{k}T_i$.
+Since the algorithm does not have access to previous samples $\{(x^{(k)}_{s}, y^{(k)}_{s}),s<t\}$ at time $t$, multi-epoch training with $D_k$ is unavailable in online CL. %, which some previous works use as a definition of online CL.
+
+
+\subsection{Neural Collapse}
+\label{sec:nc_define}
+Neural collapse~\citep{papyan2020prevalence} is a phenomenon of the penultimate features after the convergence of training on a balanced dataset. 
+When neural collapse (NC) occurs, the collection of $K$ classifier vectors $\mathbf{W}_\text{ETF} = [\mathbf{w}_1, \mathbf{w}_2, ..., \mathbf{w}_K] \in \mathbb{R}^{d \times K}$ forms a simplex equiangular tight frame (ETF), which satisfies:
+\begin{equation}
+    \mathbf{w}_i^T \mathbf{w}_j = 
+    \begin{cases}
+        ~1, ~~~~~~~~~~~~~~~~ i=j \\ 
+        -\frac{1}{K-1}, ~~~~~~~~i \neq j
+    \end{cases},
+    ~~\forall i, j \in [1,..., K],
+\end{equation}
+where $K-1\leq d$, and the penultimate feature of a training sample collapses into an ETF vector $\mathbf{w}_i$.
+
+
+
+\subsection{Equiangular Tight Frame (ETF) Classifier}
+\label{sec:etf_classifier}
+
+Inspired by neural collapse as described in Sec.~\ref{sec:nc_define}, a fixed ETF classifier has been utilized for inducing neural collapse in imbalanced datasets \citep{zhu2021geometric, yang2022inducing, yang2023neural}.
+Here, the classifier is initialized by the ETF structure $\mathbf{W}_\text{ETF}$ at the beginning of training and fixed during training to induce the penultimate feature $f(x)$ to converge to the ideal balanced scenario.
+For training $f(x)$, it is only required to attract $f(x)$ to the corresponding classifier vector for convergence, since the classifier is fixed during training. 
+Therefore, following \citet{yang2022inducing}, we use the \emph{dot regression} (DR) loss as a training objective, as it shows to outperform cross entropy (CE) loss when using a fixed ETF classifier in imbalanced datasets~\citep{yang2022inducing}.\footnote{If the training objective includes a contrastive term between different classes like cross entropy, it could cause incorrect gradients~\citep{yang2022inducing}.} The DR loss can be written as follows:
+\begin{equation}
+    \mathcal{L}_\text{DR}(\hat{f}(x),y;\mathbf{W_{\text{ETF}}})=\frac1{2}\Big (\mathbf{w}_{y}\hat{f}(x)-1\Big )^2 ,
+\end{equation}
+where $\hat{f}(x)= f(x) / \|f(x)\|_2$ is the $L_2$ normalized feature of the model $f$, $y$ is the label of the input $x$, and $\mathbf{w}_{y}$ is a classifier vector in $\mathbf{W}_\text{ETF}$ for the label $y$.
+
+
+
+Approach
+
+\begin{figure*}[t!]
+    \includegraphics[width=\linewidth]{figures/overview.pdf}
+    \caption{Overview of EARL. $\mathbf{w}_i$ denotes the ETF classifier vector for class $i$. $h_a$ denotes the output of the model. The colors of the data denote the class to which the data belong. The arrow $\mathbf{r}_i$ denotes the residual between the last layer activation $h_i$ and the classifier vector $\mathbf{w}_i$ for class $i$.
+    During training, both memory and preparatory data are used for replaying, and the residuals between $h_i$ and $\mathbf{w}_i$ are stored in feature-residual memory.
+    During inference, using the similarity between $f(x_\text{eval})$ and $h_i$ in feature-residual memory, $\textbf{r}_\text{eval}$ is obtained by a weighted sum of $\mathbf{r}_i$'s. Finally, by adding $\mathbf{r}_\text{eval}$, $f(x_\text{eval})$ is corrected. The purple arrow indicates `residual correction' (Sec.~\ref{sec:residual}).
+    } 
+    \label{fig:overview_setup}
+\end{figure*}
+
+\label{sec:approach}
+Despite the success of the fixed ETF classifier in both imbalanced training~\citep{yang2022inducing, zhong2023understanding} and offline CL~\citep{yang2023neural}, the ETF classifier has not yet been explored for online CL due to the necessity of sufficient training for neural collapse.
+To be specific, streamed data are trained only once in online CL, which makes it harder to induce neural collapse than in offline CL which supports multi-epoch training.
+
+To learn a better converged model without multi-epoch training for online CL, we propose two novel methods, each for the training phase and the inference phase, respectively.
+In the training phase, we accelerate convergence by proposing \emph{preparatory data training} (Sec.~\ref{sec:preparatory}).
+In the inference phase, we propose to correct the remaining discrepancy between the classifiers and the features using \emph{residual correction} (Sec.~\ref{sec:residual}). 
+We illustrate an overview of EARL in Fig.~\ref{fig:overview_setup} and the effect of EARL in Fig.~\ref{fig:effect}. 
+
+
+\begin{figure}[t!]
+    \centering
+    \begin{subfigure}[b]{1\linewidth}
+        \centering
+        \resizebox{0.9\linewidth}{!}{
+            \includegraphics{figures/sim_legand.pdf}
+        }
+    \end{subfigure}
+    \begin{subfigure}[b]{0.32\linewidth}
+        \centering
+        \resizebox{0.9\linewidth}{!}{
+            \includegraphics{figures/bs.pdf}
+        }
+        \caption{Vanilla ETF}
+    \end{subfigure}
+    \begin{subfigure}[b]{0.32\linewidth}
+        \centering
+        \resizebox{0.9\linewidth}{!}{
+            \includegraphics{figures/+pseudo.pdf}
+        }
+        \caption{w/ Prep. Data} % (Sec.~\ref{sec:preparatory})}
+    \end{subfigure}
+    \begin{subfigure}[b]{0.32\linewidth}
+        \centering
+        \resizebox{0.9\linewidth}{!}{
+            \includegraphics{figures/+pseudo_residual.pdf}
+        }
+        \caption{w/ Res. Corr.}% (Sec.~\ref{sec:residual})}
+    \end{subfigure}
+    \caption{Illustrative effects for each component of EARL. (a) In online CL, features of novel classes are biased towards the features of the previous class. 
+    (b) By training with preparatory data (\textbf{w/ Prep. Data}, Sec.~\ref{sec:preparatory}), we address the bias problem. 
+    (c) In inference, for features that do not fully converge to an ETF classifier, we add residuals (\textbf{w/ Res. Corr.}, Sec.~\ref{sec:residual}) to features that have not yet reached the corresponding classifier vectors, making features aligned with them. Purple arrow: the `residual correction', Colors: classes.}
+    \label{fig:effect}
+\end{figure}
+
+\subsection{Inducing Neural Collapse for Online CL}
+\label{sec:etf_baseline}
+For online CL, we first try to induce neural collapse with a fixed ETF classifier: $\mathbf{W}_\text{ETF} \in R^{d \times K}$ where $d$ is the dimension of the embedding space and $K$ is the number of ETF vectors. 
+While prior works~\cite{yang2022inducing, yang2023neural} use prior knowledge of the total number of classes that will be encountered for setting $K$, it is unrealistic to know the knowledge (\ie, the exact number of classes) as it evolves continuously over time under realistic CL scenarios. 
+
+To address the challenge, we propose using the maximum possible number of classifier vectors for $K$. Based on the simplex ETF property that the maximum number of ETF vectors is $d+1$~\cite{fickus2018equiangular, yang2022inducing}, we define our ETF classifier $\mathbf{W}_\text{ETF} \in \mathbb{R}^{d \times (d+1)}$ by letting $K:=d+1$. 
+
+\subsection{Preparatory data at training}
+\label{sec:preparatory}
+
+Since novel classes continuously arrive in CL, both the data from previous tasks ($x_\text{old}$) and the current task ($x_\text{new}$) coexist.
+While $\hat{f}(x_\text{old})$ are placed closer to their corresponding ETF classifier vectors $w_\text{new}$ by training, $\hat{f}(x_\text{new})$ are biased toward the cluster of $\hat{f}(x_\text{old})$, as we can see in Fig.~\ref{fig:feature_distrib}-(a), where $\hat{f}(x_\text{new})$ and $\hat{f}(x_\text{old})$ are the outputs of the model for inputs $x_\text{new}$ and $x_\text{old}$, respectively.
+We call this `\emph{bias problem}.'
+When $\hat{f}(x_\text{new})$ and $\hat{f}(x_\text{old})$ overlap due to bias and are optimized with the same objective function, training on the new class interferes with the representations of the old classes, dispersing the well-clustered $\hat{f}(x_\text{old})$~\citep{caccia2021new}. 
+It destroys the ETF structure formed by $\hat{f}(x_\text{old})$, which hinders convergence towards neural collapse.
+Although the bias problem exists even without a fixed ETF classifier~\cite{wu2019large, caccia2021new, chrysakis2023online}, it poses a greater problem when using a fixed ETF classifier, since the dispersed feature of old classes has to be restored to the corresponding fixed classifier vector.
+In contrast, when using a learnable classifier, the dispersed representation of the old classes does not have to be restored to the original position, since the learnable classifier vector will be re-optimized from the dispersed feature. 
+However, the angles between the classifier vector may become narrow, \ie, minority collapse occurs.
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/tsne.pdf}
+    {\footnotesize  (a) 100 iterations after \quad \quad \quad \quad \quad \quad (b) 10,000 iterations after \\ \: Task 1 introduced  \:\:\: \quad \quad \quad \quad \quad \quad \quad  Task 1 introduced}
+    \caption{
+        t-SNE visualization of 'bias-problem' in data distributions (class 0 to 3). (a) Only after 100 iterations of training after task 1 appears, learning is likely insufficient, and we can see that the features of new classes (class 2, 3) are biased towards the feature cluster of the existing class (\ie, class 1). (b) With more training iterations (10,000 iter), the features are well clustered by class.       
+    } 
+    \label{fig:feature_distrib}
+\end{figure}
+
+To accelerate convergence in the ETF structure, we propose to prevent novel classes from being biased towards existing classes when introduced, mitigating the bias problem.
+Specifically, we train the model to avoid making predictions in favor of the existing classes for images that do not belong to them.
+To this end, we propose to use preparatory data $x_p$ that is different from existing classes, obtained by transforming the samples in the episodic memory. 
+By training with the preparatory data so that their representations differ from existing classes, we prevent biased predictions towards existing classes when a new class arrives.
+
+For preparatory data to have a different representation from existing classes when trained, their image semantics should be distinguishable from existing classes, provided that they contain enough semantic information to be considered as an image (\ie, not noise).
+There are various approaches to synthesize images with modified semantics, such as using generative models~\cite{chiaroni2020counter, graffieti2023generative, yang2023ganrec} or negative transformations~\cite{sinha2021negative, wang2022resmooth}.
+We use negative transformations, as generative models are expensive in computation and storage~\cite{dedeoglu2023continual}, which is undesirable for CL scenarios with limited memory and computations.
+On the contrary, negative transformations are relatively efficient in computation and storage~\cite{pankov2011learning} and is reported to create images with semantics different from the original image~\cite{wang2022resmooth}.
+We empirically observed that data generated through negative transformations have a distinct semantic class from the original class while preserving its semantic information as an image (\ie, not as random noise), and we summarize the results in the supplementary material.
+Formally, for a set of existing classes $Y$ and the set of possible transformations $G$, we randomly select $y\in Y$ and $g\in G$, and randomly retrieve a sample of class $y$ from memory and apply the transformation $g$ to obtain \emph{preparatory data} $x_p$.
+We assign labels of the unseen classes to the preparatory data by a mapping function $m: Y\times G \rightarrow Y'$ where $Y'$ denotes a set of unseen classes, \ie, $Y' = \{y | y \notin Y,~ 1\leq y \leq K\}$ and $K$ is the total number of classifier vectors in $\mathbf{W}_\text{ETF} \in \mathbb{R}^{d \times K}$.
+Thus, preparatory data $x_p$ from class $y$ and transformation $g$ is pulled towards the classifier vector $\mathbf{w}_{p}$, where $p = m(y, g)$.
+When a new class $y_\text{new}$ is added to $Y$, we update $m$ by randomly assigning a new mapping $m(y_\text{new}, g)$ for $y_\text{new}$ and $g\in G$.
+
+We compose the transformation set $G$ as a negative transformation that can modify semantic information (\ie, change the label), used in the self-supervised literature~\citep{gidaris2018unsupervised, feng2019self} and out-of-distribution (OOD) detection~\cite{sinha2021negative, wang2022resmooth, kim2022continual}.
+Specifically, we use rotation by 90, 180, and 270 degrees ~\citep{feng2019self, gidaris2018unsupervised} as our negative transformation.
+Since the vertical information of the image is more important than the horizontal information~\cite{jang2022pooling, tumpach2023temporal}, \eg, images of a car facing left or right are common, but a car flipped upside down is very rare compared to a car standing right, rotation by a large angle causes loss of semantic information of images~\cite{wang2022resmooth}.
+Thus, we can use rotated data as semantically different images from images of existing classes, \ie, suitable for preparatory data. 
+A more detailed analysis of various negative transformations is provided in the Supple.
+
+We jointly train the model using real data (\ie, samples of existing classes) and preparatory data.
+Formally, we write the objective for the model parameter $\theta$ as:
+\begin{align}
+    \argmin_\theta &\biggl[ \mathbb{E}_{(x,y)\sim \mathcal{M}}\mathcal{L}_\text{DR}\left(\hat{f}_\theta (x), y ; \mathbf{W}_{\text{ETF}}\right) \\
+    +\lambda \, & \mathbb{E}_{(x',y')\sim \mathcal{M}, g\sim G} \mathcal{L}_\text{DR}\left(\hat{f}_\theta \left(g(x')\right), m(y', g) ; \mathbf{W}_{\text{ETF}}\right)\biggr],\nonumber    
+\end{align}
+where $\mathcal{M}$ denotes episodic memory, $(x, y)$ and $(x', y')$ denote the samples in $\mathcal{M}$, $G$ denotes the set of possible transformations, $g$ denotes a transformation in $G$, $m$ denotes the mapping function, and $\lambda$ is a hyperparameter for balancing real data and preparatory data. 
+
+\begin{table*}[t!]
+    \centering
+    \resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccccc}
+\toprule
+& \multicolumn{4}{c}{CIFAR-10} &
+\multicolumn{4}{c}{CIFAR-100}\\ \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+&\multicolumn{2}{c}{Disjoint} &
+\multicolumn{2}{c}{Gaussian-Scheduled} &
+\multicolumn{2}{c}{Disjoint} &
+\multicolumn{2}{c}{Gaussian-Scheduled} \\
+Method & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$  & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ \\ 
+\cmidrule(lr){1-1} \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+EWC {\footnotesize \color{azure}{(Kirkpatrick \etal, 2017)}}
+& 75.25$\pm$0.78 & 60.80$\pm$2.20 
+& 59.62$\pm$0.31 & 64.24$\pm$1.97
+& 52.08$\pm$0.83 & 41.55$\pm$0.85
+& 38.22$\pm$0.50 & 42.52$\pm$0.58 \\
+ER {\footnotesize \color{azure}{(Rolnick et al., 2019)}}
+& 75.94$\pm$0.86 & 63.56$\pm$1.32
+& 60.13$\pm$0.56 & 64.81$\pm$2.70
+& 52.95$\pm$1.25 & 42.82$\pm$0.05
+& 41.12$\pm$0.56 & 42.74$\pm$1.09 \\
+ER-MIR {\footnotesize \color{azure}{(Aljundi \etal, 2019)}}
+& 75.89$\pm$1.02 & 61.93$\pm$0.93
+& 60.39$\pm$0.48 & 61.64$\pm$3.86 
+& 52.93$\pm$1.44 & 42.47$\pm$0.13
+& 41.19$\pm$0.63 & 42.93$\pm$1.18 \\
+REMIND {\footnotesize \color{azure}{(Hayes \etal, 2020)}}
+& 69.55$\pm$0.91 & 53.34$\pm$1.01
+& 58.01$\pm$0.72 & 59.27$\pm$1.86
+& 40.87$\pm$0.76 & 36.17$\pm$1.83
+& 23.40$\pm$2.25 & 28.78$\pm$1.71 \\
+DER++ {\footnotesize \color{azure}{(Buzzega \etal, 2020)}}
+& 74.78$\pm$0.72 & 59.20$\pm$0.95
+& 59.44$\pm$0.28 & 66.11$\pm$1.80 
+& 38.16$\pm$1.57 & 38.55$\pm$2.11
+& 29.38$\pm$2.58 & 38.20$\pm$3.13 \\
+SCR {\footnotesize \color{azure}{(Mai \etal, 2021)}}
+& 75.61$\pm$0.93 & 56.52$\pm$0.52
+& 60.62$\pm$0.43 & 58.41$\pm$2.39
+& 41.84$\pm$0.74 & 36.00$\pm$0.83
+& 31.33$\pm$0.41 & 32.11$\pm$0.39 \\
+ODDL {\footnotesize \color{azure}{(Ye \etal, 2022)}}
+& 75.03$\pm$1.00 & 61.61$\pm$3.55
+& 65.46$\pm$0.46 & 66.19$\pm$2.08
+& 40.26$\pm$0.50 & 41.88$\pm$4.52
+& 38.82$\pm$0.49 & 41.35$\pm$1.08 \\
+MEMO {\footnotesize \color{azure}{(Zhou \etal, 2023)}}
+& 73.21$\pm$0.49 & 62.47$\pm$3.38
+& 59.26$\pm$0.90 & 62.01$\pm$1.17
+& 40.60$\pm$1.11 & 39.87$\pm$0.46
+& 23.41$\pm$1.63 & 32.74$\pm$2.11 \\
+X-DER {\footnotesize \color{azure}{(Boschini \etal, 2023)}}
+& 77.59$\pm$0.62 & 65.40$\pm$4.79
+& 58.28$\pm$1.17 & 59.76$\pm$4.28
+& 52.80$\pm$1.61 & 43.73$\pm$0.86 
+& 41.94$\pm$0.57 & 46.00$\pm$1.04 \\
+\cmidrule(lr){1-1} \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+EARL (Ours)
+& \textbf{78.31$\pm$0.72} & \textbf{65.71$\pm$2.26}
+& \textbf{69.52$\pm$0.19} & \textbf{70.41$\pm$1.97} 
+& \textbf{57.12$\pm$1.22} & \textbf{44.40$\pm$0.68}
+& \textbf{47.89$\pm$0.61} & \textbf{46.09$\pm$0.26} \\
+\bottomrule
+\\
+\toprule
+& \multicolumn{4}{c}{TinyImageNet} &
+\multicolumn{4}{c}{ImageNet-200}\\ \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+&\multicolumn{2}{c}{Disjoint} &
+\multicolumn{2}{c}{Gaussian-Scheduled} &
+\multicolumn{2}{c}{Disjoint} &
+\multicolumn{2}{c}{Gaussian-Scheduled} \\
+Method & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$  & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ & $A_\text{AUC} \ \uparrow$ & $A_{last} \ \uparrow$ \\ 
+\cmidrule(lr){1-1} \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+EWC {\footnotesize \color{azure}{(Kirkpatrick \etal, 2017)}}
+& 37.95$\pm$0.93 & 27.50$\pm$0.80
+& 25.29$\pm$0.81 & 26.06$\pm$0.52
+& 41.84$\pm$0.64 & 31.57$\pm$0.80
+& 30.71$\pm$0.27 & 33.33$\pm$0.98 \\
+ER {\footnotesize \color{azure}{(Rolnick \etal, 2019)}}
+& 37.43$\pm$1.05 & 27.47$\pm$0.63
+& 26.37$\pm$0.89 & 25.79$\pm$0.44
+& 41.51$\pm$0.76 & 30.87$\pm$0.72
+& 32.39$\pm$0.36 & 33.09$\pm$0.37 \\
+ER-MIR {\footnotesize \color{azure}{(Aljundi \etal, 2019)}}
+& 37.81$\pm$1.06 & 26.72$\pm$0.86
+& 26.22$\pm$0.69 & 25.11$\pm$1.04
+& 38.28$\pm$0.38 & 33.12$\pm$0.73
+& 32.17$\pm$0.44 & 33.85$\pm$0.93 \\
+REMIND {\footnotesize \color{azure}{(Hayes \etal, 2020)}}
+& 28.37$\pm$0.13 & 27.68$\pm$0.45
+& 10.19$\pm$0.60 & 14.90$\pm$1.49
+& 39.25$\pm$0.93 & 31.98$\pm$0.84
+& 30.23$\pm$0.62 & 33.98$\pm$0.09 \\
+DER++ {\footnotesize
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

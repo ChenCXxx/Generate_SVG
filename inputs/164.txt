@@ -1,0 +1,208 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Dynamic ranges of natural scenes are much wider than those captured by commercial imaging products, causing they are hard to be captured by most digital photography sensors. As a result, high dynamic range (HDR)~\cite{bogoni2000extending,yan2019attention} imaging techniques have attracted considerable interest due to their capability to overcome such limitations. %However, most digital photographic sensors can capture LDR images only, so that HDR images have to be generated from them through software solution.
+Among HDR solutions, multi-exposure image fusion (MEF)~\cite{mertens2007exposure, li2017detail, ram2017deepfuse, li2018multi, ma2019deep, zhang2020ifcnn, xu2020u2fusion, xu2020mef, zhang2020rethinking, jung2020unsupervised, xu2020fusiondn, qu2022transmef, zhang2023iid} provides a cost-effective one, with which plausible images with vivid detail can be generated. MEF has attracted wide attention and there have been many methods~\cite{debevec2008recovering, mertens2009exposure, granados2010optimal, li2012detail, li2013image, ma2017robust, kou2017multi, ma2017multi, li2020fast} available to fuse images with faithful detail and color reproduction. However, these MEF methods use hand-crafted features or transformations so that they usually suffer from robustness if being applied to modified conditions.
+\input{./include/teaser.tex}
+Inspired by the successes of the deep neural networks (DNNs) in many computer vision areas~\cite{ren2015faster,redmon2018yolov3,szegedy2015going,he2016deep}, recently some deep learning-based approaches ~\cite{ram2017deepfuse,ma2019deep} have been proposed to improve MEF. DeepFuse~\cite{ram2017deepfuse} uses DNNs for the first time to directly regress the Y channel of an YUV image as the target. As the core weight maps' learning is ignored, its quality is limited despite of its acceptable efficiency due to the limited model size. To improve the quality, MEFNet~\cite{ma2019deep} alternatively learns the weight maps for blending the input sequence. However, its speed is downgraded as the network becomes complex, hence it just works on low resolution input as a workaround to maintain the efficiency. 
+Unfortunately, these methods do not take real-world deployment into consideration, their speed and quality cannot be well balanced, causing the difficulty of their wide application such as into mobile platform. To tackle these issues, we propose a method named MEFLUT, which aims to achieve higher quality and efficiency simultaneously by taking advantages of deep learning techniques. Our method has no strict requirements on the running platform, it can run in PC and mobile CPU and GPU. As shown in Figs.~\ref{fig:teaser} and~\ref{fig:time}, our method outperforms all the other methods in the image detail preservation and running speed.
+
+MEFLUT consists of two parts. Firstly, we design a network based on multi-dimensional attention mechanism, which is trained via unsupervised methods. The attention mechanism works in frame, channel and spatial dimension separately to fuse inter-frame and intra-frame features, which brings us quality gain in detail preservation. After the network converges, we simplify the model to multiple 1D LUTs, that encodes the fusion weight for a given input pixel value from a specific exposure image. In the test phase, the fusion weights corresponding to different exposures are directly queried from the LUTs. In order to further accelerate our method, the input is downsampled to obtain the fusion masks, which are then upsampled to the original resolution for the fusion, by guided filtering for upsampling (GFU)~\cite{ma2019deep} to avoid boundary stratification. We verify that with or without GFU, our method always runs faster than our competitors, revealing the key effect of LUTs learned.
+
+Besides, considering none of the existing MEF datasets is completely collected through mobile devices, we therefore build a high-quality multi-exposure image sequence dataset. Specifically, we spent over one month to capture and filter out 960 multi-exposure images covering a diversity of scenes by different brands of mobile phones. Among them, 155 samples are produced with ground-truth (GT) for the purpose of quantitative evaluation, which are produced by first running image predictions by 14 algorithms, voted by 20 volunteers and then fine-tuned by an Image Quality (IQ) expert. Producing these GT samples totally cost at least 40 man-hours without counting the organization effort.
+To sum up, our main contributions include:
+\begin{itemize}
+\setlength\itemsep{-1.5mm}
+  
+  
+  \item We propose MEFLUT that learns 1D LUTs for the task of MEF. We show that the fusion weights can be encoded into the LUTs successfully. Once learned, MEFLUT can be easily deployed with high efficiency, so that a 4K image runs in less than 4ms on a PC GPU. To the best of our knowledge, this is the first time to demonstrate the benefits of LUTs for MEF. 
+  
+  \item We propose a new network structure with two attention modules in all dimensions that outperforms the state-of-the-art in quality especially detail preservation. 
+  
+  \item  We also release a new dataset of 960 multi-exposure image sequences collected by mobile phones in various brands and from diverse scenes. 155 samples of them are produced detailed image as ground-truth target by professionals manually.
+\end{itemize}
+
+
+Related Works
+
+
+\subsection{Existing MEF Algorithms}
+MEF tasks typically perform as a weighted summation of multiple frames with different exposures.
+Therefore, the focus of MEF is often to find an appropriate method to get the weights of different exposures. Mertens~\emph{et al.}~\cite{mertens2009exposure} uses contrast, saturation and well-exposeness of each exposure to get the fused weights. 
+Compared with these traditional MEF methods~\cite{goshtasby2005fusion, mertens2007exposure,mertens2009exposure, zhang2011gradient, li2013image, li2017pixel, kou2017multi}, which focus on obtaining the weight in advance, some others~\cite{ram2017deepfuse,endo2017deep, li2020fast, zhang2020ifcnn, xu2020u2fusion, xu2020fusiondn, qu2022transmef, zhang2023iid} prefer to transform the MEF task into an optimization problem.
+Ma~\emph{et al.}~\cite{ma2017multi} proposed a gradient based method to minimize MEF-SSIM for search better fusion results in image space. However, this method requires searching in each fusion causing that it is so time-consuming. In recent years, some deep learning methods also try to optimize the model through MEF-SSIM. For example, DeepFuse~\cite{ram2017deepfuse} accomplishes the MEF task via a neural network, achieving faster computation than the traditional method while keeping the fusion quality. Recently, Zhang~\emph{et al.}~\cite{zhang2020ifcnn} proposed a general image fusion framework IFCNN, which is based on DNNs and direct reconstructs the fusion results through the network.  Qu~\emph{et al.}~\cite{qu2022transmef} proposed the TransMEF, which uses a Transformer to further improve the quality of MEF. However, these methods do not consider speed and are not designed for mobile devices.
+
+\input{./include/fig-pipeline-lut.tex}
+\subsection{Acceleration of MEF Algorithms}
+Most of the aforementioned methods are time-consuming considering potential deployment in mobile platform, as mobile devices are relatively of limited computing power. 
+One solution is to cloud-based solution while for high resolution images, image transmission is also time-consuming. Another solution is to conduct the computation in down-sampled version of images like~\cite{burt1987laplacian, burt1993enhanced,hasinoff2016burst,gharbi2017deep,chen2017fast, ma2019deep}. 
+MEFNet~\cite{ma2019deep} used guided filter~\cite{he2012guided} to realize upsampling, which can well preserve the high-frequency and edge information. However, this method is too complicated and time-consuming even on small resolution images. Therefore, we propose a new MEF method based on LUT for the efficient and high quality fusion.  
+Another problem faced by MEF task on mobile devices is that there lack of datasets captured by causal cameras, although there exist public datasets such as SICE~\cite{cai2018learning} and HDREYE~\cite{nemoto2015visual} taken by professional cameras, which means the images is high-quality. The trained model by these datasets may be hard to be applied to mobile devices due to the generalization problem. Therefore, we propose a comprehensive dataset to broaden the applications.
+
+The LUT has been widely used in vision tasks, including image enhancement~\cite{zeng2020learning, wang2021real}, super-resolution~\cite{jo2021practical, li2022mulut} and so on. ~\cite{zeng2020learning, wang2021real} proposed image-adaptive 3D LUTs for efficient single image enhancement and they all need a network weight predictor to fuse different 3D LUTs, which will be restricted for some platforms that require deep learning framework support. ~\cite{jo2021practical} train a deep super-resolution (SR) network with a restricted receptive field and then cache the output values of the learned SR network to the LUTs. Compared with~\cite{zeng2020learning, wang2021real}, MEFLUT and SR-LUT~\cite{jo2021practical} are offline LUTs. In addition, MEFLUT is also essentially different from SR-LUT~\cite{jo2021practical} in the form of generating LUT and training strategy.
+
+
+
+Algorithm
+Our method is divided into two stages, where Stage 1 is training a network $\mathcal{H}(\cdot)$ to estimate weight maps $\{W_k\}$ for a given set of $K$ YUV input images $\{I^L_k\}, k=1,...,K$, and Stage 2 is generating $K$ 1D lookup tables (LUTs) of size 256, composing a $K\times256$ matrix $\textbf{L}\in \mathbb{R}^{K\times 256}$, to achieve fast calculation of $\{W_k\}$ by simply querying $\textbf{L}$ during deployment. With $\{W_k\}$ obtained, the output image $I^H$ is obtained by alpha blending $\{I^L_k\}$ and $\{W_k\}$.
+\subsection{Network Structure}\label{sec:ns}
+Our network $\mathcal{H}(\cdot)$ is built upon DNN with two newly proposed modules, which aim at inter-frame feature fusion and intra-frame weight prediction by attention mechanism in various dimensions, respectively. It takes $K$ YUV images $\{I^L_k\}$ of size $H\times W$ as input, predicts $K$ weight maps $\{W_k\}$ of the same size as intermediate results, and finally produces the output image $I^H$ by alpha blending $\{I^L_k\}$ using $\{W_k\}$.
+Note that our network only involves computation of Y channel as it is sufficient to predict the weight maps as a common experience, while UV channels are separately merged using a simple weighted summation as in~\cite{ram2017deepfuse}.
+\input{./include/fig-fca-disa2.tex}
+\subsubsection{Convolution with frame and channel attention}\label{sec:fffca}
+The Y channel of the input frames $\{I^L_k\}$, i.e. $\{Y^L_k\}\in\mathbb{R}^{1\times H\times W}$ are first bilinearly downsampled at rate $s$ to obtain
+$\{\widetilde{Y}^L_k\}$ with $\widetilde{Y}^L_k\in\mathbb{R}^{1\times H^s \times W^s}$. Then they are fed into a layer composed of convolution with frame and channel attention~\cite{hu2018squeeze} (CFCA) to obtain a
+feature map $\textbf{X}$. Specifically, we first separately apply conv2d to each $\widetilde{Y}^L_k$ and concatenate the results together to get a 4D tensor $\textbf{Y} \in \mathbb{R}^{K\times C\times H^s\times W^s}$, and then we successively apply attention mechanism in the frame and channel dimension as,\\
+\begin{small}
+\begin{equation}\label{eq:maca}
+\begin{aligned}
+p^\textbf{C}_{k,c}&=\frac{1}{H^s\times W^s}\sum^H_{i=1}\sum^W_{j=1}\textbf{Y}_{k,c}(i, j),\\
+\textbf{Y}^\textbf{C}_k &= \textbf{Y}_{k} \odot \sigma\big(\textbf{W}^\textbf{C}_2\cdot\delta(\textbf{W}^\textbf{C}_1\cdot p^\textbf{C}_k)\big),\\
+\textbf{Y}^\textbf{C} &= \{\textbf{Y}^\textbf{C}_k\},\quad k=1,...,K. 
+\end{aligned}
+\end{equation}
+\begin{small}
+\begin{equation}\label{eq:mafa}
+\begin{aligned}
+p^\textbf{F}_{k,c} &=\frac{1}{H^s\times W^s}\sum^H_{i=1}\sum^W_{j=1}\textbf{Y}^\textbf{C}_{k,c}(i, j), \\
+\textbf{X}_c &= \textbf{Y}^\textbf{C}_{c} \odot \sigma\big(\textbf{W}^\textbf{F}_2\cdot\delta(\textbf{W}^\textbf{F}_1\cdot p^\textbf{F}_c)\big), \\
+\textbf{X} &= \{\textbf{X}_c\},\quad c = 1,...,C,
+\end{aligned}
+\end{equation}
+\end{small}
+where $p^\textbf{C}_{k} \in \mathbb{R}^{C\times 1\times 1}$, $p^\textbf{F}_{c} \in \mathbb{R}^{K\times 1\times 1}$ are vectors composed of scalars $p^\textbf{C}_{k,c}$ and $p^\textbf{F}_{k,c}$, respectively. $\textbf{W}^\textbf{C}_1,\textbf{W}^\textbf{C}_2,\textbf{W}^\textbf{F}_1,\textbf{W}^\textbf{F}_2$ are linear weights in two attention modules, and $\delta, \sigma$ are ReLU and sigmoid activation. $\odot$ is element-wise product with broadcasting automatically.
+
+After the above steps, the two attention modules fuse the feature in frame and channel dimensions separately, so that the produced feature map $\textbf{X}$ accumulates rich context to predict the weight maps $\{\widetilde{W}_k\}$ in the following steps. As seen in Fig.~\ref{fig:cfca-disa-vis}, by comparing (e) and (c), or (d) and (b), we observe that with CFCA enabled, the weight map of the sky area (in green box) in EV-2 is highlighted, causing the final output image not over-saturated. This phenomenon proves the attention focuses more on EV-2 with CFCA involved. We illustrate CFCA structure in Fig.~\ref{fig:att_module}(\textbf{Left}).%In practice, we also add skip connection to achieve residual learning.
+\subsubsection{Dilated inception with spatial attention}\label{sec:wpdisa}
+\begin{small}
+\begin{equation}\label{eq:disa}
+\begin{aligned}
+\textbf{D}^r_k &= \mathcal{D}(X_k, r) \in\mathbb{R}^{C\times H^s\times W^s}, \qquad r \in \{2,4,8\}, \\
+\textbf{w}_k &= \sigma\Big(\Big[\frac{1}{C}\sum_{c=1}^C\textbf{D}^r_k(c),~\max_c \textbf{D}^r_k(c)\Big] \circledast \textbf{W}^\mathcal{D}\Big)\\
+&~~~~~~~\qquad\qquad\textbf{D}^{\textbf{S},r}_k = \textbf{D}^r_k \odot \textbf{w}_k,
+\end{aligned}
+\end{equation}
+\end{small}
+where $\mathcal{D}(\cdot,r)$ is dilated conv2d with rate $r$, $[\cdot,\cdot]$ is concatenation and $\circledast$ is conv2d operator. With $\textbf{D}^{\textbf{S},r}_k$ in 3 branches obtained, we concatenate them together and apply another convolution so as to produce the final weight map $\widetilde{W}_k$. With DISA involved, the weights for pixels within a frame is spatially optimized so that details can be well preserved and artifacts are suppressed. For example in Fig.~\ref{fig:cfca-disa-vis}, we observe that the weights in red boxes become smoother from (e) to (d) or from (c) to (b), where (d)(b) additionally involve DISA based on (e)(c). 
+
+Having completed the above steps, we obtain a multi-scale spatial attention from different dilated rates, so that the produced feature map obtain finer spatial structural information to predict the weight maps $\{\widetilde{W}_k\}$ in the following steps. The detailed structure of DISA is illustrated in Fig.~\ref{fig:att_module}(\textbf{Right}). $C$ is set to $24$ in all modules, and we make sure $\min\{H^s, W^s\} = 128$ regardless of the input image size by controlling $s$.
+
+We conduct an ablation study to demonstrate the effectiveness of the two attention modules, where with either module enabled, all metrics become higher.
+\subsubsection{Unsupervised learning of the MEFLUT}
+With $\{\widetilde{W}_k\}$ obtained, we further learn a high-quality detailed image in an unsupervised manner.
+\begin{small}
+\begin{equation}
+Y^H = \sum_{k=1}^K W_k \cdot Y^L_k.
+\end{equation}
+\end{small}
+With GFU involved, higher quality output can be achieved than using bilinear upsampling.
+\begin{small}
+\begin{equation}
+\min_\theta \mathcal{L}_\text{MEF-SSIM}(\{Y^L_k\}, Y^H),
+\end{equation}
+\end{small}
+where $\theta$ represents all the parameters in our network.
+\begin{small}
+\begin{align}
+P^H = \frac{\sum_{k=1}^K ||P_k - \tau||^1_1\cdot P_k}{\sum_{k=1}^K ||P_k - \tau||^1_1},~~P\in\{U,V\},
+\end{align}
+\end{small}
+where $\tau = 128$. With all channels obtained, the output $I^H$ is composed.
+\input{./include/fig-cfca-disa-vis.tex}
+\subsection{LUT Generation}\label{sec:lut}
+\begin{small}
+\begin{align}\label{eq:lut-fill}
+\textbf{L}(k,v+1) = \omega^v_k, \quad k=1,...,K; v=0,...,255,
+\end{align} 
+\end{small} 
+\begin{small}
+\begin{align}\label{eq:lut-query}
+\widetilde{W}_k(i,j) = \textbf{L}(k,v^*+1).
+\end{align} 
+\end{small}
+ For a 4K image, this strategy makes the time cost around 3ms which leaves enough room for mobile platform deployment, and ensures our method outperforms the others in efficiency. For example, inference with our network directly costs 16ms in NVIDIA 2080Ti GPU. Detailed comparison data can be found in Fig.~\ref{fig:time} and Tab.~\ref{table:diff_frame_time}. We also visualize a LUT in Fig.~\ref{fig:lut_vis} for clearer illustration.
+
+\input{./include/fig-oursvis.tex}
+
+
+Data Preparation
+Considering there are few existing datasets of multi-exposure image sequences from mobile phones, and the provided image sequences as in~\cite{kang2003high, cai2018learning, nemoto2015visual} are very limited in quantity and diversity, we create a new dataset that contains higher number of multi-exposure image sequences and covers more diverse scenes captured by mobile phones.
+\input{./include/fig-sice_vis.tex}
+\paragraph{Data collection.}
+We collect the data mainly in static scenes using 6 different commonly used brands of mobile phones. The scenes are ensured diverse and representative, which cover a broad of scenarios, subjects, and lighting conditions. More importantly, the collected images cover most of the exposure levels in our daily life. For each sequence, we use a tripod to ensure the frames are well-aligned. The exposure levels are manually set, and Exposure Values (EVs) of our sample sequences setting range from $-4.0$ to $+2.0$ with $0.5$ as a step. We select the exposure number 6 ($K=6$) for each scene based on the characteristics of different brands of mobile phones. After collecting the source sequences, screening is further conducted to select desirable sequences for GT generation.
+As a result, a total of 960 static but diverse sequences are filtered out.
+\paragraph{GT generation.}
+We further use a hybrid method to generate the GT. Specifically, 14 existing algorithms~\cite{mertens2009exposure,raman2009bilateral,shen2011generalized,zhang2011gradient,li2013image,shen2014exposure,ma2017robust,kou2017multi,li2020fast,sen2012robust,hu2013hdr,bruce2014expoblend,oh2014robust,ma2019deep} were first used to predict results for each sequence. Then we invited 20 volunteers to compare the results of 14 algorithms and vote for an image as the GT for each sequence. We also invited an image quality tuning engineer to further manually tune the tone-mapping operators for the fairly voted results to generate the high-quality GT. The average tuning time for each image is 10 minutes, and each volunteer spent over 60 minutes for the entire voting. Due to the huge workload, we tuned and obtained high-quality GT on the 155 samples of test set only to evaluate the results by unsupervised learning, which costs totally $2450/60=40.8$ man-hours.
+
+
+
+\input{./include/tab-res-ourdata3.tex}
+
+
+Experimental Results
+
+\paragraph{Dataset.}
+We conduct experiments on our dataset, and another public static dataset SICE~\cite{cai2018learning} is involved to keep the comparison fair enough. In our dataset, a total of 960 samples, of which 805 samples are used for training and 155 samples are used for evaluation. For SICE, we just utilized its first part of 360 index-available sequences with more classic pictures the authors obtained from a widely used dataset HDREYE~\cite{nemoto2015visual}. Following the setting of SICE, 302 samples for training, remaining 58 samples for evaluation.
+\paragraph{Evaluation.}
+We use PSNR, SSIM, and another unsupervised metric Q$_\emph{C}$~\cite{cvejic2005similarity} as the main evaluation metric for all the methods we compare, besides the training loss MEF-SSIM~\cite{ma2015perceptual}.
+Also, considering most of the involved methods are unsupervised ones, causing a large difference in brightness that may exist in their results, we calculate PSNR after an average brightness is subtracted from the given image for fair comparison.
+
+\paragraph{Training.}
+We fix the downsampling rate $s$ to $4$ so that the input training image are fixed size of $512^2$. We use the ADAM optimizer~\cite{Adam} with momentum terms (0.9, 0.999), and the learning rate is set to $1e^{-4}$. The total training epoch is $100$. Finally, we evaluate our method at full resolution during testing.
+We compare our method with 8 previous MEF methods on our test set and SICE test set, including Mertens09~\cite{mertens2009exposure}, Li13~\cite{li2013image}, GGIF~\cite{kou2017multi}, Li20~\cite{li2020fast}, DeepFuse~\cite{ram2017deepfuse}, MEFNet~\cite{ma2019deep}, IFCNN~\cite{zhang2020ifcnn}, and TransMEF~\cite{qu2022transmef}. The results of each method are generated by the implementations from the original authors with default settings.
+\paragraph{Qualitative comparison.}
+Fig.~\ref{fig:our_vis} shows the visual comparisons of fused images generated through other methods on our test set. As seen, the results of the other methods commonly fail to recover the details of saturated regions in the sky. In contrast, our method hallucinates more accurate contents in over saturated areas, causing the sharp edge of the cloud well preserved. Fig.~\ref{fig:sice_vis} shows the visual comparisons on SICE dataset. As seen, the red box highlights that other methods produce a color cast in the billboard area without recovering the text details, while in contrast, our method produces a natural appearance with faithful detail and color restoration.
+
+\paragraph{Quantitative comparison.}
+As shown in Tab.~\ref{table:ourd}(a), we conduct experiments on three sub-datasets with exposure numbers set to 2, 3, and 4, we select the exposures we need from each sample at multiple fixed EVs intervals. As seen from the table, our method consistently achieves the best results over the others in various exposure numbers. We also evaluate all methods on SICE. Here we conduct experiments with the exposure number being set to 2 (EV-1, EV+1), this setting follows the index-available sequences provided by SICE. As seen from the Tab.~\ref{table:ourd}(b), our method achieves similar results, verifying the generalization of our method.
+\input{./include/fig-time.tex}
+\input{./include/tab-multi-time-new3.tex}
+
+\paragraph{Running time.}
+
+We conduct a speed comparison of our method with the 8 MEF methods on our test set, in various platforms including CPU, GPU and mobile CPU, as shown in Tab.~\ref{table:diff_frame_time}. There, CPU is an Intel i7-10510U 1.8GHz, GPU is an Nvidia GeForce RTX 2080Ti and the mobile CPU is Qualcomm SM8250. Mertens09, Li13, GGIF and Li20 utilize CPU only, while DeepFuse, MEFNet, IFCNN and TransMEF exploit CPU and GPU, and ours exploit all three. We only compared the running time of DeepFuse and TransMEF on 2 exposures due to its strict input constraints. 
+
+When the resolution is fixed to $2048^2$ (2K), our method run in 3.06ms in GPU, which is faster than MEFNet's speed (8.21ms) and DeepFuse's speed (634ms), and the speed of CPU is also significantly faster than that of DeepFuse's, MEFNet's and other methods such as Mertens09, Li13, GGIF, Li20, IFCNN and TransMEF, these methods show a lot of performance consumption.
+In mobile CPU, our method is able to achieve real-time performance. Compared with PC CPU, our method optimizes the performance of query and other operations for mobile CPU, and our method has no strict requirements on the running platform compared with deep learning methods such as Deepfuse, MEFNet, IFCNN and TransMEF. 
+
+We also conduct experiments on images with various resolutions and illustrate the performance in Fig.~\ref{fig:time}. As seen, our method takes less than 4ms to process image sequences with resolutions ranging from $512^2$ to $4096^2$ on the GPU. 
+The network of MEFNet downsamples the full resolution image to a fixed $128^2$, so their running time is relatively not much. Our method maintains the quality while achieving less running time, which is of $3.0\times$ and $175.0\times$ speed of MEFNet and DeepFuse, and $345.4\times$ and $12226.0\times$ speed of IFCNN and TransMEF in $4096^2$ resolution (4K). In CPU, our method is of $21.3\times$ and $42.0\times$ speed of DeepFuse and Li13, and $27.6\times$ and $989.6\times$ speed of IFCNN and TransMEF. In mobile CPU, our method running less than 40ms for a 4K image sequence. We further conduct an experiment by working on images in their original resolution by disabling the GFU module to verify the efficiency of our 1D LUTs only. The performance advantage of our luts is more obvious when GFU disabled.
+
+Our method has been successfully shipped into millions of mobile phones in the market. This fact further demonstrates the practicality and robustness of our method.
+
+
+\input{./include/tab-modelArchitecture-lut.tex}
+\subsection{Ablation Studies}
+
+\paragraph{Visualization of LUTs.}
+Fig.~\ref{fig:lut_vis} shows the weight value of the multi-exposure image in the range of 0 to 255 in 3 EVs. As seen, the curve of EV$+$ basically follows a monotonously decreasing pattern, while that of EV$-$ follows a monotonously increasing one. Our 1D LUTs reflect the fusion trend of different exposure images.
+\paragraph{The effectiveness of CFCA and DISA.}\label{par:effectiveness-cfca-disa}
+We verify the module of CFCA and DISA respectively.
+Tab.~\ref{table:mod} and Fig.~\ref{fig:cfca-disa-vis} shows that when the module of CFCA and DISA are also adopted, all metrics and visual effects can achieve the best performance. The main reason can be concluded as that the dual attention mechanism of the CFCA strengthens the exchange of information between different exposures, our 1D LUTs can better take into account the difference in brightness between different exposures, and the DISA acts on each branch and focuses on spatial features under different receptive fields, the consistency of spatial information can be preserved as much as possible.
+
+\paragraph{The effectiveness of our network to LUTs.}
+In order to verify that the network we proposed is more effective for 1D LUTs' generation, we apply the same idea to MEFNet and used the generated 1D LUTs to perform the fusion task instead. As seen in Tab.~\ref{table:validity}, although MEFNet produces similar 1D LUTs to reconstruct the weight maps, its quality has a significant drop. It demonstrates that our network has better effectiveness for 1D LUTs' generation.
+
+\input{./include/fig-lutvis.tex}
+\input{./include/fig-motion.tex}
+\paragraph{Moving scene.}
+In our paper, we focus on MEF, similar to previous MEF works, such as DeepFuse, MEFNet, IFCNN and TransMEF, we all focus on static scenes. However, we also show how MEFLUT collaborates with other deghosting methods in practical applications. We show an example captured by a hand-held cellphone with dynamic objects in Fig.~\ref{fig:ghost}. We first align the input frames, then remove ghosts in the final image. As for solving the ghosts, we generate weight maps based on our 1D LUTs. The moving areas are detected and marked according to~\cite{zhang2015ghost}. The marked pixels are then assigned zero weights to prevent ghost artifacts. Our method can collaborate well with the off-the-shelf deghosting methods for practical results. 
+
+\input{./rebuttal/include/tab-network.tex}
+\paragraph{Trained network vs. LUTs.} 
+Although the LUTs in our method do not participate in the training. As shown in Tab.~\ref{table:lut_gap}, we find that the quality of the results of the LUTs is comparable to the trained network, but the speed is several times faster. Our method has little effect in actual deployment, but using LUTs will get a large speed advantage with less quality loss. 
+
+\subsection{Limitation and Discussion}
+\paragraph{Limitation.} Although our method can achieve stable and efficient MEF across a variety of scenes, it has two limitations from 1D LUTs. First, our 1D LUTs currently only operates on the Y channel, which may not be good enough for color balance. One possible solution is to use the 1D LUTs on the UV channels as well but compatibility needs to be further investigated. Second, we query the 1D table pixel-wisely, causing the reconstructed weight map may be lack of smoothness and dot artifacts may appear as neighborhood information is not considered. Despite of GFU's smoothness capability on the weight map, its parameters cannot be adaptively set causing its uneven effects to various scenes, i.e. some are too dotted and some are over-smoothed resulting in Buddha light artifact. Two possible solutions include to learn a small model that provides more semantic information guidance for the 1D LUTs, and to learn a GFU with adaptive parameters.  We leave them as our future work. 
+\paragraph{Discussion.}  The stronger the network's fitting capability, the greater the expressiveness of the generated LUTs. Advanced modules like Transformers and larger models can enhance the network's performance, resulting in superior 1D LUTs. Furthermore, our method accelerates MEF by offline generating 1D LUTs. It can be extended to tasks such as multi-focus image fusion and image enhancement. The same offline generation approach for 1D LUTs can also be applied to generate 2D/3D LUTs, enabling adaptation to a wider range of tasks. For instance, in a two-frame MEF task, we trained the network using  $256 \times 256$ groups of constant grayscale images, with grayscale values ranging from 0 to 255. We have successfully built  on offline-generated 2D LUTs exhibit promising performance. However, it is important to note that as LUT dimensionality increases, storage space requirements grow exponentially. We plan to further explore these possibilities in future research.
+
+
+
+
+Conclusion
+We have proposed a new method to efficiently fuse a multi-exposure image sequenc
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

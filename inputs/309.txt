@@ -1,0 +1,288 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Continual Self-supervised Learning: Towards Universal Multi-modal Medical Data Representation Learning
+
+% ArXiv ID: 2311.17597
+
+
+
+\maketitle
+\begin{abstract}
+Self-supervised learning is an efficient pre-training method for medical image analysis. However, current research is mostly confined to specific-modality data pre-training, consuming considerable time and resources without achieving universality across different modalities. 
+A straightforward solution is combining all modality data for joint self-supervised pre-training, which poses practical challenges. 
+Firstly, our experiments reveal conflicts in representation learning as the number of modalities increases. 
+Secondly, multi-modal data collected in advance cannot cover all real-world scenarios.
+In this paper, we reconsider versatile self-supervised learning from the perspective of continual learning and propose MedCoSS, a continuous self-supervised learning approach for multi-modal medical data. Unlike joint self-supervised learning, MedCoSS assigns different modality data to different training stages, forming a multi-stage pre-training process. 
+To balance modal conflicts and prevent catastrophic forgetting, we propose a rehearsal-based continual learning method. 
+We introduce the $k$-means sampling strategy to retain data from previous modalities and rehearse it when learning new modalities. 
+Instead of executing the pretext task on buffer data, a feature distillation strategy and an intra-modal mixup strategy are applied to these data for knowledge retention.
+We conduct continuous self-supervised pre-training on a large-scale multi-modal unlabeled dataset, including clinical reports, X-rays, CT scans, MRI scans, and pathological images. Experimental results demonstrate MedCoSS's exceptional generalization ability across nine downstream datasets and its significant scalability in integrating new modality data.
+Code and pre-trained weight are available at \href{https://github.com/yeerwen/MedCoSS}{https://github.com/yeerwen/MedCoSS}.
+\end{abstract}
+
+\renewcommand{\thefootnote}{}
+\footnotetext{
+Corresponding authors: Yong Xia and Yutong Xie. 
+}
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=0.99\linewidth]{Image/Intro.pdf}
+   \caption{
+   (a) Comparison between joint SSL and our sequential SSL. Different colored balls represent different modalities. The joint SSL suffers from the high costs to integrate knowledge from new data while our sequential SSL shows a distinct advantage in this aspect.
+   (b) Generalization performance of five single-modal pre-trained models (dashed lines) and two multi-modal pre-trained models (solid lines). 
+   The label shows the data dimension, modality, and dataset name. 
+   The model from MedCoSS achieves state-of-the-art generalization performance (red solid line) on a broad range of tasks, beating other models.
+   }
+   \label{fig: intro}
+\end{figure}
+\section{Introduction}
+\label{sec:intro}
+
+
+
+Medical self-supervised learning (SSL) emerges as a powerful alternative to large-scale supervised learning, showcasing impressive feats in high-quality representation learning. Its essence lies in pre-training strong encoder or encoder-decoder architectures for subsequent downstream tasks by solving a pretext task without human annotations.
+A review of existing medical SSL approaches highlights a pattern: they primarily focus on a single modality data, such as X-rays \cite{bozorgtabar2020salad,  azizi2021big, zhou2021preservational, zhou2021models, haghighi2022dira, taher2022caid, cai2023dual}, computed tomography (CT) scans \cite{zhu2020rubik, zhou2021preservational, zhou2021models, haghighi2022dira, ye2022desd, tang2022self, yan2023localized, zhang2023dive, jiang2023anatomical}, magnetic resonance image (MRI) scans \cite{cai2023dual, ouyang2022self, zhou2022dual, kalapos2022self}, pathological images \cite{kang2023benchmarking, wang2021transpath, yang2021self}, fundus images \cite{li2021rotation}, multivariate cardiac signals \cite{lan2022intra}, and ultrasound (US) images \cite{chen2022generating}, or only a handful of paired modality data like radiology reports paired with X-rays \cite{chen2022multi,yan2022clinical,liu2023improving,liu2023m,zhang2023knowledge}, MRI modality pairs \cite{taleb2021multimodal}, and images paired with genomics \cite{jin2023gene}.
+This narrow focus constrains them from extending to the universal medical pre-training since a large-scale paired multi-modal dataset is often impractical.
+Despite a few pioneering attempts in unpaired multi-modal pre-training \cite{xie2022unimiss, cai2022uni4eye, ghesu2022self}, the scope of these efforts remains notably constrained. Specifically, these efforts are either limited to only two modalities \cite{xie2022unimiss}, only for a specific field \cite{cai2022uni4eye}, or restricted to a specific dimension \cite{ghesu2022self}. 
+These limitations hinder their ability to delve deep into the challenges of universal multi-modal SSL in the face of more modalities.
+
+In our experiments, we used the plain ViT/B \cite{dosovitskiy2020vit} as the backbone and masked modeling \cite{he2022masked, devlin2018bert} as the pretext task. The results are the average values of accuracy, AUC, and F1 for classification tasks or Dice for segmentation tasks. We observed a consistent trend: single-modal pre-trained models excel in downstream tasks with identical modality but falter considerably when dealing with the data from another modal (see Fig. \ref{fig: intro}(b)).
+This observation underscores the urgency to craft a universal pre-training model proficiently handling varied medical multi-modal data.
+A seemingly intuitive solution to this problem is joint SSL (see Fig. \ref{fig: intro}(a)), where all accessible medical data (from various modalities) are completely collected and involved in pre-training executed as single-modal per mini-batch considering the diverse dimensions inherent in medical imaging \cite{xie2022unimiss, cai2022uni4eye}.
+However, compared to single-modal SSL, where the models are pre-trained and fine-tuned on an identical modality, joint SSL falls short of expectations, despite its richer information base. This is evident from Fig. \ref{fig: intro}(b), which shows a significant performance drop in most downstream tasks.
+We attribute this performance degradation to the phenomenon, which we term as \textit{modal data collision}, that the representation learning on two modalities conflicts with each other owing to the vast disparities between those modalities.
+Moreover, a joint training paradigm is also inadvisable, due to the high costs associated with incorporating the knowledge from both the seen and newly introduced modal data, necessitating a full reiteration of the pre-training process.
+
+To circumvent the obstacle of \textit{modal data collision} and recover the scalability of the pre-trained model, we propose the \textbf{Med}ical \textbf{Co}ntinual \textbf{S}elf-\textbf{S}upervised (MedCoSS) paradigm for multi-modal representation learning. MedCoSS diverges from traditional joint pre-training by adopting a sequential pre-training paradigm \cite{riemer2018learning}, assigning each stage to a specific modality. 
+To avoid catastrophic forgetting, we design a rehearsal-based continual learning technique that retains a subset (\textit{e.g.}, 5\%) of previous modal data within a rehearsal buffer, using the $k$-means sampling strategy over random sampling. Specific to previous knowledge retention, we deploy a feature distillation strategy and intra-modal mixup strategy during subsequent pre-training stages.
+According to our MedCoSS paradigm, a model undergoes pre-training on the data from five modalities: Report, X-ray, CT, MRI, and Pathological imaging. Evaluation on nine downstream datasets encompassing all seen modalities at the pre-training phase to showcase the superior generalization capability of our model. 
+The model from MedCoSS consistently outperforms the models developed through single-modal pre-training, joint pre-training, and other multi-modal pre-training paradigms, while maintaining cost-effective scalability to include new knowledge, paving the way to build the multi-modal pre-trained medical universal model.
+In summary, our contributions can be encapsulated as:
+\begin{itemize}
+    \item We identify and mitigate the \textit{modal data collision} issue and innovate the MedCoSS paradigm. By shifting from joint to sequential training and introducing continual learning, we alleviate the collisions and cost-effectively scale new knowledge without forgetting the old.
+    \item We conduct an in-depth exploration into unpaired multi-modal SSL, expanding the modality and data dimension. We integrate five prevalent modalities, including the Report, X-ray, CT, MRI, and Pathological imaging, spanning three dimensions (1D, 2D, and 3D) to pre-train a universal model using the proposed MedCoSS.
+    \item The model developed through our MedCoSS achieves state-of-the-art generalization performance on a broad range of downstream tasks, indicating a potential direction to develop the multi-modal pre-trained medical universal model.
+
+\end{itemize}
+
+
+\begin{figure*}[t]
+  \centering
+   \includegraphics[width=1.0\linewidth]{Image/Overview.pdf}
+   \caption{Pipeline of proposed MedCoSS paradigm. MedCoSS leverages a sequential pre-training manner to produce a multi-modal pre-trained model ($M^{t}$) through multi-stage learning, each assigned to specific modal data. To alleviate the issue of catastrophic forgetting, a rehearsal buffer is adopted and maintained for previous modal data rehearsal in the subsequent pre-training. After each stage, the model $M_{t}$, which consists of three tokenizers and a Transformer-based encoder, will be used to select samples from current data using a $k$-means sampling strategy and then transferred to the next stage.
+  }
+   \label{fig: overview}
+\end{figure*}
+
+\section{Related Work}
+\label{sec:related work}
+
+\subsection{Medical self-supervised learning}
+Medical SSL has been increasingly used to improve the performance of medical image analysis, achieving success in various clinical applications, with its success largely dependent on large-scale pre-training data.
+The modalities of data directly influence the performance of models in target tasks. 
+Generally, popular medical SSL can be categorized into three primary categories: single-modal SSL, paired multi-modal SSL, and unpaired multi-modal SSL.
+\textbf{Single-modal SSL}: this approach leverages only one modality for pre-training. Typical modalities in this category encompass X-ray \cite{bozorgtabar2020salad,  azizi2021big, zhou2021preservational, zhou2021models, haghighi2022dira, taher2022caid, cai2023dual}, CT \cite{zhu2020rubik, zhou2021preservational, zhou2021models, haghighi2022dira, ye2022desd, tang2022self, yan2023localized, zhang2023dive, jiang2023anatomical}, MRI \cite{cai2023dual, ouyang2022self, zhou2022dual, kalapos2022self}, Pathological imaging \cite{kang2023benchmarking, wang2021transpath, yang2021self}, fundus image \cite{li2021rotation}, multivariate cardiac signals \cite{lan2022intra}, and ultrasound \cite{chen2022generating}. Despite the versatility of single-modal SSL, our observations in Fig. \ref{fig: intro}(b) indicate that models trained on one modality often struggle to generalize across other modalities, particularly when these modalities differ in dimensionality.
+\textbf{Paired multi-modal SSL}: this approach leverages multiple modalities with an inherent relationship for pre-training. The design purpose behind the corresponding pretext tasks is to encourage the model to be aware of these relationships. Existing SSL paradigms employ various data pair types, such as clinical reports paired with images \cite{chen2022multi,yan2022clinical,liu2023improving,liu2023m,zhang2023knowledge,wu2023towards}, captions paired with images \cite{wu2023towards}, or MRI modality pairs \cite{taleb2021multimodal}. However, collecting such paired multi-modal datasets is resource-intensive and impractical, even for widely used modalities.
+\textbf{Unpaired multi-modal SSL}: this approach presents a more economical alternative to paired multi-modal SSL by relaxing data constraints, allowing for easier scaling.
+Pioneering efforts have delved into this field.
+Ghesu \textit{et al.} \cite{ghesu2022self} collected a 2D mixed modality dataset comprising X-rays, CT slices, MRI slices, and US images. Their approach, focusing on multi-modal clustering, enabled distinct online clustering for each modality using individual prototypes.
+Cai \textit{et al.} \cite{cai2022uni4eye} devoted to ophthalmology, creating a multi-modal dataset and leveraging masked image modeling (MIM) for effective representation learning.
+Xie \textit{et al.} \cite{xie2022unimiss} introduced an iterative training scheme for joint training of CT and X-ray data, incorporating volume-slice consistency as a form of cross-dimension regularization during CT pre-training.
+These studies, each addressing different aspects of unpaired multi-modal SSL, collectively enrich our understanding of this field.
+However, as modalities and data dimensions increase, these paradigms often fall short in fine-tuning compared to single-modal pre-training, hindered by the modal data collision in joint training.
+Crucially, the pre-trained models obtained from these paradigms exhibit limited scalability when it comes to incorporating knowledge from new data sources.
+Therefore, we introduce continual learning technology in the SSL paradigm to mitigate these issues, proposing a more practical and efficient approach to multi-modal SSL.
+
+
+\subsection{Continual learning for knowledge retention}
+Continual Learning (CL) techniques have been instrumental in aiding models to retain knowledge over time, especially when sequentially exposed to diverse data or tasks. 
+These CL techniques can be summarized in five main categories, including regularization-based approach \cite{kirkpatrick2017overcoming}, rehearsal-based approach \cite{buzzega2020dark,riemer2018learning}, optimization-based approach \cite{lin2022towards}, representation-based approach \cite{fini2022self}, and architecture-based approach \cite{mallya2018packnet}.
+The rehearsal-based approach, notably successful in retaining knowledge when equipped with a rehearsal buffer, usually maintains some previous data \cite{riemer2018learning} or features \cite{buzzega2020dark} and replays them during subsequent learning. 
+A standout method within this category is DER \cite{buzzega2020dark}, which retains previous training samples and their associated logits, focusing on logit-matching rather than label-matching.
+In this study, we adjust DER with three customized modifications for our MedCoSS, including:
+(1) we replaced reservoir sampling with a $k$-means sampling strategy, considering sample diversity; 
+(2) instead of directly preserving logits of samples, we only preserved samples and utilized a freeze encoder to extract logits, catering to the random masking operation for inputs;
+(3) we introduced an intra-modal mixup strategy to augment data from the rehearsal buffer.
+
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=1.0\linewidth]{Image/SSL.pdf}
+   \caption{
+   Illustration of proposed rehearsal SSL paradigm. The masked modeling pretext task \cite{he2022masked, devlin2018bert} is used for representation learning on current modal data corresponding to stage $t$. The feature distillation strategy is used for knowledge retention by building a freeze model $M^{t-1}$ and rehearsal buffer. 
+   }
+   \label{fig: ssl}
+\end{figure}
+\section{Approach}
+\subsection{Overview}
+The proposed MedCoSS paradigm is designed as a two-step SSL, which comprises an unsupervised pre-training phase and a fully-supervised fine-tuning phase.
+During pre-training, we employ masked image/language modeling as the pretext task to extract generalized representations from an integrated set of multi-modal data, specifically clinical reports, X-rays, CT scans, MRI scans, and pathological images. 
+To circumvent the obstacle of \textit{modal data collision} caused by the joint multi-modal pre-training, we introduce a sequential pre-training scheme, in which each stage is tailored for training on a specific modality of data.
+The potential risk of knowledge forgetting during this sequential process is countered with continual learning techniques.
+During fine-tuning, the pre-trained encoder is paired with a randomly initialized task-specific head for each downstream task.
+A comprehensive visualization of our MedCoSS paradigm was illustrated in Fig. \ref{fig: overview}. We now delve into the details of each part.
+
+\subsection{Universal architecture for multi-modal SSL}
+We craft a universal architecture \cite{zhu2022uni} in line with the aim of universal multi-modal SSL.
+The medical data from various modalities could be either 1D (\textit{e.g.}, clinical reports), 2D (\textit{e.g.}, X-rays and pathological images), or 3D (\textit{e.g.}, CT and MRI scans).
+To accommodate these 
+data seamlessly, a dimension-free backbone is imperative.
+For this study, we employ three dimension-specific tokenizers to convert 1D, 2D, and 3D medical data into token sequences, respectively, and use a plain ViT/B \cite{dosovitskiy2020vit} as the encoder for representation learning in a sequence-to-sequence manner regardless of the dimension of the medical data.
+Specifically, we deploy the byte pair encoding (BPE) tokenizer \cite{sennrich2015neural} for text and 2D/3D image patch tokenizer \cite{dosovitskiy2020vit} for 2D/3D visual data.
+For text, following BERT \cite{devlin2018bert}, we mask out 15\% words randomly. The model predicts each masked word according to the visible words, using the cross-entropy loss as a constraint.
+For visual data, following MAE \cite{he2022masked}, token sequences %generated by the image tokenizers 
+are randomly masked at a ratio of 75\% and only those unmasked token sequences are fed to the encoder. Subsequently, the encoded visible token sequences, together with learnable mask tokens, serve as the inputs of the Transformer-based decoder, aiming to reconstruct the previously masked tokens. The mean squared error (MSE) loss is employed to ensure a high consistency between the original and reconstructed images in masked regions.
+
+\subsection{Rehearsal-based continual pre-training}
+The typical approach to joint pre-training on multi-modal data often encounters the issues of \textit{modal data collision} and high cost of integrating new knowledge.
+To address both issues, we advocate a shift towards a sequential pre-training paradigm, effectively assigning each stage to a specific imaging modality.
+Formally, considering $T$ unlabeled subsets of data $D=\{D_{1}, D_{2},..., D_{T}\}$, each being acquired from a unique modality.
+The correspondence between modalities and stages is random.
+Unlike the standard practice of directly pre-training a model $M$ on $D$, our MedCoSS paradigm pre-trains $M$ sequentially on each subset $D_{t}$ in the $t^{th}$ stage, where the intermediate pre-trained model is denoted by $M^{t}$.
+This paradigm strategically circumvents \textit{modal data collision} by isolating different modalities during pre-training while at the risk of catastrophic forgetting.
+We counter this risk by integrating rehearsal-based continual learning techniques to preserve previous knowledge.
+When stage $t$ unfolds, the pre-training not only focuses on the MIM pretext task using $D_{t}$, but also engages an auxiliary feature distillation task to prevent catastrophic forgetting. 
+
+\noindent{\textbf{Learn from current modality}. We utilize $M_{t-1}$, which includes an encoder $\phi$ and three tokenizers $\mathcal{T} ^{1d}, \mathcal{T}^{2d}, \mathcal{T}^{3d}$, along with a randomly initialized decoder to continually learn new knowledge from current modal data on a masked modeling pretext task. 
+
+\noindent{\textbf{Learn from previous modalities}. We establish a rehearsal buffer $B=\{x_{i}^{j}\mid x_{i}^{j} \in  D_{j}, j \in (1, 2,..., t-1) \}$ to retain a fraction of training data from each of previous stages (see Section \ref{method: kmeans} for details). 
+Moreover, we copy a frozen version of $M_{t-1}$, where an encoder and three tokenizers are denoted as $\phi_{f}, \mathcal{T}_{f}^{1d}, \mathcal{T}_{f}^{2d}, \mathcal{T}_{f}^{3d}$, respectively.
+For each sample $x$ from $B$, the intra-modal mixup (IMM) strategy is utilized (see Section \ref{method: IMM} for details) for augmentation. 
+The augmented sample is processed by the learnable network (\textit{i.e.}, $\mathcal{T}^{1d}, \mathcal{T}^{2d}, \mathcal{T}^{3d}$, and $\phi$) and frozen network (\textit{i.e.}, $\mathcal{T}_{f}^{1d}, \mathcal{T}_{f}^{2d}, \mathcal{T}_{f}^{3d}$, and $\phi_{f}$), respectively. The embeddings produced by both networks are then encouraged to be similar via minimizing the MSE loss (see $L_{fd}$ in Fig. \ref{fig: ssl}).
+
+
+
+The pre-training process of our MedCoSS paradigm is summarized in Algorithm \ref{alg: main}.
+
+\SetKwInOut{Require}{Require}
+\SetKwInOut{Initialize}{Initialize}
+\begin{algorithm}[t]
+\KwIn{$T$ datasets $\{D_{1},...,D_{T}\}$ with different modalities, rehearsal buffer $B$, tokenizers $\mathcal{T}$, encoder $\phi$, model-specific decoders $\psi_{i},(i \in (1,...,T))$, sampling operation $Sample(.)$}
+\KwOut{$\phi$ and $\mathcal{T}$}
+\caption{MedCoSS's pre-training algorithm.}
+\begin{algorithmic}[1]
+\STATE $\triangleright$ \textbf{Stage 1}:
+    \STATE Training dataset $D \leftarrow D_{1}$ 
+    \STATE Update $\phi$, $\mathcal{T}$, and $\psi_{1}$ by $L_{mim}$
+    \STATE $B \leftarrow Sample(D_{1})$
+\STATE $\triangleright$ \textbf{Stage 2, 3, ...}:
+\FOR {\textit{i} = 2, 3, ...}
+    \STATE Training dataset $D \leftarrow D_{i} \cup B$ 
+    \FOR {\textit{iteration} = 1, 2, ...}
+        \STATE Sample a batch of unlabeled data $x$ from $D$
+        \IF{$x \in D_{i}$} 
+            \STATE Update $\phi$, $\mathcal{T}$, and $\psi_{i}$ by $L_{mim}$
+        \ELSE
+            \STATE Update $\phi$ and $\mathcal{T}$ by $L_{fd}$
+        \ENDIF
+    \ENDFOR
+    \STATE $B \leftarrow B \cup Sample(D_{i})$
+\ENDFOR 
+\end{algorithmic}
+\label{alg: main}
+\end{algorithm}
+
+\subsubsection{Rehearsal buffer construction} \label{method: kmeans}
+In our MedCoSS paradigm, the rehearsal buffer $B$ is constructed for subsequent training stages by using the $k$-means sampling strategy
+to select representative samples from each subset $D_t$. Unlike the random sampling that lacks reliability in capturing data diversity, $k$-means sampling consists of two steps: (1) clustering each subset $D_t$ into $C$ clusters based on the embeddings produced by the pre-trained model (\textit{i.e.}, $M_{t-1}$ in the $t^{th}$ Stage), and (2) selecting $K$ samples, which are nearest to the center, from each cluster. Note that the number of clusters $C$ is empirically set to 1\% of the subset size.
+
+\subsubsection{IMM Augmentation Strategy} \label{method: IMM}
+In MedCoSS, the IMM augmentation strategy enhances the variety of the samples drawn from the rehearsal buffer $B$ to deal with a limited buffer size for each modality.% We now introduce the approach for both text and visual data in detail.
+
+\noindent{\textbf{For text data}},
+we denote the batch of text samples as $b \in \mathbb{R}^{N \times L}$, where $N$ represents the batch size and $L$ means the length of text sequences.
+To perform augmentation, we initiate by copying the batch $b$ to produce $b^{'}$, which is subsequently shuffled to create a new sequence order. A binary mixup strategy is then employed to synthesize a new batch $b^{mix}$, defined as:
+\begin{equation}
+b^{mix} = \lambda_{b} \odot b + (1 - \lambda_{b}) \odot b^{'}, 
+\label{eq1}
+\end{equation}
+where $\odot$ denotes element-wise multiplication, and $\lambda_{b}$ represents a binary mask array matching the shape of $b$. 
+This mask's values, either 0 or 1, are derived from an array generated by uniformly sampling numbers with a random threshold, also sourced from a uniform distribution within the range of $[0, 1)$.
+
+\noindent{\textbf{For visual data}},
+the augmentation process begins similarly by duplicating and shuffling the image batch $b$ to obtain $b^{'}$.
+The difference is that we incorporate a continual mixup strategy here, expressed as:
+\begin{equation}
+b^{mix} = \lambda_{c} \odot b + (1 - \lambda_{c}) \odot b^{'}, 
+\label{eq2}
+\end{equation}
+where the continual mask vector $\lambda_{c}$ is an array of length $N$ with values randomly chosen between $[0, 1)$. Each number in this vector corresponds to a specific sample, determining how much each image in batch $b$ blends with its counterpart in batch $b^{'}$.
+
+\subsection{Fine-tuning on downstream tasks}
+After pre-training, we adopt the pre-trained encoder and customize it for various downstream tasks, including the classification and segmentation of all seen modalities. %Due to the universal architecture of the encoder, only a smaller number of the modules is dimension-sensitivity (not modality-sensitivity). 
+Given a task, a corresponding prediction head is designed according to the dimensionality of input data and the task type.
+We use the Multi-Layer Perceptron (MLP) head for classification tasks and employ a convolutional-based decoder with a segmentation head for segmentation tasks. More details are in Appendix \ref{sec:model details}.
+
+
+\begin{table}[t]
+  \centering
+  \caption{Overview of the datasets used in this study.}
+  \resizebox{1\columnwidth}{!}{
+    \begin{tabular}{c|c|c|c|ccc}
+        \toprule
+          & Dataset & Modality  & Task  & \#Train & \#Val & \#Test \\
+      \midrule
+    \multirow{5}[0]{*}{SSL} & MIMIC-CXR & Report & \multirow{5}[0]{*}{MLM/MIM} & 227,323 & -     & - \\
+          & MIMIC-CXR & X-ray &       & 356,309 & -     & - \\
+          & DeepLesion & CT    &       & 10,594 & -     & - \\
+          & ADNI  & MRI   &       & 3,789 & -     & - \\
+          & TCGA  & Path. &       & 217452 & -     & - \\
+        \midrule
+    \multirow{9}[0]{*}{DS} & PudMed20k & Report & Cls   & 180,040 & 30,212 & 30,135 \\
+          & ChestXR & X-ray & Cls   & 14,365 & 3,593 & 3,432 \\
+          & QaTa  & X-ray & Seg   & 5,716 & 1,429 & 2,113 \\
+          & RICORD & CT    & Cls   & 194   & 52    & 84 \\
+          & LiTS  & CT    & Seg   & 104   & -     & 27 \\
+          & VS    & MRI   & Seg   & 193   & -     & 49 \\
+          & LA    & MRI   & Seg   & 80    & -     & 20 \\
+          & NCH   & Path. & Cls   & 79,994 & 20,006 & 7,180 \\
+          & GlaS  & Path. & Seg   & 67    & 18    & 80 \\
+        \bottomrule
+    \end{tabular}%
+    }
+  \label{tab:data}%
+\end{table}%
+
+\section{Experiment}
+\subsection{Datasets}
+The datasets used in this study can be divided into upstream unlabeled and downstream labeled datasets. The summary of these datasets is shown in Table \ref{tab:data}.
+
+\noindent{\textbf{Upstream datasets}}:
+Our large-scale multi-modal unlabeled dataset encompasses five modalities: Report, X-ray, CT, MRI, and Pathological imaging (Path.). The clinical reports and X-rays are sourced from the JPG version of the MIMIC-CXR 2.0.0 dataset \cite{johnson2019mimic}.
+CT scans are obtained from the DeepLesion dataset \cite{yan2018deeplesion}.
+MRI scans are drawn from the Alzheimer’s Disease Neuroimaging Initiative (ADNI) database, including ADNI-1, ADNI-2, and ADNI-GO datasets \cite{jack2008alzheimer}. 
+Pathological images are collected from 7 projects: TCGA-THYM, TCGA-THCA, TCGA-BRCA, TCGA-UCEC, TCGA-UVM, TCGA-OV, TCGA-MESO within the cancer genome atlas (TCGA) \footnote{\url{https://portal.gdc.cancer.gov/}}.
+
+Detailed preprocessing steps for these upstream datasets are provided in Appendix \ref{sec:upstream pre}.
+
+
+\noindent{\textbf{Downstream (DS) datasets}}:
+Nine datasets covering five different modalities are used for downstream evaluation.
+These include (1) Report: sentence classification (PudMed20k \cite{dernoncourt2017pubmed}); (2) X-ray: multi-class COVID-19 classification (ChestXR \cite{CovidGrandChallenge2021}) and COVID-19 infected region segmentation (QaTa-COV19-v2) \cite{degerli2022osegnet});
+(3) CT: COVID-19 classification (RICORD \cite{tsai2021rsna}) and liver and liver tumor segmentation (LiTS \cite{bilic2023liver});
+(4) MRI: vestibular schwannoma segmentation (VS \cite{shapey2021segmentation}) and left atrium segmentation (LA \cite{xiong2021global});
+(5) Pathological imaging: colorectal cancer and healthy tissue classification (NCH \cite{kather2018100}) and gland segmentation (GlaS \cite{sirinukunwattana2017gland}).
+More details about these downstream datasets are in Appendix \ref{sec:downstream pre}.
+
+
+
+\begin{table*}[t]
+\centering
+
+    \setlength{\tabcolsep}{2pt}
+  \caption{Generalization Performance of our MedCoSS, TFS, five single-modal pre-training models, and seven multi-modal pre-training on nine datasets. The best and second-best results in each column are highlighted in \textcolor[rgb]{ 1,  0,  0}{red} and \textcolor[rgb]{ 0,  .439,  .753}{blue}, respectively. *: Joint SSL with dimension-shared decoders. \dag: Joint SSL with modal-specific decoders.    }
+\resizebox{1\textwidth}{!}{
+    \begin{tabular}{c|ccc|ccc|cc|ccc|cc|cc|cc|ccc|cc}
+    \toprule
+    \multirow{2}{*}{Method} & \multicolumn{3}{c|}{PudMed20k (Report)} & \multicolumn{3}{c|}{ChestXR (X-ray)} & \multicolumn{2}{c|}{QaTa (X-ray)} & \multicolumn{3}{c|}{RICORD (CT)}  & \multicolumn{2}{c|}{LiTS (CT)} & \multicolumn{2}{c|}{VS (MRI)} & \multicolumn{2}{c|}{LA (MRI)} & \multicolumn{3}{c|}{NCH (Path.)} & \multicolumn{2}{c}{GlaS (Path.)} \\
+\cmidrule{2-23}          
+& ACC   & AUC & F1 & ACC & AUC   & F1  & Dice  & HD & ACC & AUC   & F1 & Dice  & HD  & Dice  & HD  & Dice  & HD  & ACC   & AUC   & F1    & Dice  & HD \\
+    \hline
+    TFS   & 82.41 & 94.82 & 76.45 & 82.36 & 94.32 & 81.55 & 73.94 & 38.38 &73.02 & 79.69 & 81.25  & 60.77 & 67.40 & 84.27 & 58.15 & 85.94 & 16.62 & 84.93 & 97.37 & 79.15 & 86.20 & 51.88 \\
+    \hline
+    \multicolumn{12}{l}{
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

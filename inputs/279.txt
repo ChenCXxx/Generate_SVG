@@ -1,0 +1,323 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Transformers have achieved excellent performance in the tasks of natural language processing~(NLP)~\cite{vaswani2017attention, kenton2019bert, brown2020language} and computer vision~\cite{touvron2021training, jiang2021all, carion2020end, xie2021segformer}.
+Despite their great success, modern Transformer models typically require extremely large parameters and computation consumption due to the quadratic computational complexity in the self-attention module.
+For example, ViT-H/14~\cite{dosovitskiy2020image} requires $\sim$1,000B FLOPs, which is $250\times$ larger than ResNet-50~\cite{he2016deep}.
+The entire training process needs a significant amount of computing resources to reach model convergence, resulting in a substantial computation overhead.
+To reduce the computational cost of large models, there has been growing research attention on accelerating Transformers for either training or inference.
+
+\input{tables/consistency}
+Existing Transformer pruning methods~\cite{yang2023global,yu2022width,lagunas2021block,xia2022structured,rao2021dynamicvit,meng2022adavit,fayyaz2022adaptive,kong2022spvit,yin2022vit} aim to reduce the inference complexity.
+Among them, structure pruning~\cite{yang2023global, yu2022width, lagunas2021block, xia2022structured} and token pruning~\cite{rao2021dynamicvit, meng2022adavit, fayyaz2022adaptive, kong2022spvit, yin2022vit} focus on reducing the neurons or tokens of Transformers to accelerate the inference.
+However, these pruning methods require additional training computational cost %
+in each forward-backward iteration to determine which neurons or tokens are important enough to be retained, or the fine-tuning for pruned models.
+Recently, Transformer quantization~\cite{xu2023q,li2022q,he2023bivit,le2023binaryvit} accelerates the inference via low-bit computation, but they also cannot reduce the training computation cost.
+Thus, it is challenging for them to effectively accelerate the training of Transformers in practical scenarios, \eg, cloud service.
+To reduce the training computation overhead, recent works~\cite{gong2019efficient,  chen2022bert2bert, ding2023network, yuan2020growing, wen2020autogrow} have proposed structure growth methods.
+They update a smaller number of model parameters during the early stages of training and gradually increase the number of parameters involved in the updating process as training progresses.
+However, the existing methods fail to achieve general transformer training acceleration without accuracy dropping (shown in Tab.~\ref{tab:consistency}), and they break the \textit{training consistency} of the original transformers from three perspectives:
+(1) Hyper-parameter consistency. 
+Existing methods (\eg, SViTE~\cite{chen2021chasing}) delicately tune training hyper-parameters (\emph{e.g.}, learning rate and epoch number) of the original models, which are sensitive to individual ViTs~\cite{touvron2021training} and require additional trial-and-error costs for different networks.
+(2) Architecture consistency. 
+Existing methods~\cite{chen2021chasing, bolya2022token} alter the final model architectures, which may deviate from the user's requirements and potentially necessitates additional hardware/software support to implement real training speedup.
+For example, ToMe~\cite{bolya2022token} progressively merges similar tokens layer-by-layer to reduce the number of tokens in ViTs during training, which replaces the attention operators with the weighted average attention modules, generating a different model architecture that deviates from the original Transformer. Moreover, it cannot significantly accelerate the practical training due to the unfriendly computation.
+(3) Strategy consistency.
+Existing methods~\cite{gong2019efficient, chen2022bert2bert, ding2023network} may suffer from performance deterioration across different Transformers by adding additional training strategies, such as EMA and reset optimizer states.
+It means the effectiveness of these strategies is for specific models, which limits the method's universality whether employing them for training.
+In Tab.~\ref{tab:consistency}, the extra EMA strategy in ~\cite{ding2023network} plays different roles to the performance across different models, \emph{i.e.}, the effectiveness for DeiT-base but not for DeiT-tiny. 
+Thus, this begs our rethinkings: \emph{How to implement real and friendly training speedup for Transformers while keeping the training consistency and high accuracy?}
+
+\input{figs/pipeline}
+To answer the above question, we propose a novel token growth scheme, \textit{Token Expansion} (termed \textbf{\OurMethod}) to achieve general training acceleration for ViTs, while adhering to the training consistency of original models.
+Specifically, we present an ``initialization-expansion-merging'' pipeline (in Fig.~\ref{fig:pipeline}) to maintain the integrity of the intermediate feature distribution of original transformers, preventing the loss of crucial learnable information during the accelerated training process.
+Similar to structure growth methods, we initially involve a limited number of tokens to participate in training and gradually grow the token number during training progress, eventually reaching the utilization of the entire token set.
+Then, a \textit{widest feature-distribution token expansion} is introduced to make the feature distributions of the selected token set as wide as possible.
+Additionally, a \textit{feature-distribution token merging} combines the tokens with close feature distributions to further avoid information loss.
+ToE not only accelerates the training and fine-tuning process of popular Transformers in a lossless manner or even with performance improvement, but also can be integrated into the existing efficient training frameworks (\eg, EfficientTrain~\cite{wang2023efficienttrain}) for further performance improvement, without twisting the original training hyper-parameters, architecture, and introducing additional training strategies.
+Our main contributions can be summarized as follows:
+\begin{itemize}
+      \item
+            We propose \OurMethod, a novel token growth scheme to accelerate ViTs from the perspective of tokens.
+            \OurMethod is a consistent training acceleration method and can be seamlessly integrated into the training and fine-tuning process of transformers without any modifications to the original training hyper-parameters, architecture, and strategies.
+      \item
+            We %
+            propose an effective ``initialization-expansion-merging'' framework to avoid the token information loss by maintaining the integrity of the intermediate feature distribution. 
+      \item
+            Extensive experiments demonstrate that \OurMethod accelerates the training and fine-tuning process of ViTs with a negligible accuracy drop or even surpassing the original full-token counterparts, which outperforms previous SOTA methods.
+\end{itemize}
+
+
+
+Related Work
+\label{sec:related}
+
+\subsection{Training Acceleration for Transformers}
+As mentioned above, many existing works focus on accelerating the training of transformers from the perspective of structural parameters.
+These structure methods~\cite{gong2019efficient, chen2022bert2bert, ding2023network, chen2021chasing, li2022automated, pan2022budgeted} reduce the number of updated parameters in the training process to save the computational cost.
+In contrast, the proposed \OurMethod accelerates training from the perspective of reducing token redundancy.
+In other words, \OurMethod computes a smaller number of tokens but still optimizes all parameters.
+It avoids potential performance drops in many structure growth methods due to the inconsistent structures of before-and-after models during structure growth and resetting of optimizer state when updating new structural parameters. %
+ToMe~\cite{bolya2022token} uses a limited number of tokens to participate in training and progressively merges similar tokens layer-by-layer, which changes the attention operator in inference.
+\OurMethod also involves merging tokens with close feature distributions by \textit{feature-distribution token merging}.
+However, our merging strategy is performed only once at the end of the ``initialization-expansion-merging'' pipeline during training, which prevents the information loss of tokens.
+This ensures that \OurMethod avoids the mismatch between practical and theoretical acceleration caused by excessive merging operations and operator modifications. %
+Additionally, several works~\cite{lee2022deduplicating, wang2023efficienttrain, tan2021efficientnetv2, mcdanel2022accelerating} also consider to reduce the data for training. %
+The work in~\cite{lee2022deduplicating} deduplicates training datasets to save computational resources.
+Unfortunately, it usually introduces additional computational costs and sometimes becomes a bottleneck by using additional time to process datasets during training~\cite{shen2023efficient}.
+PSS~\cite{mcdanel2022accelerating} uses fewer patches obtained by splitting images during training.
+EfficientTrain~\cite{wang2023efficienttrain} and PL~\cite{tan2021efficientnetv2} use images of different sizes and additional data augmentation.
+However, EfficientTrain and PL change the training pipelines that differ from the training of the original model, \eg, hyper-parameters.
+Moreover, the above methods consider the properties of training data.
+In contrast, \OurMethod focuses on the crucial learnable information in the intermediate feature space of transformers.
+Thus, \OurMethod can be integrated into the above methods in a plug-and-play manner to further enhance training efficiency. %
+
+\subsection{Training Acceleration for CNNs}
+Prior efficient training acceleration methods have explored ways to speed up the training of CNN models~\cite{yang2023efficient, ye2020accelerating, fu2020fractrain, wang2019e2, li2019budgeted, zhang2019autoassist}. For example,
+works in~\cite{yang2023efficient, ye2020accelerating} consider pruning gradients to reduce training computation costs.
+Works in~\cite{fu2020fractrain, wang2019e2} attempt to use quantization technical to achieve training acceleration.
+Others try to reduce training time either by reducing the number of optimization iterations with a linear decay for the learning rate~\cite{li2019budgeted} or skipping easy samples that contribute little to loss reduction~\cite{zhang2019autoassist}.
+However, these methods may not be directly applied to Transformers for training acceleration due to the specific architectural differences between transformers and CNNs.
+Differently, \OurMethod focuses on the training acceleration for Transformers on the token dimension.
+
+\subsection{Transformer pruning}
+Transformer pruning methods typically reduce parameters or tokens to generate sparse Transformers for fast inference.
+Structure pruning methods~\cite{yang2023global,yu2022width,lagunas2021block,xia2022structured} attempted to prune the structures of transformers. Token pruning methods~\cite{rao2021dynamicvit, meng2022adavit, fayyaz2022adaptive, kong2022spvit, yin2022vit} focused on dynamically determining the importance of input tokens and pruning them during inference.
+
+The key differences between our method and transformer pruning methods are two-fold.
+(1) Transformer pruning methods primarily aim to accelerate transformer inference, while our target is for training acceleration.
+(2) We obtain a dense model after training by token growth, which is entirely consistent with the original model for inference. In contrast, pruning methods generate sparse models after training.
+
+
+
+Method
+\label{sec:method}
+\subsection{Preliminaries and Notations}
+\label{subsec:preliminaries}
+
+Given a Transformer with $L$ blocks, we denote the sets of input and output tokens for the $l$-th block as $\mathcal{S}_{l-1}$ and $\mathcal{S}_{l}$ with $l\in \{1, 2, \cdots, L\}$, respectively.
+The index set of output tokens for the $l$-th block is defined as $\mathcal{I} = \{1, 2, \cdots, N_l\}$, where $N_l$ is the number of output tokens for the $l$-th block.
+We further denote the $i$-th token of the output tokens for the $l$-th block as $\mit{t}_{l,i}\in \mathbb{R}^{d}$, thus $\mathcal{S}_{l} = \{\mit{t}_{l,i}|\forall i\in\mathcal{I}\}$.
+For the $l$-th Transformer block, we consider to reduce the output tokens to a specified size $N_l^{'} = \lfloor r N_l\rfloor$, where $r\in \left( 0,1 \right]$ is the kept rate of tokens, and $\lfloor\cdot\rfloor$ is a floor function.
+Further, we define the index set of kept tokens as $\mathcal{I}^{'} = \{1, 2, \cdots, N_l^{'}\}$ and we obtain a subset $\mathcal{S}_{l}^{'} = \{\mit{t}_{l,i}^{'} | \forall i \in \mathcal{I}^{'}\}$ of output tokens.
+When the output tokens of the $l$-th block are reduced, this results in a corresponding reduction in the quantity of input tokens for blocks beyond the $l$-th block.
+Furthermore, the computational complexity of self-attention blocks and MLP layers in Transformers is directly proportional to the number of input tokens. 
+According to the work~\cite{epoch2021backwardforwardFLOPratio}, the computation in the forward and backward propagation of modern neural networks roughly conforms to 1:2.
+Therefore,  the reduction of tokens significantly accelerates the computation in both the forward and backward propagations during training if $r < 1$. Note that, to reduce the complex search computation for the kept rate of tokens $r$ across all Transformer blocks, we simply and effectively set $r$ to be the same in all blocks that benefit from acceleration. 
+\subsection{Overview of ToE}
+\label{subsec:token growth strategy}
+
+As shown in Fig.~\ref{fig:pipeline}, \OurMethod initially selects a significantly small number of tokens, then progressively grows to the final full-token same as the original Transformer, thereby achieving training acceleration.
+We divide the origin training process into $N_g$ stages on average.
+We use a limited number of tokens to participate in each training stage and gradually grow the token number along with the training stages.
+The token growth strategy consists of three steps:
+
+\textbf{(1) Initial token selection as the seed tokens}.
+we initially select $\lfloor r_0 N_l\rfloor$ output tokens from the origin token set $\mathcal{S}_{l}$ as the seed token set by using Uniform sampling on the index set $\mathcal{I}$, where $r_0$ represents the pre-defined initial kept rate, which is default set to less than 0.3 in our experiments unless otherwise specified.
+
+\textbf{(2) Token expansion}.
+In the $\delta$-th ($\delta\in \{1, 2, \cdots, N_g\}$) training stage, we perform $\delta$ times token expansion to preserve the integrity of the original intermediate feature space.
+Furthermore, we pre-define the keep rate of the first stage to be $r_1$.
+The kept rate of $\delta$-th stage $r_\delta$ is computed as:
+\begin{equation}
+\small
+    \begin{split}
+        & \mu_{\delta} =
+        \begin{cases}
+            r_1 - r_0,       & \text{if }\delta=1, \\
+            \frac{ 1 - r_1 }{ N_g - 1 }, & \text{otherwise},
+        \end{cases} \\
+        & r_\delta = r_{\delta-1} + \mu_{\delta}, \\
+    \end{split}
+    \label{eq1}
+\end{equation}
+where $\mu_{\delta}$ is the token expansion rate in the $\delta$-th training stage and $r_1 = 2 \cdot r_0\in \left( 0,1 \right]$.
+After the $\delta$ times token expansion, we select $\lfloor r_\delta N_l\rfloor$ tokens from the full-token set $\mathcal{S}_{l}$. In Sec.~\ref{sssec:wfdte}, we will introduce the widest feature-distribution token expansion method to select $\lfloor r_\delta N_l\rfloor$ tokens, which aims to expand the token distribution space to effectively present full-token feature distribution. 
+\textbf{(3) Token merging}.
+To further avoid information loss during the training process, we consider merging the unselected tokens into the selected ones in the token expansion process, which retains effective information of the unselected tokens in the merged token set $\mathcal{S}_{l}^{'}$.
+Inspired by ToMe~\cite{bolya2022token}, we merge \textit{averagely} the tokens that the feature distributions are close as one new token, which is further introduced in Sec.~\ref{sssec:fdtm}.
+
+During training, \OurMethod performs steps (1), (2), and (3) on the original full-token set for each training iteration, which reduces the number of tokens involved in training while retaining the effective information from the full-token set.
+
+
+
+\subsection{Token Expansion}
+\label{subsec:token expansion}
+In this Section, we introduce the proposed \OurMethod method, including spatial-distribution token initialization, widest feature-distribution token expansion, feature-distribution token merging, and its optimization.
+
+\subsubsection{Spatial-distribution Token Initialization}
+\label{sssec:sdti}
+For the initialization, we apply a simple strategy to select the initial token set from $\mathcal{S}_l$.
+We define the index of the initial token set as:
+\begin{equation}
+\small
+    \mathcal{I}^{(I)} = \{i|\forall i\bmod \lfloor\frac{1}{r_0}\rfloor=1 \land \forall i\in\mathcal{I}\}.
+    \label{eq2}
+\end{equation}
+The selected token set and the unselected tokens set can be expressed as $\mathbb{A}=\{\mit{t}_{l,i}|\forall i\in\mathcal{I}^{(I)}\}$ and $\mathbb{B}=\mathcal{S}_l-\mathbb{A}$, respectively.
+This initialization selection strategy is based on spatial distribution.
+It indicates that we choose one token out of every $\lfloor\frac{1}{r_0}\rfloor$ tokens from the original token set and add it to the initial token set.
+Our strategy is simple, yet effective, to ensure that the initially selected tokens provide broad spatial coverage across the image patches.
+\subsubsection{Widest Feature-distribution Token Expansion}
+\label{sssec:wfdte}
+Previous works~\cite{bolya2022token, rao2021dynamicvit} show that the intermediate feature space in modern Transformers is \textit{overparameterized}, such that they prune the full-token Transformers to be sparse ones. Actually, through the above token initialization, we obtain the sparse Transformers. However, the performance drops significantly if we only train on these selected tokens. Thus, we consider to grow the number of tokens, which is expected to preserve the integrity of the original intermediate feature space and avoid the loss of tokens containing valuable information.
+Inspired by this, we seek to maintain the integrity of the intermediate feature distribution.
+Intuitively, when the feature distributions of two token sets are sufficiently close, they have similar information that can be used to effectively represent each other.
+In contrast, given one token whose feature distribution deviates significantly from all other tokens in the token set, it will be difficult to be adequately represented by other tokens, such that we expect to select this token to underscore its importance in the token expansion.
+
+To this end, we propose the widest feature-distribution token expansion strategy.
+Specifically, we perform the expanding operation on the selected tokens from the initialized set.
+For the $\delta$-th stage of token expansion, we consider the selected token set $\mathbb{A}\in\mathbb{R}^{|\mathbb{A}|\times d}$ and the unselected token set $\mathbb{B}\in\mathbb{R}^{|\mathbb{B}|\times d}$ as the 2D matrices, where $|\cdot|$ and $d$ respectively denote the number of tokens and feature dimension, and $|\mathbb{A}|+|\mathbb{B}|=N_l$. 
+We utilize \textit{Cosine Distance} as the metric to measure the distance between feature distribution of tokens in these two sets (other metrics see Tab.~\ref{tab:distance}):
+\begin{equation}
+\small
+        \mathcal{D}(\mathbb{B}, \mathbb{A}) = \mathbf{1} - \operatorfont{cos}\left<\mathbb{B}, \mathbb{A}\right> 
+        = \mathbf{1} - \frac{\mathbb{B}\mathbb{A}^{\mathrm{T}}}{\left\vert\kern-0.25ex\left\vert\mathbb{B}\right\vert\kern-0.25ex\right\vert \cdot \left\vert\kern-0.25ex\left\vert\mathbb{A}\right\vert\kern-0.25ex\right\vert}, 
+    \label{eq3}
+\end{equation}
+where $\mathbf{1}$ is an all-one matrix.
+$\mathcal{D}(\mathbb{B}, \mathbb{A}) \in\mathbb{R}^{|\mathbb{B}|\times |\mathbb{A}|}$ represents the pairwise distances between tokens in $\mathbb{B}$ and $\mathbb{A}$.
+
+We further define the distance between the feature distribution of tokens in $\mathbb{B}$ and its closest token in $\mathbb{A}$ as $distance(\mathbb{B}\rightarrow\mathbb{A}) \in\mathbb{R}^{|\mathbb{B}|}$:
+\begin{equation}
+\small
+    \mathit{distance}(\mathbb{B}\rightarrow\mathbb{A})_i = \text{min}_j(\mathcal{D}(\mathbb{B}, \mathbb{A})_{i,j}),
+    \label{eq4}
+\end{equation}
+where $i\in\{1,\cdots,|B|\}$ and $j\in\{1,\cdots,|A|\}$.
+Eq.~\ref{eq4} indicates that we sample the minimal values of the feature-distribution distance matrix $\mathcal{D}(\mathbb{B}, \mathbb{A})$ along the second dimension.
+Thus, $\mathit{distance}(\mathbb{B}\rightarrow\mathbb{A})_i$ measures importance of $i$-th token in $\mathbb{B}$.
+At this point, we progressively add the most important token to $\mathbb{A}$, which is formulated as:
+\begin{equation}
+\small
+    \begin{array}{c}
+        \mathbb{A}=\mathbb{A}+\mit{t}^{*}, \quad
+        \mathbb{B}=\mathbb{B}-\mit{t}^{*}, \\
+        \mit{t}^{*}=\{\mathbb{B}_{i}|i=\operatorfont{argmax}(\mathit{distance}(\mathbb{B}\rightarrow\mathbb{A}))\},
+    \end{array}
+    \label{eq5}
+\end{equation}
+where $\mit{t}^{*}$ is the most important token in $\mathbb{B}$.
+When the feature distribution of one token is far from its closest token, it can be said that the feature distribution of this token deviates significantly from that of all other tokens in the token set.
+The operation described in Eq.~\ref{eq5} is performed for $\lfloor\mu_{\delta} N_l\rfloor$ times to select $\lfloor\mu_{\delta} N_l\rfloor$ tokens from $\mathbb{B}$ into $\mathbb{A}$.
+The widest feature-distribution token expansion strategy ensures that the feature distributions of the selected token set become as wide as possible, preventing the loss of important tokens.
+However, as we need to iterate $\lfloor\mu_{\delta} N_l\rfloor$ times expansion, it results in a considerable consumption of computational resources.
+Considering the computation parallelization, we modify the expanding operation in Eq.~\ref{eq5} parallelly:
+\begin{equation}
+\small
+    \begin{array}{c}
+        \mathbb{A}=\mathbb{A}+\mathcal{S}^{*}, \quad
+        \mathbb{B}=\mathbb{B}-\mathcal{S}^{*}, \\
+        \mathcal{S}^{*}=\{\mathbb{B}_{i}|i \in \operatorfont{topk}_{\lfloor\mu_{\delta} N_l/{k}\rfloor}(\mathit{distance}(\mathbb{B}\rightarrow\mathbb{A}))\},
+    \end{array}
+    \label{eq6}
+\end{equation}
+where $k$ is the pre-defined repetition step of parallel expanding operation, $\mathcal{S}^{*}$ is a token set consisting of the important tokens in $\mathbb{B}$, $\text{topk}_n$ denotes the top argmax with the number of $n$ tokens.
+By this way, we only perform $k$ times parallel expanding operation to expand $\lfloor\mu_{\delta} N_l\rfloor$ tokens, and its computational consumption is negligible with small $k$.
+
+\input{figs/t_sne}
+
+\subsubsection{Feature-distribution Token Merging}
+\label{sssec:fdtm}
+After token expansion, we aim to retain the effective information of the unselected tokens, such that we merge the unselected tokens that the feature distributions are close to the selected ones.
+The feature-distribution token merging can be formulated as:
+\begin{equation}
+\small
+    \begin{array}{c}
+        \mathcal{S}_{l}^{'} =\{\text{mean}(\mathbb{A}_j,\mathcal{S}_{j}^{(M)})|\forall j\in\{1,2,\cdots,|\mathbb{A}|\}\}, \text{where}\\
+        \mathcal{S}_{j}^{(M)} =\{\mathbb{B}_{i}| \mathcal{I}_{i}^{(M)}==j, \forall i\in\{1,2,\cdots,|\mathbb{B}|\}\},  \\
+        \mathcal{I}^{(M)} =\text{argmin}_j(\mathcal{D}(\mathbb{B}, \mathbb{A})_{i,j}),                                    \\
+    \end{array}
+    \label{eq7}
+\end{equation}
+where $\mathcal{S}_{l}^{'} \in\mathbb{R}^{|\mathbb{A}|\times d} $ is the token set merging the closest tokens from $\mathbb{B}$ to $\mathbb{A}$, and $\text{mean}(\mathbb{A}_j,\mathcal{S}_{j}^{(M)})$ indicate that we merge  $\mathbb{B}$ into $\mathbb{A}$ \textit{averagely} based on the indice set $\mathcal{I}^{(M)} \in\mathbb{R}^{|\mathbb{B}|}$. Note that every $\mathbb{B}_i$ participates in the merging to avoid the information dropping for the unselected tokens. 
+\subsubsection{Optimization of ToE}
+
+Our objective loss is the same as the original models, \eg, cross-entropy loss in DeiT.
+The training details of \OurMethod are presented in Algorithm~\ref{algorithm1}. Note that we only apply \OurMethod to the output tokens of the first transformer block.
+The detailed analysis is discussed in Sec.~\ref{subsec:ablation study}.
+
+\OurMethod is a plug-and-play acceleration module, which has three following advantages: 
+(1) As shown in Fig.~\ref{fig:t_sne}, %
+we observed that the selected token set obtained by \OurMethod in the multiple block outputs has a larger average distribution distance via T-SNE~\cite{van2008visualizing}, compared to that in the original full-token set (see First block \emph{vs.} After ToE).
+Moreover, it maintains a feature distribution similar to the original token set.
+It indicates \OurMethod can preserve the integrity of the intermediate feature distribution of the original token set across different Transformer blocks by reducing the number of tokens.
+(2) \OurMethod is a parameter-free module, it does not introduce any trainable parameters and utilizes efficient matrix calculations that the computational overhead is negligible, compared to computation-intensive self-attention.
+(3) The speedup factors (\eg, token kept rate $r_1$ and training stage $N_g$) of \OurMethod are independent of the original model's training hyper-parameters.
+This decoupling allows \OurMethod to be seamlessly integrated into the training process of the original model, obviating the need for any adjustments to the training hyper-parameters.
+
+
+\begin{algorithm}[t]\footnotesize
+    \caption{Optimization with ToE}
+    \label{algorithm1}
+    \KwIn{
+        Input dataset $\mathcal{X}$, output token number $N_l$, total training stage $N_g$,
+        kept rate of the first training stage $r_1$,
+        repetition step of the parallel expanding operation $k$, Transformer parameters $\theta$, maximum iterations $T$.
+    }
+    \KwOut{Updated Transformer parameters $\theta$}
+    \For{$t\leftarrow 1$ \KwTo $T$}{
+        Sample from $\mathcal{X}$ to obtain data sample $x$, feed-forwarded through the embedding and first $l$-th transformer blocks to obtain the output token set $\mathcal{S}_l$\;
+
+        \%\%\%\emph{Spatial-distribution Token Initialization}\%\%\%\\
+        $r_0 \leftarrow  \frac{1}{2} r_1$; \\
+        Initialize $\mathbb{A}$ and $\mathbb{B}$ by $r_0$, $\mathcal{S}_l$ via Eq.~\ref{eq2}\;
+
+        \%\%\%\emph{Widest Feature-distribution Token Expansion}\%\%\%\\
+        Obtain the current training stage $\delta=\lceil N_g*t/T\rceil$\;
+        \For{$m\leftarrow 1$ \KwTo $\delta$}{
+            \eIf{$m=1$}
+            {$\mu_m\leftarrow r_1-r_0$\;}
+            {$\mu_m\leftarrow \frac{1-r_1}{N_g-1}$}
+
+            \For{$n\leftarrow 1$ \KwTo $k$}{
+                Update $\mathbb{A}$ and $\mathbb{B}$ by $\mu_m$, $N_l$, $k$, prior $\mathbb{A}$ and prior $\mathbb{B}$ via Eq.~\ref{eq6}\;
+            }
+        }
+
+        \%\%\%\emph{Feature-distribution Token Merging}\%\%\%\\
+        Obtain $\mathcal{S}_{l}^{'}$ by $\mathbb{A}$ and $\mathbb{B}$ via Eq.~\ref{eq7}\;
+
+        $\mathcal{S}_{l}^{'}$ feed-forwarded through the $l$+1-th transformer block to final layer and progressively obtain the final prediction $y$\;
+
+        \%\%\%\emph{Parameter Updating}\%\%\%\\
+        Use $y$ to compute the loss and obtain the gradient $\nabla\theta$\;
+        Use $\nabla\theta$ to update prior $\theta$ via the optimizer to obtain new $\theta$\;
+    }
+    \Return{$\theta$}
+\end{algorithm}
+
+
+Experiments
+\label{sec:experiments}
+
+\subsection{Experimental Settings}
+\label{subsec:experimental settings}
+
+\textbf{Datasets and baselines.}
+We evaluate our method on ImageNet-1K~\cite{deng2009imagenet} and CIFAR-10/100~\cite{krizhevsky2009learning}.
+For baselines, we use two popular ViTs, \ie, DeiT~\cite{touvron2021training} and LV-ViT~\cite{jiang2021all}, as the base models to evaluate the proposed \OurMethod on ImageNet-1K.
+To further evaluate the universality, we integrate \OurMethod into the efficient training framework EfficientTrain~\cite{wang2023efficienttrain}.
+Moreover, we evaluate the transfer learning ability using pre-trained weights of \OurMethod on DeiT and the performance of accelerating the fine-tuning process with \OurMethod on CIFAR-10/100.
+
+\textbf{Evaluation metrics.}
+We report Top-1 accuracy, the GPU training time and FLOPs as the evaluation metric.
+To evaluate the training speed, we report the total GPU hours consumed during the entire training process, as well as the theoretical FLOPs for \emph{one forward-backward process}.
+To avoid the impact of memory access and kernel launching on training time~\cite{ding2023network}, we report the GPU hours on different numbers of GPUs,
+but with the same GPU numbers to evaluate different training methods.
+
+\textbf{Implementations.}
+All methods are trained by Pytorch~\cite{paszke2019pytorch}.
+For DeiT and LV-ViT, all experiments are conducted on four NVIDIA RTX A6000 GPUs\footnote{Note that the used number of GPUs for training may be different to the evaluation of training speedup for a fair comparison.}, while EfficientTrain is trained on eight NVIDIA RTX A6000 GPUs.
+All hyper-parameters (\eg, learning rate, decay strategy and rate), and training strategies and optimization processes are the same as the original papers unless otherwise specified. 
+
+\textbf{Growth strategy.}
+In default, we divide the origin training process into $N_g=3$ stages on average.
+The token kept rate of 1st stage $r_1$ is set to $0.4$, $0.5$ or $0.6$, our method is corresponding to be denoted as \OurMethod$_{r_1=0.4}$, \OurMethod$_{r_1=0.5}$ or \OurMethod$
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

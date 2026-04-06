@@ -1,0 +1,314 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+\begin{figure} [ht]
+  \includegraphics[width=1.0\linewidth]{figures/intro-no-back-color.png}
+  \caption{
+  Our proposed method achieves 3D building reconstruction by training samples of different annotation levels.
+  Large quantity of samples only include building footprint annotations, whereas a small quantity of samples contain extra roof-to-footprint offset and building height annotations.
+  }
+  \label{fig:intro}
+\end{figure}
+
+3D building reconstruction is a fundamental task for large-scale city modeling and has received increasing attention in recent studies. Among these studies, monocular 3D building reconstruction has become a promising and economic solution for large-scale real-world applications, owing to its lower data acquisition cost and larger data coverage compared to multi-view stereo imagery and LiDAR data \cite{20063D,Duan2016Towards}.
+Meanwhile, the limited information of monocular images as well as the diversity of building structures also result in great challenges for large-scale 3D building reconstruction.
+
+Inspired by the progress of supervised monocular depth estimation methods, deep neural networks have been broadly applied to monocular 3D building reconstruction studies. 
+Most studies utilize building footprints or other types of semantic labels as prior information to facilitate building height estimation from near-nadir images \cite{kunwar2019u,2020Boundary,2017Joint,zheng2019pop,mao2023elevation}.
+Off-nadir images, by contrast, constitute a larger proportion of the remote sensing images and provide additional useful information for building height estimation, which have demonstrated significant potential in several recent studies \cite{2020Learning,christie2021single,xiong2023benchmark,li20213d,wang2022learning}.
+Some studies designed geocentric pose estimation task considering the parallax effect of building roof and footprint \cite{2020Learning,christie2021single}, aiming at estimating the height values instead of reconstruct a 3D model. Other studies leveraged the relation between different components of a building instance (e.g. roof, footprint, and facade) as well as the offset between roof and footprint, which has proven to be an effective solution for 3D building reconstruction and accurate extraction of building footprints \cite{li20213d,wang2022learning}.
+
+In general, existing monocular building reconstruction methods are designed for fully-supervised learning, requiring a large number of fully-annotated 3D labels for network training.
+However, due to the expensive annotation cost, the available datasets for 3D building reconstruction are still very insufficient, restricting existing 3D reconstruction methods to single city or single dataset scenarios. By contrast, owing to the low annotation cost and the increase of open map data, public building footprints have an extremely large coverage and quantity. Additionally, existing building datasets provide different levels of annotations, such as footprint only, footprint and pixel-wise height \cite{2020Learning}, footprint and offset vector \cite{li20213d,wang2022learning}, etc.
+The large-scale 2D footprints and different levels of annotated datasets can provide new opportunities for enlarging 3D building reconstruction application scenarios and reducing the annotation cost if they are effectively utilized. 
+In this work, we propose MLS-BRN, a Multi-Level Supervised Building Reconstruction Network based on monocular remote sensing images, which is a unified and flexible framework that is capable of utilizing the training samples with different annotation levels.
+To alleviate the demand on 3D annotations and enhance the building reconstruction performance, we design new tasks regarding the meta information of off-nadir images and two new modules, i.e., Pseudo Building Bbox Calculator and Roof-Offset guided Footprint Extractor, as well as a new training strategy based on different types of samples.
+Experimental results on several public and new datasets demonstrate that our method achieves competitive performance when only using a small proportion of 3D-annotated samples, and significantly improves the building segmentation and height estimation performance compared with current state-of-the-art. 
+Our main contributions are summarized as follows:
+
+\begin{itemize}
+
+\item We design MLS-BRN, a multi-level supervised building reconstruction network, which consists of new tasks and modules to enhance the relation between different components of a building instance and alleviate the demand on 3D annotations.
+
+\item We propose a multi-level training strategy that enables the training of MLS-BRN with different supervision levels to further improve the 3D reconstruction performance.
+\item We extend the monocular building reconstruction datasets to more cities. Comprehensive experiments under different settings demonstrate the potential of MLS-BRN in large-scale cross-city scenarios.
+
+
+
+\end{itemize}
+
+
+Related work
+\label{sec:related_work}
+\begin{figure*}
+    \centering
+    \includegraphics[width=0.95\linewidth]{figures/overall-framework.png}
+    \caption{
+    An overview of our proposed method. 
+    Taking a monocular remote sensing image as input, our MLS-BRN generates a set of building bboxes, roof-to-footprint offsets, building heights, and pixel-wise roof masks.
+    The predicted roof masks and their corresponding offsets are further integrated to predict pixel-wise footprint masks.
+    The predicted footprint mask and building height are used to produce the final vectorized 3D model.
+    Two novel modules are introduced: (1) the \textbf{ROFE} predicts footprint masks guided by the predicted roof masks and offsets; (2) the \textbf{PBC} predicts off-nadir and offset angles to calculate pseudo building bboxes for building bbox-unknown samples. 
+    }
+    \label{fig:overall-framework}
+\end{figure*}
+
+\subsection{Building footprint extraction}
+Building footprint extraction is an important prerequisite for monocular 3D building reconstruction. Various instance and semantic segmentation networks have been broadly applied to building extraction tasks. 
+Many studies utilize multi-task segmentation network to improve the building segmentation performance. For instance, Yuan \cite{yuan2017learning} proposed the signed distance representation for building footprint extraction, achieving better performance compared with the single-task fully-connected network.
+Similarly, in \cite{2020Boundary}, a modified signed distance function was introduced and jointly learned with other tasks for predicting building footprint outlines and heights. 
+To improve the geometry shapes of building extraction results, several methods directly predicted the vertices of a building polygon based on Recurrent Neural Network or Graph Neural Network \cite{li2019topological,zhao2021building,zorzi2022polyworld}, or combined the pixel-based multi-task segmentation network with a graph-based polygon refinement network using a rule-based module \cite{li2021joint}.
+In addition, some recent studies converted building footprint extraction into roof segmentation and roof-to-footprint offset estimation tasks, which achieved promising performance for building footprint extraction, especially for high-rise buildings in off-nadir images \cite{li20213d,wang2022learning}.
+In summary, most existing methods directly extract the building footprints and perform worse for high-rise buildings in off-nadir images. Offset-based methods can effectively alleviate this problem, but the expensive offset annotation efforts and the post-processing process are still inevitable.
+On the contrary, our work proposes a multi-level supervised solution that is capable of leveraging different types of samples to reduce the demand for offset annotation, achieving promising footprint extraction results in an end-to-end manner.
+\subsection{Monocular 3D building reconstruction}
+Inspired by the progress of monocular depth estimation, deep neural networks have been widely used for monocular building height estimation in recent studies \cite{gao2023joint,xiong2023benchmark,li20233dcentripetalnet}. Most of these studies are designed for height estimation from near-nadir images, in which the building roof and footprint are almost overlapped. Some methods used an encoder-decoder network to regress the height values \cite{mao2023elevation}, or used a generative adversarial network to simulate a height map \cite{2018IMG2DSM}. Moreover, the semantic labels have been utilized as effective priors in many existing methods considering the limited information provided from the near-nadir images for height estimation. Some studies designed a multi-task network for joint footprint extraction and height estimation \cite{2017Joint,zheng2019pop,gao2023joint}, while others exploit the semantic labels as prior information for height estimation \cite{kunwar2019u}.
+In actual scenarios, off-nadir images constitute a large proportion of the remote sensing images, in which the parallax effect of roof and footprint results in more challenges for extracting footprints but provides additional information for height estimation as well.
+Some recent studies \cite{2020Learning,christie2021single} design methods to learn the geocentric pose of buildings in off-nadir images for monocular height estimation \cite{ronneberger2015u}, while others leverage the offset between building roof and footprint and the relation between different components to reconstruct a 3D building model \cite{li20213d,wang2022learning}.
+
+In summary, the monocular building reconstruction methods in existing studies require expensive and fully-annotated 3D labels for supervised learning.
+Our proposed method, by contrast, is a unified and flexible framework for 3D building reconstruction with different supervision levels, which effectively reduces the demand for the large-scale 3D annotations. 
+
+\subsection{Monocular 3D reconstruction with fewer labels}
+
+In monocular 3D reconstruction in the general computer vision domain, several methods have been proposed for reducing the 3D annotation demand via weakly-supervised or semi-supervised learning \cite{chen2019so,mitra2020multiview,han2021weakly,li2023robust,ji2019semi}. 
+In Yang et al. \cite{yang2018learning}, a unified framework combining two types of supervisions was proposed, i.e., a small number of camera pose annotations and a large number of unlabeled images.
+In Neverova et al. \cite{neverova2017hand}, an intermediate representation containing important topological and structural information of hand was introduced to enable the weakly-supervised training for hand pose estimation.
+Concurrently, Gwak et al. \cite{gwak2017weakly} effectually leveraged a weak supervision type, i.e., foreground mask, as a substitute for costly 3D CAD annotations, which incorporates a raytrace pooling layer to enable perspective projection and backpropagation.
+
+In contrast to the aforementioned studies, our proposed method leverages prior knowledge about the 3D structure of a  building instance and the monocular remote sensing image, including the relation between roof, footprint, height, offset angle, and off-nadir angle, enabling multi-level supervised 3D reconstruction with fewer annotation efforts.
+
+
+
+
+
+Methods
+\label{sec:methods}
+\subsection{Problem statement}
+Given an off-nadir remote sensing image $I$ that includes buildings $B=\{b_1, b_2, ..., b_N\}$, the objective of monocular 3D building reconstruction is to identify all the footprints $F=\{f_1, f_2, ..., f_N\}$ and roofs $R=\{r_1, r_2, ..., r_N\}$ corresponding to $B$. 
+The difficulty is that the footprints of buildings may be partially visible from an off-nadir viewing angle. 
+Thus, previous studies, including \cite{li20213d} and \cite{wang2022learning}, typically solve this issue by training a deep neural network with samples annotated with both $F$ and roof-to-footprint offsets $\vec{V}=\{v_1, v_2, ..., v_N\}$.  
+
+However, the cost of annotating remote sensing images is still high, particularly for offset annotations.
+Therefore, we suggest addressing this issue by training a deep model that effectively uses samples containing both $F$ and $\vec{V}$ annotations, alongside samples only annotated with $F$.
+
+To facilitate training with offset-unknown samples, two tasks are included; one for predicting the off-nadir angle $\theta_{I}$ and the other for the offset angle $\varphi_{I}$. 
+Additionally, an instance-wise footprint segmentation task is included to predict the footprint conditioned on the predicted roof and offset.
+Finally, a task for predicting real-world height is introduced to enhance the comprehension of the correlation between footprint and roof placement.
+In summary, four additional tasks are added to the original three tasks in LOFT-FOA \cite{wang2022learning}: (1) off-nadir angle prediction task; (2) offset angle prediction task; (3) footprint segmentation task; (4) real-world height prediction task.
+
+\subsection{Network structure}
+\cref{fig:overall-framework} illustrates the proposed architecture of our MLS-BRN.
+To facilitate multi-level supervised learning, two novel modules are introduced, namely the Pseudo Building Bbox Calculator (PBC) and the Roof-Offset guided Footprint Extractor (ROFE). 
+The PBC module provides pseudo building boxes to determine the positivity/negativity of the region proposals from the RPN module when offset-unknown (\ie building bbox-unknown) samples are processed in the MLS-BRN. 
+The ROFE module has two significant functions. 
+Firstly, it provides a more straightforward method to supervise the building footprint segmentation task.
+Secondly, it offers an indirect method of supervising offset prediction and roof segmentation for offset-unknown samples as they pass through the MLS-BRN.
+Additionally, a building height prediction task has been included in order to predict the real-world building height.
+
+\subsubsection{Pseudo Building Bbox Calculator (PBC)}
+Samples without the ground truth for building bounding box $b\text{-}bbox_{gt}$ cannot be utilized by previous models, like LOFT-FOA \cite{wang2022learning}.
+To address this issue, we propose a module that predicts pseudo building bounding boxes to substitute $b$-$bbox_{gt}$.
+For a provided off-nadir remote sensing image $I$ and one building $b$ contained by $I$, we can describe the connection between the image-wise off-nadir angle $\theta_{I}$, the offset angle $\varphi_{I}$, the factor for scaling real-world height to pixel scale $s_I$, and the building's height $h_b$ and offset $\vec{v}_b$ using the following equation:
+\begin{equation}
+\begin{aligned}
+\vec{v}_b   &= ||\vec{v}_b||_2 \times \vec{e}   \\ \label{eq:v}
+            &= ||\vec{v}_b||_2 \times [e_x, e_y]   \\
+            &= h_b \times s_I \times \tan{\theta_I} \times [\cos{\varphi_I}, \sin{\varphi_I}]
+\end{aligned}
+\end{equation}
+where $||\vec{v}_b||_2$ is the $L2$ norm of the offset, $\vec{e}$ is the unit normal vector of $\vec{v}_b$.
+The PBC module uses an off-nadir angle head to predict an image-wise off-nadir angle $\theta_{pred}$ and an offset angle head to predict an image-wise offset angle $\varphi_{pred}$. 
+Then, following \cref{eq:v}, they are combined with the instance-wise building height ground truth $h_{gt}$, and scale factor $s_{gt}$ to compute the pseudo offset $\vec{v}_{pred}$.
+Finally, $f_{gt}$ is translated to get the pseudo building bbox $b\text{-}bbox_{pred}$ guided by $\vec{v}_{pred}$.
+$b$-$bbox_{pred}$ will play the role of $b$-$bbox_{gt}$ during the training of the building bbox-unknown samples.
+From the perspective of weak supervision, the PBC module extracts the image-wise angle information, \ie the offset angle and the off-nadir angle, and uses it to supervise the instance-wise task.
+Note that for building height-unknown samples, the pseudo bounding boxes are calculated by directly enlarge the footprint boxes.
+
+\subsubsection{Roof-Offset guided Footprint Extractor (ROFE)}
+Previous works calculate the footprint mask in the inference stage by translating the inferred roof guided by the inferred offset.
+The ROFE module, however, predicts the footprint mask directly.
+It trains a convolutional network to learn the translation process, using the inferred roof mask and offset as inputs.
+For offset-aware (\ie roof-aware) samples, this end-to-end training process adds more supervision on the offset head and the roof head. 
+And for offset-unknown samples, which cannot contribute to the training of the offset head and the roof head due to lack of ground truth, ROFE provides an indirect way to supervise these two heads.
+
+\subsection{Network training}
+In this section, we first introduce the loss functions in our MLS-BRN.
+Then we introduce our three levels of training samples graded by their level of supervision and their training strategies.
+The total hybrid loss is presented at the end of this section. 
+
+\subsubsection{Loss definition}
+The LOFT-FOA \cite{wang2022learning} is trained by minimising \cref{eq:loft-foa-loss}, where $\mathcal{L}_{rp}$, $\mathcal{L}_{rc}$, $\mathcal{L}_{mh}$ are the same as those in Mask R-CNN \cite{he2017mask}, \ie, the losses for the RPN, R-CNN, and mask head, respectively; $\mathcal{L}_{o}$ is the loss for the offset head, which is a standard smooth L1 Loss.
+\begin{equation}
+\mathcal{L}_{LF} = \mathcal{L}_{rp} + \beta_1\mathcal{L}_{rc} + \beta_2\mathcal{L}_{mh} + \beta_3\mathcal{L}_{o}  \label{eq:loft-foa-loss}
+\end{equation}
+
+The MLS-BRN model keeps the four losses the same as LOFT-FOA \cite{wang2022learning} and introduces new losses to train the newly added modules.
+The footprint mask loss of the ROFE module is the same as $\mathcal{L}_{mh}$, which is a standard cross entropy loss (\cref{eq:f-mask-loss}).
+\begin{equation}
+    \mathcal{L}_{f} = \frac{1}{N}\sum^{N}_{i=1}\sum^{C}_{c=1}y_{i,c} \times \log{(p(y_{i, c}))} \\ \label{eq:f-mask-loss}
+\end{equation}
+
+The loss of the offset angle head of the PBC module is calculated according to \cref{eq:ova-loss}, in which $\mathcal{L}_{ova}$ denotes the offset angle loss; $\vec{v}_{pred}$ denotes the predicted unit normal vector of the offset.
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{ova}   &= \mathcal{L}_{ang} + \lambda_1\mathcal{L}_{reg} \label{eq:ova-loss}   \\
+                    &= ||\vec{v}_{pred} - \vec{v}_{gt}||_1 + \lambda_1|| ||\vec{v}_{pred}||_2 - 1||_1   \\
+\end{aligned}
+\end{equation}
+
+The nadir angle head of the PBC module is trained following \cref{eq:ona-loss}, where $\mathcal{L}_{ona}$ is the off-nadir angle loss; $\theta_{pred}$ is the predicted tangent of the off-nadir angle.
+\begin{equation}
+\mathcal{L}_{ona} = ||\tan{\theta}_{pred} - \tan{\theta}_{gt}||_1     \label{eq:ona-loss}   \\
+\end{equation}
+
+The height head loss of our MLS-BRN is calculated by \cref{eq:h-loss}, in which $\mathcal{L}_{h}$ denotes the height loss; $h_{pred}$ denotes the predicted building height.
+\begin{equation}
+\mathcal{L}_{h} = ||h_{pred} - h_{gt}||_1     \label{eq:h-loss}   \\
+\end{equation}
+
+\subsubsection{Multi-level training strategy}
+In our proposed unified framework, all the training samples can be graded into three levels according to their level of supervision (\cref{fig:intro}):
+\begin{itemize}
+    \item Level 1 samples: samples with only instance-wise footprint annotation, which are denoted by $\mathcal{X}^{N} = \{ x^{N}_1, x^{N}_2, ..., x^{N}_{n_3} \}$. $N$ means no additional supervision.
+    \item Level 2 samples: samples with instance-wise footprint and building height annotation, which are denoted by $\mathcal{X}^{H} = \{ x^{H}_1, x^{H}_2, ..., x^{H}_{n_2} \}$.
+    \item Level 3 samples: samples with instance-wise footprint, offset, and building height annotation, which are denoted by $\mathcal{X}^{OH} = \{ x^{OH}_1, x^{OH}_2, ..., x^{OH}_{n_1} \}$. 
+\end{itemize}
+
+Different levels of samples are supervised by different training strategies.
+As defined in \cref{eq:x-n-loss}, the loss function for $\mathcal{X}^{N}$ is only based on $\mathcal{L}_{f}$.
+\begin{equation}
+    \mathcal{L}_{\mathcal{X}^{N}} = \mathcal{L}_{f}   \\ \label{eq:x-n-loss}
+\end{equation}
+
+The loss function for $\mathcal{X}^{H}$ is defined in \cref{eq:x-h-loss}.
+In $\mathcal{L}_{\mathcal{X}^{H}}$, the $\mathcal{L}_{rp}$ is activated since the PBC module can predict a high-quality pseudo building bbox, which is good enough to supervise the RPN module.
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}_{\mathcal{X}^{H}}   &= \mathcal{L}_{\mathcal{X}^{N}} + \alpha_1\mathcal{L}_{rp} + \alpha_2\mathcal{L}_{h}  \\
+                                    &= \mathcal{L}_{f} + \alpha_1\mathcal{L}_{rp} + \alpha_2\mathcal{L}_{h} \label{eq:x-h-loss}
+\end{aligned}
+\end{equation}
+
+The loss function for $\mathcal{X}^{OH}$ is defined in \cref{eq:x-oh-loss}.
+Compared with the original $\mathcal{L}_{LF}$, $\mathcal{L}_{\mathcal{X}^{OH}}$ adds four more losses: $\mathcal{L}_{f}$, $\mathcal{L}_{h}$, $\mathcal{L}_{ona}$, $\mathcal{L}_{ova}$. 
+The $\mathcal{L}_{ona}$ and $\mathcal{L}_{ova}$ are used for training the two angle heads of the PBC module.
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}_{\mathcal{X}^{OH}}  =& \mathcal{L}_{\mathcal{X}^{H}} + \alpha_3\mathcal{L}_{rc} + \alpha_4\mathcal{L}_{mh}   \\ \label{eq:x-oh-loss} 
+                                    +& \alpha_5\mathcal{L}_{o} + \alpha_6\mathcal{L}_{ona} + \alpha_7\mathcal{L}_{ova}    \\  
+                                    =& \mathcal{L}_{LF} + \mathcal{L}_{f} + \alpha_2\mathcal{L}_{h} + \alpha_6\mathcal{L}_{ona} + \alpha_7\mathcal{L}_{ova}
+\end{aligned}
+\end{equation}
+
+The final hybrid loss is defined as the total loss of the three levels of training samples according to \cref{eq:overall-loss}. 
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\mathcal{X}^{N}} + \mathcal{L}_{\mathcal{X}^{H}} +  \mathcal{L}_{\mathcal{X}^{OH}} \\ \label{eq:overall-loss}
+\end{equation}
+
+\subsection{Implementation details}
+As mentioned in \cref{fig:overall-framework}, we use ResNet-50 \cite{2016deep} with FPN \cite{lin2017feature} pre-trained on the ImageNet as the backbone. 
+All the models are trained with a batch size of 4 using NVIDIA 3090 GPUs. 
+To align with LOFT-FOA \cite{wang2022learning}, we train 24 epochs for all the models, with the learning rate starting from 0.01 and decaying by a factor of 0.1 at the $16^{th}$ and $22^{nd}$ epochs.
+The SGD algorithm with a weight decay of 0.0001 and a momentum of 0.9 is used for all experiments.
+LOFT-FOA \cite{wang2022learning} is used as the basic architecture of the MLS-BRN model, and all the hyperparameters that occur in both LOFT-FOA \cite{wang2022learning} and MLS-BRN are the same, except for the learning rate mentioned above.
+All models are built in PyTorch.
+
+In \cref{eq:ova-loss}, we set $\lambda_1 = 0.1$ to balance the two loss items.
+In \cref{eq:x-h-loss}, we set $\alpha_1 = 1$ to keep the loss weight of ROFE the same as the roof mask head, and set $\alpha_2 = 32$ since the absolute building height loss value is relatively small.
+In \cref{eq:x-oh-loss}, we set $\alpha_3 = \alpha_4 = 1, \alpha_5 = 16$ to keep them the same as LOFT-FOA \cite{wang2022learning}, and set $\alpha_6 = 1, \alpha_7 = 8$ to balance the effects of the magnitude of these two losses.
+
+
+
+Experiments
+\label{sec:experiments}
+
+\subsection{Datasets}
+In our experiments, we employ multi-supervised datasets for training our methods: (1) \textbf{BONAI} \cite{wang2022learning} provides building footprint segmentation, offset, and height annotations, which contains 3,000 and 300 images for train-val and test respectively; (2) \textbf{OmniCity-view3} \cite{li2023omnicity} originally provides satellite images with annotations for footprint segmentation and building height. We add additional offset annotations for 17,092 and 4,929 images from train-val and test sets respectively; (3) Additionally, we release a new dataset named \textbf{HK}, which includes 500 and 119 satellite images specifically captured from Hong Kong for train-val and test sets, along with annotations for footprint segmentation, offset and height.
+
+As detailed in \cref{sec:methods}, all our training samples are graded into three levels: samples from $\mathcal{X}^{N}$, $\mathcal{X}^{H}$, and $\mathcal{X}^{OH}$.
+To create different levels of training samples, we extract samples from the datasets mentioned above, reorganizing their annotations as necessary.
+We randomly choose 30\% of the samples from the BONAI dataset \cite{wang2022learning} as a smaller $\mathcal{X}^{OH}$ dataset, which we call $BN_{30}$.
+We randomly drop the offset annotations of 70\% of the samples in the BONAI dataset \cite{wang2022learning}, regard the entire BONAI \cite{wang2022learning} dataset as a $\mathcal{X}^{OH}$+$\mathcal{X}^{H}$ dataset, and name it $BN_{30/70}$.
+Similarly, the original BONAI dataset \cite{wang2022learning} is regarded as a large $\mathcal{X}^{OH}$ and is named $BN_{100}$.
+We use $OC$ to designate the OmniCity-view3 dataset \cite{li2023omnicity}. Naturally, the abbreviations $OC_{30}$, $OC_{30/70}$, and $OC_{100}$ have the similar meaning with $BN_{30}$, $BN_{30/70}$, and $BN_{100}$ respectively.
+Moreover, we use $BH$ to refer to the combination of BONAI \cite{wang2022learning} and HK.
+It is important to note that in $BH_{30/70}$, 30\% of BONAI's \cite{wang2022learning} samples are $\mathcal{X}^{OH}$ type while the remaining 70\% are $\mathcal{X}^{H}$ type.
+Additionally, 30\% of HK's samples belong to $\mathcal{X}^{OH}$ type and the remaining 70\% belong to $\mathcal{X}^{N}$ type.
+
+\subsection{Performance comparison}
+In this section, we evaluate our method's performance in footprint segmentation, offset prediction, and height prediction against several competitive methods for the single-level supervised learning scenario. 
+In a Multi-level supervised learning scenario, we mainly compare our method with LOFT-FOA \cite{wang2022learning}.
+Additionally, we present our method's offset and off-nadir angles prediction performance.
+More results will be provided in the supplementary materials.
+
+\textbf{Single-level supervised learning.} The performance of footprint segmentation and offset prediction for different methods trained on $BN_{100}$ and $OC_{100}$ are listed in \cref{tab:seg-offset-perf-bn} and \cref{tab:seg-offset-perf-oc}, respectively.
+Additionally, \cref{fig:footprint-seg} provides a qualitative comparison of footprint segmentation results on the BONAI \cite{wang2022learning} test set.
+Note that all the experimental results in this section are obtained using $\mathcal{X}^{OH}$ samples, and the results obtained using $\mathcal{X}^{H}$ and $\mathcal{X}^{N}$ samples will be analysed in the following paragraph. 
+For the footprint segmentation task, experimental results tested on $BN_{100}$ demonstrate that our method improves the F1-score by 5.42\% - 8.30\% compared with the instance segmentation methods that directly extract the building footprints.
+Furthermore, our method enhances the F1-score by 2.05\% - 2.76\% relative to MTBR-Net \cite{li20213d} and LOFT-FOA \cite{wang2022learning}, which are specifically designed for extracting off-nadir building footprints based on predicted roof and offset, tested on $BN_{100}$.
+Regarding the offset prediction task, our experimental findings indicate that our approach betters the EPE by 0.18 - 0.93 in comparison to MTBR-Net \cite{li20213d} and LOFT-FOA \cite{wang2022learning} tested on $BN_{100}$.
+The results show that the direct supervision of the footprint segmentation, the constraint on the building height, and the encouragement of the angular feature extraction can help to achieve better performance in the footprint segmentation and offset prediction tasks in the single-level supervised learning scenario.
+\begin{table}[H]
+    \centering
+    \scalebox{0.8}{
+    \begin{tabular}{lcccccccccc}
+        \toprule
+        method              & F1            & Precision     & Recall        & EPE 
+        \\
+        \midrule
+        PANet \cite{2020Approximating}        & 58.06         & 59.26         & 56.91         & -             
+        \\
+        HRNetv2 \cite{sun2019high_arxiv}      & 60.81         & 61.20         & 60.42         & -             
+        \\
+        M R-CNN \cite{he2017mask}             & 58.12         & 59.26         & 57.03         & -             
+        \\
+        CM R-CNN \cite{HTC_2019_CVPR}         & 60.94         & \textbf{67.09}   & 55.83       & -             
+        \\
+        MTBR-Net \cite{li20213d}              & 63.60         & 64.34         & 62.87         & 5.69          
+        \\
+        LOFT-FOA \cite{wang2022learning}     & 64.31         & 63.37         & 65.29           & 4.94          
+        \\
+        Ours                      & \textbf{66.36}        & 65.90    & \textbf{66.83}       & \textbf{4.76} 
+        \\
+        \bottomrule
+    \end{tabular}
+    }
+    \caption{
+    Building footprint segmentation results of different methods in terms of F1-score, precision, recall (\%) and offset prediction results in terms of EPE trained on $BN_{100}$.
+    }
+    \label{tab:seg-offset-perf-bn}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \scalebox{0.95}{
+    \begin{tabular}{lcccccccccc}
+        \toprule
+        method      & F1            & Precision     & Recall        & EPE           
+        \\
+        \midrule
+        M R-CNN \cite{he2017mask}  & 69.75         & \textbf{69.74}         & 69.76         & -             
+        \\
+        LOFT-FOA \cite{wang2022learning}    & 70.46         & 68.77         & 72.23         & 6.08          
+        \\
+        Ours        & \textbf{72.25}& 69.57 & \textbf{75.14} & \textbf{5.38} 
+        \\
+        \bottomrule
+    \end{tabular}
+    }
+    \caption{
+    Building footprint segmentation results of different methods in terms of F1-score, precision, recall (\%) and offset prediction results in terms of EPE trained on $OC_{100}$.
+    }
+    \label{tab:seg-offset-perf-oc}
+\end{table}
+\begin{figure}[H]\centering
+    \includeg
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,207 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\input{attention}
+
+Active depth sensing has achieved significant gains in performance and demonstrated its utility in numerous applications, such as autonomous driving and augmented reality. Although depth maps captured by existing commercial depth sensors (\eg, Microsoft Kinect~\cite{kinect}, Intel RealSense~\cite{realsense}) or depths points within the same scanning line of LiDAR sensors are dense, the distance between valid/correct depth points could still be far owing to the sensor noise, challenging conditions such as transparent, shining, and dark surfaces, or the limited number of scanning lines of LiDAR sensors. To address these issues, depth completion~\cite{CSPN++,DySPN,NLSPN,GuideFormer}, which targets at completing and reconstructing the whole depth map from sparse depth measurements and a corresponding RGB image (\ie, RGBD), has gained much attention in the latest years. 
+For depth completion, one key point is to get the depth affinity among neighboring pixels so that reliable depth labels can be propagated to the surroundings~\cite{CSPN++,CSPN,PENet,DySPN,NLSPN}. Based on the fact that the given sparse depth could be highly sparse due to noise or even no measurement being returned from the depth sensor, it requires depth completion methods to be capable of 1) detecting depth outliers by measuring the spatial relationship between pixels in both local and global perspectives; 2) fusing valid depth values from close or even extremely far distance points. All these properties ask the network for the potential to capture both local and global correlations between pixels. Current depth completion networks collect context information with the widely used convolution neural networks (CNNs)~\cite{CSPN++,CSPN,PENet,FusionNet,DySPN,DeepLiDAR,NLSPN,RobustDC} or graph neural network~\cite{ACMNet,xiong2020sparse}. However, both the convolutional layer and graph models can only aggregate within a local region, \eg{} square kernel in $3\times 3$ for convolution and kNN-based neighborhood for graph models~\cite{ACMNet,xiong2020sparse}, making it still tough to model global long-range relationship, in particular within the shallowest layers of the architecture. Recently, GuideFormer~\cite{GuideFormer} resorts fully Transformer-based architecture to enable global reasoning. Unfortunately, since Vision Transformers project image patches into vectors through a single step, this causes the loss of local details, resulting in ignoring local feature details in dense prediction tasks~\cite{ConFormer,coat}. For depth completion, the limitations affecting pure CNNs or Transformer based networks also manifest, as shown in \cref{fig:attention}. Despite \textit{any} distance the reliable depth points could be distributed at, exploring an elegant integration of these two distinct paradigms, \ie{} CNNs and Transformer, has not been studied for depth completion yet.
+
+In this work, we propose \net{}, a pyramidal architecture coupling CNN-based local features with Transformer-based global representations for enhanced depth completion. Generally, there are two gaps we are facing: 1) the content gap between RGB and depth input; 2) the semantic gap between convolution and Transformer. As for the multimodal input, we propose embedding the RGB and depth information at the early network stage. Thus our \net{} can be implemented in an efficient single-branch architecture as shown in \cref{fig:framework} and multimodal information can be aggregated throughout the whole network. Considering the integration of convolution and Transformer, previous work has explored from several different perspectives~\cite{mpvit,coat,ConFormer,CMT,integrationvit} on image classification and object detection. Although state-of-the-art performance has been achieved on those tasks, high computation cost~\cite{mpvit} or inferior performance~\cite{mpvit,CMT} are observed when these networks are directly adapted to depth completion task. To promise the combination of self-attention and convolution still being efficient, and also effective,  we embrace convolutional attention and Transformer into one block and use it as the basic unit to construct our network in a multi-scale style. Specifically, the Transformer layer is inspired by Pyramid Vision Transformer~\cite{pvt}, which adopts spatial-reduction attention to make the Transformer layer much more lightweight. As for the convolution-related part, the common option is to use plain convolutions such as Inverted Residual Block~\cite{mobilenetv2}. However, the huge semantic gap between convolution and the Transformer and the lost local details by Transformer require the convolutional layers to increase its own capacity to compensate for it. Following this rationale, we further introduce spatial and channel attention~\cite{cbam} to enhance convolutions. As a result, without any extra module to bridge the content and semantic gaps~\cite{ConFormer,mpvit,GuideFormer}, every convolution and Transformer layer in the proposed block can access the local and global features. Hence, information exchange and fusion happen effectively at every block of our network.
+To summarize, our main contributions are as follows:
+\begin{itemize}
+    \item We propose integrating Vision Transformer with convolutional attention layers into one block for depth completion, enabling the network to possess both local and global receptive fields for multi-modal information interaction and fusion. In particular, spatial and channel attention are introduced to increase the capacity of convolutional layers.
+    \item Taking the proposed \underline{J}oint \underline{C}onvolutional \underline{A}ttention and \underline{T}ransformer (JCAT) block as the basic unit, we introduce a single-branch network structure, \ie{} \net{}. This elegant design leads to a comparable computation cost to current CNN-based methods while presenting significantly higher efficiency when compared with pure Transformer based methods.
+    \item Our \net{} yields substantial improvements to depth completion compared to state-of-the-art methods, especially when the provided depth is \textit{very} sparse, as often occurs in practical applications.
+\end{itemize}
+
+\begin{figure*}[t]
+	\centering
+		\includegraphics[width=1.6\columnwidth]{assets/architecture.pdf}
+		\caption{\textbf{\net{} Architecture.} Given the sparse depth and corresponding RGB image, a U-Net backbone strengthened with JCAT block is used to perform the depth and image information interaction at multiple scales. Features from different stages are fused at full resolution and fed for initial prediction. Finally, a spatial propagation network (SPN) is exploited for final refinement.
+		} 
+	\label{fig:framework}
+\end{figure*}
+
+
+
+Related Work
+
+\textbf{Depth Completion.} Scene depth completion has become a fundamental task in computer vision with the emergence of active depth sensors. Recently, following the advance of deep learning, fully-convolutional network has been the prototype architecture for current state-of-the-art on depth completion. Ma \emph{et al.}~\cite{Ma2017SparseToDense,ma2019self} utilize a ResNet~\cite{resnet} based encoder-decoder architecture, \ie{} U-Net, within either a supervised or self-supervised framework to predict the dense output. 
+To preserve the accurate measurements in the given sparse depth and also perform refinement over the final depth map, CSPN~\cite{CSPN} appends a convolutional spatial propagation network (SPN~\cite{spn}) at the end of U-Net to refine its coarse prediction. Based on CSPN, learnable convolutional kernel sizes and a number of iterations are proposed to improve the efficiency~\cite{CSPN++}, and the performance could be further improved by using unfixed local neighbors~\cite{DSPN,NLSPN} and independent affinity matrix for each iteration~\cite{DySPN}. For all these SPN-based methods, while a larger context is observed within recurrent processing, the performance is limited by the capacity of the convolutional U-Net backbone. Accordingly, we strengthen the expressivity of the U-Net backbone with local and global coherent context information, proving effective in improving performance.
+
+Rather than depending on a single branch, multi-branch networks~\cite{FusionNet,FCFRNet,PENet,GuideNet,DeepLiDAR,semattnet,singlergbd} are also adopted to perform multi-modal fusion. The common way to fuse the multi-modal information is simple concatenation or element-wise summation operation. More sophisticated strategies like image-guided spatially-variant convolution~\cite{GuideNet,RigNet}, channel-wise canonical correlation analysis~\cite{zhong2019deep},
+neighbour attention mechanism~\cite{neighborattention} and attention-based graph propagation~\cite{ACMNet,xiong2020sparse} were also proposed to enhance local information interaction and fusion. Instead of pixel-wise operation or local fusion, recently, GuideFormer~\cite{GuideFormer} proposed a dual-branch fully Transformer-based network to embed the RGB and depth input separately, and an extra module is further designed to capture inter-modal dependencies. The independent design for each input source leads to huge computation costs (near 2T FLOPs with the $352\times 1216$ input). In contrast, our \net{} in one branch brings significant efficiency (559.5G FLOPs), and the included convolutional attention layer complements the disadvantage of a Transformer in local details. 
+
+\textbf{Vision Transformer.}
+Transformers~\cite{mpvit,swin} are first introduced in natural language processing~\cite{nlp}, then also showing great potential in the fields of image classification~\cite{vit}, object detection~\cite{swin,mpvit,coat} and semantic segmentation~\cite{segformer}. Tasks related to 3D vision have also benefited from the enriched modeling capability of Transformer, such as stereo matching~\cite{sttr,CREStereo}, supervised~\cite{dpt,depthformer} and unsupervised monocular depth estimation~\cite{monovit}, optical flow~\cite{craft,GMA} and also depth completion~\cite{GuideFormer}. Instead of relying on pure Vision Transformer~\cite{GuideFormer}, in this paper, we explore the combination of Transformer and convolution into one block for depth completion. Compared to the general backbone networks (\eg{} ResNet~\cite{resnet} with fully CNN-based design, Swin Transformer~\cite{swin} and PVT~\cite{pvt} based on pure Transformer, MPViT~\cite{mpvit} and CMT~\cite{CMT} using both the convolutions and Vision Transformer), our proposed joint convolutional attention and Transformer block achieves much higher efficiency and performance on public benchmarks~\cite{NYUV2,KITTI}
+\begin{figure*}[t]
+	\centering
+		\includegraphics[width=1.8\columnwidth]{assets/JointCTBlock.pdf}
+		\caption{\textbf{Example of architecture with convolutions and Vision Transformer.} (a) Multi-Path Transformer Block of MPViT~\cite{mpvit}. (b) CMT Block of CMT-S~\cite{CMT}. (c) Our proposed JCAT block which contains two parallel streams, \ie{} convolutional attention and Transformer layer respectively. (d) The variant of our proposed block with cascaded connection.
+		} 
+	\label{fig:transformer_block}
+\end{figure*}
+
+
+Method
+
+In practical applications, depth maps captured by sensors present various levels of sparsity and noise. Our goal is to introduce both the local features and global context information into the depth completion task so that it can gather reliable depth hints from any distance. The overall diagram of our \net{} is shown in ~\cref{fig:framework}. After obtaining depth and RGB image embedding, a backbone constructed by our JCAT block is used for feature extraction at multiple scales and the decoder provides full-resolution features for initial depth prediction. Finally, for the purpose of preserving accurate depth from the sparse input, we refine the initial estimation with a spatial propagation network. 
+\subsection{RGB and Depth Embedding}
+\label{sec:embedding_module}
+For depth completion, multimodal information fusion at an early stage has several advantages, 1) it makes the feature vector of each pixel possess both the RGB and depth information so that pixels with invalid depth still have a chance to be corrected by reliable depth measurements according to appearance similarity; 2) only one branch is required for the following network, which enables much efficient implementation. Therefore, we firstly use two separate convolutions to encode the input sparse depth map $\mathnormal{S}$ and RGB image $\mathnormal{I}$. The outputs are concatenated and further processed by another convolution layer to get the raw feature containing contents from both sources. 
+\subsection{Joint Convolutional Attention and Transformer Encoder}
+It has been extensively studied how to build connections between pixels to implement depth propagation from reliable pixels while avoiding incorrect ones. Recently, convolution layer~\cite{CSPN++,CSPN,PENet,FusionNet,DySPN,DeepLiDAR,NLSPN,RobustDC} or attention based graph propagation~\cite{ACMNet,xiong2020sparse} has been the dominant operation for this purpose. Although a fully Transformer-based network~\cite{GuideFormer} has also been adopted for this purpose, it shows worse results and much higher computational cost compared to pure CNNs-based methods. Considering the complementary properties of these two-style operations, an elegant integration of these two paradigms is highly demanded for depth completion task. On the other hand, for classification and object detection tasks, MPViT~\cite{mpvit} and CMT~\cite{CMT} are two representative state-of-the-art networks on the combination of self-attention and convolution as shown in \cref{fig:transformer_block} (a) and (b) respectively. Generally, the integration can be implemented in a parallel or cascaded manner. Accordingly, inspired by their design, within \net{}, we propose a joint design as shown in~\cref{fig:transformer_block} (c) and (d). To decrease computation overhead but also get highly accurate depth completion result, our \net{} only contains single rather than multiple time-consuming Transformer-based paths as in MPViT~\cite{mpvit}. Furthermore, the representation power of convolution-based path is enhanced with spatial and channel attention.
+
+\begin{table}[t]
+    \centering
+    \resizebox{0.9\columnwidth}{!}{
+    \begin{tabular}{c|cccc}
+    \toprule
+    \net{} & \#Layers & Params (M) & FLOPs (G) \\
+    \midrule
+    Tiny & [2, 2, 2, 2] & 41.5 & 191.7 \\
+    Small & [3, 3, 6, 3] & 78.3 & 231.8 \\
+    Base & [3, 3, 18, 3] & 142.4 & 301.9 \\
+    \bottomrule
+    \end{tabular}
+    }
+    \caption{\textbf{\net{} Configurations.} \#Layers denotes the number of our JCAT blocks in each stage. For all model variants, the channels of 4 stages are 64, 128, 320, 512, respectively. FLOPs are measured using $480\times640$ input image.}
+    \label{tab:configuration}
+\end{table}
+Specifically, our encoder has five stages, allowing features representation at different scales to communicate with each other effectively. In the first stage, to decrease the computation cost and memory overhead introduced by the Transformer layer, we use a series of BasicBlocks from ResNet34~\cite{resnet} to process and finally get downsampled feature map $F_{1}$ at half resolution. For the next four stages, we introduce our proposed JCAT block as the basic unit for framework design. 
+
+Basically, for each stage $i \in \{2, 3, 4, 5\}$, it consists of a patch embedding module and $L_{i}$ repeated JCAT blocks. The patch embedding module firstly divides the feature map $F_{i-1}$ from previous stage $i-1$ into patches with size $2\times 2$. We implement it with a $3\times 3$ convolution layer and stride set to 2 as~\cite{pvt}, so it actually halves resolution for features $F_{i-1}$ and thus allows for obtaining a features pyramid $\{ F_{2}, F_{3}, F_{4}, F_{5} \}$, whose resolutions are $\{ 1/4, 1/8, 1/16, 1/32 \}$ with respect to the input image. Furthermore, position embedding is also included in the embedded patches and passed through the JCAT blocks. 
+\textbf{Joint Convolutional Attention and Transformer Block.} 
+In overview, our JCAT block can be organized in a parallel or cascaded manner as shown in \cref{fig:transformer_block} (c) and (d) respectively. The Transformer layer is implemented in an efficient way as in Pyramid Vision Transformer~\cite{pvt}, which contains a spatial-reduction attention (SRA) layer with multi-head mechanism and a feed-forward layer (FNN). Given input features $F\in \mathbb{R}^{H_{i} \times W_{i} \times C}$ from the patch embedding module or last joint block (with $H_{i}$ and $W_{i}$ height and width of features at stage $i$, and $C$ number of channel), we firstly normalize it with layer normalization~\cite{layernorm} (LN) and then flatten it into vector tokens $X \in \mathbb{R}^{N\times C}$, where $N$ is the number of tokens and equals to $H_{i} \times W_{i}$, \ie{} the number of all pixels in the $F$. Using learned linear transformations $W^{Q}$, $W^{K}$, and $W^{V}\in\mathbb{R}^{C\times C}$, tokens $X$ are projected into corresponding query $Q$, key $K$, and value vectors $V\in \mathbb{R}^{N\times C}$. Here, the spatial scale of $K$ and $V$ is further reduced to decrease memory consumption, and then self-attention is performed as:
+
+\begin{equation}
+    \text{Attention}(Q, K, V) = \text{Softmax}(\frac{QK^{T}}{\sqrt{C_{head}}})V, 
+    \label{eq: self_attention}
+\end{equation}
+with $C_{head}$ the channel dimension of each attention head in SRA. According to \cref{eq: self_attention}, each token in the entire input space $F$ is matched with any tokens, including itself. Our depth completion network benefits from the self-attention mechanism in two folds: 1) it extends the receptive field of our network to the full image in each Transformer layer; 2) as we have embedded each token with both depth and RGB image information, the self-attention mechanism explicitly compare the similarity of each pixel not only by appearance, but also by depth with dot-product operation. Thus, reliable depth information can be broadcasted to the whole image, enabling to correct erroneous pixels.
+
+We boost the representation power of the convolutional path with channel and spatial attention~\cite{cbam}. On the one hand, it helps to model locally accurate attention and reduce noise. On the other hand, due to the semantic gap between convolution and Transformer, the increased modeling capacity by using the attention mechanism enables this path to focus on important features provided by the Transformer layer while suppressing the unnecessary ones. Finally, by concatenating the reshaped feature from the Transformer-based path, we fuse the two paths with a $3\times 3$ convolution and send it to the next block or stage.
+
+Taking the proposed JCAT block as the basic unit, we build stages 2-5 with repeated configurations. As reported in \cref{tab:configuration}, we scale-up the 4 stages in \net{} from tiny, small to base scale. 
+Our results demonstrate the superiority of JCAT design compared to recent Vision Transformers~\cite{mpvit,swin,pvt} in depth completion task.
+
+\subsection{Decoder}
+\label{sec:decoder}
+In the decoder, outputs from each encoding layer are concatenated and further processed by the corresponding decoding layers via skip connections. To accommodate diverse scale features better, the features from previous decoder layer is upsampled to current scale with a deconvolution layer and convolutional attention mechanism~\cite{cbam} is also exploited to strengthen feature fusion in channel and spatial dimensions. Finally, the fused result from the decoder is concatenated with features from stage one and fed to the first convolution layer of the prediction head. Its output is concatenated with the raw feature from RGB and depth embedding module (\cref{sec:embedding_module}) and sent to another convolution, which is in charge of initial depth prediction $\mathnormal{D}^{0}$. 
+\subsection{SPN Refinement and Loss Function}
+Considering that the accurate depth values from the sparse input may not be well preserved after going though U-Net~\cite{CSPN,PENet}, spatial propagation network~\cite{spn} has been a standard operation for final refinement. Recent work~\cite{CSPN,CSPN++,PENet,NLSPN} mainly focuses on improving the spatial propagation network from fixed-local to nonlocal propagation. While in our experiments (\cref{tab: ablation_components}), we observe that, with our enhanced U-Net backbone, the network is able to provide good depth affinity and thus obtain almost the same accuracy with fixed-local~\cite{CSPN,CSPN++} or non-local~\cite{NLSPN} neighbours for spatial propagation. With regard to CSPN++~\cite{CSPN++} consumes more computation cost, we adopt the non-local spatial propagation network~\cite{NLSPN} (NLSPN) for further refinement. Specifically, let $\mathnormal{D}^{t}=(d^{t}_{u,v}) \in \mathbb{R}^{H\times W}$ denotes the 2D depth map updated by spatial propagation at step $t$, where $d^{t}_{u,v}$ denotes the depth value at pixel $(u,v)$, and $H, W$ denotes the height and width of the $\mathnormal{D}^{t}$ respectively. The propagation of $d^{t}_{u,v}$ at step $t$ with its non-local neighbors $\mathnormal{N}_{u,v}^{NL}$ is defined as follows:
+
+\begin{equation}
+    \begin{aligned}
+    d_{u,v}^{t} = w_{u,v}(0,0) d_{u,v}^{t-1} + \sum_{(i,j) \in \mathnormal{N}_{u,v}^{NL}, i\neq 0, j\neq 0} w_{u,v}(i,j) d_{i,j}^{t-1},
+    \end{aligned}
+    \label{eq:propagation}
+\end{equation}
+where $w_{u,v}(i,j) \in (-1, 1)$ describes the affinity weight between the reference pixel at $(u,v)$ and its neighbor pixel at $(i,j)$ and $w_{u,v}(0,0) =1 - \sum_{(i,j) \in \mathnormal{N}_{u,v}, i\neq 0, j\neq 0} w_{u,v}(i,j)$ stands for how much the original depth $d_{u,v}^{t-1}$ will be preserved. Moreover, the affinity matrix $w$ is also outputted by the decoder and modulated by a predicted confidence map from decoder to prevent less confident pixels from propagating into neighbors regardless of how large the affinity is.
+After $K$ steps spatial propagation, we get the final refined depth map $\mathnormal{D}^{K}$. 
+
+Finally, following~\cite{NLSPN}, a combined $L_{1}$ and $L_{2}$ loss is employed to supervise the network training as follows:
+
+\begin{equation}
+    \mathnormal{L}(\hat{\mathnormal{D}}, \mathnormal{D}^{gt}) = \frac{1}{|\mathnormal{V}|} \sum_{v\in\mathnormal{V}} \left( | \hat{\mathnormal{D}}_{v} - \mathnormal{D}_{v}^{gt} | + | \hat{\mathnormal{D}}_{v} - \mathnormal{D}_{v}^{gt} |^{2} \right),
+\end{equation}
+where $\hat{\mathnormal{D}} = \mathnormal{D}^{K}$, and $\mathnormal{V}$ is the set of pixels with valid depth in ground truth $\mathnormal{D}^{gt}$, and $|\mathnormal{V}|$ denotes the size of set $\mathnormal{V}$.
+
+
+
+
+Experiments
+
+
+\subsection{Datasets}
+
+\textbf{NYUv2 Dataset~\cite{NYUV2}:} it consists of RGB and depth images captured by Microsoft Kinect~\cite{kinect} in 464 indoor scenes. Following the similar setting of previous depth completion methods~\cite{NLSPN,RobustDC}, our method is trained on 50,000 images uniformly sampled from the training set and tested on the 654 images from the official labeled test set for evaluation. For both training and test sets, the original frames of size $640\times 480$ are half down-sampled with bilinear interpolation and then center-cropped to $304\times228$. The sparse input depth is generated by random sampling from the dense ground truth. 
+
+\textbf{KITTI Depth Completion (DC) Dataset~\cite{KITTI}:} it contains 86\,898 training data, 1\,000 selected for validation, and 1\,000 for testing without ground truth. The original depth map obtained by the Velodyne HDL-64e is sparse, covering about 5.9\% pixels. The dense ground truth is generated by collecting LiDAR scans from 11 consecutive temporal frames into one, producing near 30\% annotated pixels. These registered points are verified with the stereo image pairs to eliminate noisy values. Since there is no LiDAR return at the top of the image, following~\cite{NLSPN}, input images are bottom center-cropped to $240\times1216$ for training, validation and testing phases.
+
+\subsection{Implementation Details}
+We implement our model in PyTorch~\cite{pytorch} on 4 NVIDIA 3\,090 GPUs, using AdamW~\cite{adamw} as optimizer with an initial learning rate of 0.001, $\beta_{1}=0.9,\; \beta_{2}=0.999$, weight decay of 0.01. The batch size per GPU is set to 3 and 12 on KITTI DC and NYUv2 datasets, respectively. On the NYUv2 dataset, we train the model for 72 epochs and decay the learning rate by a factor of 0.5 at epochs 36, 48, 60, 72. For the KITTI DC dataset, the model is trained with 100 epochs, and we reduce the learning rate by half at epochs 50, 60, 70, 80, 90. The {supplementary material} outlines more details about network parameters.
+\begin{table}[t]
+    \centering
+    \begin{tabular}{c}
+    \resizebox{0.96\columnwidth}{!}{
+    \begin{tabular}{ll|cc|cc}
+    \toprule
+    & \multirow{2}{*}{\net{}} & \cellcolor{lower} RMSE$\downarrow$ & \cellcolor{lower} MAE$\downarrow$ & Params.$\downarrow$ & FLOPs $\downarrow$ \\
+    & & \cellcolor{lower}(mm) & \cellcolor{lower}(mm) & (M)  & (G) \\
+    \midrule
+    (A) & w/ cascaded connection & 91.5 & 35.7 & 82.6 & 429.6 \\
+    (B) & w/ parallel connection & \textbf{90.0} & \textbf{35.0} & 82.6 & 429.6  \\
+    \midrule
+    (C) & w/o Spatial and Channel Attention & 91.1 & 35.5 & \textbf{82.5} & \textbf{429.4} \\
+    \midrule
+    (D) & w/ dual-branch encoders & 94.0 & 36.4 & 161.0 & 661.4  \\
+    
+    \bottomrule
+    \end{tabular}
+    }
+    \\
+    \resizebox{0.96\columnwidth}{!}{
+    \begin{tabular}{llcc|cc|cc}
+    \toprule
+    & Backbone & Attention & Refinement & \cellcolor{lower} RMSE$\downarrow$ & \cellcolor{lower} MAE$\downarrow$ & Params.$\downarrow$ & FLOPs $\downarrow$  \\
+    & Type & Decoder & Iterations & \cellcolor{lower}(mm) & \cellcolor{lower}(mm) & (M)  & (G) \\
+    \midrule
+    (E) & ResNet34~\cite{resnet} & \xmark & 18 & 92.3 & 36.1 & \textbf{26.4} & 542.2 \\
+    (F) & ResNet34~\cite{resnet} & \cmark & 18 & 91.4 & 35.5 & 28.1 & 582.1  \\
+    (G) & Swin-Tiny~\cite{swin} & \cmark & 18 & 92.6 & 36.4 & 38.1 & 634.8  \\
+    (H) & PVT-Large~\cite{pvt} & \cmark & 18 & 91.4 & 35.6 & 68.3 & 419.8 \\
+    (I) & MPViT-Base~\cite{mpvit} & \cmark & 18 & 91.0 & 35.5 & 83.1 & 1259.3 \\
+    (J) & CMT-Base~\cite{CMT} & \cmark & 18 & 92.0 & 35.9 & 47.6 & \textbf{358.7}  \\
+    (K) & Ours-Small & \cmark & 18 & 90.1 & 35.2 & 82.6 & 439.1 \\
+    \midrule
+    (L) & Ours-Small & \cmark & 6 & \textbf{90.0} & 35.0 & 82.6 & 429.6 \\ 
+    (M) & Ours-Small & \cmark & CSPN++ & 90.3 & \textbf{34.9} & 82.7 & 446.4 \\
+    \midrule
+    (N) & Ours-Tiny & \cmark & 6 & 90.9 & 35.3 & 45.8 & 389.4 \\
+    (O) & Ours-Base & \cmark & 6 & 90.1 & 35.1 & 146.7 & 499.6 \\
+
+    \bottomrule
+    \end{tabular}
+    }
+    \end{tabular}
+    \caption{\textbf{Ablation study on NYU Depth v2~\cite{NYUV2}}.
+    \label{tab: ablation_components}
+\end{table}
+
+\begin{table}[t]
+    \centering
+    \resizebox{0.99\columnwidth}{!}{
+		\begin{tabular}{l|c|c|c|c|c|c|c}
+		\toprule
+        & SPN & ResNet34 & Swin-Tiny & PVT-Large & MPViT-Base & CMT-Base & Ours-Small \\
+        \hline
+        \multirow{2}{*}{RMSE(mm)$\downarrow$} & \xmark & 106.5 & 106.5 & 106.7 & 100.2 & 108.4 & \textbf{99.2} \\
+        & \cmark & 91.4 & 92.6 & 91.4 & 91.0 & 92.0 & \textbf{90.0} \\
+		\bottomrule	
+		\end{tabular}
+	}
+	\caption{\textbf{Ablation study without SPN module.} We report the accuracy of different backbone with/without SPN on NYUv2.}
+	\label{table:no_spn}
+
+\end{table}
+\subsection{Evaluation Metrics}
+Following the KITTI benchmark and existing depth completion methods~\cite{NLSPN,RobustDC}, given the prediction $\hat{\mathnormal{D}}$ and ground truth $\mathnormal{D}^{gt}$, we use the standard metrics for evaluation: (1) root mean square error (RMSE); (2) mean absolute error (MAE); (3) root mean squared error of the inverse depth (iRMSE); (4) mean absolute error of the inverse depth (iMAE); (5) mean absolute relative error (REL).
+\subsection{Ablation Studies and Analysis}
+
+We assess the impact of the main components of our \net{} on NYUv2 dataset~\cite{NYUV2}. Following previous methods~\cite{DySPN,NLSPN}, we randomly sample 500 depth pixels from the ground truth depth map and input them along with the corresponding RGB image for network training. Results are reported in  \cref{tab: ablation_components}.
+
+\textbf{Cascaded vs Parallel Connection.}
+We can notice that the cascaded design (A) shows inferior performance compared to parallel style (B). This conclusion is also confirmed in (I) and (J), as CMT-Base gets even worse RMSE (92.0) than MPViT-Base~\cite{mpvit} (91.0). It indicates the parallel connection is more suitable for information interaction between streams with different contents and semantics on depth completion task. Thus, we adopt parallel connection as our final scheme. 
+
+\textbf{Spatial and Channel Attention in JCAT block.} Previous methods combine the Transformer with plain convolutions~\cite{mpvit,CMT,ConFormer,integrationvit}. Here, we also ablate the case when we disable the spatial and channel attention at the convolutional path of our proposed JCAT block (C). The drop in accuracy (RMSE increases from 90.0 to 91.1) confirms that increasing the capacity of convolutions is vital when combining convolution with Vision Transformer, and it only leads to negligible FLOPs increase (0.2G FLOPs).
+
+\textbf{Single- or Dual-branch Encoder.} Similar to previous methods~\cite{GuideFormer,GuideNet}, we test the dual-branch architecture, which encodes the RGB and depth information separately (D). For feature communication between two branches, we include the spatial and channel attention mechanism~\cite{cbam} at the end of each stage in the encoder. However, the worse results compared to our single-branch design (B) demonstrates that embedding the multimodal information at the early stage is much more effective and efficient.
+
+\textbf{Comparisons with General Feature Ba
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

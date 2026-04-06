@@ -1,0 +1,331 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Entities and their associated relationships form the cornerstones of visual contents in images \cite{krishna2017visual}. 
+Scene Graph Generation (SGG), a fundamental task in visual scene understanding, is designed to detect these entities and predict their pairwise relationships, encapsulating them into \textit{\textless subject, predicate, object\textgreater } triplets \cite{lu2016visual,dai2017detecting,zhang2017visual}. 
+The generated compact graph-structured image representation can be utilized in a range of applications, \eg embodied navigation \cite{du2020learning,singh2023scene}, image retrieval \cite{dhamo2020semantic,guo2020visual}, visual question answering \cite{ben2019block,shi2019explainable}, \etc, so the SGG task has received widespread attention in recent years \cite{lin2020gps,yang2022panoptic,li2023zero,jung2023devil}.
+
+\begin{figure}
+\centering {\includegraphics[width=0.4\textwidth]{intro-eating.pdf}}
+\caption{
+The illustration of large visual variations within the predicate ``eating''.
+Identical predicate can appear differently under distinct subject-object pairs, encompassing a different set of visual cues within each manifestation. 
+Identifying discriminative relation cues that are shared across diverse subject-object pairs within the same predicate can be challenging. Yet, they can be easily captured when the scope is narrowed to the identical triplet.
+}
+\label{fig:intro1}
+\end{figure}
+Existing SGG methods are mostly dedicated to generating discriminative predicate representations for the detected entities, based on their appearances, relative positions, contextual cues, \textit{etc.} \cite{yang2018graph,tang2019learning,li2021bipartite,kundu2023ggt,zheng2023prototype}. 
+However, as shown in Figure \ref{fig:intro1}, large visual variations due to different subject-object combinations are inherent even in the same predicate, presenting an obstacle for SGG methods to capture robust predicate cues across distinct triplet types.
+To alleviate this problem, PE-Net \cite{zheng2023prototype} utilizes textual semantics of predicate categories as the prototype and model  predicate cues by reducing the intra-class variance and inter-class similarity.
+Despite the improved prediction accuracy, PE-Net still follows the previous strategy of straightforwardly amalgamating predicate cues that probably contain extensive visual variations of diverse triplets.
+
+Moreover, many recent efforts have been devoted to the long-tail problem in SGG task. Insufficient samples with limited triplet types lead to the reduced diversity observed in tail predicate categories, making it a challenging task to learn and adapt to their distributions. Existing methods boost model's attention towards tail predicate categories through re-sampling \cite{li2021bipartite}, re-weighting\cite{lyu2022fine}, or the utilization of mixture of experts \cite{dong2022stacked,sudhakaran2023vision}. 
+However, they mostly fall short of directly tackling the core of the long-tail issue, \ie, the insufficient patterns for tail predicates, leaving space for further improvement.
+Reflecting on similarities and differences among predicates, we find that despite the non-negligible or even large variations inherent in the same predicate, the visual diversity of the same triplet is relatively small (\eg the two instances of 
+\textit{\textless elephant, eating, leaf\textgreater } in Figure \ref{fig:intro1}). 
+Accordingly, considering the more fine-grained triplet cues in addition to the coarse-grained predicate ones can help prevent the model from getting stuck in the refinement process of predicate features with potentially large variations, and promote it to strike a balance between different granularities during the relationship learning process.
+For the long-tail problem in SGG task which primarily emerges due to the insufficient tail predicate patterns and corresponding limited types and quantity of triplets, it then becomes a natural choice to enrich tail predicate patterns using head predicates and their triplets.
+
+Based on the aforementioned insights, we propose a Dual-granularity Relation Modeling (DRM) network that models triplet cues to facilitate predicate learning and transfer knowledge from the head classes to tail classes for relation recognition. 
+In our DRM network, as shown in Figure \ref{fig:intro}, 1) besides a predicate branch that models coarse-grained predicate cues by leveraging their contextual predicates and subject-object pairs, a triplet branch is also presented to strengthen fine-grained triplet representations via jointly exploring their visual contents and corresponding label semantics. 
+We also devise dual-granularity constraints to prevent the degradation of predicate and triplet feature spaces during model training.
+Subsequently, 2) the Dual-granularity Knowledge Transfer (DKT) strategy is proposed to transfer the class variance from head classes to tail ones from both the predicate and triplet perspectives for unbiased SGG. 
+Distributions of tail predicates/triplets are designed to be calibrated using variance from head ones that are most similar to them. 
+New predicate/triplet samples are generated as well based on the calibrated distributions to enrich the pattern diversity of tail predicates/triplets.
+Extensive experiments conducted on the widely used Visual Genome \cite{krishna2017visual}, Open Image \cite{krasin2017openimages}, and GQA \cite{hudson2019gqa} datasets for SGG demonstrate the state-of-the-art performance of our method.
+
+
+Contributions of this paper can be summarized as:
+\begin{itemize}
+\item We propose to learn scene graphs in a dual-granularity manner, integrating both coarse-grained predicate cues and fine-grained triplet cues.
+\item We introduce the DRM network to model predicate and triplet cues, and propose the DKT strategy to propagate knowledge from head predicates/triplets to tail ones to mitigate the long-tail problem in SGG.
+\item We comprehensively evaluate the proposed method and demonstrate its superior performance.
+\end{itemize}
+\begin{figure}
+\centering {\includegraphics[width=0.45\textwidth]{intro-cmp.pdf}}
+\caption{
+Comparison of different pipelines for relation recognition. 
+Previous methods focus on learning predicate cues shared across various triplets with diverse visual appearance. 
+Our method learns and leverages both triplet cues within the same triplet and predicate cues across triplets, to better handle the visual diversity.
+}
+\label{fig:intro}
+\end{figure}
+
+\begin{figure*}[!tb]
+\centering {\includegraphics[width=1.0\textwidth]{framework.pdf}}
+\caption{
+Illustration of the proposed Dual-granularity Relation Modeling (DRM) network. 
+The learning procedure of DRM is composed of two stages. 
+In the first stage, we capture the coarse-grained predicate cues shared across different subject-object pairs and learn the fine-grained triplet cues under specific subject-object pairs.
+In the second stage, the Dual-granularity Knowledge Transfer (DKT) strategy transfers the variation from head predicates with their associate triplets to the tail. 
+Then DRM exploits the real instances along with synthetic samples from the calibrated tail distribution to fine-tune the relation classifier, which alleviates the long-tail problem in SGG.
+}
+\label{fig:framework}
+\end{figure*}
+
+
+
+Related Work
+\label{sec:related work}
+
+\subsection{Scene Graph Generation}
+
+Scene graph is a structured representation of the image content, where its essential constituents are the relationships (or triplets \textit{\textless subject, predicate, object\textgreater }). 
+The direct prediction of triplet categories presents a significant challenge given the extensive combinations of subjects, predicates, and objects.
+Existing Scene Graph Generation (SGG) methods \cite{woo2018linknet,zhang2019graphical,liu2021fully,li2023zero,zheng2023prototype,jin2023fast} decompose this prediction target into two components: entities and predicates. 
+Early SGG approaches \cite{lu2016visual,zhang2017visual,zellers2018neural} explore to integrate multiple modalities like positional information and linguistic features into relationships. 
+Later methodologies \cite{suhail2021energy,tian2021mask,lu2021context,jin2023fast,sun2023unbiased} identify the value of visual context in SGG. 
+Some of them encode contextual information utilizing techniques \eg message passing \cite{xu2017scene}, LSTM \cite{zellers2018neural,tang2019learning,wang2020sketching}, graph neural networks \cite{yang2018graph,li2021bipartite}, and self-attention modules \cite{dong2022stacked,chen2022reltransformer,li2022sgtr}.
+Others \cite{lu2021context,tian2021mask} refine the detected scene graph and optimize the features of refined predicates based on high-confidence predictions.
+PE-Net \cite{zheng2023prototype} proposes to utilize text embeddings as the centroid of predicates, aiming to minimize the intra-class variance and the inter-class similarity.
+Despite the improved prediction accuracy, it is still hard to extract discriminative relation cues across the various subject-object pairs in the same predicate.
+The core of this issue lies in the fact that the identical predicates can manifest differently under distinct subject-object pairs, encompassing a unique array of visual cues within each manifestation. 
+The direct aggregation of predicate features tends to overlook the inherent triplet cues present under the various subject-object pairs. 
+We propose to explicitly model both coarse-grained predicate cues and fine-grained triplet cues for biased and unbiased SGG.
+\subsection{Unbiased Scene Graph Generation}
+
+Real-world data tends to obey a long-tailed distribution, and imbalanced samples in scene graph present the challenge to learn and adapt to the distribution in the tail predicates \cite{tang2019learning,tang2020unbiased,zhang2023deep,yu2023visually}.
+Recently, many methods have been proposed to deal with the biased prediction problem in scene graphs, which can be roughly divided into three categories.
+The first category of methods use re-balancing strategies that alleviate the long-tail problem by re-sampling images and triplet samples to enhance the performance of tail predicates \cite{li2021bipartite} or by enhancing the loss weights of tail predicates and easily misclassified categories through the pre-defined Predicate Lattice \cite{lyu2022fine}.
+The second category of methods utilize noisy label learning to explicitly re-label relational triplets missed by annotators and correct the mislabeled predicates \cite{zhang2022fine,li2022devil}.
+The last category exploit the mixture of experts to let different experts separately deal with a sub-part of predicates and merge their outputs \cite{dong2022stacked,sudhakaran2023vision}.
+Different from these approaches, we mitigate the long-tail problem in SGG by exploiting knowledge from the head predicates and triplets.
+Our method involves transferring the abundant variations from the head predicates and their associate triplets to the tail, thus enriching patterns of the tail predicates. 
+
+
+
+
+Method
+
+
+An overview of our Dual-granularity Relation Modeling (DRM) network is illustrated in Figure \ref{fig:framework}. 
+DRM aims to balance and integrate coarse-grained predicate cues and fine-grained triplet cues for relation recognition. 
+To this end, a predicate cue modeling module and a triplet cue modeling module are designed to extract predicate cues shared across diverse subject and object pairs, and triplet cues shared by specific subject-object pairs, respectively. 
+Moreover, the Dual-granularity Knowledge Transfer (DKT) strategy is proposed for unbiased SGG. 
+This strategy transfers the knowledge of both predicates and triplets from head categories to tail ones, with the objective of enriching the pattern of tail predicates and their associated triplets.
+
+\subsection{The DRM Network Backbone}
+The backbone of our DRM network is composed of a proposal network and an entity encoder. Features generated by the backbone are further fed into subsequent predicate and triplet cue modeling modules.
+
+\textbf{Proposal Network.} 
+Given an image $\mathcal{I}$, the proposal network generates $N$ entities
+along with their corresponding visual features, label predictions, and spatial features from their bounding boxes.
+A pre-trained Faster RCNN \cite{ren2015faster} is adopted as the proposal network in this paper.
+And following previous works \cite{zellers2018neural,tang2019learning,li2021bipartite,dong2022stacked}, we initialize the entity representations $\{\mathbf{v}_i\}_{i=1}^N$ with their visual and spatial features, encode the union feature $\mathbf{u}_{i,j}$ between the $i$-th entity and the $j$-th entity with their relative spatial representation and the ROI feature of their union box, and obtain the semantic features $\{\mathbf{s}_i\}_{i=1}^N$ of entities using word embeddings of their class labels.
+
+\textbf{Entity Encoder.} The entity encoder is designed to refine features of entities with their contexts for further predictions. 
+Inspired by Dong \textit{et al.} \cite{dong2022stacked}, we utilize the Hybrid Attention (HA) to incorporate semantic cues $\{\mathbf{s}_i\}_{i=1}^N$ into entities $\{\mathbf{v}_i\}_{i=1}^N$ while modeling the scene context. 
+Each layer of Hybrid Attention is composed of two Self-Attention (SA) units and two Cross-Attention (CA) units, which is built upon the multi-head attention module \cite{vaswani2017attention}.
+The Hybrid Attention at the $l$-th layer can be formulated as:
+\begin{equation}
+    \left \{
+    \begin{aligned}
+	\mathbf{X}^{(l)} = SA(\mathbf{X}^{(l-1)}) + CA(\mathbf{X}^{(l-1)}, \mathbf{Y}^{(l-1)}),
+	\\
+	\mathbf{Y}^{(l)} = SA(\mathbf{Y}^{(l-1)}) + CA(\mathbf{Y}^{(l-1)}, \mathbf{X}^{(l-1)}),
+	\end{aligned}
+	\right.
+\end{equation}
+where $\mathbf{X}^{(l-1)}$ and $\mathbf{Y}^{(l-1)}$ are inputs of the $l$-th HA layer. We directly fuse outputs of SA and CA units with an addition operation.
+
+Our entity encoder $Enc_{ent}$ is consisted of a stacked 4-layer Hybrid Attention, and we have $\mathbf{X}^{(0)}=\{\mathbf{v}_i\}_{i=1}^N$, $\mathbf{Y}^{(0)}=\{\mathbf{s}_i\}_{i=1}^N$, and:
+\begin{equation}
+    \{\mathbf{v}^{\prime}_i\}_{i=1}^N = Enc_{ent}(\{\mathbf{v}_i\}_{i=1}^N, \{\mathbf{s}_i\}_{i=1}^N),
+\end{equation}
+where the refined entity representations $\{\mathbf{v}^{\prime}_i\}_{i=1}^N$ are obtained by summing up of outputs from the last HA layer.
+\subsection{Predicate and Triplet Cue Modeling}
+Previous approaches tend to categorize predicates in a coarse manner, most of which only focus on predicate cues shared among various subject-object pairs, and thus cannot effectively deal with the potentially large visual variations inherent in the identical predicate.
+In contrast to these approaches, our method considers both coarse-grained predicate cues and fine-grained triplet cues, leveraging and striking a balance between the dual-grained cues for accurate predicate categorization. 
+Our DRM network involves a Predicate Cue Modeling module and a Triplet Cue Modeling module for extracting features at these two granularities respectively. 
+Additionally, we introduce Dual-Granularity Constraints to decrease the intra-class variance and increase inter-class distinguishability, explicitly enforcing the predicate and triplet branches to concentrate on cues from their corresponding granularities and preventing the degradation of dual-granularity space.
+\textbf{Predicate Cue Modeling.}
+Our predicate cue modeling module $Enc_{prd}$, comprising a 2-layer Hybrid Attention, aims to capture predicate cues across different subject-object pairs. 
+In each HA layer of $Enc_{prd}$, the two Self-Attention units are designed to model predicate and entity contextual information. 
+And the two Cross-Attention units are designed to capture the dependency between entities and predicates, 
+where the predicate $\mathbf{p}_{i,j}$ solely queries the contexts of its corresponding subject $\mathbf{e}_i$ and object $\mathbf{e}_j$, and the entity $\mathbf{e}_i$ only queries predicates related to it.
+Our Predicate Cue Modeling process can thus be formulated as:
+\begin{equation}
+    \{\mathbf{p}^{\prime}_{i,j}\}_{i\neq j}^{M} = Enc_{prd}(\{\mathbf{p}_{i,j}\}_{i\neq j}^{M}, \{\mathbf{e}_i\}_{i=1}^N),
+\end{equation}
+where the predicate representation $\mathbf{p}_{i,j}$ is initialized with the union feature $\mathbf{u}_{i,j}$, 
+the entity representation $\mathbf{e}_i$ is obtained with the concatenation of $\mathbf{v}^{\prime}_i$ and $\mathbf{v}_i$, $M=N\times(N-1)$ is the number of subject-object pairs, and $\mathbf{p}^{\prime}_{i,j}$ is the corresponding output of $\mathbf{p}_{i,j}$ at the last HA layer.
+
+\textbf{Triplet Cue Modeling.}
+Our triplet cue modeling module $Enc_{tpt}$ is also constructed using a 2-layer Hybrid Attention. This module is responsible for obtaining fine-grained triplet cues that are shared by specific subject-object pairs.
+The two Self-Attention units in each HA layer of $Enc_{tpt}$ are designed to model visual and semantic contextual information of triplets, respectively, and the two Cross-Attention units aim at fusing semantic cues into the visual information of triplets.
+We initialize the triplet representation $\mathbf{t}_{i,j}$ with the concatenation of the subject representation $\mathbf{e}_i$, predicate representation $\mathbf{p}_{i,j}$, and object representation $\mathbf{e}_j$.
+Our Triplet Cue Modeling process is formulated as:
+\begin{equation}
+    \{\mathbf{t}^{\prime}_{i,j}\}_{i\neq j}^{M} = Enc_{tpt}(\{\mathbf{t}_{i,j}\}_{i\neq j}^{M}, \{[\mathbf{s}^{\prime}_i, \mathbf{s}^{\prime}_j]\}_{i\neq j}^{M}),
+\end{equation}
+where $\mathbf{s}^{\prime}_i$ is the word embedding of predicted entity label, 
+and $[\cdot,\cdot]$ denotes the concatenate operation. $\mathbf{t}^{\prime}_{i,j}$ is the contextually and semantically aware triplet feature, and is derived from the addition of outputs from the last HA layer. 
+\textbf{Dual-granularity Constraints.}
+Although we explicitly model predicate and triplet cues with $Enc_{prd}$ and $Enc_{tpt}$, they may degrade beyond our desires with a single predicate cross-entropy loss.
+To prevent this degradation, we propose the dual-granularity constraints to guide the predicate and triplet cue modeling modules to refine representations in their desired granularities. 
+Specifically, we generate two views of an input relation and impose a predicate category-aware supervised contrastive learning loss on predicate representations to capture the coarse-grained predicate cues as:
+\begin{equation}
+\label{eq:loss_prd}
+  \mathcal{L}_{p} =  - \log{\frac{\exp(\langle \mathbf{p}^{\prime\prime}_{i,j}, \mathbf{p}^{\prime\prime}_{pos_p} \rangle / \tau_{p})}{
+  \sum_{b \in \mathcal{B}(i,j)} \exp(\langle \mathbf{p}^{\prime\prime}_{i,j}, \mathbf{p}^{\prime\prime}_{b} \rangle / \tau_{p})}},
+\end{equation}
+where $\mathbf{p}^{\prime\prime}_{i,j}$ is obtained by passing $\mathbf{p}^{\prime}_{i,j}$ through a projection layer comprising two fully connected layers,
+$\tau_{p}$ is the temperature, 
+$pos_p$ denotes the subscripts of positive samples belonging to the same predicate category as $\mathbf{p}^{\prime\prime}_{i,j}$, $\langle\cdot,\cdot\rangle$ is the cosine similarity function, 
+and $\mathcal{B}(i,j)$ denotes the subscript set of samples within the same batch.
+
+Similarly, a triplet category-aware supervised contrastive learning loss is applied on triplet representations, aiming at capturing the fine-grained triplet cues as:
+\begin{equation}
+\label{eq:loss_tpt}
+  \mathcal{L}_{t} =  -  \log{\frac{\exp(\langle \mathbf{t}^{\prime\prime}_{i,j}, \mathbf{t}^{\prime\prime}_{pos_t} \rangle / \tau_{t})}{
+  \sum_{b \in \mathcal{B}(i,j)} \exp(\langle \mathbf{t}^{\prime\prime}_{i,j}, \mathbf{t}^{\prime\prime}_{b} \rangle / \tau_{t})}},
+\end{equation}
+where $\tau_{t}$ is the temperature, 
+$pos_t$ denotes subscripts of positive samples from the same triplet category as $\mathbf{t}^{\prime\prime}_{i,j}$, and $\mathbf{t}^{\prime\prime}_{i,j}$ is obtained by passing $\mathbf{t}^{\prime}_{i,j}$ through a projection layer.
+\textbf{Scene Graph Prediction.}
+For each relationship proposal, our predicate classifier utilizes two fully connected layers to integrate the coarse-grained and fine-grained cues, \ie $\mathbf{p}^{\prime}_{i,j}$ and $\mathbf{t}^{\prime}_{i,j}$, to obtain the final relation label prediction.
+For each entity, we also introduce a fully connected layer with softmax function to get its refined label prediction. 
+
+\textbf{Training Loss.}
+During the training in the first stage of DRM, the overall loss function $\mathcal{L}$ is defined as:
+\begin{equation}
+\label{eq:loss_all}
+  \mathcal{L} =  \lambda_{e}\mathcal{L}_{e} + \lambda_{r}\mathcal{L}_{r} + \lambda_{p}\mathcal{L}_{p} + \lambda_{t}\mathcal{L}_{t},
+\end{equation}
+where $\mathcal{L}_{e}$ and $\mathcal{L}_{r}$ are cross-entropy losses of entities and relationships respectively. $\lambda_{e}$, $\lambda_{r}$, $\lambda_{p}$, and $\lambda_{t}$ are pre-defined weight hyper-parameters for corresponding loss terms.
+\subsection{Dual-granularity Knowledge Transfer}
+The SGG task typically suffers from the long-tail distribution problem.
+This problem primarily originates from the tail predicate classes, which possesses limited types and quantities of triplets. 
+The head predicate classes contain a relatively larger number of samples and an abundance of triplet types.
+Thus to alleviate the long-tail problem, we propose the Dual-granularity Knowledge Transfer (DKT) strategy to transfer knowledge in predicate and triplet feature spaces from head predicate class to the tail one.
+DKT generates samples belonging to the tail predicates with their associated predicate and triplet features, thereby enriching and diversifying the patterns of tail predicates.
+
+Specifically, DKT first calculates the distributions of predicate and triplet features.
+We assume that the distribution of each category $\Omega_c$ follows a multidimensional Gaussian distribution. 
+Formally, it can be expressed as $\{ \Omega_c = \mathcal{N}(\bm{\mu}_c, \bm{\sigma}_c) | c \in \mathcal{C} \}$, where $\bm{\mu}_c$ and $\bm{\sigma}_c$ denote the mean and covariance of $\Omega_c$, and $c$ denotes the predicate or triplet category.
+After the first-stage pre-training of DRM network, we freeze the proposal network, entity encoder, and the predicate and triplet cue modeling modules. 
+Subsequently, the compact predicate and triplet features, \ie $\mathbf{p}^{\prime}$ and $\mathbf{t}^{\prime}$, are extracted to calculate the predicate and triplet feature distributions, respectively.
+The mean, denoted as $\bm{\mu}_c$, is calculated as $\bm{\mu}_c = \frac{1}{N_c} \sum^{N_c}_{k}\mathbf{x}_k^c$.
+The covariance, symbolized as $\bm{\sigma}_c$, is calculated as $\bm{\sigma}_c = \frac{1}{N_c - 1} \sum^{N_c}_k (\mathbf{x}^c_k - \bm{\mu}_c)(\mathbf{x}^c_k - \bm{\mu}_c)^T$.
+Here, $\mathbf{x}_i^c$ denotes the feature of category $c$, and $N_c$ is the number of $\mathbf{x}_k^c$. The feature $\mathbf{x}$ can be either $\mathbf{p}^{\prime}$ or $\mathbf{t}^{\prime}$.
+
+We then transfer knowledge of feature distributions of head predicate classes to the tail ones.
+Specifically, we arrange the predicate classes in descending order based on their sample numbers, choosing half of the predicate classes as head predicates and the remaining ones as tail predicates. 
+We further select triplets that appear more than certain times in the head predicates to be the head triplets (we use 64 times as the threshold in this paper), and those in the tail predicates to be the tail triplets.
+For each tail category $i \in \mathcal{C}$, we compute the euclidean distance $d_{i,j}$ between its center $\bm{\mu}_i$ and the center $\bm{\mu}_j$ of head category $j \in \mathcal{C}$.
+The closer the centers of two categories are to each other in either predicate or triplet space, the more similar they are, which also increases the likelihood of knowledge sharing between them.
+Based on $d_{i,j}$, we achieve the knowledge transfer as:
+\begin{equation}
+\label{eq:transfer_cov}
+  \bm{\sigma}^{\prime}_{i} = \frac{N_{i}}{Q_{i}}\bm{\sigma}_{i} + (1-\frac{N_{i}}{Q_{i}})\sum_{j}\alpha_{i,j}\bm{\sigma}_{j},
+\end{equation}
+where $\alpha_{i,j}$ denotes the softmax normalized form of $d_{i,j}$, 
+$Q_{i}$ denotes the desired number of predicate/triplet instances of tail class $i$ and it is identical for every predicates in the tail. 
+It suggests that the tail category with fewer samples requires more knowledge from the head for calibration. 
+
+After dual-granularity knowledge transfer, we generate synthetic samples in tail predicate using corresponding predicate and triplet features from calibrated distributions:
+\begin{equation}
+\label{eq:sample}
+  \{ \Tilde{\bm{x}} | \Tilde{\bm{x}} \sim \Omega^{\prime}_c = \mathcal{N}(\bm{\mu}_c, \bm{\sigma}^{\prime}_c) \}.
+\end{equation}
+
+Finally, we under-sample head predicates to form a balanced dataset and input the real instances together with synthetic ones into the relation classifier for fine-tuning. Benefiting from the dual-granularity knowledge transfer, the patterns of tail predicates and their associate triplets can be enriched, thus alleviating the long-tail problem.
+
+
+\begin{table*}[tbp]
+    \centering
+    \scalebox{0.9}{
+            \begin{tabular}{ l | c c  | c   c | c  c}
+                \hline
+                \multirow{2}{*}{Models} & \multicolumn{2}{c|}{PredCls} & \multicolumn{2}{c|}{SGCls} & \multicolumn{2}{c}{SGDet} \\
+                & R@50/100 & mR@50/100 
+               & R@50/100 & mR@50/100 
+               & R@50/100 & mR@50/100  \\
+                \hline
+                \hline
+                IMP~\cite{xu2017scene}$_{\textit{CVPR'17}}$
+                & 61.1 / 63.1 & 11.0 / 11.8 
+                & 37.5 / 38.5 & 6.2 / 6.5 
+                & 25.9 / 31.2 & 4.2 / 5.3  \\
+                VTransE~\cite{zhang2017visual}$_{\textit{CVPR'17}}$
+                & 65.7 / 67.6 & 14.7 / 15.8
+                & 38.6 / 39.4 & 8.2 / 8.7 
+                & 29.7 / 34.3 & 5.0 / 6.1  \\
+                MOTIFS~\cite{zellers2018neural}$_{\textit{CVPR'18}}$
+                & 66.0 / 67.9 & 14.6 / 15.8 
+                & 39.1 / 39.9 & 8.0 / 8.5
+                & 32.1 / 36.9 & 5.5 / 6.8  \\
+                G-RCNN~\cite{yang2018graph}$_{\textit{ECCV'18}}$
+                & 65.4 / 67.2 & 16.4 / 17.2
+                & 37.0 / 38.5 & 9.0 / 9.5 
+                & 29.7 / 32.8 & 5.8 / 6.6 \\
+                VCTREE~\cite{tang2019learning}$_{\textit{CVPR'19}}$
+                & 65.5 / 67.4 & 16.7 / 17.9 
+                & 40.3 / 41.6 & 7.9 / 8.3 
+                & 31.9 / 36.0 & 6.4 / 7.3  \\
+                GPS-Net~\cite{lin2020gps}$_{\textit{CVPR'20}}$
+                & 65.2 / 67.1 & 15.2 / 16.6 
+                & 37.8 / 39.2 & 8.5 / 9.1 
+                & 31.3 / 35.9 & 6.7 / 8.6  \\
+                RU-Net~\cite{lin2022ru}$_{\textit{CVPR'22}}$
+                & 67.7 / 69.6 & \, \; - \, / 24.2 
+                & 42.4 / 43.3 & \, \; - \, / 14.6 
+                & 32.9 / 37.5 & \, \; - \, / 10.8  \\
+                HL-Net~\cite{lin2022hl}$_{\textit{CVPR'22}}$
+                & 67.0 / 68.9 & \, \; - \, / 22.8
+                & \textcolor{blue}{\textbf{\underline{42.6}}} / \textcolor{blue}{\textbf{\underline{43.5}}} 
+                & \, \; - \, / 13.5 
+                & \textcolor{blue}{\underline{\textbf{33.7}}} / \textcolor{blue}{\underline{\textbf{38.1}}}
+                & \, \; - \, / 9.2 \,  \\
+                PE-Net(P)~\cite{zheng2023prototype}$_{\textit{CVPR'23}}$
+                & \textcolor{blue}{\textbf{\underline{68.2}}} / \textcolor{blue}{\textbf{\underline{70.1}}} 
+                & 23.1 / 25.4 
+                & 41.3 / 42.3 & 13.1 / 14.8
+                & 32.4 / 36.9 & \, 8.9  / 11.0  \\
+                VETO~\cite{sudhakaran2023vision}$_{\textit{ICCV'23}}$
+                & 64.2 / 66.3 & 22.8 / 24.7 
+                & 35.7 / 36.9 & 11.1 / 11.9 
+                & 27.5 / 31.5 & 8.1 / 9.5  \\
+                \hline
+                TDE$^{\diamond}$~\cite{tang2020unbiased}$_{\textit{CVPR'20}}$
+                & 46.2 / 51.4 & 25.5 / 29.1 
+                & 27.7 / 29.9 & 13.1 / 14.9 
+                & 16.9 / 20.3 & 8.2 / 9.8 \\
+                CogTree$^{\diamond}$~\cite{yu2021cogtree}$_{\textit{IJCAI'21}}$
+                & 35.6 / 36.8 & 26.4 / 29.0 
+                & 21.6 / 22.2 & 14.9 / 16.1 
+                & 20.0 / 22.1 & 10.4 / 11.8  \\
+                BPL-SA$^{\diamond}$~\cite{guo2021general}$_{\textit{ICCV'21}}$
+                & 50.7 / 52.5 & 29.7 / 31.7 
+                & 30.1 / 31.0 & 16.5 / 17.5 
+                & 23.0 / 26.9 & 13.5 / 15.6 \\
+                VisualDS$^{\diamond}$~\cite{yao2021visual}$_{\textit{ICCV'21}}$
+                & \, \; - \;  /\, \; - \; \, & 16.1 / 17.5 
+                & \, \; - \;  /\, \; - \; \, & 9.3 / 9.9 
+                & \, \; - \;  /\, \; - \; \, & 7.0 / 8.3 \\
+                NICE$^{\diamond}$~\cite{li2022devil}$_{\textit{CVPR'22}}$
+                & 55.1 / 57.2 & 29.9 / 32.3
+                & 33.1 / 34.0 & 16.6 / 17.9 
+                & 27.8 / 31.8 & 12.2 / 14.4 \\
+                PPDL$^{\diamond}$~\cite{li2022ppdl}$_{\textit{CVPR'22}}$
+                & 47.2 / 47.6  & 32.2 / 33.3 
+                & 28.4 / 29.3 & 17.5 / 18.2
+                & 21.2 / 23.9 & 11.4 / 13.5\\
+                GCL$^{\diamond}$~\cite{dong2022stacked}$_{\textit{CVPR'22}}$
+                & 42.7 / 44.4 & 36.1 / 38.2 
+                & 26.1 / 27.1 & 20.8 / 21.8 
+                & 18.4 / 22.0 & 16.8 / 19.3  \\
+                IETrans$^{\diamond}$~\cite{zhang2022fine}$_{\textit{ECCV'22}}$
+                & \, \; - \;  /\, \; - \; \, & 35.8 / 39.1 
+                & \, \; - \;  /\, \; - \; \, & 21.5 / 22.8 
+                & \, \; - \;  /\, \; - \; \, & 15.5 / 18.0  \\
+                INF$^{\diamond}$~\cite{biswas2023probabilistic}$_{\textit{CVPR'23}}$
+                & 51.5 / 55.1 & 24.7 / 30.7  
+     
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

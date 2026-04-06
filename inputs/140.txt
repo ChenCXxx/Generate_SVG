@@ -1,0 +1,327 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Real-world data often have a long-tailed and open-ended distribution~\citep{liu2019large}.
+As a cornerstone for AI applications~\cite{yang2019end}, Question Answering (QA) is widely investigated to tackle various QA tasks involving diverse formats and domains~\citep{khashabi-etal-2020-unifiedqa,zhong-etal-2022-proqa}.
+The frequency distribution of QA tasks in our daily life is long-tailed~\citep{reed2001pareto}, with a few head tasks of adequate samples and many more tail tasks of limited samples, and we continuously encounter new tasks that are not seen during training in an open world.
+
+We formally study \textit{Open Long-Tailed QA} (OLTQA) emerging in natural data settings.
+A practical QA system shall learn from long-tailed distributed data, i.e., a few head tasks and many tail tasks, and it is expected to perform well over a balanced test set which include head, tail, and unseen tasks.
+
+OLTQA must handle not only few-shot learning for tail tasks in the closed world~\citep{shu2017doc}, but also zero-shot learning for unseen tasks in an open world~\citep{scheirer2012toward} with one unified model.
+A major challenge for OLTQA is the lack of knowledge required for the language understanding and reasoning abilities of QA tasks, especially under such low resource conditions~\citep{yan-etal-2020-multi-source}.
+Therefore, it is important for an OLTQA model to share knowledge between head, tail, and unseen QA tasks~\citep{zaremoodi-etal-2018-adaptive}, and mine knowledge from external resources~\citep{,liu-etal-2022-generated}.\looseness=-1
+
+However, it is non-trivial to directly extend previous methods to the OLTQA setting.
+Specifically, an effective implementation of knowledge sharing is the multi-task learning (MTL) approach~\citep{liu-etal-2019-multi,raffel2020exploring}, in which task-specific components are maintained to preserve learned knowledge~\citep{aghajanyan-etal-2021-muppet,karimi-mahabadi-etal-2021-parameter}.
+As we constantly encounter new tasks in practice, it is challenging to directly apply MTL methods since they do not explicitly model samples from unseen tasks.
+
+Another challenge is the absence of samples from unseen tasks in the training process, which leads to poor prior knowledge about unseen tasks.
+Fortunately, a large pre-trained language model (LM) embeds broad-coverage knowledge that can help a variety of tasks~\citep{rubin-etal-2022-learning}.
+One key ingredient in LM knowledge mining is to select demonstrative in-context examples, which guild the LM to generate text that express knowledge for downstream tasks~\citep{liu-etal-2022-makes}.
+However, few studies have explored selecting in-context examples to directly optimize QA performance in the OLTQA setting.
+
+In this study, we propose an OLTQA model to address challenges mentioned above for the OLTQA setting.
+Specifically, to encourage knowledge sharing between head and tail tasks while acknowledging the emergence of unseen tasks, we organize our model at the instance-level and use a dynamic architecture for each input~\citep{Wiwatcharakoses2020SOINNAS}, i.e., a pool of fine-grained components are maintained  and dynamically combined in each forward pass based on the input~\citep{Wang2021LearningTP}.
+This scheme tackles unseen tasks, since the learned knowledge is distributed into different model components~\citep{Trauble2022DiscreteKB}.
+
+We further mine knowledge from a large pre-trained LM.
+Concretely, we employ a retrieve-then-rerank frame~\citep{ren-etal-2021-rocketqav2} to select demonstrative in-context examples for a test instance, which guide the LM to decode the output~\citep{brown2020language}.
+The LM outputs are viewed as hints for QA tasks~\citep{zhang2022birdqa} and leveraged for improving QA performance.
+The retrieve-then-rerank frame consists of an efficient retriever and an effective re-ranker~\citep{zamani2022stochastic}, which is optimized by a two-stage training approach.
+The first stage pre-trains the retrieve-then-rerank framework by knowledge distillation from a pre-trained LM~\citep{Izacard2022FewshotLW}.
+The second stage jointly train the above framework and an encoder-decoder QA model through adaptive mutual knowledge distillation~\citep{xie2022performance} to allow information exchange between each other.
+Our key contributions are summarized as follows:
+
+\begin{itemize}
+    \item We formally define the OLTQA task, which learns from natural long-tail distributed data and optimizes the performance over seen and unseen tasks. We curate a large OLTQA dataset according to a
+long-tail distribution from  43 existing representative QA datasets.
+    \item We propose an OLTQA model, consisting of knowledge sharing and knowledge mining components to address challenges of OLTQA. An instance-level knowledge sharing mechanism is introduced, and a retrieve-then-rerank frame is employed to mine knowledge from a large pre-trained LM through a novel two-stage knowledge distillation training process.
+    \item Our extensive experimentation on the OLTQA dataset demonstrates that our model consistently outperforms the state-of-the-art.
+\end{itemize}
+
+
+
+Related Work
+
+\textbf{Question Answering (QA)} is important for advanced AI applications \cite{yang2019end}.
+Recent approaches try to build unified QA models by casting different QA tasks into a unified text-to-text format~\cite{mccann2019the,khashabi-etal-2020-unifiedqa,zhong-etal-2022-proqa}.
+Some works try to improve QA performance under the low-resource conditions~\citep{yan-etal-2020-multi-source,van2021cheap,bai2022domain}.
+Some approaches also attempt to solve the open-domain QA problem, aiming at answering general domain questions through an extensive collection of documents~\cite{voorhees1999trec,chen-etal-2017-reading,NEURIPS2021_da3fde15,cheng-etal-2021-unitedqa}.
+These approaches do not learn from natural long-tail distributed data.
+\textbf{Long-Tailed Learning} focuses on long-tail distributed data~\citep{liu2019large}.
+Recent approaches for long-tailed learning include re-balancing~\citep{Zhang_2021_ICCV}, information augmentation~\citep{He_2021_ICCV}, and module improvement~\citep{Cui_2021_ICCV}.
+In this study, we attempt to build a QA model from long-tail distributed data by knowledge sharing and knowledge mining.
+\textbf{Knowledge Mining} from external resources is essential for building robust QA models~\cite{pan-etal-2019-improving-question}.
+Wikipedia and knowledge bases are used to improve QA performance~\citep{bi-etal-2019-incorporating,banerjee-etal-2019-careful}.
+Large pre-trained LMs store rich knowledge, which is used to solve various tasks via conditioned generation~\cite{petroni-etal-2019-language}.
+Recent approaches build prompt retrievers to select in-context examples from a training set to optimize LM generation performance~\citep{rubin-etal-2022-learning}.
+However, these approaches cannot directly optimize our OLTQA model. In this study, we jointly train a retrieve-then-rerank framework and a QA model to enhance QA performance.
+
+\textbf{Knowledge distillation (KD)} is often employed to learn a student model using the knowledge distilled from a teacher model by enforcing the agreement of outputs between the two models~\cite{hinton2015distilling}.
+Mutual KD helps a group of models mutually generate knowledge to train each other~\citep{zhao2021novel}.
+Our OLTQA model jointly trains the retrieve-then-rerank frame and the QA model through adaptive mutual KD, encouraging them to collaborate with each other~\citep{xie2022performance}.
+
+
+
+Method
+
+\subsection{Problem Setup}
+
+In this study, we aim to learn from $n$ QA tasks $\{T_1,\cdots,T_n\}$, in which training sets follow a long-tailed Zipf distribution with power value $\alpha$, i.e., a few head tasks of adequate samples and many tail tasks of limited samples.
+Each sample of $T_i$ is a tuple of a context $\boldsymbol{c}$, a question $\boldsymbol{q}$, and an answer $\boldsymbol{a}$: $\langle \boldsymbol{c}, \boldsymbol{q}, \boldsymbol{a} \rangle$.
+Our QA model $F$ is built to predict $\boldsymbol{a}$ based on $\boldsymbol{c}$ and $\boldsymbol{q}$.
+We also consider a more challenging setting in an open world, i.e., model $F$ needs to predict answers for unseen tasks.
+Therefore, we collect another $\widetilde{n}$ unseen tasks $\{T_{n+1}, \cdots, T_{n+\widetilde{n}}\}$ that are only used for testing.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width = 1.0\linewidth]{figs/framework.pdf}
+\caption{Two key ingredients introduced in our model:(a) Knowledge sharing between head, tail, and unseen tasks at the instance level by maintaining a pool of prompts $\{\mathcal{P}_m^i\}_{i=1}^s$; (b) Knowledge mining from a pre-trained LM $g$ using a retrieve-then-rerank framework.}
+\label{fig:pipeline}
+\end{figure*} 
+
+\subsection{Overview}
+Our model tackles the open long-tailed QA problem by training a prompt-enhanced encoder-decoder QA model $F$ on long-tailed distributed data.
+There are mainly two challenges to be addressed: (1) How to alleviate the low-resource problem and share knowledge between head, tail, and unseen tasks; (2) How to mine knowledge from external resources.
+These two issues are tackled with two key ingredients in our model (see Figure~\ref{fig:pipeline}): 1. An instance-level knowledge sharing method (Section~\ref{sec:ks}); 2. A knowledge mining method from a pre-trained language model (Section~\ref{sec:km}).
+
+We follow previous approaches to serialize the context $\boldsymbol{c}$, question $\boldsymbol{q}$, and answer $\boldsymbol{a}$ into text sequences~\cite{khashabi-etal-2020-unifiedqa,zhong2022proqa}.
+For each training sample $\langle \boldsymbol{c}, \boldsymbol{q}, \boldsymbol{a} \rangle$, we first construct a prompt $\mathcal{P}$ based on $\boldsymbol{c}$ and $\boldsymbol{q}$, and then the encoder takes in the concatenation of $\mathcal{P}$, $\boldsymbol{c}$, and $\boldsymbol{q}$ and the decoder predicts $\boldsymbol{a}$, i.e., $p(\boldsymbol{a}|[\mathcal{P};\boldsymbol{c};\boldsymbol{q}])$, where $[;]$ denotes the sequence concatenation operation.\looseness=-1
+~Specifically, $\mathcal{P}$ is a concatenation of two kinds of prompts, i.e., a meta prompt $\mathcal{P}_m$ and a knowledge prompt $\mathcal{P}_k$.
+To capture fine-grained knowledge distributed in each input sample, we maintain $s$ meta prompts $\{\mathcal{P}_m^i\}_{i=1}^s$ and dynamically combine these prompts based on $\boldsymbol{c}$ and $\boldsymbol{q}$ to obtain $\mathcal{P}_m$~\cite{Wang2021LearningTP}.
+We associate a key vector $\boldsymbol{k}_m^i$ for each meta prompt $\mathcal{P}_m^i$, respectively.
+A fixed query function $h$ is built to map $\boldsymbol{c}$ and $\boldsymbol{q}$ to a query vector $\boldsymbol{x}=h(\boldsymbol{c}, \boldsymbol{q})$.
+$h$ is initialized by a fixed pre-trained LM and not tuned in the training phase.
+$\mathcal{P}_m$ can be determined by retrieving the most similar key vectors $\boldsymbol{k}_m^i$ using $\boldsymbol{x}$.
+Note that $\mathcal{P}_m$ is a soft prompt, i.e., a sequence of trainable embeddings that is randomly initialized and optimized when training QA model $F$~\citep{liu2021gpt}.
+
+We also mine knowledge from a large pre-trained LM $g$ to construct knowledge prompt $\mathcal{P}_k$.
+\citet{liu-etal-2022-makes} showed that the efficacy of output generated by an LM could vary widely depending on the choice of in-context examples.
+In this study, we introduce a retrieve-then-rerank framework $\langle R_1, R_2 \rangle$~\citep{ren-etal-2021-rocketqav2} to select in-context examples from a training set $\mathcal{D}_{tr}$, consisting of a retriever $R_1$ and a re-ranker $R_2$~\citep{zamani2022stochastic}.
+The retriever $R_1$ is implemented as an efficient dual-encoder~\cite{xiong2021approximate}.
+The re-ranker $R_2$ is built as a more effective cross-encoder~\cite{luan-etal-2021-sparse}.
+For a test instance $\langle \boldsymbol{c}, \boldsymbol{q} \rangle$, we mine knowledge following three steps:
+\textbf{1.} $R_1$ retrieves a subset of $l$ candidate examples $\{\boldsymbol{e}_i=\langle \boldsymbol{c}_i, \boldsymbol{q}_i, \boldsymbol{a}_i \rangle\}_{i=1}^l$ from training set $\mathcal{D}_{tr}$;
+\textbf{2.} LM $g$ produces a text $\boldsymbol{h}_i$ for each example $\boldsymbol{e}_i$ by conditional generation $p_g(\boldsymbol{h}_i|[\boldsymbol{e}_i;\boldsymbol{c};\boldsymbol{q}])$, which can serve as a hint for the test instance;
+\textbf{3.} $R_2$ further select top $\widetilde{l}$ hints $\{\boldsymbol{h}_i\}_{i=1}^{\widetilde{l}}$ to obtain the knowledge prompt $\mathcal{P}_k$ $(\widetilde{l} \ll l)$, in which the scoring function measures the similarity between $\langle \boldsymbol{c}, \boldsymbol{q} \rangle$ and $\langle\boldsymbol{e}_i,\boldsymbol{h}_i \rangle$.
+Note that $\mathcal{P}_k$ is a hard prompt~\cite{jiang-etal-2020-know}, which is a concatenation of texts in $\{\boldsymbol{h}_i\}_{i=1}^{\widetilde{l}}$.
+
+\subsection{Instance-level Knowledge Sharing}\label{sec:ks}
+To facilitate knowledge sharing between head, tail, and unseen tasks at the instance level, we maintain a pool of prompts and optimize key vectors assigned to these prompts.
+Specifically, for each input $\langle \boldsymbol{c},\boldsymbol{q} \rangle$, we select $\widetilde{s}$ prompt keys that are closest to the query vector $\boldsymbol{x}=h(\boldsymbol{c},\boldsymbol{q})$ and concatenate these $\widetilde{s}$ associated meta prompts to obtain $\mathcal{P}_m$.
+Intuitively, the knowledge associated with the input sample is distributed in these $\widetilde{s}$ meta prompts.
+
+When learning meta prompt keys, we assume the distribution of these keys should balance  diversity and locality.
+Concretely, meta prompts are expected to distribute to the whole vector space so that every meta prompt can be involved in the training process, while similar prompt keys are grouped into clusters so that the knowledge of each sample can be better shared.
+We propose  the following loss to enforce the above two properties:
+\begin{equation}
+\begin{aligned}
+\label{eq:meta}
+    \mathcal{L}_{m} = &  \mathop{\mathbb{E}}_{\langle \boldsymbol{c}, \boldsymbol{q}, \boldsymbol{a} \rangle \in \mathcal{D}_{tr} }(  \mathop{\sum}\limits_{i \in \mathcal{S}(\boldsymbol{x})}{\rm  max}(0,||\bm{k}_m^{i}, \boldsymbol{x}||-\eta)\\&+\mathop{\sum}\limits_{i, j \in \mathcal{S}(\bm{x})}{\rm max}(0,\gamma-||\bm{k}_m^{i},\bm{k}_m^{j}||)/{\widetilde{s}}^2),
+\end{aligned}
+\end{equation}
+where the operator $||\cdot,\cdot||$ determines the distance between two input vectors (here we use cosine distance), $\mathcal{D}_{tr}$ is the training set of all seen tasks, $\mathcal{S}(\boldsymbol{x})$  is the index set of $\widetilde{s}$ selected meta prompt keys that are closest to $\boldsymbol{x}$,
+$\eta$ and $\gamma$ are scalar hyper-parameters to control the distance margin. Specifically, the first term in the above equation pulls these selected meta prompt keys around the query vector. The second term pushes these keys away from each other to occupy the whole vector space.
+
+\subsection{Pre-trained LM Knowledge Mining}\label{sec:km}
+
+To further enhance QA performance, we also mine knowledge from a large pre-trained LM $g$.
+We employ a retrieve-then-rerank framework $\langle R_1, R_2 \rangle$ to retrieve in-context examples from a training set $\mathcal{D}_{tr}$ and further select hints for the test instance that are generated by LM $g$.
+We propose a two-stage knowledge distillation method to jointly train the framework $\langle R_1, R_2 \rangle$ and QA model $F$.
+
+\paragraph{Stage \uppercase\expandafter{\romannumeral1}.} We pre-train $R_1$ and $R_2$ by knowledge distillation from a pre-trained LM $g$, inspired by ~\citet{rubin-etal-2022-learning}.
+We first construct a set of $c$ candidate examples $\{\boldsymbol{e}_i=\langle \boldsymbol{c}_i, \boldsymbol{q}_i, \boldsymbol{a}_i \rangle\}_{i=1}^c$ for a traning instance $\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle$ with BM25~\citep{robertson2009probabilistic} .
+Then, we score each candidate example $\boldsymbol{e}_i$ and calculate a distribution of candidate examples by applying the Softmax operator over the resulting scores, based on scoring functions of LM $g$, $R_1$, and $R_2$, respectively.
+Specifically, the distribution for the LM  $g$ scoring function is:
+\begin{equation}
+p_{lm}(\boldsymbol{e}_k)=\frac{\exp(\log(p_{g}(\boldsymbol{a}|[\boldsymbol{e}_k; \boldsymbol{c}; \boldsymbol{q} ])))}{\sum_{i=1}^c \exp(\log(p_{g}(\boldsymbol{a}|[\boldsymbol{e}_i; \boldsymbol{c}; \boldsymbol{q} ])))}, \nonumber
+\end{equation}
+where $p_{g}(\boldsymbol{a}|[\boldsymbol{e}_k;\boldsymbol{c}; \boldsymbol{q}])$ is the score for candidate $\boldsymbol{e}_k$, which is the probability under LM $g$ of output sequence conditioned on the candidate example and the training instance.
+In a similar manner, we calculate distributions $p_{r1}$ and  $p_{r2}$ based on scoring functions of $R_{1}$ and $R_{2}$, respectively.
+We optimize $R_1$ and $R_2$ by minimizing KL-divergence of $p_{lm}$ from $p_{r1}$ and $p_{r2}$~\citep{Izacard2022FewshotLW}:
+
+\begin{equation}
+\label{s1}
+    \begin{aligned}
+    \mathcal{L}_{lm} = \mathop{\mathbb{E}}\limits_{\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle \in \mathcal{D}_{tr}}&({\rm KL}(\dashv[p_{lm}]\|p_{r1})\\&+{\rm KL}(\dashv[p_{lm}]\|p_{r2})),
+    \end{aligned}
+\end{equation}
+ where $\dashv[\cdot]$ is a stopgrad operator that sets the gradient of its operand to zero.
+ 
+
+\paragraph{Stage \uppercase\expandafter{\romannumeral2}.}
+We jointly train $\langle R_1$, $R_2 \rangle$ and the QA model $F$.
+For each training sample $\langle \bm{c},\bm{q},\bm{a} \rangle$, we first construct prompt $\mathcal{P}_m$ and $\mathcal{P}_k$, and then optimize the encoder-decoder QA model $F$ together with $\mathcal{P}_m$ using the following loss:
+
+\begin{equation}
+\label{eq:qa}
+\mathcal{L}_{f} = \mathop{\mathbb{E}}_{\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle \in \mathcal{D}_{tr} }(-\log~p_{F}(\boldsymbol{a}|[\mathcal{P}_m;\mathcal{P}_k;\boldsymbol{c};\boldsymbol{q}])).
+\end{equation}
+
+To allow information exchange and encourage agreement between $\langle R_1, R_2 \rangle$ and QA model $F$, mutual knowledge distillation is introduced to refine $R_1$, $R_2$, and $F$ by knowledge distillation from each other~\citep{zhao2021novel}.
+However, in this case, a worse-performing model is allowed to generate knowledge to train a better-performing model, which may lead to collective failures~\cite{xie2022performance}.
+Therefore, we propose an adaptive mutual knowledge distillation method to allow a model to generate knowledge for training another model only if it performs better.
+
+Therefore, we evaluate the performance of $R_1$, $R_2$, and $F$ on a validation set $\mathcal{D}_{val}$ before mutual knowledge distillation.
+Specifically, we select top $\widetilde{l}$ hints $\{\boldsymbol{h}_i\}_{i=1}^{\widetilde{l}}$ from the $c$ candidate examples $\{\bm{e}_i\}_{i=1}^c$ of a validation instance $\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle$ based on scoring functions of $R_1$, $R_2$, $F$, and then obtain knowledge prompt $\mathcal{P}_k^{r1}$, $\mathcal{P}_k^{r2}$ and $\mathcal{P}_k^{f}$, respectively.
+The scoring function of QA model $F$ is $p_{F}(\bm{a}|[\mathcal{P}_m;\bm{h}_i;\bm{c}; \bm{q}])$, where $\bm{h}_i$ is a hint for example $\bm{e}_i$ and acts as a pseudo knowledge prompt.
+We evaluate $R_1$, $R_2$, and $F$ as follows:
+\begin{equation}
+\label{evl}
+v_{i} =  \mathop{\mathbb{E}}_{\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle \in \mathcal{D}_{val} }\log p_{F}(\boldsymbol{a}|[\mathcal{P}_m;\mathcal{P}_k^i; \boldsymbol{c};\boldsymbol{q} ]),
+\end{equation}
+where $i \in \{r1,r2,f\}$ denotes a specific model.
+Lastly, we optimize the adaptive mutual knowledge distillation loss as follows:
+\begin{equation}\small
+\begin{aligned}
+\label{mkd}
+    \mathcal{L}_{mkd} = \mathop{\mathbb{E}}_{\langle \boldsymbol{c}, \boldsymbol{q},\boldsymbol{a} \rangle \in \mathcal{D}_{tr} }&\mathop{\sum}\limits_{i,j \in \{r1,r2,f\}}
+    {\rm KL}(\dashv[p_i]\|p_j)\cdot\mathbb{I}(v_i>v_j),
+\end{aligned}
+\end{equation}
+where $p_{f}$ is the distribution of candidate examples based on the scoring function of QA model $F$.
+
+The whole training process of our model is summarized in Algorithm \ref{alg:algorithm}.
+
+\begin{algorithm}
+\caption{The training process}
+\label{alg:algorithm}
+\KwIn{Training data $\mathcal{D}_{tr}$, validation data $\mathcal{D}_{val}$.}
+\KwOut{QA model $F$, meta prompts $\{\mathcal{P}_m^i\}_{i=1}^s$, prompt keys $\{\bm{k}_m^i\}_{i=1}^s$, framework $\langle R_1, R_2 \rangle$.}
+\tcp{Stage \uppercase\expandafter{\romannumeral1}}
+Train $R_1$ and $R_2$ using $\mathcal{L}_{lm}$ (Eq. \ref{s1}). \\
+\tcp{Stage \uppercase\expandafter{\romannumeral2}}
+Train $\{\bm{k}_m^i\}_{i=1}^s$ using $\mathcal{L}_{m}$ (Eq. \ref{eq:meta}). \\
+Train $F$ and $\{\mathcal{P}_m^i\}_{i=1}^s$  using $\mathcal{L}_{f}$ (Eq. \ref{eq:qa}). \\
+Evaluate $R_1$, $R_2$ and $F$ (Eq. \ref{evl}). \\
+Train $R_1$, $R_2$, $F$, $\{\mathcal{P}_m^i\}_{i=1}^s$  using $\mathcal{L}_{mkd}$ (Eq. \ref{mkd}).\\
+\end{algorithm}
+
+
+Experiments
+
+\subsection{Datasets}
+
+We curate an open long-tailed question answering benchmark from 43 existing representative QA datasets~\cite{unifiedqav2} covering four QA formats (\textit{Extractive} QA, \textit{Abstractive} QA, \textit{Multiple-choice} QA, and \textit{Yes/No} QA).
+We regard each dataset as an individual QA task and reserve $\widetilde{n}=22$ as unseen tasks. 
+Our model is trained on the rest of $n=21$ seen tasks while tested on all 43 tasks.
+We down-sample the training sets of all seen tasks following a Zipf distribution with power value $\alpha=2.0$ to construct the training data for our model.
+Figure~\ref{fig:task-distribution} shows the training data statistics.
+
+\begin{figure}[!t]
+\scalebox{0.85}{
+\centering
+\includegraphics[width=1.0\linewidth]{figs/distributionalpha.pdf}
+}
+\centering
+\caption{Training dataset statistics of long-tailed QA tasks. Blue bars represent the original dataset sizes of 21 seen tasks and orange bars denote down-sampled dataset sizes.}
+
+\label{fig:task-distribution}
+\end{figure}
+
+\label{sec:seen}
+\begin{table*}[!t]
+\centering
+\small
+\scalebox{0.9}{
+\begin{tabular}{l|ccccccc|ccc}
+\toprule
+Methods & SQuAD 2 & NatQA & RACE & ARC-easy & MCTest & ARC-hard & MultiRC & Head@3 & Tail@4 & $A_{\rm{seen}}$\\
+\midrule
+UnifiedQA & 77.80 & 40.25 & 56.97 & 36.84 & 77.19 & 31.77 & 80.45 & 58.34 & 56.56 & 55.21\\
+ProQA & 79.84 & 39.01 & 59.55 & 44.21 & 80.00 & 38.13 & 77.56 & 59.47 & 59.98 & 53.23 \\
+Muppet & 79.41 & 40.83 & 57.13 & 38.07  & 79.06 & 31.34 & 85.57 & 59.12 & 58.51 & 56.13 \\
+Hyperformer++ & 79.52 & 40.24 & 58.24 & 40.18 & 76.88 & 31.10 & 86.86 & 59.33 & 58.76 & 56.81  \\
+EPR  & 44.14 & 39.50 & 38.82 & 51.81 & 55.00 & 39.80 & 56.41 & 40.82 & 50.76 & 47.97 \\
+\midrule
+Ours (w/o $\mathcal{P}_m$) & 77.72 & 42.10 & 58.13 & 56.49 & 83.02
+& 39.46 & 85.58 & 59.32 & 66.14 & 59.60 \\
+Ours (w/o $\mathcal{P}_k$) & 78.89 & 40.20 & 59.34 & 39.82 & 76.25
+& 33.11 & 85.90 & 59.48 & 58.77 & 56.51 \\
+Ours & \textbf{79.99} & \textbf{42.68} & \textbf{59.65} & \textbf{58.95} & \textbf{83.75} & \textbf{40.43} & \textbf{87.82} & \textbf{60.77} & \textbf{67.74} & \textbf{61.48} 
+\\
+\bottomrule
+\end{tabular}}
+\caption{Comparison with competitive baselines and ablations on main components of our model in seven seen tasks (3 head tasks + 4 tail tasks). Bold numbers are superior results.}
+\label{tab:in-domain}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\small
+\scalebox{0.9}{
+\begin{tabular}{l|ccccccc|c}
+\toprule
+\multirow{2}{*}{Methods}  & AdversarialQA & \multirow{2}{*}{RACE-C} & \multirow{2}{*}{MMMLU} & OneStopQA & \multirow{2}{*}{MCScript} & \multirow{2}{*}{DREAM} & \multirow{2}{*}{PubmedQA} & \multirow{2}{*}{$A_{\rm{unseen}}$}  \\
+& dRoberta & &  & Advanced & & &  &\\
+\midrule
+UnifiedQA  & 18.16 & 49.86  & 28.77 & 54.01 & 67.97 & 59.56 & 50.53 & 46.70 \\
+ProQA  & 14.21  & 54.91  & 25.96 & 61.11 & 71.23 & 64.41  & 58.00 & 48.27 \\
+Muppet  & 17.33 & 50.00 & 30.42 & 54.79 & 70.91 & 58.61 & 56.73 & 46.98 \\
+Hyperformer++  & 16.99  & 52.11  & 25.26 & 59.88 & 71.51 & 59.31 & 53.00 & 47.21 \\
+EPR  & 27.74 & 35.39 & 28.77 & 60.49 & 65.56 & 53.92 & 59.67 & 46.57 \\
+\midrule
+Ours (w/o $\mathcal{P}_m$) & 25.16 & 53.51 & 33.68 & 61.11 & 77.46 & 68.28 & 62.07 & 52.09 \\
+Ours (w/o $\mathcal{P}_k$)  & 17.12  & 53.23 & 31.23 & 56.70 & 70.80 & 60.29 & 56.27 & 48.37 \\
+Ours  & \textbf{28.05}  & \textbf{56.88}  & \textbf{36.14} & \textbf{64.31} & \textbf{79.16} & \textbf{69.51} & \textbf{64.40} & \textbf{54.42} \\
+\bottomrule
+\end{tabular}}
+\caption{Comparison with competitive baselines and ablations on main components of our model in seven unseen tasks (randomly selected). Bold numbers are superior results.}
+\label{tab:out-domain}
+\end{table*}
+
+\subsection{Metrics}
+
+We calculate the average performances over 21 seen tasks ($A_{\rm{seen}}$) and 22 unseen tasks ($A_{\rm{unseen}}$) to evaluate the QA performance.
+We also calculate the average scores over a subset of seen tasks with $m$ largest training sets (Head@m) and $n$ smallest training sets (Tail@n) to evaluate the performance of head and tail tasks, respectively.
+
+\subsection{Implementation Details}
+ 
+We use T5-base~\cite{raffel2020exploring} to initialize the QA model $F$. For knowledge sharing, we maintain totally $s=30$ meta prompts, and set the length of each meta prompt to $10$. We adopt a fixed T5-base encoder with an average pooling layer to generate the query vector. For each instance, we select $\widetilde{s}=5$ meta prompts to construct $\mathcal{P}_m$. We set $\eta = 0.15$ and $\gamma = 0.3$ in Eq.~\ref{eq:meta}. For knowledge mining, we use a dual-encoder as retriever, and a cross-encoder as re-ranker. Encoders in the retriever and the re-ranker are all initialized with Bert-base-uncased~\cite{devlin-etal-2019-bert}. We use GLM-10B~\cite{du-etal-2022-glm} with 10B parameters as pre-trained LM $g$. For 
+ each instance, the retriever first selects $l=64$ examples from the training dataset, and the re-ranker selects $\widetilde{l}=4$ examples to construct $\mathcal{P}_k$. All hyper-parameters are tuned according to the average score on the validation set. All results reported in our paper are averages of 3 runs with different random seeds. We use the AdamW~\cite{loshchilov2017decoupled} optimizer with a learning rate of 1e-4 and batch size of 32. Our model is trained for five epochs. All experiments are performed on 8 A100 GPUs.
+ 
+
+\subsection{Baselines}
+
+We use the following competitive baselines:
+\textbf{1. UnifiedQA}:~\cite{khashabi-etal-2020-unifiedqa} casts different QA tasks into a unified text-to-text format and builds a single model for all QA tasks;
+\textbf{2. ProQA}:~\cite{zhong-etal-2022-proqa} uses structural prompts to train a unified QA model with a QA-centric pre-training;
+\textbf{3. Muppet}:~\cite{aghajanyan-etal-2021-muppet} maintains task-specific heads and learns QA tasks through multi-task learning;
+\textbf{4. Hyperformer++}:~\cite{karimi-mahabadi-etal-2021-parameter} uses a hyper-network to generate task-specific adapters for multi-task learning;
+\textbf{5. EPR}:~\cite{rubin-etal-2022-learning} propose an efficient method to retrieve in-context examples for a test instance and use a pre-trained LM to directly decode the output based on the examples.
+Note that ``Muppet'' and ``Hyperformer++'' have no specific modules for unseen tasks. Thus, we select a task with the lowest perplexity across all seen tasks for an input from unseen tasks in the testing phase, following~\citet{madotto-etal-2021-continual}.
+
+\subsection{Main Results}
+
+Table~\ref{tab:in-domain} shows the result on seen tasks.
+Our model outperforms all competitive baselines in terms of Head@3, Tail@4, $A_{\rm{seen}}$, and achieves SOTA results on all head and tail tasks.
+We can observe that:
+\textbf{1.} Our model achieves an even larger performance improvement for tail tasks, i.e., absolute improvement is $1.44$ in Head@3 and $8.98$ in Tail@4, compared to the best-performing baseline Hyperformer++.
+The performance gain precisely demonstrates the advantages of knowledge sharing between head and tail tasks and knowledge mining from external resources.
+\textbf{2.} Our model also outperforms the in-context learning baseline EPR without any parameter update of the pre-trained LM.
+This shows that leveraging knowledge mined from a pre-trained LM and directly optimizing QA tasks can lead to better QA performance. 
+ 
+
+Table~\ref{tab:out-domain} shows the result on unseen tasks.
+Our model yields the best performances on all metrics.
+We can also observe that:
+\textbf{1.} Our model that shares knowledge through fine-grained components (i.e., a pool of meta prompts) and mines knowledge from an LM generally obtain higher performance.
+\textbf{2.} EPR is on par with the other baselines trained on seen tasks. It shows that a pre-trained LM embeds a large amount of knowledge, which can help QA tasks potentially.
+
+\subsection{Ablation Studies}
+
+\paragraph{Model Main Components:}
+Ablation studies are carried out to validate the effectiveness of each main component in our model.
+Specifically, the following variants are investigated:
+\textbf{1. w/o $\mathcal{P}_m$} removes the knowledge sharing component, i.e., meta prompt $\mathcal{P}_m$ is not used.
+\textbf{2. w/o $\mathcal{P}_k$} removes the knowledge mining component, i.e., knowledge prompt $\mathcal{P}_k$ is not used.
+Results in Table~\ref{tab:in-domain} and Table~\ref{tab:out-domain} indicate that our model outperforms all ablation variants.
+Specifically, we can also observe that:
+1. Both knowledge sharing (see w/o $\mathcal{P}_m$) and knowledge mining (see w/o $\mathcal{P}_k$) components help to improve the QA performance.
+2. Knowledge mining brings larger improvement compared to knowledge sharing component on both tail and unseen tasks.  This further proves the importance of leveraging knowledge embedded in the pre-trained LM for
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

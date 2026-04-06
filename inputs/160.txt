@@ -1,0 +1,216 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+As a crucial step towards understanding 3D visual world, 3D object detection aims to estimate the oriented 3D bounding boxes and semantic labels of objects in real 3D scenes. It has been studied for a long time in both academia and industry 
+since it benefits various downstream applications, such as autonomous driving~\cite{bansal2018chauffeurnet,wang2019monocular}, robotics~\cite{zhu2017target,wang2021collaborative} and augmented reality~\cite{azuma1997survey,billinghurst2015survey}. In this paper, we focus on detecting 3D objects from unordered, sparse and irregular point clouds. Those natural characteristics make it more challenging to directly extend well-studied 2D techniques to 3D detection.
+
+Unlike 3D object detection from autonomous driving scenarios that only considers bird's eye view (BEV) boxes~\cite{shi2019pointrcnn,yin2021cvpr,lang2019pointpillars,fan2021embracing,shi2020p2,shi2020pv}, most of existing 3D indoor object detectors~\cite{qi2019deep,wang2022rbgnet,liu2021group,cheng2021back,zhang2020h3dnet} typically handle this task 
+through a bottom-up scheme, which extracts the point-wise features from input point clouds, and then groups the points into their respective instances to generate a set of proposals. 
+However, the above grouping algorithms are usually carried out in a class-agnostic manner, which abandons semantic consistency within the same group and also ignores diverse locality among different categories. For example, VoteNet~\cite{qi2019deep} learns the point-wise center offsets and aggregates the points that vote to similar semantic-irrelevant local region. Though impressive, as shown in Figure \ref{fig:intro}, these methods may fail in cluttered indoor scenes where various objects are close but belong to different categories. Also, the object sizes are diverse for different categories, so that a class-agnostic local grouping may partially cover the boundary points of large objects and involve more noise outliers for small objects. 
+
+Hence, we propose CAGroup3D, a two-stage fully convolutional 3D object detection framework. 
+Our method consists of two novel components. One is the class-aware 3D proposal generation module, which aims to generate reliable proposals by utilizing class-specific local group strategy on the object surface voxels with same semantic predictions. The other one is an efficient fully sparse convolutional RoI pooling module for recovering the features of the missed surface voxels due to semantic segmentation errors, so as to improve the quality of predicted boxes.  
+
+Specifically, a backbone network with 3D sparse convolution is firstly utilized to extract descriptive voxel-wise features from raw point clouds. Based on the learned features, we conduct a class-aware local grouping module to cluster surface voxels into their corresponding instance centroids. Different from \cite{qi2019deep}, in order to consider the semantic consistency, we not only shift voxels of the same instance towards the same centroid but also predict per-voxel semantic scores. Given the contiguously distributed vote points with their semantic predictions, we initially voxelize them according to the predicted semantic categories and vote coordinates, so as to generate class-specific 3D voxels for different categories. The voxel size of each category is adaptive to its average spatial dimension.
+To maintain the structure of fully convolution, we apply sparse convolution as grouping operation centered on each voted voxel to aggregate adjacent voxel features in the same semantic space. Note that these grouping layers are class-dependent but share the same kernel size, thus the larger classes are preferred to be aggregated with larger local regions. 
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth]{fig/intro2.pdf}
+  \caption{Class-agnostic grouping methods suffer from (a) mis-grouping of different categories within the same local regions, (b) partial coverage of the object surfaces; outliers from the cluttered scene.}
+  \label{fig:intro}
+\end{figure}
+
+Secondly, given the proposal candidates, fine-grained specific features within 3D proposals need to be revisited from 3D backbone through certain pooling operation for the following box refinement. 
+However, state-of-the-art pooling strategies~\cite{shi2020pv,deng2020voxel} are memory-and-computation intensive due to the hand-crafted set abstraction~\cite{qi2017pointnet}. Besides that, its max-pooling operation also harms the geometry distribution.
+To tackle this problem, we propose RoI-Conv pooling module, which directly adopts the well-optimized 3D sparse convolutions to aggregate voxel features from backbone.  It can encode effective geometric representations with a memory-efficient design for further proposal refinement.
+
+In summary, our contributions are three-fold: 
+1) We propose a novel class-aware 3D proposal generation strategy, which considers both the voxel-wise semantic consistency within the same local group and the object-level shape diversity among different categories.
+2) We present RoI-Conv pooling module, an efficient fully convolutional 3D pooling operation for revisiting voxel features directly from backbone to refine 3D proposals. 
+3) Our approach outperforms state-of-the-art methods with remarkable gains on two challenging indoor datasets, \textit{i.e.}, ScanNet V2~\cite{dai2017scannet} and SUN RGB-D~\cite{sunrgbd}, demonstrating its effectiveness and generality.
+
+
+
+Related Work
+\textbf{3D Object Detection on Point Clouds.} Detecting 3D objects from point clouds is challenging due to orderless, sparse and irregular characteristics. Previous approaches can be coarsely classified into two lines in terms of point representations, \textit{i.e.}, the voxel-based methods~\cite{zhou2018voxelnet,yang2018pixor,shi2020p2,yan2018second,shi2020pv,yin2021cvpr,shi2020p2} and the point-based methods~\cite{qi2019deep,wang2022rbgnet,cheng2021back,liu2021group,zhang2020h3dnet,yang2022boosting}.  Voxel-based methods are mainly applied in outdoor autonomous driving scenarios where objects are distributed on the large-scale 2D ground plane. They process the sparse point clouds by efficient 3D sparse convolution, then project these 3D volumes to 2D grids for detecting bird's eye view (BEV) bboxes by 2D ConvNet. Powered by PointNet series~\cite{qi2017pointnet,qi2018pointnnetplus}, point-based methods are also widely used to predict 3D bounding bboxes. Most of existing methods are in a bottom-up manner, which extracts the point-wise features and groups them to obtain object features. This pipeline has been a great success for estimating 3D bboxes directly from cluttered and dense 3D scenes. However, due to the hand-crafted point sampling and computation intensive grouping scheme applied in PointNet++~\cite{qi2018pointnnetplus}, they are difficult to be extended to large-scale point clouds. Hence, we propose an efficient fully convolutional bottom-up framework to efficiently detect 3D bboxes directly from dense 3D point clouds.
+
+\textbf{Feature Grouping.} Feature grouping is a crucial step for bottom-up 3D object detectors~\cite{qi2019deep,wang2022rbgnet,liu2021group,cheng2021back,zhang2020h3dnet,vu2022softgroup}, which clusters a group of point-wise features to generate high-quality 3D bounding boxes. Among the numerous successors, voting-based framework~\cite{qi2019deep} is widely used, which groups the points that vote to the same local region. Though impressive, it doesn't consider the semantic consistency, so that may fail in cluttered indoor scenes where the objects of different classes are distributed closely. Moreover, voting-based methods usually adopt a class-agonistic local region for all objects, which may incorrectly group the boundary points of large objects and involve more noise points for small objects. To address the above limitations, we present a class-aware local grouping strategy to aggregate the points of the same category with class-specific center regions.
+ 
+
+\textbf{Two-stage 3D Object Detection.} Many state-of-the-art methods considered applying RCNN style 2D detectors to the 3D scenes, which apply 3D RoI-pooling scheme or its variants~\cite{shi2019pointrcnn,shi2020p2,deng2020voxel,shi2020pv,yang2019std,xu2022fusionrcnn} to aggregate the specific features within 3D proposals for the box refinement in a second stage. These pooling algorithms are usually equipped with set abstraction~\cite{qi2017pointnet} to encode local spatial features, which consists of a hand-crafted query operation (\textit{e.g.}, ball query~\cite{qi2017pointnet} or vector query~\cite{deng2020voxel}) to capture the local points and a max-pooling operation to group the assigned features. Therefore these RoI pooling modules are mostly computation expensive. Moreover, the max-pooling operation also harms the spatial distribution information. To tackle these problems, we propose RoI-Conv pooling, a memory-and-computation efficient fully convolutional RoI pooling operation to aggregate the specific features for the following refinement. 
+
+
+
+Methodology
+In this paper, we propose CAGroup3D, a two-stage fully convolutional 3D object detection framework for estimating accurate 3D bounding boxes from point clouds. The overall architecture of CAGroup3D is depicted in Figure \ref{fig:overview}. Our framework consists of three major components: an efficient 3D voxel CNN with sparse convolution as the backbone network for point cloud feature learning (\S \ref{sec:backbone}), a class-aware 3D proposal generation module for predicting high quality 3D proposals by aggregating voxel features of the same category within the class-specific local regions (\S \ref{sec:proposal}) and RoI-Conv pooling module for directly extracting complete and fine-grained voxel features from the backbone 
+to revisit the miss-segmented surface voxels and refine 3D proposals. Finally, we formulate the learning objective of our framework in \S \ref{sec:loss}. 
+ 
+\subsection{3D Voxel CNN for Point Cloud Feature Learning}\label{sec:backbone}
+For generating accurate 3D proposals, we first need to learn discriminative geometric representation for describing input point clouds. Voxel CNN with 3D sparse convolution~\cite{shi2020p2,yan2018second,zhou2018voxelnet,graham20183d,graham2017submanifold} is widely used by state-of-the-art 3D detectors thanks to its high efficiency and scalability of converting the point clouds to regular 3D volumes. In this paper, we adopt sparse convolution based backbone for feature encoding and 3D proposal generation.
+
+3D backbone network equipped with high-resolution feature maps and large receptive fields is critical for accurate 3D bounding box estimation and voxel-wise semantic segmentation. The latter is 
+closely related to the accuracy of succeeding grouping module. To maintain these two characteristics, inspired by the success of HRNet series~\cite{wang2020deep,hong2021deep,sun2019deep} in segmentation community, we implement a 3D voxel bilateral network with dual resolution based on ResNet~\cite{he2016deep}. For brevity, we refer it as BiResNet. As shown in Figure \ref{fig:overview}, our backbone network contains two branches. One is the sparse modification of ResNet18~\cite{he2016deep} where all 2D convolutions are replaced with 3D sparse convolutions. It can extract multi-scale contextual information 
+with proper downsampling modules.
+The other one is a auxiliary branch that maintains a high-resolution feature map whose resolution is 1/2 of the input 3D voxels. Specifically, the auxiliary branch is inserted following the first stage of ResNet backbone and doesn't contain any downsampling operation. Similar to \cite{wang2020deep}, we adopt the bridge operation between the two paths to perform the bilateral feature fusion. Finally, the fine-grained voxel-wise geometric features with rich contextual information are generated by the high-resolution branch and facilitate the following module. Experiments also demonstrate that our voxel backbone performs better than previous FPN-based ResNet~\cite{lin2017feature}.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=1.0\linewidth]{fig/fig2.pdf}
+  \caption{The overall architecture of CAGroup3D. (a) Generate 3D proposals by utilizing class-aware local grouping on the vote space with same semantic predictions. (b) Aggregating the specific features within the 3D proposals by the efficient RoI-Conv pooling module for the following box refinement.}
+  \label{fig:overview}
+\end{figure}
+
+\subsection{Class-Aware 3D Proposal Generation}\label{sec:proposal}
+Given the voxel-wise geometric features generated by the backbone network, a bottom-up grouping algorithm 
+is generally adopted
+to aggregate object surface voxels into their respective ground truth instances and generate reliable 3D proposals. Voting-based grouping method~\cite{qi2019deep} has shown great success for 3D object detection, which is performed in a class-agnostic manner.
+It reformulates Hough voting to learn point-wise center offsets, and then generates object candidates by clustering the points that vote to similar center regions.
+However, this method may incorrectly group the outliers in the cluttered indoor scenarios (\textit{e.g.}, votes are close together but belong to different categories), which 
+degrades the performance of 
+3D object detection. Moreover, due to the diverse object sizes of different categories, class-agnostic local regions may mis-group the boundary points of large objects and involve more noise points for small objects.
+
+To address this limitation, we propose the class-aware 3D proposal generation module, which first produces voxel-wise predictions (\textit{e.g.}, semantic maps and geometric shifts), and then clusters the object surface voxels of the same semantic predictions with class-specific local groups. 
+
+\textbf{Voxel-wise Semantic and Vote Prediction.}
+After obtaining the voxel features from backbone network, two branches are constructed to output the voxel-wise semantic scores and center offset vectors. Specifically, the backbone network generates a number of $N$ non-empty voxels $\{o_i\}^{N}_{i=1}$ from backbone, where $o_i = [x_i;f_i]$ with $x_i \in \mathbb{R}^3$ and $f_i \in \mathbb{R}^C$. A voting branch encodes the voxel feature $f_i$ to learn the spatial center offset $\Delta x_i\in\mathbb{R}^3$ and feature offset $\Delta f_i\in\mathbb{R}^C$. Based on the learned spatial and feature offset, we shift voxel $o_i$ to the center of its respective instance and generate vote point $p_i$ as follow:
+\begin{equation}
+		\left\{p_i\mid p_i=[x_i+\Delta x_i, f_i+\Delta f_i] \right\}_{i=1}^N.
+\end{equation}
+The predicted offset $\Delta x_i$ is explicitly supervised by a smooth-$\ell_1$ loss with the ground-truth displacement from the coordinate of seed voxel $x_i$ to its corresponding bounding box center.
+
+In parallel with the voting branch, we also construct a semantic branch to output semantic scores $S=\{s_i\}^{N}_{i=1}$ for all the voxels over $N_{class}$ classes as
+\begin{equation}
+    \begin{aligned}
+    s_i = \text{MLP}^{\text{sem}}(o_{i}) \in [0,1]^{N_{class}}, ~~~\text{for}~ i=1, \cdot\cdot\cdot,N, 
+    \end{aligned}
+\end{equation}
+where $\text{MLP}^{\text{sem}}(\cdot)$ is a one-layer multi-layer-perceptron (MLP) network and $s_i$ indicates the semantic probability for all classes of voxel $o_i$. We adopt focal loss~\cite{lin2017focal} for calculating voxel segmentation loss to handle the class imbalance issue.
+
+Notably, the vote and semantic targets of each voxel are associated with the ground-truth 3D boxes not the instance or semantic masks, so that it can be easily generalized to the 3D object detection datasets with bounding box annotations. To be specific, for each voxel, only the ground-truth bounding boxes that includes this voxel are selected. Considering the ambiguous cases that a voxel is in multiple ground truth bounding boxes, only the box with the least volume is assigned to this voxel. 
+
+\textbf{Class-Aware Local Grouping.} This step aims to produce reliable 3D proposals in a bottom-up scheme based on the above voxel-wise semantic scores $\{s_i\}^{N}_{i=1}$ and vote predictions $\{p_i\}^{N}_{i=1}$. To carry out grouping with semantic predictions, we first define a score threshold $\tau$ for all  categories to 
+individually determine whether a voxel belongs to a category instead of utilizing the one-hot semantic predictions.
+It can allow the voxel to be associated with multiple classes and thus improve the recall of semantic voxels for each category. Given the semantic scores $S=\{s_i\}^{N}_{i=1}$, we iterate over all the classes, and slice a point subset from the whole scene of each class that has the score higher than the threshold $\tau$, to form the class-dependent vote set $\{c_j\}_{j=1}^{N_{class}}$,
+\begin{equation}
+	\left\{c_j\mid c_j=\{p_i: s_i^j > \tau , i=1, ..., N \} \right\}_{j=1}^{N_{class}}.
+	\label{eq:vfe}
+\end{equation}
+The above semantic subset is generated in a contiguous euclidean space and the vote points are distributed irregularly. 
+To maintain the structure of pure convolutions and facilitate the succeeding class-aware convolution-based local grouping module, we individually voxelize the vote points in each semantic subset to $\{V_j\}_{j=1}^{N_{class}}$  by employing a voxel feature encoding (VFE) layer with a class-specific 3D voxel size, which is proportional to the class average spatial dimension. Specifically, this re-voxelization process for each class can be formulated as follows:
+\begin{equation}
+	\{v_i\}_{i=1}^{\mid V_j \mid} =\text{VFE}(c_j, ~\alpha \cdot d_j, ~Avg), ~~~\text{for}~ j = 1, ..., N_{class},
+\end{equation}
+where $c_j$ is the class-dependent vote set of class index $j$ and $\mid V_j \mid$ is the number of non-empty voxels after class individual re-voxelization. $\alpha \cdot d_j$ is the class-specific voxel size, where $\alpha$ is a predefined scale factor and $d_j = (w_j, h_j, l_j)$ is the category average spatial dimension. $\text{VFE}(~\cdot~, ~\alpha \cdot d_j, ~Avg)$ means that the average pooling operation is adopted to voxelize vote features on $j\text{-th}$ class subset with the voxel size $\alpha \cdot d_j$. Importantly, the voxel size is adaptive among different categories, which is more diverse than the widely used FPN-based prediction structure.
+
+Given the predicted vote voxels of $j\text{-th}$ class $\{v_i\}_{i=1}^{\mid V_j \mid}$, we apply sparse convolutions with a predefined kernel size $k^{(a)}$ on each voxel, and automatically aggregate local context inside the class to generate class-specific geometric features $A^{(j)}$ as follow:
+\begin{equation}
+    A^{(j)} = \{a_i^{(j)} \mid a_i^{(j)} = \text{SparseConv}_{\text{3D}}^{(j)}(v_i, ~ \{v_i\}_{i=1}^{\mid V_j \mid}, ~k^{(a)})\}_{i=1}^{\mid V_j \mid},
+    \label{eq:multiconv}
+\end{equation}
+where $\text{SparseConv}^{(j)}_{\text{3D}}(\cdot_{\text{ center}}, \cdot_{\text{ support voxels}}, \cdot_{\text{ kernel size}})$ is the standard sparse 3D convolution~\cite{graham20183d} and specific for different classes. 
+A shared anchor-free head is appended to the aggregated features for predicting classification probabilities, bounding box regression parameters and confidence scores.
+
+\subsection{RoI-Conv point cloud feature pooling for 3D Proposal Refinement}\label{sec:refine}
+Due to the semantic segmentation errors in stage-I, class-aware local grouping module will mis-group some object surface voxels. So an efficient pooling module is needed to recover the missed voxel features and also aggregate more fine-grained features from backbone for proposal refinement. 
+State-of-the-art 3D RoI pooling strategies~\cite{shi2020pv,deng2020voxel} usually adopt set abstraction operation to encode local patterns, which is computation expensive compared to traditional convolution and hand-crafted with lots of hyper-parameters (\textit{e.g.}, radius, the number of neighbors). Moreover, its max-pooling operation also harms the spatial distribution information. 
+
+To tackle these limitations and hold a fully convolution structure, we propose RoI-Conv pooling operation, which builds a hierarchical grouping module with well optimized 3D sparse convolutions to directly aggregate RoI-specific features from backbone for further proposal refinement. Our hierarchical structure is composed by a number of \textit{sparse abstraction} block, which contains two key components: the RoI-guidence sampling for selecting a subset of input voxels within the 3D proposals, which defines the centroids of local regions, and a shared sparse convolution layer for encoding local patterns into feature vectors. 
+
+\textbf{Sparse Abstraction.}
+As shown in Figure \ref{fig:overview}, the inputs to this block are a number of $\mid \mathcal{I} \mid$ input voxels  $\mathcal{I} = \{l_{n}\}_{n=1}^{\mathcal{I}}$ and $\mid \mathcal{M} \mid$ proposals $\mathcal{M} = \{\rho_m\}_{m=1}^{\mathcal{M}}$, where $\rho_m$ is the proposal parameters for guiding the point sampling. The output is a number of $\mid \mathcal{Q} \mid$ pooling RoI-specific voxels $\mathcal{Q} = \{q_{k}\}_{k=1}^{\mid \mathcal{Q} \mid}$.
+
+Specifically, given the input voxels and proposals, instead of directly sampling from the whole input space, we adopt the RoI-guidence sampling to uniformly sample $G_x \times G_y \times G_z$ grid points within each 3D proposal in voxel space, which are denoted as $\mathcal{G}=\{g_k \in \mathbb{Z}^3\}^{G_x \times G_y \times G_z \times \mathcal{M}}_{k=1}$. $G_x \times G_y \times G_z$ is the proposal sampling resolution, which are the hyper-parameters independent on proposal sizes. Considering the overlap of different proposals, we merge the repeated grid points and generate a unique points set $\widetilde{\mathcal{G}}=\{g_k\}^{\mid \widetilde{\mathcal{G}} \mid}_{k=1}$, where $\mid \widetilde{\mathcal{G}} \mid$ is the number of unique grid points. Then, with the RoI-specific points set $\widetilde{\mathcal{G}}$, we exploit a sparse convolution centered on each sampled point to cover a set of neighboring input voxels (\textit{e.g.}, $\mathcal{N}_k = \{l_k^1, l_k^2, ..., l_k^{L_k}\}$ for $g_k$) within the kernel size $k^{(p)}$ as:
+\begin{equation}
+    \mathcal{Q} = \left\{\begin{aligned}
+    q_k \mid q_k = \left\{
+    		\begin{aligned}
+            		&\text{SparseConv}_{\text{3D}}(g_k, ~ \mathcal{N}_k, ~k^{(p)}),~~~\text{if}  ~~L_k  > 0,~~~~~\\ 
+            		&\phi,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\text{if} ~~L_k  = 0,~~~~~\\ 
+    		\end{aligned}
+    		\right.\!\!
+    	\end{aligned}
+    	\text{for}~ k = 1, ..., \mid \widetilde{\mathcal{G}} \mid
+    	\right \}
+    		\label{eq:griconv}
+\end{equation} 
+where $L_k$ is the number of neighboring voxels queried by the $k\text{-th}$ RoI-specific point with kernel size $k^{(p)}$. $\text{SparseConv}_{\text{3D}}(\cdot_{\text{ center}}, \cdot_{\text{ support voxels}}, \cdot_{\text{ kernel size}})$ is a shared sparse 3D convolution for all the proposals and only applied on the points that their neighboring voxel sets are non-empty. $\phi$ means empty voxel. Then, to hold the surface geometry and reduce computation cost, we abandon the empty voxels and output the RoI-specific voxels set $\mathcal{Q}$.
+
+\textbf{RoI-Conv Pooling Module.} Our pooling network is equipped with two-layers sparse abstraction block and progressively abstracts the voxel features within each 3D proposal from the backbone to RoI-specific features iteratively as:
+\begin{equation}
+    \begin{aligned}
+    & \mathcal{Q}^{1} =  \text{SparseAbs}(\mathcal{I}, ~  \{\rho_m\}_{m=1}^{\mathcal{M}}, ~ 7 \times 7 \times 7, ~5), ~~~~~\\
+    & \mathcal{F} = \text{SparseAbs}( \mathcal{Q}^{1}, ~  \{\rho_m\}_{m=1}^{\mathcal{M}}, ~1 \times 1 \times 1, ~ 7),
+    \end{aligned}
+\end{equation}
+where $\text{SparseAbs}(\cdot_{\text{ input voxels}}, \cdot_{\text{ proposals}}, \cdot_{\text{sampling resolution}}, \cdot_{\text{ kernel size}})$ denotes our sparse abstraction block.
+Notably, to encode the voxel features of oriented proposals, we follow the transformation strategy in \cite{shi2020p2} before the last block, and normalize the input voxels belonging to each proposal to its individual canonical systems. With the RoI feature $\mathcal{F} \in R^C$ of each proposal, the refinement network predicts the size and location (\textit{i.e.}, bbox dimension, center and orientation) residuals relative to the proposal in Stage-I and the targets are encoded by the traditional residual-based method ~\cite{shi2020pv,shi2020p2}.
+
+\iffalse
+\textbf{Sparse Grouping layer.} The inputs to this layer are a RoI-specific point set $\widetilde{\mathcal{G}}=\{g_k\}^{\mid \widetilde{\mathcal{G}} \mid}_{k=1}$ and the same input voxels $\{l_{n}\}_{n=1}^{\mathcal{I}}$ as the sampling layer. We exploit a sparse convolution centered on each sampled point to group a set of neighboring input voxels $\mathcal{N}_k = \{l_k^1, l_k^2, ..., l_k^L\}$ within the kernel size $k^{(p)}$ as:
+\begin{equation}
+    \mathcal{O} = \left\{\begin{aligned}
+    \mathcal{O}_k \mid \mathcal{O}_k = \left\{
+    		\begin{aligned}
+            		&\text{SparseConv}_{\text{3D}}(g_k, ~ \mathcal{N}_k, ~k^{(p)}),~~~\text{if} \mid \mathcal{N}_k \mid > 0,~~~~~\\ 
+            		&\phi,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\text{if} \mid \mathcal{N}_k \mid = 0,~~~~~\\ 
+    		\end{aligned}
+    		\right.\!\!
+    	\end{aligned}
+    	\text{for}~ k = 1, ..., \mid \widetilde{\mathcal{G}} \mid
+    	\right \}
+    		\label{eq:griconv}
+\end{equation} 
+where $\mid \mathcal{N}_k \mid$ is the number of neighboring voxels queried by the $k\text{-th}$ RoI-specific point with kernel size $k^{(p)}$. $\text{SparseConv}_{\text{3D}}(\cdot_{\text{ center}}, \cdot_{\text{ support voxels}}, \cdot_{\text{ kernel size}})$  is a shared sparse 3D convolution for all the proposals and only applied on the points that their neighboring voxel set are non-empty. $\phi$ means empty voxel. Then, to hold the surface geometry and reduce computation cost, we abandon the empty parts, and the output of this block is $\widetilde{\mathcal{O}} = \{\mathcal{O}_k: \mathcal{O}_k \neq \phi, \text{for}~ k = 1, ..., \mid \widetilde{\mathcal{G}} \mid \}$.
+\fi
+\subsection{Learning Objective}\label{sec:loss}
+Our proposed approach is trained from scratch with semantic loss $\mathcal{L}_\text{sem}$, voting loss $\mathcal{L}_{\text{vote-reg}}$, centerness loss $\mathcal{L}_\text{cntr}$, bounding box estimation loss $\mathcal{L}_\text{box}$, classification losses $\mathcal{L}_\text{cls}$ for Stage-I and bbox refinement loss $\mathcal{L}_\text{rebox}$ for Stage-II, which are formulated as follows:
+
+\begin{equation}
+    \begin{aligned}
+    L = \beta_\text{sem}\mathcal{L}_\text{sem} + \beta_\text{vote}\mathcal{L}_{\text{vote}} + \beta_\text{cntr}\mathcal{L}_\text{cntr} \\ 
+    +\beta_\text{box}\mathcal{L}_\text{box} + \beta_\text{cls}\mathcal{L}_\text{cls} + \beta_\text{rebox}\mathcal{L}_\text{rebox}.
+    \end{aligned}
+\end{equation}
+$\mathcal{L}_\text{sem-cls}$ is a multi-class focal loss~\cite{lin2017focal} used to supervise voxel-wise semantic segmentation. $\mathcal{L}_{\text{vote}}$ is a smooth-$\ell_1$ loss for predicting the center offset of each voxel. In term of the 3D proposal generation module, we follow the same loss functions $\mathcal{L}_\text{cntr}$, $\mathcal{L}_\text{box}$ and $\mathcal{L}_\text{cls}$ defined in \cite{rukhovich2021fcaf3d} to optimize object centerness, bounding box estimation and classification respectively. For the second stage, $\mathcal{L}_\text{rebox}$  is the residual-based smooth-$\ell_1$ box regression loss for 3D box proposal refinement, which contains size, box center and angle refinement loss. Besides that, we also add the same IoU loss $\mathcal{L}_\text{iou}$ as used in stage-I, and the final box refinement loss is as follows
+
+\begin{equation}
+    \mathcal{L}_\text{rebox} = \sum\limits_{r\in\{x,y,z,l,h,w,\theta \}} \mathcal{L}_{\text{smooth-}\ell_1}(\Delta r^*, \Delta r) + \mathcal{L}_{\text{iou}},
+\end{equation}
+where $\Delta r$ is the predicted residual and $\Delta r^*$ is the corresponding ground truth.
+
+
+
+Experiments
+
+\begin{table}
+  \caption{3D detection results on ScanNet V2~\cite{dai2017scannet} and SUN RGB-D~\cite{sunrgbd}. The main comparison is based on the best results of multiple experiments, and the average value of 25 trials is given in brackets. * means the multi-sensor approaches that use both point clouds and RGB images.}
+  \label{tab:results}
+  \centering
+  \begin{tabular}{cccccc}
+    \toprule
+    & & \multicolumn{2}{c}{ScanNet V2} & \multicolumn{2}{c}{SUN RGB-D} \\
+    \cmidrule(r){3-6}
+    \multirow{-2}{*}{Methods}     & \multirow{-2}{*}{Presened at}    & mAP@0.25 & mAP@0.5 & mAP@0.25 & mAP@0.5\\
+    \midrule
+    F-PointNet~\cite{qi2018frustum}*   			& CVPR'18  & 19.8 & 10.8 & 54.0 & -   \\
+	GSPN~\cite{yi2018gspn}*                     & CVPR'19  & 30.6 & 17.7 & -    & -   \\
+	3D-SIS~\cite{hou20193d}*       				& CVPR'19  & 40.2 & 22.5 & -    & -   \\
+	ImVoteNet~\cite{qi2020imvotenet}*       		& CVPR'20  & -    & -    & 63.4 & -   \\
+	TokenFusion~\cite{wang2022multimodal}*      &CVPR'22   & 70.8(69.8) & 54.2(53.6) & 64.9(64.4) & 48.3(47.7)\\
+	\midrule
+	VoteNet~\cite{qi2019deep}                   & ICCV'19  & 58.6 & 33.5 & 57.7 & -   \\
+	3D-MPA~\cite{engelmann20203d}       			& CVPR'20  & 64.2 & 49.2 & -    & -   \\
+	HGNet~\cite{chen2020hierarchical}        	& CVPR'20  & 61.3 & 34.4 & 61.6 & -   \\
+	MLCVNet~\cite{xie2020mlcvnet}               & CVPR'20  & 64.5 & 41.4 & 59.8 & -   \\
+	GSDN~\cite{gwak2020generative}              & ECCV'20  & 62.8 & 34.8 & -    & -   \\
+	H3DNet~\cite{zhang2020h3dnet}       			& ECCV'20  & 67.2 & 48.1 & 60.1 & 39.0\\
+	BRNet~\cite{cheng2021back}        			& CVPR'21  & 66.1 & 50.9 & 61.1 & 43.7\\
+	3DETR~\cite{misra2021end}        			& ICCV'21  & 65.0 & 47.0 & 59.1 & 32.7\\
+	VENet~\cite{xie2021venet}        			& ICCV'21  & 67.7 & -    & 62.5 & 39.2\\
+	Group-free~\cite{liu2021g
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

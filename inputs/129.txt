@@ -1,0 +1,383 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Graphs, as a powerful data structure, are widely used to represent entities and their relations in a variety of domains, such as social networks in sociology %~\citep{hidden}
+ and protein-protein interaction networks in biology.
+Their complex features (\eg, attribute features and topology features) make the graph mining tasks very challenging. 
+Graph Neural Networks (GNNs)~\citep{GCNII,GCN,GAT}, owing to the message passing mechanism that aggregates neighborhood information for learning the node representations~\citep{mpnn}, have been recognized as a type of powerful deep learning techniques for graph mining tasks~\citep{GIN,gnnrs1,gnnrs2,gnnlink,cdgnn} over the last decade. 
+Though effective, message passing-based GNNs have a number of inherent limitations, 
+including over-smoothing~\citep{oversmoothing} and over-squashing~\citep{oversq} with the increment of model depth, limiting their potential capability for graph representation learning.
+Though recent efforts~\citep{reoversm,skipnode,tackingos,pasl} have been devoted to alleviate the impact of over-smoothing and over-squashing problems, the negative influence of these inherent limitations cannot be eliminated completely. 
+
+Transformers~\citep{Transformer}, on the other hand recently, are well-known deep learning architectures that have shown superior performance in a variety of data with an underlying Euclidean or grid-like structure, 
+such as natural languages~\citep{bert,liu2019roberta} and images~\citep{vit,swin}.
+Due to their great modeling capability, %researchers have increasingly focused on 
+there is a growing interest in 
+generalizing Transformers to non-Euclidean data like graphs~\citep{GT,SAN,Graphormer,GraphTrans}. 
+However, graph-structured data generally contain more complicated properties, including structural topology and attribute features, that cannot be directly encoded into Transformers as the tokens.
+
+Existing graph Transformers have developed three %strategies 
+techniques to address this issue~\citep{trans-survey}: introducing structural encoding~\citep{GT,SAN}, using GNNs as auxiliary modules~\citep{GraphTrans}, and incorporating graph bias into the attention matrix~\citep{Graphormer}.
+By integrating structural information into the model, 
+graph Transformers exhibit competitive performance on various graph mining tasks, and outperform GNNs on node classification~\citep{SAN,sat} and graph classification~\citep{Graphormer,GraphTrans} tasks on small to mediate scale graphs. 
+
+In this work, we observe that existing graph Transformers treat the nodes as independent tokens and construct a single sequence composed of all the node tokens to train the Transformer model, %leading to 
+causing a quadratic complexity on %the graph size
+the number of nodes for the self-attention calculation. 
+Training such a model on large graphs will cost a huge amount of GPU resources that are generally unaffordable since the mini-batch training is unsuitable for graph Transformers using a single long sequence as the input.
+Meanwhile, effective strategies that make GNNs scalable to large-scale graphs, including node sampling~\citep{FastGCN,LADIES} and approximation propagation~\citep{GBP,Grand+}, are not applicable to graph Transformers, as they capture the global attention of all node pairs and are independent of the message passing mechanism. The current paradigm of graph Transformers makes it intractable to generalize to large graphs.
+\begin{figure}[t]
+    \centering
+	\includegraphics[width=13.9cm]{figs/v7.pdf}
+	\caption{\textbf{Model framework of \name.} \name first uses a novel neighborhood aggregation module, \pname, to construct a sequence for each node based on the tokens of different hops of neighbors. Then, \name learns the node representations using a Transformer backbone, and an attention-based readout function is developed to aggregate neighborhood information of different hops adaptively. An MLP-based module is used in the end for label prediction.
+	}
+	\label{fig:fw}
+\end{figure}
+To address the above challenge, 
+we propose a novel model dubbed Neighborhood Aggregation Graph Transformer (\name) for node classification in large graphs. Unlike existing graph Transformers that regard the nodes as independent tokens,
+\name treats each node as a sequence and constructs tokens for each node by a novel neighborhood aggregation module called \pname. % which is motivated by the aggregation operation of GNNs.
+The key idea behind \pname is to aggregate neighborhood features from multiple hops 
+and transform each hop into a representation, which could be regarded as a token.
+\pname then constructs a sequence for each node based on the tokens in different hops to preserve the neighborhood information. %of nodes.
+The sequences are then fed into a Transformer-based module for learning the node representations.
+By treating each node as a sequence of tokens, \name could be trained in a mini-batch manner and hence can handle large graphs even on limited GPU resources. 
+
+Considering that the contributions of neighbors in different hops differ to the final node representation, \name  further provides an attention-based readout function to learn the importance of each hop adaptively.
+Moreover, we provide theoretical analysis on the relationship between \name and an advanced category of GNNs, the decoupled Graph Convolutional Network (GCN)~\citep{pt,appnp,SGC,gprgnn}. 
+The analysis is from the perspective of self-attention mechanism and \pname, indicating that 
+\name is capable of learning more informative node representations from 
+the multi-hop neighborhoods. We conduct extensive experiments on various popular benchmarks, including six small datasets and three large datasets, and the results demonstrate the superiority of the proposed method. 
+
+The main contributions of this work are as follows:
+\begin{itemize}
+
+\item We propose \pname, a novel neighborhood aggregation method that aggregates the neighborhood features from each hop into a node representation, resulting in a sequence of token vectors that preserves neighborhood information for different hops. In this way, we can regard each node in the complex graph data as a sequence of tokens, and treat them analogously as in natural language processing and computer vision fields.
+\item We propose a new graph Transformer model, \name, for the node classification task. \name can be trained in a mini-batch manner depending on the output of \pname, and therefore enables the model to handle large graphs. 
+We also develop an attention-based readout function to adaptively learn the importance of different-hop neighborhoods
+to further boost the model performance.
+
+\item We prove that from the perspective of self-attention mechanism, the proposed \name can learn more expressive node representations from the multi-hop neighborhoods compared to an advanced category of GNNs, the decoupled GCN. 
+
+\item Extensive experiments on benchmark datasets from small to large demonstrate that \name consistently outperforms existing graph Transformers and mainstream GNNs.
+\end{itemize}
+
+
+
+
+
+
+Background
+
+\subsection{Problem Formulation}
+Let $G=(V,E)$ be an unweighted and undirected attributed graph, where $V=\{v_1, v_2, \cdots, v_n\}$, and $n=|V|$. 
+Each node $v \in V$ has a feature vector $\mathbf{x}_v \in \mathbf{X}$, where $\mathbf{X} \in \mathbb{R}^{n \times d}$ is the feature matrix describing the attribute information of nodes and $d$ the dimension of feature vector.
+$\mathbf{A}\in \mathbb{R}^{n \times n}$ represents the adjacency matrix and  $\mathbf{D}$ the diagonal degree matrix.
+The normalized adjacency matrix is defined as
+$\hat{\mathbf{A}}=\tilde{\mathbf{D}}^{-1 / 2} \tilde{\mathbf{A}} \tilde{\mathbf{D}}^{-1 / 2}$, where $\tilde{\mathbf{A}}$ denotes the adjacency matrix with self-loops and $\tilde{\mathbf{D}}$ denotes the corresponding degree matrix. 
+The node classification task provides a labeled node set $V_l$ and an unlabeled node set $V_u$. Let $\mathbf{Y}\in \mathbb{R}^{n \times c}$ denote the label matrix where $c$ is the number of classes. Given the labels $\mathbf{Y}_{V_l}$, the goal is to predict the labels $\mathbf{Y}_{V_u}$ for unlabeled nodes.
+
+\subsection{Graph Neural Network}
+Graph Neural Network (GNN) has become a powerful technique to model the graph-structured data. 
+Graph Convolutional Network (GCN)~\citep{GCN} is a typical model of GNN that applies the first-order approximation of spectral convolution~\citep{sp-gcn} to aggregate information of immediate neighbors.
+A GCN layer can be written as:
+\begin{equation}
+	\mathbf{H}^{(l+1)} = \sigma(\hat{\mathbf{A}} \mathbf{H}^{(l)} \mathbf{W}^{(l)}),
+	\label{eq:gcn}
+\end{equation}
+where $\mathbf{H}^{(l)} \in \mathbb{R}^{n\times d^{(l)}}$ and
+$\mathbf{W}^{(l)} \in \mathbb{R}^{d^{(l)} \times d^{(l+1)}}$
+denote the representation of nodes and the learnable parameter matrix in the $l$-th layer, respectively.
+$\sigma(\cdot)$ denotes the non-linear activation function.
+
+\autoref{eq:gcn} contains two operations, neighborhood aggregation and feature transformation, which are coupled in the GCN layer. 
+Such a coupled design would lead to the over-smoothing problem~\citep{oversmoothing} when the number of layers increases, limiting the model to capture deep structural information.
+To address this issue, 
+the decoupled GCN~\citep{appnp,SGC} separates the feature transformation and neighborhood aggregation in the GCN layer and treats them as independent modules.
+A general form of decoupled GCN is described as~\citep{gprgnn}:
+\begin{equation}
+	\mathbf{Z}=\sum_{k=0}^{K} \beta_{k} \mathbf{H}^{(k)}, \mathbf{H}^{(k)}=\hat{\mathbf{A}} \mathbf{H}^{(k-1)}, \mathbf{H}^{(0)}=\boldsymbol{f}_{\theta}(\mathbf{X}),
+	\label{eq:dgcn}
+\end{equation}
+where $\mathbf{Z}$ denotes the final representations of nodes, $\mathbf{H}^{(k)}$ denotes the hidden representations of nodes at propagation step $k$, $\beta_{k}$ denotes the aggregation coefficient of propagation step $k$,
+$\hat{\mathbf{A}}$ denotes the normalized adjacency matrix,
+$\boldsymbol{f}_{\theta}$ denotes a neural network module and $\mathbf{X}$ denotes the raw attribute feature matrix.
+Such a decoupled design exhibits high computational efficiency and enables the model capture deeper structural information. 
+\subsection{Transformer} \label{trans-att}
+The Transformer encoder~\citep{Transformer} contains a sequence of Transformer layers, where each layer is comprised with a multi-head self-attention (MSA) and a position-wise feed-forward network (FFN). 
+The MSA module is the critical component that aims to capture the semantic correlation between the input tokens. For simplicity, we use the single-head self-attention module for description. 
+Suppose we have an input $\mathbf{H}\in \mathbb{R}^{n \times d}$ for the self-attention module where $n$ is the number of tokens and $d$ the hidden dimension. The self-attention module first projects $\mathbf{H}$ into three subspaces, namely $\mathbf{Q}$, $\mathbf{K}$ and $\mathbf{V}$:
+\begin{equation}
+	\mathbf{Q} = \mathbf{H}\mathbf{W}^Q,~
+	\mathbf{K} = \mathbf{H}\mathbf{W}^K,~
+	\mathbf{V} = \mathbf{H}\mathbf{W}^V,
+	\label{eq:QKV} 
+\end{equation}
+where $\mathbf{W}^Q\in \mathbb{R}^{d \times d_K}, \mathbf{W}^K\in \mathbb{R}^{d \times d_K}$ and $\mathbf{W}^V \in \mathbb{R}^{d \times d_V}$ are the projection matrices. 
+The output matrix is calculated as:
+\begin{equation}
+	\mathbf{H}^{\prime} = \mathrm{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_K}}\right)\mathbf{V}.
+	\label{eq:att-out}
+\end{equation}
+The attention matrix, $\mathrm{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_K}}\right)$, captures the pair-wise similarity of input tokens in the sequence. Specifically, it calculates the dot product between each token pair after projection. The softmax is applied row-wise. 
+
+\textbf{Graph Transformer.}  The Transformer architecture has attracted increasing attention in graph representation learning in recent years. The key idea of graph Transformer is to integrate graph structural information to the Transformer architecture so as to learn the node representations.
+Existing graph Transformers could be divided into three categories: 
+(\uppercase\expandafter{\romannumeral1}) Replace the positional encoding with Laplacian eigenvectors~\citep{GT,SAN} or degree-related feature vectors~\citep{Graphormer} to capture the structural features of nodes. 
+(\uppercase\expandafter{\romannumeral2}) In addition to positional encoding, GNNs are used as auxiliary modules to enable the Transformer model to capture structural information~\citep{GraphTrans, SSGT}.
+(\uppercase\expandafter{\romannumeral3}) Introduce graph information bias into the attention score of each node pair, \eg, the shortest-path distance~\citep{Graphormer}. 
+
+
+The Proposed NAGphormer
+In this section, we present the proposed \name in details. To handle graphs at scale, we first introduce a novel neighborhood aggregation module called \pname, then we build \name together with structural encoding and attention-based readout function. 
+
+\subsection{\pname}
+
+How to aggregate information from adjacent nodes into a node representation is crucial in reasonably powerful Graph Neural Network (GNN) architectures. 
+To inherit the desirable properties, we design \pname considering the neighborhood information of different hops.
+
+For a node $v$, let $\mathcal{N}^{k}(v) = \{u \in V | d(v, u)\leq k\}$ be its $k$-hop neighborhood, where $d(v, u)$ represents the distance of shortest path between $v$ and $u$. We define $\mathcal{N}^{0}(v) = \{v\}$, \ie, the $0$-hop neighborhood is the node itself. 
+In \pname, we transform the $k$-hop neighborhood $\mathcal{N}^{k}(v)$ into a neighborhood embedding $\mathbf{x}^k_v$ with an aggregation operator $\phi$. 
+In this way, the $k$-hop representation of a node $v$ can be expressed as:
+\begin{equation}
+	\mathbf{x}^k_v = \phi(\mathcal{N}^{k}(v)).
+	\label{eq:token}
+\end{equation}
+By \autoref{eq:token}, we can calculate the neighborhood embeddings for variable hops of a node and further construct a sequence to represent its neighborhood information, \ie,
+$\mathcal{S}_{v} = (\mathbf{x}^0_v, \mathbf{x}^1_v,...,\mathbf{x}^K_v )$, where $K$ is fixed as a hyperparameter.  Assume $\mathbf{x}^k_v$ is a $d$-dimensional vector, the sequences of all nodes in graph $G$ will construct a tensor $\mathbf{X}_G \in \mathbb{R}^{n\times (K+1)\times d}$. To better illustrate the implementation of \pname, we decompose $\mathbf{X}_{G}$ to a sequence $\mathcal{S} = (\mathbf{X}_0, \mathbf{X}_1, \cdots, \mathbf{X}_K)$, where $\mathbf{X}_k \in \mathbb{R}^{n\times d}$ can be seen as the $k$-hop neighborhood matrix. Here we define $\mathbf{X}_0$ as the original feature matrix $\mathbf{X}$.
+
+In practice, we apply a propagation process similar to the method in \citep{gprgnn,QT} to obtain the sequence of $K$-hop neighborhood matrices. 
+Given the normalized adjacency matrix $\hat{\mathbf{A}}$ (\textit{aka} the transition matrix~\citep{diffusion}) and $\mathbf{X}$, multiplying $\hat{\mathbf{A}}$ with $\mathbf{X}$ aggregates immediate neighborhood information. Applying this multiplication consecutively allows us to propagate information at larger distances. For example, we can access $2$-hop neighborhood information by $\hat{\mathbf{A}}(\hat{\mathbf{A}}\mathbf{X})$.
+Thereafter, the $k$-hop neighborhood matrix can be described as:
+\begin{equation}
+	\mathbf{X}_{k} = \hat{\mathbf{A}}^{k}\mathbf{X}.
+	\label{eq:fp}
+\end{equation}
+The detailed implementation is drawn in Algorithm~\ref{alg:hn2fm}.
+\begin{algorithm}[t]  
+	\caption{The \pname Algorithm}  
+	\label{alg:hn2fm}  
+	\begin{algorithmic}[1]  
+		\Require
+		Normalized adjacency matrix $\hat{\mathbf{A}}$;
+		Feature matrix $\mathbf{X}$;
+		Propagation step $K$
+		\Ensure  
+		Sequences of all nodes $\mathbf{X}_{G}$
+
+		
+		\For{$k=0$ to $K$}
+
+		\For{$i=0$ to $n$}
+		\State $\mathbf{X}_{G}[i,k]=\mathbf{X}[i]$;
+        \EndFor
+        \State
+		$\mathbf{X} = \hat{\mathbf{A}}\mathbf{X}$;
+		\EndFor 
+         \\  
+		\Return 		Sequences of all nodes $\mathbf{X}_{G}$;  
+	\end{algorithmic}  
+\end{algorithm}   
+The advantages of \pname is two-fold.  
+(\uppercase\expandafter{\romannumeral1}) \pname is a non-parametric method. It can be conducted offline before the model training, and the output of \pname supports mini-batch training. In this way, the model can handle graphs of arbitrary sizes, thus allowing the generalization of graph Transformer to large-scale graphs.
+(\uppercase\expandafter{\romannumeral2}) Encoding $k$-hop neighborhood of a node into one representation is helpful for capturing the hop-wise semantic correlation, which is ignored in typical GNNs~\citep{GCN,appnp,gprgnn}.
+
+\subsection{\name for Node Classification}
+
+\autoref{fig:fw} depicts the architecture of \name. Given an attributed graph, 
+we first concatenate a matrix constructed by eigendecomposition to the attribute matrix, and gain a structure-aware feature matrix.  
+Accordingly, the effective feature vector for node $v$ is extended as $\mathbf{x}_v \in \mathbb{R}^{d^{\prime}}$. The detailed construction is described in Section \ref{implm}.  
+
+Next, we assemble an aggregated neighborhood sequence as $\mathcal{S}_{v} = (\mathbf{x}^0_v, \mathbf{x}^1_v,...,\mathbf{x}^K_v$) by applying \pname. 
+Then we map $\mathcal{S}_{v}$ to the hidden dimension $d_m$ of the Transformer with a learnable linear projection:
+\begin{equation}
+	\mathbf{Z}^{(0)}_{v}=\left[\mathbf{x}_{v}^{0} \mathbf{E};~ \mathbf{x}_{v}^{1} \mathbf{E};~ \cdots;~ \mathbf{x}_{v}^{K} \mathbf{E}\right],
+	\label{eq:ly_att}
+\end{equation}
+where $\mathbf{E} \in \mathbb{R}^{d^{\prime} \times d_m}$ and $\mathbf{Z}^{(0)}_{v} \in \mathbb{R}^{(K+1) \times d_m}$.
+
+Then, we feed the projected sequence into the Transformer encoder. 
+The building blocks of the Transformer contain multi-head self-attention (MSA) and position-wise feed-forward network (FFN). We follow the implementation of the vanilla Transformer encoder described in \citep{Transformer}, while LayerNorm (LN) is applied before each block~\citep{prenorm}. And the FFN consists of two linear layers with a GELU non-linearity:
+\begin{align}
+\mathbf{Z}^{\prime(\ell)}_{v} &=\operatorname{MSA}\left(\operatorname{LN}\left(\mathbf{Z}^{(\ell-1)}_{v}\right)\right)+\mathbf{Z}^{(\ell-1)}_{v}, \\
+\mathbf{Z}^{(\ell)}_{v} &=\operatorname{FFN}\left(\operatorname{LN}\left(\mathbf{Z}^{\prime(\ell)}_{v}\right)\right)+\mathbf{Z}^{\prime(\ell)}_{v}, 
+\end{align}
+where $\ell=1, \ldots, L$ implies the $\ell$-th layer of the Transformer.
+
+In the end, a novel readout function is applied to the output of the Transformer encoder. 
+Through several Transformer layers, the corresponding output $\mathbf{Z}^{(\ell)}_{v}$ contains the embeddings for all neighborhoods of node $v$.
+It requires a readout function to aggregate the information of different neighborhoods into one embedding. 
+Common readout functions include summation and mean~\citep{GraphSAGE}. However, these methods ignore the importance of different neighborhoods. 
+Inspired by GAT~\citep{GAT}, we propose an attention-based readout function to learn such importance by computing the attention coefficients between $0$-hop neighborhood (\ie, the node itself) and every other neighborhood. 
+For detailed implementation, please refer to Section \ref{implm}.
+
+The time and space complexity of \name are 
+$O(n(K+1)^2d)$ and $O(b(K+1)^2 + b(K+1)d+ d^2L)$, respectively ($n$: number of nodes, $K$: number of  hops, $d$: dimension of feature vector, $L$: number of layers, $b$: batch size).
+\subsection{Implementation details} \label{implm}
+
+\textbf{Structural encoding.} 
+Besides the attribute information of nodes, the structural information of nodes is also a crucial feature for graph mining tasks.  
+We adopt the eigenvectors of Laplacian matrix of the graph 
+for capturing the structural information of nodes.
+Specifically, we select the eigenvectors corresponding to the $s$ smallest non-trivial eigenvalues to construct the structure matrix $\mathbf{U} \in \mathbb{R} ^ {n \times s}$~\citep{GT,SAN}. 
+Then we combine the original feature matrix $\mathbf{X}$ with the structure matrix $\mathbf{U}$ to preserve both the attribute and structural information:
+\begin{equation}
+	\mathbf{X}^{\prime} = 
+	\mathbf{X} \Vert \mathbf{U}.
+	\label{eq:infea}
+\end{equation}
+Here $\Vert$ indicates the concatenation operator and $\mathbf{X}^{\prime} \in \mathbb{R} ^ {n \times (d+s)}$ denotes the fused feature matrix, which is then used as the input of \pname for calculating the information of different-hop neighborhoods.
+
+\textbf{Attention-based readout function.} 
+For the output matrix $\mathbf{Z}\in \mathbb{R}^{(K+1) \times d_{m}}$ of a node, $\mathbf{Z}_0$ is the token representation of the node itself and $\mathbf{Z}_k$ is its $k$-hop representation.  
+We calculate the normalized attention coefficients for its $k$-hop neighborhood:
+\begin{equation}
+	\alpha_k = \frac{exp((\mathbf{Z}_0\Vert\mathbf{Z}_k)\mathbf{W}_{a}^{\top})}{\sum_{i=1}^{K}exp((\mathbf{Z}_0\Vert\mathbf{Z}_i)\mathbf{W}_{a}^{\top})} ,
+	\label{eq:att_readout}
+\end{equation}
+where $\mathbf{W}_{a}\in \mathbb{R}^{1 \times 2d_{m}}$ denotes the learnable projection and $i=1, \ldots, K$. Therefore, the readout function takes the correlation between each neighborhood and the node representation into account.
+The node representation is finally aggregated as follows:
+\begin{equation}
+	\mathbf{Z}_{out} = \mathbf{Z}_0 + \sum_{k=1}^{K} \alpha_k \mathbf{Z}_k.
+	\label{eq:node_final}
+\end{equation}
+
+
+\subsection{Theoretical Analysis of NAGphormer}
+In this subsection, we discuss the relation of \name and decoupled GCN 
+through the lens of the node representations of \pname and the self-attention mechanism. We theoretically show that \name could learn more informative node representations from the multi-hop neighborhoods than decoupled GCN does.
+
+\textbf{Fact 1.} \textit{From the perspective of the output node representations of \pname,
+we can regard the decoupled GCN as applying a self-attention mechanism with a fixed attention matrix $\mathbf{S}\in \mathbb{R}^{(K+1)\times (K+1)}$, where $\mathbf{S}_{K,k}=\beta_{k}$ ($k\in\{0,...,K\}$) and other elements are all zeroes.  
+}
+
+Here $K$ denotes the total propagation step, $k$ represents the current propagation step,
+$\beta_{k}$ represents the aggregation weight at propagation step $k$ in the decoupled GCN.  
+
+\textbf{Fact 1} indicates that the decoupled GCN, an advanced category of GNN, only captures partial information of the multi-hop neighborhoods through the incomplete attention matrix.
+Moreover, the fixed attention coefficients of $\beta_{k}$ ($k\in\{0,...,K\}$ ) for all nodes also limit the model to learn the node representations adaptively from their individual neighborhood information.
+
+In contrast, our proposed \name first utilizes the self-attention mechanism to learn the representations of different-hop neighborhoods based on their semantic correlation.
+Then \name develops an attention-based readout function to adaptively learn the node representations from their neighborhood information, which helps the model learn more informative node representations. 
+
+
+Experiments
+\subsection{Experimental Setup}
+Here we briefly introduce datasets and baselines in experiments. 
+\textbf{Datasets}. 
+We conduct experiments on nine widely used datasets of various scales, including six small-scale datasets and three relatively large-scale datasets. 
+For small-scale datasets, we adopt Pubmed, CoraFull, Computer, Photo, CS and Physics from the Deep Graph Library (DGL). 
+We apply 60\%/20\%/20\% train/val/test random splits for small-scale datasets.
+For large-scale datasets, we adopt AMiner-CS, Reddit and Amazon2M from~\citep{Grand+}.
+The splits of large-scale datasets are followed the settings from~\citep{Grand+}.
+\textbf{Baselines}. 
+We compare \name with twelve advanced baselines, including: 
+(\uppercase\expandafter{\romannumeral1}) four full-batch GNNs:~GCN~\citep{GCN}, GAT~\citep{GAT}, APPNP~\citep{appnp} and GPRGNN~\citep{gprgnn}; 
+(\uppercase\expandafter{\romannumeral2}) three scalable GNNs:~GraphSAINT~\citep{GraphSAINT}, PPRGo~\citep{PPRGo} and GRAND+~\citep{Grand+}; 
+(\uppercase\expandafter{\romannumeral3}) five graph Transformers\footnote{Another recent graph Transformer, SAT~\citep{sat}, is not considered as it reports OOM even in our small-scale graphs.}:~GT~\citep{GT}, SAN~\citep{SAN}, Graphormer~\citep{Graphormer}, GraphGPS~\citep{gps} and Gophormer~\citep{gophormer}\footnote{
+ Nevertheless, it still shows that our results are very competitive with their reported results.
+}. 
+
+\begin{table}[t]
+\small
+    \centering
+	\caption{
+	Comparison of all models in terms of mean accuracy $\pm$ stdev (\%) on small-scale datasets. 
+	The best results appear in \textbf{bold}. OOM indicates the out-of-memory error.
+	}
+	\label{tab:normal-data}
+	\setlength\tabcolsep{1mm}{
+	\scalebox{0.75}{
+	\begin{tabular}{lcccccc}
+		\toprule
+		Method  &Pubmed &CoraFull &Computer &Photo &CS &Physics\\
+		\midrule
+		GCN &86.54 $\pm$ 0.12  & 61.76 $\pm$ 0.14 & 89.65 $\pm$ 0.52  & 92.70 $\pm$ 0.20 & 92.92 $\pm$ 0.12 & 96.18 $\pm$ 0.07\\
+		GAT &86.32 $\pm$ 0.16  & 64.47 $\pm$ 0.18 & 90.78 $\pm$ 0.13  & 93.87 $\pm$ 0.11 & 93.61 $\pm$ 0.14 & 96.17 $\pm$ 0.08 \\
+		APPNP &88.43 $\pm$ 0.15  & 65.16 $\pm$ 0.28 & 90.18 $\pm$ 0.17  & 94.32 $\pm$ 0.14 & 94.49 $\pm$ 0.07 & 96.54 $\pm$ 0.07\\
+		GPRGNN &89.34 $\pm$ 0.25  & 67.12 $\pm$ 0.31 & 89.32 $\pm$ 0.29  & 94.49 $\pm$ 0.14 & 95.13 $\pm$ 0.09 & 96.85 $\pm$ 0.08\\
+		\midrule
+		GraphSAINT & 88.96 $\pm$ 0.16  & 67.85  $\pm$ 0.21  & 90.22 $\pm$ 0.15  & 91.72 $\pm$ 0.13  & 94.41 $\pm$ 0.09 & 96.43 $\pm$ 0.05  \\
+		PPRGo & 87.38 $\pm$ 0.11   & 63.54 $\pm$ 0.25 & 88.69 $\pm$ 0.21  & 93.61 $\pm$ 0.12  & 92.52 $\pm$ 0.15 & 95.51 $\pm$ 0.08  \\
+		GRAND+ & 88.64 $\pm$ 0.09   & 71.37 $\pm$ 0.11 &  88.74 $\pm$ 0.11   & 94.75 $\pm$ 0.12  & 93.92 $\pm$ 0.08 & 96.47 $\pm$ 0.04   \\
+		\midrule
+		GT &88.79 $\pm$ 0.12  & 61.05 $\pm$ 0.38 & 91.18 $\pm$ 0.17  & 94.74 $\pm$ 0.13 & 94.64 $\pm$ 0.13 & 97.05 $\pm$ 0.05 \\
+		Graphormer & OOM   &  OOM  &  OOM   & 92.74 $\pm$ 0.14 &  OOM  &  OOM \\
+		SAN & 88.22 $\pm$ 0.15   & 59.01 $\pm$ 0.34 & 89.83 $\pm$ 0.16  & 94.86 $\pm$ 0.10 & 94.51 $\pm$ 0.15 &  OOM \\
+	    GraphGPS & 88.94 $\pm$ 0.16   & 55.76 $\pm$ 0.23 & OOM  & 95.06 $\pm$ 0.13 & 93.93 $\pm$ 0.12 &  OOM  \\	
+		\midrule
+		\name &\textbf{89.70 $\pm$ 0.19}  & \textbf{71.51 $\pm$ 0.13} &  \textbf{91.22 $\pm$ 0.14}  & \textbf{95.49 $\pm$ 0.11} & \textbf{95.75 $\pm$ 0.09} & \textbf{97.34 $\pm$ 0.03} \\
+		\bottomrule
+	\end{tabular}}
+	}
+\end{table}
+
+\subsection{Comparison on Small-scale Datasets}
+We conduct 10 trials with random seeds for
+each model and take the mean accuracy and standard deviation for comparison on small-scale datasets, and the results are reported in \autoref{tab:normal-data}.  
+From the experimental results, we can observe that \name outperforms the baselines consistently on all these datasets.
+For the superiority over GNN-based methods, it is because \name utilizes \pname and the Transformer model to capture the semantic relevance of different hop neighbors overlooked in most GNNs, especially compared to APPNP and GPRGNN, which are two decoupled GCNs.
+Besides, the performance of \name also surpasses graph Transformer-based methods, indicating that leveraging the local information is beneficial for node classification. 
+In particular, \name outperforms GT and SAN, which also introduce the eigenvectors of Laplacian matrix as the structural encoding into Transformers for learning the node representations, demonstrating the superiority of our proposed \name.
+Moreover, We observe that Graphormer, SAN, and GraphGPS suffer from the out-of-memory error even in some small graphs, further demonstrating the necessity of designing a scalable graph Transformer for large-scale graphs.
+
+\begin{table}[t]
+    \centering
+	\caption{%Results 
+	Comparison of all models in terms of mean accuracy $\pm$ stdev (\%) on large-scale datasets. 
+	The best results appear in \textbf{bold}.
+	}
+	\label{tab:large-data}
+\scalebox{0.75}{
+	\begin{tabular}{lccc}
+		\toprule
+		Method  &AMiner-CS &Reddit &Amazon2M\\
+		\midrule
+		PPRGo & 49.07 $\pm$ 0.19 & 90.38 $\pm$ 0.11  & 66.12 $\pm$ 0.59 \\
+		GraphSAINT & 51.86  $\pm$ 0.21 &  92.35 $\pm$ 0.08   & 75.21 $\pm$ 0.15  \\
+		GRAND+ & 54.67 $\pm$ 0.25  &92.81 $\pm$ 0.03  & 75.49 $\pm$ 0.11   \\
+		\midrule
+		\name  &\textbf{56.21 $\pm$ 0.42}  & \textbf{93.58 $\pm$ 0.05} & \textbf{77.43 $\pm$ 0.24}\\
+		\bottomrule
+	\end{tabular}
+ 	}
+\end{table}
+\subsection{Comparison on Large-scale Datasets}
+To verify the scalability of \name, we continue the comparison on three large-scale datasets. 
+For the baselines, we only compare with three scalable GNNs, as existing graph Transformers can not work on such large-scale datasets due to their high computational cost. 
+The results are summarized in \autoref{tab:large-data}.
+\name consistently outperforms the scalable GNNs on all datasets, indicating that \name can better preserve the local information of nodes and is capable of handling the node classification task in large graphs.
+\begin{table}[t]
+    \centering
+	\caption{
+    The accuracy (\%) with or without structural encoding.
+	}
+	\label{tab:ab-str}
+	\setlength\tabcolsep{1mm}{
+		\footnotesize
+	\scalebox{0.75}{
+	\begin{tabular}{lccccccccc}
+		\toprule
+		  &Pubmed &CoraFull &CS &Computer &Photo  &Physics& Aminer-CS&Reddit &Amazon2M \\
+		\midrule
+		W/O-SE &89.06  & 70.42 & 95.52 & 90.44& 95.02& 97.10&55.64& 93.47  & 76.98   \\
+		With-SE  &89.70  & 71.51 & 95.75 & 91.22& 95.49& 97.34&56.21& 93.58  & 77.43 \\
+		\midrule
+        Gain &$+$0.64 & $+$1.09 & $+$0.23 & $+$0.78& $+$0.47& $+$0.24&$+$0.57 & $+$0.11 & $+$0.45\\
+		\bottomrule
+	\end{tabular}}}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+	\includegraphics[width=4in]{figs/test_data_test.pdf}
+	\caption{The performance of \name via different readout functions.}
+	\label{fig:rd}
+\end{figure}
+
+\subsection{Abla
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

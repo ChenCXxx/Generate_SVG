@@ -1,0 +1,284 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Humans excel at solving newer tasks without forgetting previous knowledge. Deep neural networks, however, face the challenge of forgetting old knowledge when trained for a novel task.
+This problem, known as {\it Catastrophic Forgetting}, is a fundamental challenge
+if a model needs to learn when data arrives in a sequence of non-overlapping tasks.
+\emph{Continual Learning}~\cite{aljundi2017expert,TCS2020Hadsell,PNAS2017kirk,NN2019parisi,cvpr2017icarl,neurips2019rolnick} aims to handle such problems arising from non-stationary data to retain previously learned knowledge as well as acquire knowledge from new data with limited or no access to previous data.
+
+\input{figs/teaser_fig}
+
+Although continual learning in computer vision has witnessed remarkable progress, most of the methods are tailored for CNNs. 
+Recently, vision transformers have shown promising results in big data regime~\cite{carion2020end,iclr2021vit,iccv2021swin}.
+However, data hungry vision transformers and data-scarce continual learning do not seem to go hand in hand, and thus continual learning in vision transformers has received relatively little attention.
+Early continual learning approaches on ConvNets relied on exemplar rehearsal which re-trains newer models on previous data instances stored in a fixed size memory buffer~\cite{cvpr2021rm,icpr2020ert,chaudhry2019continual,hayes2020remind,lopez2017gradient,prabhu2020gdumb,cvpr2017icarl,neurips2019rolnick}.
+Dytox~\cite{douillard2021dytox} and LVT~\cite{wang2022lvt} are contemporary works addressing continual learning on vision transformers using such previously stored data.
+However, storing task samples in raw format may not always  be feasible, especially for tasks where long-term storage of data is not permitted owing to privacy or data use legislation~\cite{he2022exemplar}.
+{\it Dynamic architecture} based methods, on the other hand, grows an initial model dynamically or rearranges its internal structure,~\cite{fernando2017pathnet,serra2018overcoming, singh2020calibrating,iclr2018den} with the arrival of new tasks without the need for storing previous data.
+
+The main focus of this paper is in modeling the new set of parameters for new tasks with as low overhead as possible.
+We conjecture that better representation learning capability of a transformer keeps it ready for easily adapting to new tasks by \emph{manipulating} the already learned weights.
+Convolution offers a cheap way to manipulate transformer weights and the weight matrices are natural fits to convolution as input and output.
+In this paper, we propose a dynamically expandable architecture with novel convolutional adaption on previously learnt transformer weights to obtain new weights for new tasks.
+In addition to this, we employ a learnable skip-gating which learns to convexly combine the old and the convoluted weights.
+This helps significantly in maintaining the stability-plasticity tradeoff by balancing between how much to retain and how much to forget.
+The resulting proposed approach -- \textbf{Con}tinual \textbf{Tra}nsformer with \textbf{Con}volutions (\model{}) (ref. Fig.~\ref{fig:transformer_cl_fig1}) -- not only leverages a vision transformer's learning capability but also does it with significantly low memory overhead per task as is shown in our experiments.
+
+Specifically, for each new task, we reweigh the key, query, and value weights of the previously learned transformer by convolving them with small filters.
+Transformers are known for their ability to capture long-range dependencies between patches.
+Convolution, on the other hand, exploits a local neighborhood only.
+Such local dependency not only restricts large changes in the weights for the new task from the old tasks, but also allows us to achieve this with very little increase in the model size.
+As the convolution weights are separate for different tasks, during inference, this will require the information of which task an image belongs to.
+However, in class incremental continual learning, images may come arbitrarily without associated task information.
+To tackle the challenging scenario, we propose a novel entropy-based criterion to infer the task before calling for the corresponding task-specific convolution weights
+In particular, our proposed approach creates multiple augmented views of a test image and evaluates the agreement of their predictions among different task-specific models.
+The task-id of the image is determined by identifying the task giving the lowest entropy value of the average predictions from the various augmented views.
+The task-specific model with the most consistent and confident predictions across different augmentations corresponds to the correct task for the image.
+
+Extensive experiments on four benchmark datasets, considering both the availability and unavailability of task-ids at test time, demonstrate the superiority of our proposed method over several state-of-the-art methods including the extension of popular approaches on CNNs to transformers.
+Despite being exemplar-free, our approach outperforms state-of-the-art exemplar-based continual learning approaches that use transformers as backbone architectures (Dytox~\cite{douillard2021dytox} and LVT~\cite{wang2022lvt}) with an average improvement of $5\%$.
+Moreover, our approach accomplishes this with only about $\sim 60\%$ parameters used by above models.
+We also perform ablation studies highlighting the contribution of each component in our approach.
+To summarize, our key contributions include:
+\begin{itemize}[leftmargin=*]
+    \item We propose \model{}, a dynamic architecture for CL on transformers. We use convolution on the Multi-head self-attention (MHSA) layers to learn new tasks thereby achieving better performance with significantly low memory overhead. We also apply a temporal skip-gating function to tradeoff between stability and plasticity.
+    \item Our entropy based approach adds the flexibility of not having to know the task information during inference.
+    \item We performed extensive experimentation and ablation of the proposed approach thereby validating the superiority of our model and helping to disentangle the significance of different components.
+\end{itemize}
+
+
+
+Related Work
+\noindent{\bf Continual Learning:} CL approaches can be broadly classified into --  1)~ Exemplar-replay methods, 2)~regularization methods and 3)~dynamic architecture methods. 
+To avoid forgetting when learning a new task, replay approaches repeat past task samples that are kept in raw format~\cite{cvpr2021rm,iclr2019fdr,neurips2020der,icpr2020ert,chaudhry2019continual,douillard2021dytox,aaai2018isele,cvpr2017icarl,wang2022lvt} or generated with a generative model~\cite{neurips2017deepgenreplay}. Usually, replay-based approaches have a fixed memory which stores samples.
+Regularization-based approaches, on the other hand, prevent catastrophic forgetting by encouraging important parameters to lie in close vicinity of previous solutions with the introduction of penalty terms to the loss
+function ~\cite{PNAS2017kirk,neurips2017lee,zenke2017continual}  or constraining the direction of parameter update~\cite{farajtabar2020orthogonal,iclr2021gpm}. However, the regularization prevents the model from performing well for long task sequences.
+Dynamic Architecture methods~\cite{verma2021efficient,cvpr2021der,iclr2018den} grow the model dynamically with the arrival of new tasks. Although these approaches can learn long sequences of tasks, these can suffer from the huge memory and compute overhead if not managed properly.
+
+\input{figs/main_fig}
+
+\noindent{\bf Transformers:}
+Transformers~\cite{neurips2017vaswani} introduced multi-head self-attention (MHSA) in the form of encoder-decoder architecture for machine translation and have since become the state-of-the-art in many NLP tasks~\cite{beltagy2020longformer,brown2020language,choromanski2020rethinking,dehghani2018universal,naacl2019bert}.
+In computer vision, the pioneering Vision Transformer (ViT)~\cite{iclr2021vit} directly applied a transformer encoder to image classification with image patches as input.
+There have been multiple works since then, including DeiT~\cite{pmlr2021deit}, ConVit~\cite{pmlr2021convit} CCT~\cite{hassani2021cct} \textit{etc.} with architecture and training procedures modifications.
+
+\noindent{\bf Continual Learning in Vision Transformers:} Despite the success of vision transformers, continual learning with vision transformers has received very little attention.
+Recently Dytox~\cite{douillard2021dytox} proposed to learn new tasks through the expansion of special tokens known as task tokens.
+Another recent approach, LVT~\cite{wang2022lvt}, proposed an inter-task attention mechanism that absorbs the previous tasks’ information and slows down the drift of information between previous and current tasks.
+Both Dytox and LVT require extra memory for storing training instances from previous tasks.
+Another recent method, MEAT~\cite{cvpr2022meat} uses learnable masks to help isolate previous tasks' parameters that are important for learning new tasks.
+However, as the architecture is not expandable, the number of tasks the model can learn is limited.
+Additionally, task-ids are required during inference.
+A few recent approaches learn soft prompts on new tasks rather than directly modifying the vision encoder which is pre-trained on large amounts of training data.
+L2P~\cite{cvpr2022l2p} and DualPrompt~\cite{eccv2022dualprompt} learn a query mechanism to select task relevant prompts from a pool of prompts structured in a key-value scheme.
+One drawback of these approaches is they require large pre-training on huge datasets and may fail if the pre-training data is not representative of the later tasks in hand.
+
+Different from the contemporary works, \model{} uses convolution in an intelligent way on the weights that does not require a rehearsal memory for storing samples.
+In addition, our proposed approach is flexible enough to operate without the knowledge of task-ids by comparing the entropy of average predictions of several augmented views.
+It does not depend on large pre-training and can gracefully handle continual learning scenarios with largely varying tasks.
+
+
+
+Method
+In this section, we first describe our problem setting, and then describe the proposed \model{} model. 
+
+\subsection{Problem Setting} 
+Considering $T$ tasks arriving sequentially, the goal is to obtain a model which is capable of learning new tasks without forgetting the previous ones.
+Specifically, for a task $t \in \{1,2, \ldots, T\}$  the model is exposed to training samples $\{x_i^t , y_i^t\}$, where $x^t_i$ is the $i^{th}$ sample of the $t^{th}$ task and $y^t_i \in C^t$ is the corresponding label belonging to the set of classes $C^t$ with the set of the class labels being mutually exclusive, \textit{i.e.}, $C^0 \cap C^1 \ldots \cap C^T = \phi$.
+Our approach is flexible to work in two common CL scenarios, namely (1)~Task Incremental Learning (TIL), and (2)~Class Incremental Learning (CIL). 
+In TIL, task-ids for each input is assumed to be known at test time. 
+In the more challenging CIL scenario, task-ids are unknown and need to be inferred~\cite{de2021continual,threescenarios2019}.
+Our approach is also \textit{exemplar-free}, \textit{i.e.}, data from previous tasks is \textit{not} available for any subsequent use.
+
+\subsection{Preliminaries}
+The vision transformer (ViT)~\cite{iclr2021vit} has three major components: (1)~tokenizer layer, (2)~multi-head self-attention (MHSA) and (3)~feed-forward network (FFN).
+In ViT, an image is divided into $n$ fixed-size non-overlapping patches.
+Each of these patches are embedded into $d$-dimensional vectors.
+Formally, the input image $x_i^t$ is tokenized into $n$ patches $z_0 \in \mathbb{R}^{n \times d}$.
+Positional embeddings are used to add spatial information in the token sequence.
+In ViT, a learnable class embedding is used for the final classification.
+
+A single encoder layer of ViT consists of stacks of MHSA, layer normalization, and FFN blocks, each with residual connections.
+At the $l^{th}$ layer, the input is $z_l$ generating the output $z_{l+1}$ that goes into the next layer as input, $l \in \{1, 2, \cdots L\}$ where $L$ is the total number of encoder layers.
+Each MHSA block consists of $H$ separate self-attention heads. At the $l^{th}$ layer, self-attention values from head $h \in \{1,2, \cdots H\}$ is:
+\begin{align}
+    A_{l,h}(Q_{l,h}, K_{l,h}, V_{l,h}) & = softmax \bigg(\frac{Q_{l,h} K^T_{l,h}}{\sqrt{d_k}}\bigg) V_{l,h}
+    \label{eq:sa}
+\end{align}
+where $Q_{l,h}=z_l W^Q_{l,h}$,  $K_{l,h} = z_l W^K_{l,h}$ and $V_{l,h} = z_l W^V_{l,h}$ are query, key, and value with learnable weights $W^Q_{l,h}, W^K_{l,h}$ and $W^V_{l,h} \in \mathbb{R}^{d\times d_k}$ respectively with $d_k$ being the dimension of  key, query and value vectors.
+$A_{l,h}$ is the attention matrix obtained as dot product between query and key. 
+The activations from different attention heads are then concatenated and passed through a linear projection layer as:
+\begin{equation}
+    \small
+    MHSA_{l} (Q, K, V) = Concat ( A_{l,1},  A_{l,2}, \ldots,  A_{l,H}) W^O
+\end{equation}
+\normalsize
+The FFN block consists of two linear layers and an activation function (usually GELU).
+
+\subsection{ConTraCon}
+We now describe the different modules of \model{}.
+An overview of the approach is illustrated in Fig.~\ref{fig:transformer_cl}.
+
+\noindent {\bf Convolution on Transformer Weights:}
+Self-attention in transformers plays a significant role in their improved performance.
+The model learns the relationship between all image patches.
+The large effective receptive field of the self-attention layers of transformers helps them to learn the visual representations required for vision tasks~\cite{raghu2021do} by exploiting large amounts of labeled training data.
+However, in the presence of only a handful of labeled training data, one of the requirements for capturing the new knowledge without overfitting is to employ only a small number of learnable parameters.
+We propose task-specific convolution operations to reweigh the previously learned key, query, and value weights.
+The sharable computation offered by the convolutional filters prevents overfitting and maintains plasticity while learning new tasks.
+On the other hand, the local computation offered by them helps to maintain the required stability by restricting large changes in the weights. Additionally, convolutional filters being small, help to keep the memory footprint of the newly learned models in check as well.
+
+Specifically, on a ViT, with $L$ encoders and $H$ attention heads per MHSA block, each new task is continually learned by applying convolution kernels on each of the self-attention layers of the MHSA blocks in the transformer:
+\begin{equation}
+\label{eq:conv_op}
+    \begin{split}
+        W^{Q'}_{l,h} & = Conv (F^Q_{l,h}, W^Q_{l,h}) \\
+        W^{K'}_{l,h} & = Conv (F^K_{l,h}, W^K_{l,h}) \\
+        W^{V'}_{l,h} & = Conv (F^V_{l,h}, W^V_{l,h}) \\
+    \end{split}
+\end{equation}
+where $Conv(.)$ denotes the convolution operation which is applied on the weights $W^Q_{l,h}$, $W^K_{l,h}$ and $W^V_{l,h}$ with filters $F^Q_{l,h}, F^K_{l,h}$ and $F^V_{l,h}$ respectively.
+Note that the filter weights are learned separately for each task $t \in \{1,2, \ldots, T\}$.
+However, to avoid clutter, we are not incorporating the task index above.
+These cheap operations help the transformers learn a similar task without forgetting previous tasks and simultaneously keep the compute and memory footprint low.
+
+\noindent {\bf Learnable Skip-Gate:}
+It has been shown in ResCL~\cite{Lee2020ResidualCL} that a residual connection combining previous and newly learned weights could improve continual learning performance.
+Taking inspiration, we took a step further and replaced the heuristic combination with a learnable skip connection where the combined weight is learned directly from data.
+Specifically, we apply the skip connections as follows.
+\begin{equation}
+    W^{Q''}_{l,h} = W^{Q'}_{l,h} + \sigma (\alpha_{l,h}) * W^Q_{l,h}
+\end{equation}
+Where $\alpha_{l,h} \in \mathbb{R}$ is a learnable parameter and $\sigma (.)$  is the sigmoid function.
+$W^{Q''}_{l,h}$ is the weight matrix of the query for layer 
+$l$ and head $h$ corresponding to the new task. Here also, we drop the task index $t$ to avoid clutter.
+A similar operation is performed on the key and values weight matrices. 
+
+\subsection{Task Prediction}
+In the class incremental setup (CIL), the task-id is not known during inference. Therefore we require a model to predict the task-id of the input in order to decide which set of task-specific parameters to use for inference. This prediction can be difficult, especially when there is no training data available from previous tasks.
+One simple approach to predict the task-id is to pass the test image via all task-specific parameters and compare the entropy of all the predictions.
+The prediction with the lowest entropy \textit{i.e.}, the prediction with the peakiest confidence can be taken.
+However, this method does \textit{not} work well because the cross-entropy training objective tends to make neural networks highly confident, even for out-of-distribution (OOD) samples~\cite{guo2017calibration}. We conjecture that such confident classifiers will predict different classes for different augmentations of an OOD data sample, but their predictions will be consistent for in-distribution samples and their augmentations. Based on this premise, the proposed approach calculates the entropy of the average predictions of a set of augmented views of the input image.
+The average entropy reflects the agreement of the predictions for different views of the same image, and thus a highly confident average prediction \textit{i.e.}, the lowest entropy average prediction, is used to infer the task identity.
+Once the task identity is inferred, the corresponding task-specific model is invoked on the unaugmented image.
+This simple trick is shown to significantly improve task prediction  as verified by ablation studies (see Section~\ref{sec:ablation}). Furthermore, it does so without adding much overhead, except for the increase in batch size due to the augmentations during inference.
+
+\subsection{Training}
+As ViT is extremely data hungry and continual learning by nature is data scarce, we resorted to the compact version of ViT proposed by Hassani \textit{et al.}~\cite{hassani2021cct}.
+In particular, we used the Compact Convolutional Transformer (CCT) which uses convolutional blocks in the tokenization step reducing the number of effective patches which in turn reduces the number of parameters used later.
+CCT further reduces the number of trainable parameters and improves performance by replacing class tokens with a sequence pooling strategy.
+Due to its effectiveness in reducing overfitting in a low data regime, we start with a CCT and train it from scratch on the initial task.
+Afterward, for every new incoming task, we learn (1) Task-specific convolution filters on the transformer encoder weights, (2) layernorm layers, (3) the sequence pooling layer, and (4) the final classification layer.
+
+
+
+Experiments
+
+We evaluated \model{} on several datasets in both CIL and TIL settings, comparing with many strong state-of-the-art baseline methods.
+We also conducted extensive ablation studies to study the effectiveness of different components in our model.
+\subsection{Baselines} 
+Following~\cite{wang2022lvt}, we compare \model{} against several well-established rehearsal-based Continual Learning methods such as
+iCARL~\cite{cvpr2017icarl}, FDR~\cite{iclr2019fdr}, DER++~\cite{neurips2020der}, ERT~\cite{icpr2020ert}, RM~\cite{cvpr2021rm}. Besides, we also compare our method with various state-of-the-art methods like
+Dytox~\cite{douillard2021dytox}, GPM~\cite{iclr2021gpm},  EFT~\cite{verma2021efficient}, LvT~\cite{wang2022lvt}, and  PASS~\cite{cvpr2021pass}.
+Inspired by the recent success of Class Attention in image Transformers (CAiT)~\cite{cvpr2021cait}, Dytox~\cite{douillard2021dytox} proposed task attention-based Dynamic Token Expansion for continual classification using transformers.
+LvT ~\cite{wang2022lvt} proposes a continual learning mechanism for vision transformers that utilizes an inter-task attention mechanism to consolidate knowledge from previous tasks and avoid catastrophic forgetting. Both Dytox~\cite{douillard2021dytox} and LvT~\cite{wang2022lvt} include a small memory buffer to store training instances of previous tasks. Following ~\cite{wang2022lvt}, we report the performance of all the rehearsal-based approaches with memory buffer sizes of $200$ and $500$.
+GPM~\cite{iclr2021gpm} is a regularization-based approach for TIL and so we report only the TIL values for GPM.
+EFT~\cite{verma2021efficient} used task-specific feature-map transformation to convolutional architectures.
+Specifically, group-wise and point-wise convolutions were used.
+For a fair comparison with a similar number of parameters, we ran experiments on EFT by setting the groupsize of the group-wise convolution to the minimum (\textit{i.e., $0$}) and point-wise convolution depth to $8$.
+PASS~\cite{cvpr2021pass} performs continual classification by learning per-class prototypes rather than storing exemplars for replay.
+Different augmented versions of these stored prototypes are replayed.
+
+\subsection{Datasets, Setup \& Metrics}
+We evaluate the continual learning models on four benchmark datasets as follows. \textbf{(1)~CIFAR-100}~\cite{2009cifar} is composed of 60K images of size  $32\times 32$ belonging to $100$ classes with $600$ images per class ($500$ training images and the rest $100$ testing images).
+Following~\cite{wang2022lvt} we divided CIFAR-100 into 5 tasks, 10 tasks and 20 tasks.
+\textbf{(2)~TinyImageNet-200/10}~\cite{tinyimagenet} is a subset of the ImageNet dataset containing  100K images of size $64\times 64$ distributed among $200$ classes. Each class has $500$ training, $50$ validation and $50$ test images. In TinyImageNet-200/10, the $200$ classes are divided into $10$ sequential tasks containing $20$ classes each.
+\textbf{(3)~ImageNet-100/10}~\cite{cvpr2017icarl} contains 100 randomly chosen classes from ImageNet~\cite{russakovsky2015imagenet} having an average resolution of $469\times 387$. It contains around $120K$ images for training and $5K$ for validation. The $100$ classes are divided into $10$ tasks consisting of $10$ classes each.
+\textbf{(4)~5-Datasets}~\cite{eccv2020fived} is composed of  CIFAR-10~\cite{2009cifar}, MNIST~\cite{mnist2010}, SVHN~\cite{svhn2011}, Fashion MNIST~\cite{fashionmnist2017} and notMNIST. Classification of each of these datasets is considered as a task.
+Additional statistics about the datasets are summarized in Table~\ref{tab:dataset}.
+
+\noindent {\bf Performance metrics:}
+Following~\cite{wang2022lvt}, for Class Incremental Learning (CIL), we report top-1 accuracy over all classes of all tasks after training on the last task is completed.
+\input{tables/dataset_stats}
+For Task Incremental Learning (TIL), we report the average accuracy over all the tasks after training on the last task. The average accuracy after training on the $T^{th}$ task is defined by $A_{T} = \frac{1}{T}\sum^{T}_{t=1} a_{T,t}$ where $a_{T,t}$ is the accuracy on the test set of tasks $t$ when the model completed learning task $T$.
+
+\input{tables/cifar_results}
+
+\subsection{Implementation Details}
+We used CCT~\cite{hassani2021cct} as our backbone architecture.
+For CIFAR-100, ImageNet-100 and TinyImageNet-200, we used 6 transformer encoder layers with 4 attention heads for each.
+For 5-Datasets we used 7 transformer encoder layers with 4 attention heads per layer.
+The encoder layers have an embedding dimension of 256.
+We used sinusoidal positional embeddings.
+For CIFAR-100 and 5-Datasets, we configured the tokenizer to a single convolution layer with kernel size $3$.
+For TinyImageNet-200/10, the tokenizer consisted of $2$ convolution layers with kernel size $5$ and for ImageNet-100/10 the tokenizer had $3$ convolution layers with kernel size $3$.
+A stride of $2$ and padding of $3$ were used for all datasets.
+Following CCT~\cite{hassani2021cct}, we set both attention and depth dropout probability to $0.1$.
+Each task was trained for $500$ epochs using AdamW~\cite{iclr2019adamw} optimizer.
+We employed cosine annealing learning rate scheduler with initial learning rate of $8e^{-4}$ and warm restarts~\cite{loshchilov2016sgdr}.
+For the convolution operation on the transformer weights, we set kernel size ($k$) as $15$, which is obtained by validating on a small subset of the data.
+Convolution is performed on the transformer weights learnt after the initial task \textit{i.e.}, $W^Q_{l,h}, W^K_{l,h}$ and $W^V_{l,h}$ in Eqn.~\ref{eq:conv_op} comes from the first task.
+For task prediction, using 10 augmentations and $\beta=0.6$ gives the best result.
+
+\input{tables/imagenet_results}
+
+\input{tables/5d_results}
+
+\subsection{Results and Analyses}
+Tables~\ref{tab:cifar-results-200}, \ref{tab:imgnet-tiny-results-200} and~\ref{tab:5d-results} compare \model{} with baselines working on both CNN and transformers, over the aforementioned four datasets.
+The results show the performance of our approach in both CIL and TIL setups.
+Table~\ref{tab:cifar-results-200} shows the results on the CIFAR-100 dataset split into 5 tasks, 10 tasks, and 20 tasks following the standards commonly adopted in the community.
+The 5-tasks split contains fewer tasks but more classes per task.
+The 20-tasks split is more challenging, where performance of most models suffer a drastic drop compared to setups consisting of fewer tasks.
+\model{} significantly outperforms  existing approaches over longer sequences of tasks.
+In task incremental setting (TIL), \model{} performs the best across all the splits using the lowest amount of parameters.
+As rehearsal and regularization based approaches do not expand their architectures with new tasks, we provide the number of initial parameters learned for dynamic architecture expansion based approaches including ours, for fair comparison (ref \textbf{\# Params} column).
+We also provide the number of additional parameters per task for the dynamic expansion based approaches including ours.
+
+For the challenging CIL setup, \model{} does the best in the most challenging 20-Tasks scenario.
+For 10-Tasks, \model{} is the best among the dynamic architecture based approaches and better than most rehearsal based approaches.
+An advantage of our approach is that it does not need an extra memory buffer to store previous examples while remaining the most parameter efficient.
+
+Table~\ref{tab:imgnet-tiny-results-200} shows the performance on Imagenet-100/10 and TinyImagenet-100/10.
+The format \emph{dataset-X/Y} implies that the dataset contains a total of X classes divided into Y tasks uniformly.
+\model{} significantly beats all the competing approaches while remaining parameter efficient and without using replay memory.
+Table~\ref{tab:5d-results} shows the performance on the challenging 5-Datasets.
+While requiring more parameters compared to GPM, \model{} significantly outperforms it in the TIL setup.
+\model{} can equally handle CIL setup which GPM can not.
+In the challenging CIL setup, DyTox is better but at the cost of using almost 2.5 times the number of parameters as used in \model{}, and using 500 exemplars (while \model{} is exemplar-free).
+
+\subsection{Model Introspection}
+
+In this section, we analyze and explain the significance of various components of our approach.
+For this purpose, we use the CIFAR-100/10 dataset unless otherwise mentioned.
+
+\begin{figure*}[!t]
+\captionsetup[subfigure]{aboveskip=-1pt,belowskip=-1pt}
+\input{figs/kernel_size_ablation}
+\input{figs/split_ratio}
+\input{figs/with_and_without_aug}
+\input{figs/aug_vs_time_plot}
+\caption{Ablation studies on \model{} over CIFAR-100/10 dataset: (a)~Average classification accuracy using different convolutional kernel sizes. (b)~Effect of the presence of local filters -- interestingly, the presence of task adaptable convolution filters in the tokenizer layer lowers the performance. 
+(c)~Effect of augmentation in the inference. Reported is the average top-1 accuracy in the CIL setup calculated after training all the tasks. \model{}'s performance drops significantly when inference is done without augmentation. (d) Inference time vs number of augmentations for one batch of $64$ images.}
+\label{fig:ablation}
+\end{figure*}
+
+\noindent{\bf Upper and Lower Bounds:}
+We trained separate CCT backbones for each task assuming no limitations on the total number of learnable parameters.
+The average accuracy was found to be $89.3\%$ which serves as the performance upperbound having $100\%$ increase in parameters for each new task.
+On the other extreme, we fine-tuned an initial CCT backbone with every new task giving 0 parameter increase per task but suffering from catastrophic forgetting the most.
+The average accuracy (calculated after training the last task) obtained is only $17.1\%$.
+\model{} achieves $85.7\%$ average classification accuracy in TIL setup, a mere $\sim 4\%$ drop in comparison to the upper bound while using only $0.7\%$ of the parameters required per task by the upper bound.
+
+\input{figs/parameter_number}
+\noindent{\bf Memory Overhead: }
+Fig.~\ref{fig:parameter_number} shows the number of trainable parameters required in CIFAR-100/10 dataset. As can be seen, \model{} has the least number of trainable parameters. 
+For each novel task, we have separate convolution kernels, layernorm, sequence pool, and classification layers. These are cheap to store as they consist of very few parameters. \model{} incurs a total parameter increase of $\sim 7\%$ for learning all the tasks in CIFAR-100/10.
+
+\noindent{\bf Computational Overhead:} \model{} uses $50\%$ less total FLOPs during training compared to DyTox.
+This is because Dytox uses additional distilla
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

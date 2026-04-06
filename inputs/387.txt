@@ -1,0 +1,284 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Modern machine learning models typically require a huge collection of precisely labeled data, which can be a labor-intensive and time-consuming process. 
+Even worse, it can be unrealistic in some practical scenarios that demand much expertise, such as medical diagnosis and industrial applications.
+To this end, a plethora of approaches have been investigated to reduce the burden of annotation, including semi-supervised learning \citep{DBLP:conf/nips/SohnBCZZRCKL20,DBLP:conf/nips/BerthelotCGPOR19}, learning with label noise \citep{DBLP:conf/nips/HanYYNXHTS18,DBLP:conf/iclr/LiSH20}, and so on. Amongst them, active learning \citep{ein-dor-etal-2020-active,yuan-etal-2020-cold,margatina-etal-2021-active} is a prominent solution that interactively queries an external expert or oracle to mark the new data points that the model wants to learn from. These methods alleviate the labeling burden to some extent but still require human efforts in the annotation or construction of the oracle to start with.
+
+\begin{figure}[!t]
+     \centering
+         \includegraphics[width=\columnwidth]{image/main_freeal_621.png}
+     \caption{{Comparisons of FreeAL with traditional active learning (AL) algorithms and supervised fine-tuning on the SST-2 dataset. FreeAL surpasses all the active learning rivals and achieves near-supervised performance without human annotation.} }
+     \label{fig:head}
+\end{figure}
+
+The recent prevalent large language models (LLMs) \citep{DBLP:conf/nips/Ouyang0JAWMZASR22,DBLP:journals/corr/abs-2201-08239,openai2023gpt4}, such as ChatGPT and PaLM \citep{DBLP:journals/corr/abs-2204-02311}, have exhibited strong zero-shot learning ability by proper prompt design, yet becoming a new remedy for data efficiency. Even more inspiringly, LLMs emerge with the so-called in-context learning (ICL) \citep{DBLP:conf/nips/BrownMRSKDNSSAA20} ability {to learn from a few task-related labeled samples for boosted performance.}
+Despite the promise, some studies \citep{DBLP:journals/corr/abs-2302-04023} find that LLMs tend to underperform compared to fine-tuned {small language models }(SLMs) on challenging tasks, which is also verified in our empirical studies (Table \ref{tab:sup-llm}).  
+One possible reason is that ICL can not fully exploit supervised training samples due to limited context length. 
+Moreover, their extremely large size and limited accessibility also hinder their training and generalization on specific tasks.
+To date, it is still questionable how can we generalize to downstream tasks with the least human annotation in the era of LLMs.
+
+
+In this work, we present a novel collaborative learning paradigm FreeAL that revolutionizes traditional active learning by interactively distilling and filtering the task-related knowledge from the LLMs. 
+Our intuition is that, while LLMs are hard to fine-tune, they are {competent} zero-shot learners \citep{DBLP:conf/iclr/WeiBZGYLDDL22,DBLP:conf/nips/KojimaGRMI22} and can provide coarse-grained knowledge for downstream tasks.
+On the other hand, SLMs are {effective} weak learners \citep{DBLP:conf/iclr/LiSH20} that can distill valuable clean samples from noisy supervision. 
+To integrate LLMs and SLMs {synergistically} as a whole, we design a collaborative training framework where LLM operates as an active annotator infusing its knowledge and the SLM acts as a student to filter out the high-quality input-label pairs to feed back the LLM for subsequent label refinery. 
+Empirically, FreeAL iteratively boosts the {unsupervised} performance of both SLMs and LLMs during collaborative training for transductive and inductive settings. {As depicted in Figure \ref{fig:head}, FreeAL allows us to achieve an extraordinary annotation-performance trade-off by obtaining competitive results on par with the supervised counterparts while fully eliminating human annotation costs. }
+
+Overall, our main contributions can be summarized as follows,
+\begin{itemize}
+    \item To the best of our knowledge, we are among the first to overhaul traditional active learning in the era of LLMs for boosted generalization performance \textit{without any human supervision}.
+    \item We propose a novel collaborative learning framework called FreeAL to employ the LLMs as active annotators and the SLMs as weak filters to interactively distill the task-related knowledge from the LLMs.
+    \item Our proposed FreeAL largely improves the unsupervised learning performance for both the LLMs and the SLMs, even approaching the supervised counterparts in some scenarios. Our results prove the feasibility of human-free active labeling in the era of LLMs. 
+\end{itemize}
+
+
+Related Work
+\subsection{Prompt-based Zero/Few-shot Learning}
+The emergent ability of LLMs has sparked heightened interest in prompt-based zero-shot and few-shot learning \citep{ye-etal-2021-crossfit,schick-schutze-2021-exploiting}. Instead of fine-tuning on massive downstream data, in-context learning (ICL) \citep{DBLP:conf/nips/BrownMRSKDNSSAA20}, which suits LLMs to new tasks with few-shot input-label exemplars as demonstrations without training, has shown promising few-shot performance. It has been further improved by later works \citep{liu-etal-2022-makes,lu-etal-2022-fantastically,su2023selective}. 
+
+On the other hand, zero-shot learning is much more challenging without task-specific data. Direct steering LLMs for predictions without in-context demonstrations can lead to significantly degraded performance \citep{gao-etal-2021-making}. To bridge this, some methods \citep{DBLP:conf/iclr/WeiBZGYLDDL22,DBLP:conf/iclr/SanhWRBSACSRDBX22,xu-etal-2022-zeroprompt} adopt instruction tuning with a multi-task paradigm to further pre-train the LLMs with a collection of different tasks in shared prompting templates. However, these methods require cumbersome training for LLMs and the overwhelming bulk of cross-task human annotations. Another new line of research \citep{ye-etal-2022-zerogen,DBLP:conf/nips/MengHZH22,ye-etal-2022-progen} endeavors to ameliorate zero-shot learning merely via dataset generation, while the synthesized data commonly involves a notable portion of low-quality samples and misses the nuanced semantics present in the original data. In our work, we take inspiration from active learning with an innovative viewpoint to distill and filter the rich knowledge from LLMs for boosted zero-shot generalization performance.
+
+\begin{figure*}[!t]
+     \centering
+         \includegraphics[width=\linewidth]{image/framework_621_v6.png}
+     \caption{{Overview of FreeAL. In each collaborative training loop, the LLM serves as an active annotator imbuing its knowledge. Then the SLM is employed as a filter to distill the task-related knowledge with robust self-training from LLM and filter out a high-quality demonstration pool $\mathcal{D}_{\text{demo}}$ to feedback the subsequent label refinery of LLM.}}
+     \label{fig:overview}
+\end{figure*}
+
+\subsection{Active Learning}
+Active learning (AL) is a prevailing paradigm in various NLP tasks \citep{yuan-etal-2020-cold,zhao-etal-2020-active,shelmanov-etal-2021-active,DBLP:conf/eccv/WangLY22} that aims to reduce labeling effort by selecting only the most useful examples to annotate.  In each iteration of active learning, a model is trained on the currently labeled data and then tasked with selecting the most informative yet-to-be-labeled data point to be labeled for boosted performance. Based on different querying strategies \citep{settles-craven-2008-analysis}, existing traditional active learning methods can be categorized into uncertainty-based methods \citep{prabhu-etal-2019-sampling,margatina-etal-2021-active} and diversity-based methods \citep{DBLP:conf/iclr/SenerS18,ru-etal-2020-active,DBLP:conf/iclr/AshZK0A20}. While these methods relieve the annotation burden to some extent, they still count on human experts as expensive supervision sources to start with. To overcome this high cost, we investigate the opportunities of leveraging the rich knowledge of LLMs as a low-cost supervision source for boosting generalization performance without human effort.
+
+
+
+Background
+We consider unsupervised classification tasks \textit{without human annotations}. Given an unlabeled training dataset $\mathcal{D}_{\text{train}}=\{x_i\}^n_{i=1}$ with $n$ samples, where $x\in\mathcal{X}$ is the input text and the corresponding ground-truth label $y\in \mathcal{Y}=\{1,\ldots,C\}$ is inaccessible. Our task is to predict the true label for both the training dataset $\mathcal{D}_{\text{train}}$ and test dataset $\mathcal{D}_{\text{test}}$. Our framework employs a pre-trained large language model (LLM) $\mathcal{P}$ and a downstream small language model (SLM) $\mathcal{S}$. For the LLM, we define a natural language template $T(\cdot)$ which contains additional task-related information and a verbalizer $V(\cdot)$ which maps each class label in $\{1,\ldots,C\}$ to a pre-defined token in the prompt. For the fine-tuning of SLM $\mathcal{S}$ with parameters $\theta$, we adopt the cross entropy loss $l_i= -\sum_{j\in Y}\tilde{{y}_i}^{j}\log{S^j(x_i,\theta)}$ for training, where $S^j(x_i,\theta)$ is the $j$-th entry of SLM's output softmax probability for the input $x_i$ with the pseudo label $\tilde{{y}_i}^{j}$.
+
+\paragraph{Few-shot In-context Learning. }
+When supervised data are available, we can directly employ the few-shot ICL for inference. In concrete, given a {demonstration supporting pool} $\mathcal{D}_{\text{demo}}=\{x^{\text{demo}}_i,\tilde{y}^{\text{demo}}_i\}^m_{i=1}$ for prompt retrieval during ICL, we  construct a prompt including a test input $x^{\text{test}}$ and $m$-shot in-context examples $\{(x_j^{\text{demo}},{\tilde{y}_j^{\text{demo}}})\}_{j=1}^m$ retrieved from $\mathcal{D}_{\text{demo}}$ as the demonstration.
+The final prompt steers the LLM and the prediction is obtained via,
+\begin{equation}\label{formula:ICL}
+\begin{split}
+\arg\max P_{y\in Y}(V(y)\mid T(x^{\text{demo}}_1,{\tilde{y}_1^{\text{demo}}})&,\\...,
+T(x^{\text{demo}}_m,{\tilde{y}_m^{\text{demo}}}),T(x^{\text{test}})&)
+\end{split}
+\end{equation}
+{Despite the simplicity, the success of ICL largely hinges on the demonstration pool $\mathcal{D}_{\text{demo}}$, which requires human efforts of careful annotation for every individual scenario and can be particularly annoying for challenging tasks. To bridge this gap, we resort to our proposed plug-and-play method FreeAL without involving any human supervision.} 
+
+
+FreeAL
+In this section, we introduce our proposed framework FreeAL which investigates the opportunity for human-free active learning in the LLMs era. In contrast to traditional active learning that requests human annotation in each training loop, FreeAL employs LLMs as weak annotators. In each training loop, we alternate the following steps:
+\begin{enumerate}
+\item Active labeling of the to-be-labeled samples via LLMs based on the feedback from SLMs.
+
+\item Training weakly supervised SLMs to distill the task-related knowledge from noisy annotations of LLMs and in turn feedback to them.
+\end{enumerate}
+The overview of the FreeAL framework is displayed in Figure \ref{fig:overview} and its overall pipeline is also shown in Algorithm \ref{alg:FreeAL}. In what follows, we will elaborate on our FreeAL framework minutely.
+
+\subsection{Active Labeling by LLMs}
+\label{sec:al-llm}
+In this step, we leverage the strong in-context learning ability of LLMs to assign weak labels to unsupervised training corpora.
+In particular, the core challenge lies in the construction of a proper prompt containing {demonstration} samples. To this end, we introduce two practical strategies for the different life cycles of FreeAL. 
+\paragraph{Initial Annotation by Self-generated Demonstration. }
+At the initial round of FreeAL, we are given a purely unsupervised training set $\mathcal{D}_{\text{train}}$. To enable pseudo-labeling via LLMs, we may directly perform zero-shot ICL without access to a demonstration pool $\mathcal{D}_{\text{demo}}$. However, such a strategy can largely impede the knowledge-distilling process of SLMs due to {shoddy} initial annotations. 
+To remedy this, we design a novel self-generated demonstration technique by virtual data generation. Notably, when given some unlabeled samples and task-descriptive instructions, 
+humans can imitate the expression styles of these texts and leverage their own knowledge to generate similar label-aware samples. 
+Motivated by this, {we steer LLMs to first mimic the format of unlabeled samples from $\mathcal{D}_{\text{train}}$, which is important to ICL according to recent research \citep{min-etal-2022-rethinking}, and then generate new {label-aware} examples to construct the initial $\mathcal{D}_{\text{demo}}$. }
+{Specifically}, the data-generation prompt contains a hand-crafted task-descriptive instruction $\rho_{\text{gen}}$ that explains the task background and $Q$ randomly-selected unlabeled samples $c_{\text{gen}}$ from $\mathcal{D}_{\text{train}}$ as {prototypes to imitate}. The generation process can be formulated as,
+\begin{equation}\label{formula:selfgen}
+\{(x^{\text{gen}},\tilde{y}^{\text{gen}})\}\leftarrow P(\rho_{\text{gen}},T(c_{\text{gen}}))
+\end{equation}
+The generated samples constitute the generated dataset $\mathcal{D}_{\text{gen}} = \{(x^{\text{gen}},\tilde{y}^{\text{gen}})\}$, {which is then used as demonstration pool (i.e.,$\mathcal{D}_{\text{demo}}=\mathcal{D}_{\text{gen}}$) for the subsequent labeling}. 
+Next, we follow the standard ICL pipelines with demonstration selection \citep{liu-etal-2022-makes}. 
+Each prompt contains $m$-nearest-neighbors from $\mathcal{D}_{\text{demo}}$ with the highest embedding similarity to $x_i$. 
+The ICL process follows Eq.(\ref{formula:ICL}). With the demonstrations seen in the prompt, the LLM is able to provide {passable} initial annotations $\tilde{y}$ of the training dataset $\mathcal{D}_{\text{train}}=\{x_i,\tilde{y}_i\}^n_{i=1}$, the annotations $\tilde{y}$ are employed as pseudo-labels for the subsequent training of SLM.
+
+\paragraph{Refined Annotation in Subsequent Rounds.} 
+In the later rounds, the SLM $\mathcal{S}$ is trained using the weak annotation given by the LLM $\mathcal{P}$. Meanwhile, the SLM filters out a {high-quality demonstration pool $\mathcal{D}_{\text{demo}}$ as feedback}; details are shown in Section \ref{sec:kd-slm}. 
+Then with a high-quality $\mathcal{D}_{\text{demo}}$, the LLM $\mathcal{P}$ re-annotates the remaining noisy-prone samples via few-shot ICL according to Eq. (\ref{formula:ICL}). 
+
+\begin{algorithm}[!t]
+	\caption{Pipeline of FreeAL}
+	\label{alg:FreeAL}
+	\begin{algorithmic}[1]
+            \Require
+      Unlabeled dataset $\mathcal{D}_{\text{train}}=\{x_i\}^n_{i=1}$; pre-trained LLM $\mathcal{P}$ and a downstream SLM $\mathcal{S}$; 
+            \State $round \leftarrow 1$
+            \State \textbf{while} not convergent \textbf{do}
+             \State\hspace{\algorithmicindent} \textcolor{codeblue}{\# For LLM: active annotation} 
+                 \State\hspace{\algorithmicindent} \textbf{if} {$round = 1$} \textbf{then}
+                    \State\hspace{\algorithmicindent}\hspace{\algorithmicindent} \textcolor{codeblue}{\# Initial self-generated demonstration}
+                    \State\hspace{\algorithmicindent}\hspace{\algorithmicindent} Generate $\{(x^{\text{gen}},\tilde{y}^{\text{gen}})\}$ as Eq.(\ref{formula:selfgen});
+                    \State\hspace{\algorithmicindent}\hspace{\algorithmicindent}
+                    $\mathcal{D}_{\text{demo}}=\mathcal{D}_{\text{gen}}=\{(x^{\text{gen}},\tilde{y}^{\text{gen}})\}$;
+                \State\hspace{\algorithmicindent} \textbf{else}
+                    \State\hspace{\algorithmicindent}\hspace{\algorithmicindent} Receive $\mathcal{D}_{\text{demo}}$ from SLM;       
+                 \State\hspace{\algorithmicindent} \textbf{end if}
+                 \State\hspace{\algorithmicindent} In-context learning as Eq.(\ref{formula:ICL}) for  labeling;
+               
+                \State\hspace{\algorithmicindent} $round \leftarrow round+1$;
+                
+                 \State\hspace{\algorithmicindent} \textcolor{codeblue}{\# For SLM: knowledge distillation}
+                \State\hspace{\algorithmicindent} Robust self-training as Eq.(\ref{formula:self-training}) 
+                \State\hspace{\algorithmicindent} \textcolor{codeblue}{\# Construction of $\mathcal{D}_{\text{demo}}$}
+               \State\hspace{\algorithmicindent} Filter out class-wise clean subset $\mathcal{D}_{\text{clean}}^j$
+                \State\hspace{\algorithmicindent} Adopt k-medoids on $\mathcal{D}_{\text{clean}}^j$ for $\mathcal{D}_{\text{demo}}^j$
+                \State\hspace{\algorithmicindent} $\mathcal{D}_{\text{demo}}=\cup_{j \in Y}\mathcal{D}_{\text{demo}}^j$
+                \State\hspace{\algorithmicindent} $\mathcal{D}_{\text{noisy}}=\mathcal{D}_{\text{train}}\setminus(\cup_{j\in Y}\mathcal{D}_{\text{clean}}^j)$
+                \State\hspace{\algorithmicindent} Feed $\mathcal{D}_{\text{demo}}$ and $\mathcal{D}_{\text{noisy}}$ back to LLM
+
+                \State\hspace{\algorithmicindent} $round \leftarrow round+1$;
+                 
+            \State \textbf{end while}
+	\end{algorithmic}  
+ 
+\end{algorithm}
+
+\subsection{Knowledge Distillation by SLMs}
+\label{sec:kd-slm}
+Given the acquired weak annotations from LLM, it is difficult for the LLM to distinguish its own errors due to the confirmation bias. 
+Fortunately, previous studies \citep{DBLP:conf/nips/HanYYNXHTS18,DBLP:conf/iclr/LiSH20} in weakly-supervised learning have shown that deep models have the potential of detecting noisy samples during the training procedure. 
+Therefore, after receiving weak labels, our {intention} is two-fold: {(i)-train a strong and robust downstream SLM that maximally distills task-specific knowledge; (ii)-employ the derived SLM to filter out a high-quality demonstration pool to feedback LLM. }
+
+\subsubsection{Robust Self-training}
+{Motivated by the memorization effect of DNNs \citep{DBLP:conf/iclr/ZhangBHRV17}, the SLM tends to first fit easy patterns in the early stage of training. Thus, noisy samples mostly pose larger loss values. }
+To this end, we adopt the selection-based technique \citep{DBLP:conf/iclr/LiSH20} from noisy label learning to train a robust SLM for knowledge distillation. 
+
+Formally, after a few warm-up epochs with standard training on noisy labels, given the standard cross-entropy loss $l_i$ that reflects how well the model fits the sample $x_i$, we fit a two-component GMM to the loss $l_i$ to find out those clean samples. 
+Let $w_i=p(g\mid l_i)$ represent the probability of $x_i$ belonging to the Gaussian component with smaller mean $g$, which can also be deemed as its clean probability. {Then we divide the training dataset into a clean subset and a noisy subset by setting a threshold $\tau$ on $w_i$ }, which is considered as a labeled set $\mathcal{D}_l$ and a noisy set $\mathcal{D}_u$ respectively,
+\begin{equation} \label{formula:self-training}
+\begin{split}
+& \mathcal{D}_{l}=\left\{\left(x_i, \tilde{y_i}\right) \mid x_i \in \mathcal{D}_{\text{train}}, w_i \geq \tau\right\}, \\
+& \mathcal{D}_{u}=\left\{\left(x_i\right) \mid x_i \in \mathcal{D}_{\text{train}}, w_i<\tau\right\}
+\end{split}
+\end{equation}
+To improve the robustness of training, we utilize consistency regularization for boosted performance, which assumes that a classifier should produce  a similar prediction on a local  neighbor of each data point. Given an input $x_i$, we adopt back-translation \citep{sennrich-etal-2016-improving} to paraphrase it and obtain the augmented version $x_i^{\text{aug}}$. For the labeled and unlabeled data, the consistency regularizations are formulated,
+\begin{equation}
+\begin{split}
+& L_{\text{cr}}^{l}= \frac{1}{|\mathcal{D}_l|}\sum_{x_i \in \mathcal{D}_l} l_{\text{ce}}(x_i^{\text{aug}},\tilde{y}_i),  \\
+& L_{\text{cr}}^{u}=\frac{1}{|\mathcal{D}_u|}\sum_{x_i \in \mathcal{D}_u} l_{\text{kl}}(S(x_i^{\text{aug}}),S(x_i)) \\
+\end{split}
+\end{equation}
+{where $l_{\text{ce}}$ and $l_{\text{kl}}$ are standard cross entropy and KL divergence respectively. Finally, the total loss for self-training of SLM is aggregated,}
+\begin{equation}
+L_{\text{total}}=L_{\text{clean}}+\alpha (L_{\text{cr}}^l+L_{\text{cr}}^u)
+\end{equation}
+where $L_{\text{clean}}$ is the cross entropy loss on $\mathcal{D}_{l}$, $\alpha$ is the loss weight parameter.}
+\begin{table*}[!t]
+    \centering
+    \small
+    \renewcommand\arraystretch{1.1}
+    \tabcolsep=0.14cm
+    \begin{tabular}{l|cl|ccccc|ccc}
+        \toprule
+        \textbf{Model} & \textbf{Round} & \textbf{Demons/Annos}
+        & \textbf{SST-2} &   \textbf{MR} & \textbf{SUBJ} & \textbf{TREC} & \textbf{CoNLL03} & \textbf{MA} & \textbf{BC5-C} &\textbf{BC5-D} \\
+        \midrule
+        \multirow{3}{*}{GPT-3.5-Turbo} 
+        & 0 & Zero-shot         & 88.93  & 89.99 & 57.11 & 43.36 & 64.19 & 59.51 & 69.28 & 27.74\\
+        & 1 & Self-generated    & 92.16  & 91.74 & 86.54 & 70.74 & 70.89 & 59.78 & 81.05 & 47.12\\
+        & {3} & Selected by Round 2 & \textbf{94.93}  & \textbf{92.89} & \textbf{90.33} & \textbf{77.70} & \textbf{74.71} & \textbf{61.38} & \textbf{82.40} & \textbf{52.59}\\
+           \midrule
+         \multirow{2}{*}{RoBERTa} 
+         & 2 & Annotated by Round 1 & 94.70	 & 92.43 & 92.24 & 76.75 & 74.49 & 61.41 & 81.61 & 52.89\\
+         & 4 & Annotated by Round 3 & \textbf{95.49}  & \textbf{92.64} & \textbf{92.85} & \textbf{81.59} & \textbf{78.79} & \textbf{62.15} & \textbf{82.81} & \textbf{59.25}\\
+        \bottomrule
+    \end{tabular}
+    \caption{Comparisons of \textbf{transductive performance on training datasets} of different tasks. BC5-C/D refers to  BC5CDR-Chemical/Disease dataset. For the token-level NER tasks (including CoNLL03, BC5-C, BC5-D) the F1-score is given and For the other sequence-level tasks the test accuracy is provided.}
+    \label{tab:main_train}
+\end{table*}
+
+\begin{table*}[!t]
+    \centering
+    \small
+    \renewcommand\arraystretch{1.1}
+    \tabcolsep=0.14cm
+    \begin{tabular}{l|cl|ccccc|ccc}
+        \toprule
+        \textbf{Model} & \textbf{Round} & \textbf{Demons/Annos}
+        & \textbf{SST-2}  & \textbf{MR} & \textbf{SUBJ} & \textbf{TREC} & \textbf{CoNLL03} & \textbf{MA} & \textbf{BC5-C} &\textbf{BC5-D} \\
+        \midrule
+        \multirow{3}{*}{GPT-3.5-Turbo} 
+        & 0 & Zero-shot         & 92.47 & 90.05 & 55.65 & 77.20 & 66.47 & 59.71 & 67.85 & 29.60\\
+        & 1 & Self-generated    & 93.73 & 90.85 & 83.85 & 80.00 & 70.22 & 59.97 & 76.90 & 50.68\\
+        & {3} & Selected by Round 2 & \textbf{95.91} & \textbf{93.10} & \textbf{90.27} & \textbf{79.80} & \textbf{70.80} & \textbf{60.93} & \textbf{80.77} & \textbf{52.70}\\
+           \midrule
+         \multirow{2}{*}{RoBERTa} 
+         & 2 & Annotated by Round 1 & 94.29	& 89.35 & 92.95 & 86.80 & 71.82 & 61.91 & 80.55 & 53.38\\
+         & 4 & Annotated by Round 3 & \textbf{94.66} & \textbf{90.20} & \textbf{94.45} & \textbf{91.40} & \textbf{76.12} & \textbf{62.64} & \textbf{81.13} & \textbf{58.90}\\
+        \bottomrule
+    \end{tabular}
+    \caption{Comparisons of \textbf{inductive performance on test datasets} of different tasks. BC5-C/D refers to  BC5CDR-Chemical/Disease dataset. For the token-level NER tasks (including CoNLL03, BC5-C, and BC5-D) the F1-score is given and For the other sequence-level tasks the test accuracy is provided.}
+    \label{tab:main_test}
+\end{table*}
+
+\subsubsection{Demonstration Pool Filtering}
+While the SLM $S$ can filter out a clean subset to enhance its performance during self-training, other stubborn noisy labels are hard to correct by SLM itself due to the confirmation bias. 
+Thanks to our robust SLM, we can filter out those clean and representative samples and construct a high-quality demonstration pool $\mathcal{D}_{\text{demo}}$ for the LLM to refurbish its potentially wrong predictions in previous rounds. 
+One may directly reuse the GMM-based selection criterion again and take $\mathcal{D}_{l}$ as demonstrations. {However, such a selection procedure is too aggressive since excessively over-selecting some noisy samples may still improve the self-training procedure.} 
+To this end, we would like to filter out a more curated $\mathcal{D}_{\text{demo}}$ that prioritizes representative examples with accurate labels to be included.
+
+The construction process mainly contains two steps in a class-wise manner to cover every class and ensure diversity. For the training subset $\mathcal{D}_{\text{train}}^j$ of class $j$, following the memory effect of DNNs \citep{DBLP:conf/iclr/ZhangBHRV17}, we utilize the small loss criterion and select samples with the smallest cross-entropy loss $l_i$ in the first $R$ percent to construct $\mathcal{D}_{\text{clean}}^j=\{(x_i,\tilde{y}_i)\mid rank(l_i)\le R\%,\tilde{y}_i=j\}$. In practice, we set a small $R$ to ensure the high precision of $\mathcal{D}_{\text{clean}}^j$. Secondly, we further adopt a simple clustering algorithm $k$-medoids on the embeddings of SLM to filter out the most representative medoids samples from $\mathcal{D}_{\text{clean}}^j$ to construct $\mathcal{D}_{\text{demo}}^j$.  When the $k$-medoids algorithm gets converged, the medoids of $k$ clusters are collected as $\mathcal{D}_{\text{demo}}^j$. Finally the integral demonstration set is merged from each class as $\mathcal{D}_{\text{demo}}=\cup_{j \in Y}\mathcal{D}_{\text{demo}}^j$.
+
+{With a high quality $\mathcal{D}_{\text{demo}}$, the great potential of LLM $P$ can be unleashed to refine those noisy-prone samples $\mathcal{D}_{\text{noisy}}=\mathcal{D}_{\text{train}}\setminus(\cup_{j\in Y}\mathcal{D}_{\text{clean}}^j)$ via few-shot ICL as described in section \ref{sec:al-llm}. }
+
+
+Experiment
+\label{sec:exp}
+In this section, we provide the experimental results to verify the effectiveness of the FreeAL framework.
+\subsection{Setup}
+\paragraph{Datasets.} We evaluate the performance of FreeAL on both sequence-level and token-level tasks. For sequence-level tasks, we choose SST-2 \citep{socher-etal-2013-recursive}, MR \citep{pang-lee-2005-seeing} dataset for sentiment classification, SUBJ \citep{pang-lee-2004-sentimental} dataset for subjectivity classification and TREC \citep{DBLP:conf/sigir/VoorheesT00} for topic classification. For token-level tasks, CoNLL03 \citep{tjong-kim-sang-de-meulder-2003-introduction} dataset is adopted for named entity recognition (NER). To validate the feasibility of FreeAL in practical scenarios such as medical diagnosis and biochemical applications that demand highly specialized domain-specific expertise, we also conduct experiments on BC5CDR \citep{DBLP:journals/biodb/LiSJSWLDMWL16} dataset with chemical and disease interactions as token-level NER tasks and Medical Abstract (MA) \citep{DBLP:journals/corr/abs-2211-16285} dataset describing 5 different classes of patient conditions as sequence-level classification task. More details are listed in Table \ref{tab:dataset_info}.
+
+\begin{table*}[t!]
+    \centering
+    \small
+    \renewcommand\arraystretch{1.1}
+    \tabcolsep=0.11cm
+    \begin{tabular}{l|lc|cccccccc}
+        \toprule
+        \textbf{Model}&\textbf{Ablation} &  \textbf{Human}
+        & \textbf{SST-2}  & \textbf{MR} & \textbf{SUBJ} &\textbf{TREC} & \textbf{CoNLL} & \textbf{MA} &\textbf{BC5-C} &\textbf{BC5-D}  \\
+        \midrule
+         \multirow{5}{*}{GPT-3.5-Turbo}&{Zero-shot ICL} & {\xmark}  & {92.47}&  90.05 &55.65 & 77.20 & 66.47 & 59.71 & 67.85 & 29.60\\
+        &{\textbf{FreeAL (ours)}} & {\xmark} & \textbf{95.91} &  \textbf{93.10} & \textbf{90.27} & \textbf{79.80} & \textbf{70.80} &\textbf{60.93}&\textbf{80.77} &\textbf{52.70} \\
+        &\cellcolor{Gray}{$\Delta$ Absolute gain} & \cellcolor{Gray}{-}  &\cellcolor{Gray} {+3.44}& \cellcolor{Gray} +3.05 & \cellcolor{Gray} +34.6 & \cellcolor{Gray}+2.60 & \cellcolor{Gray}+4.33 & \cellcolor{Gray}+1.22 & \cellcolor{Gray}+12.9 & \cellcolor{Gray}+23.1 \\
+       \cmidrule{2-11}
+        &{Supervised ICL (Standard)}  & $\checkmark$ & 96.06 & 92.85 & 89.30 & 81.50 & 85.46 & 61.22 & 82.24 & 68.63\\ 
+        &{Supervised ICL ($k$-medoids)} & $\checkmark$ & 96.10 & 93.19 & 90.35 & 82.60 & 84.97 & 61.13 & 82.06 & 67.93\\
+        \midrule 
+        \midrule
+         \multirow{4}{*}{RoBERTa}&Zero-shot distillation  &\xmark & 92.81 & 88.60 & 59.25 & 82.80 & 69.71 & 61.22 & 77.05 & 31.98\\
+       & \textbf{FreeAL (ours)}  & \xmark & \textbf{94.66}  & \textbf{90.20} & \textbf{94.45} & \textbf{91.40} &\textbf{76.12} &\textbf{62.64}&\textbf{ 81.13} &\textbf{58.90} \\
+       &\cellcolor{Gray}{$\Delta$ Absolute gain} & \cellcolor{Gray}{-}  & \cellcolor{Gray}{+1.85}&\cellcolor{Gray} +1.60  &\cellcolor{Gray} +35.2 & \cellcolor{Gray}+8.60 &\cellcolor{Gray} +6.41 &\cellcolor{Gray} +1.42 & \cellcolor{Gray}+4.08 &\cellcolor{Gray} +26.9
+       \\  
+       \cmidrule{2-11}
+       &  Supervised FT  & $\checkmark$ & 94.89 & 91.05 & 95.95 & 96.70 & 88.11 &63.96 & 87.26& 75.38\\ 
+        \bottomrule
+    \end{tabular}
+    \caption{ Performance comparison of FreeAL with the zero-shot and supervised counterparts on the test dataset. BC5-C/D refers to BC5CDR-Chemical/Disease dataset. The results of FreeAL are in bold. Supervised FT refers to supervised fine-tuning. The absolute gain indicates the improvement of FreeAL compared to the zero-shot baseline. }
+    \label{tab:sup-llm}
+\end{table*}
+
+\begin{table}[!t]
+    \centering
+    \small
+    \renewcommand\arraystretch{1.1}
+    \tabcolsep=0.15cm
+    \begin{tabular}{lcc|cc}
+        \toprule
+        \textbf{Dataset} & \textbf{Domain} & \textbf{\#Token} & \textbf{\#Train}  
+      &  \textbf{\#Test} \\
+        \midrule
+       SST-2 & Sentiment cls & 19.3 & 6,920 & 1,821 \\
+       MR & Sentiment cls & 21.6 & 8,662 & 2,000 \\
+       SUBJ & Subjectivity cls & 24.5 &  8,000 & 2,000 \\
+       TREC & Topic cls & 10.2 & 5,452 & 500 \\
+       CoNLL03 & NER & 14.59 & 14,041 &  3,453 \\ \cmidrule{1-5}
+       MA & Medical cls & 205.3 & 11,550 &2,888  \\
+       BC5CDR & NER & 25.92 & 4,560 & 4,797  \\
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

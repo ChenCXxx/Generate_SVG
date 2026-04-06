@@ -1,0 +1,208 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Unsupervised Graph Neural Architecture Search \\ with Disentangled Self-supervision
+
+% ArXiv ID: 2403.05064
+
+
+
+
+
+\maketitle
+
+
+\begin{abstract}
+The existing graph neural architecture search (GNAS) methods heavily rely on supervised labels during the search process, failing to handle ubiquitous scenarios where supervisions are not available. 
+In this paper, we study the problem of unsupervised graph neural architecture search, which remains unexplored in the literature.
+The key problem is to discover the latent graph factors that drive the formation of graph data as well as the underlying relations between the factors and the optimal neural architectures.
+Handling this problem is challenging given that the latent graph factors together with architectures are highly entangled due to the nature of the graph and the complexity of the neural architecture search process.
+To address the challenge, we propose a novel \underline Disentangled \underline Self-supervised \underline Graph Neural \underline Architecture \underline Search (\modelnosp) model, which is able to discover the optimal architectures capturing various latent graph factors in a self-supervised fashion based on unlabeled graph data.
+Specifically, we first design a disentangled graph super-network capable of incorporating multiple architectures with factor-wise disentanglement, which are optimized simultaneously. Then, we estimate the performance of architectures under different factors by our proposed self-supervised training with joint architecture-graph disentanglement. Finally, we propose a contrastive search with architecture augmentations to discover architectures with factor-specific expertise.
+Extensive experiments on 11 real-world datasets demonstrate that the proposed \model model is able to achieve state-of-the-art performance against several baseline methods in an unsupervised manner.
+\end{abstract}
+
+\section{Introduction}
+
+Graph neural architecture search (GNAS), aiming to automatically discover the optimal architecture for graph neural network (GNN) based on graph-structured data and task, has shown remarkable progress in enhancing the predictive power and saving human endeavors for various graph applications~\cite{zhang2021automated}. The existing GNAS methods generally follow a supervised paradigm such that they optimize the weights within architectures given a training dataset with a supervised loss (e.g., the cross entropy loss of label predictions) and estimate the architecture performance based on the validation dataset with supervision signals. For example, the label prediction accuracy is adopted for architecture ranking during the neural architecture search process~\cite{li2020autograph, gao2020graph,wei2021pooling}. As a result, supervised labels become indispensable for applying the existing GNAS methods.  
+
+However, ground-truth labels in reality may be extremely scarce or hardly available in many graph applications. 
+For example, a variety of biological problems require a significant amount of human labors and time costs in clinical tests to obtain labels for supervision~\cite{martin2017much,paul2021artificial,sun202290}.
+As the existing GNAS approaches heavily rely on supervised labels for weight training and architecture evaluation, 
+they will suffer from performance deterioration in unsupervised settings, 
+failing to discover optimal architectures in the scenarios where labels are scarce or not available.
+
+In this paper, we study unsupervised graph neural architecture search, i.e., discovering optimal GNN architectures without labels for graph-structured data, which remains unexplored in the literature. 
+The key problem lies in two important aspects: i) discover the latent graph factors that drive the formation process of graph data~\cite{fan2019graph,ma2019disentangled,yang2020factorizable,li2022disentangled, cooray2022graph,xiao2022decoupled,li2021disentangled}; 
+ii) capture the underlying relations between the factors and the optimal neural architectures.
+For instance, a molecular graph may consist of groups of atoms as well as bonds representing different functional units~\cite{ying2018hierarchical}, requiring different optimal neural architectures to make accurate predictions. 
+
+Nevertheless, solving the problem is highly non-trivial and challenging 
+given that the hidden factors are entangled in the graph and very difficult to capture, 
+e.g., a social network may contain several communities originating from various interests (e.g., sports, games, etc.)~\cite{ying2019gnnexplainer,yang2020factorizable}, with the nodes and edges belonging to different communities mixing together.  
+Moreover, the architectures with different functional factors are also entangled within the weight-sharing super-network~\cite{chu2020fair,chu2021fairnas,cha2022supernet}, resulting in inaccurate architecture performance estimations under different hidden factors. 
+
+To tackle the challenge, we propose a novel unsupervised graph neural architecture search method, i.e., Disentangled Self-supervised Graph Neural Architecture Search (\modelnosp)\footnote{The codes are available at \href{https://github.com/wondergo2017/dsgas}{Github}.}. Given graph data without supervised labels, our proposed \model model can discover the optimal architectures capturing multiple latent factors in a self-supervised fashion. 
+In particular, we first design a disentangled graph super-network, where multiple architectures are disentangled for simultaneous optimization w.r.t various latent factors.
+Then, we propose a self-supervised training with joint architecture-graph disentanglement, which disentangles architectures and graphs within a common latent space. The super-network is trained through a routing mechanism between architectures, graphs and self-supervised tasks, to obtain an accurate estimation of the architecture performance under each latent factor. 
+Finally, we propose a contrastive search with architecture augmentations, where a novel architecture-level instance discrimination task is introduced to discover architectures with distinct capabilities of capturing various factors in a self-supervised fashion. Extensive experiments show that the proposed \model model is able to significantly outperform the state-of-the-art GNAS baselines under both unsupervised and semi-supervised settings. Detailed ablation studies and analyses also demonstrate that \model is able to discover effective architectures with our proposed disentangled self-supervision designs.
+The contributions of this paper are summarized as follows:
+\begin{itemize}[leftmargin=0.5cm]
+    \item We are the first to study the problem of unsupervised graph neural architecture search and propose the Disentangled Self-supervised Graph Neural Architecture Search (\modelnosp) model capable of discovering the optimal architectures without labels, to the best of our knowledge. 
+    \item We introduce three novel modules, i) disentangled graph architecture super-network, ii) self-supervised training with joint architecture-graph disentanglement and iii) contrastive search with architecture augmentations, which can discover the optimal architectures capturing various graph latent factors with disentangled self-supervision.
+    \item Extensive experiments on 11 real-world graph datasets show that our proposed method \model is able to discover effective graph neural architectures without supervised labels and significantly outperform the state-of-the-art baselines in both unsupervised and semi-supervised settings.
+\end{itemize}
+
+\section{Preliminaries and Problem Formulation}
+\paragraph{Graph Neural Architecture Search}
+Denote the graph space as $\mathcal{G}$ and the label space as $\mathcal{Y}$. A graph neural network can be denoted as a function $f_{\alpha,w}:\mathcal{G} \rightarrow \mathcal{Y}$, which is characterized by architecture parameters $\alpha \in \mathcal{A}$ and learnable weights $w \in \mathcal{W}$ given an architecture space $\mathcal{A}$ and a weight space $\mathcal{W}$. Graph neural architecture search (GNAS) aims at automating the design of graph neural architectures, i.e., obtaining the best-performed architectures by searching $\alpha$. As $\alpha$ is usually instantiated as selecting GNN operations, e.g., GCN~\cite{kipf2016semi}, GAT~\cite{velivckovic2018graph}, GIN~\cite{xu2018powerful}, we also call $\alpha$ as operation choices for brevity. Generally, GNAS solves the bi-level optimization problem~\cite{elsken2019neural} :
+\begin{align}
+\alpha^{*} &=\argmin_{\alpha \in \mathcal{A}} \mathcal{L}_{\text{val}}(\alpha, w^{*}(\alpha)),\label{eq:alpha} \\ 
+\text{ s.t. } w^{*}(\alpha) &=\argmin_{w \in \mathcal{W}(\alpha)} \mathcal{L}_{\text{train}}(\alpha, w), \label{eq:weight}
+\end{align}
+where $\mathcal{L}_{\text{train}}$ and $\mathcal{L}_{\text{val}}$ denotes the loss of the predictions of the architecture $f_{\alpha,w}(\cdot)$ against supervised labels on training and validation datasets. The optimization problem can be viewed as having two objectives that Eq.\eqref{eq:weight} aims to obtain accurate architecture performance estimation, and Eq.\eqref{eq:alpha}  aims to search the best-performed architectures. To avoid the cost of training from scratch for each architecture, the super-network~\cite{pham2018efficient,liu2018darts} arises as a commonly adopted technique to obtain faster architecture performance estimation, where the architecture candidates are viewed as sub-networks of the super-network, and their weights are shared during the training process.  
+
+\paragraph{Unsupervised Graph Neural Architecture Search}
+We consider the problem of unsupervised graph neural architecture where labels, which are adopted for the performance estimation and the search process in the supervised GNAS, are not accessible. 
+The problem of unsupervised GNAS can be formulated as optimizing an architecture generator that is able to discover powerful architectures by exploiting inherent graph properties without labels, i.e., $\mathcal{G} \mapsto f_{\alpha,w}$ instead of $(\mathcal{G},\mathcal{Y}) \mapsto f_{\alpha,w}$ as done by supervised GNAS methods. Then, the discovered architectures $f_{\alpha,w}(\cdot)$ can be utilized in downstream tasks, e.g., finetuning the weights $w$ or the operation choices $\alpha$, or extra shallow classifiers for further prediction. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1\textwidth]{figs/framework12.pdf}
+    \caption{The framework of Disentangled Self-supervised Graph Neural Architecture Search (\modelnosp), including the following three key components: 1) Disentangled graph architecture super-network enables multiple architectures to be disentangled and optimized simultaneously in an end-to-end manner. 2) Self-supervised training with joint architecture-graph disentanglement estimates the performance of architectures under various latent factors by considering the relationship between architectures, graphs and factors. 3) Contrastive search with architecture augmentations encourages and discovers architectures with distinct capabilities of capturing factors. (Best viewed in color) }
+\end{figure}
+
+\section{Disentangled Self-supervised Graph Neural Architecture Search}
+
+In this section, we introduce Disentangled Self-supervised Graph Neural Architecture Search (\modelnosp) to search architectures without labels, by proposing three key components: disentangled graph architecture super-network, self-supervised training with joint architecture-graph disentanglement, and contrastive search with architecture augmentations.
+
+\subsection{Disentangled Graph Architecture Super-Network}
+\label{sec:supernet}
+To discover architectures that potentially have optimal performance, we resort to guiding the search towards architectures' capabilities of capturing the inherent graph factors, which are shown important in the graph formation~\cite{fan2019graph,ma2019disentangled}.
+As architectures may expert in different graph factors, we propose a disentangled graph architecture super-network to incorporate $K$ different architectures to be estimated and searched w.r.t factors simultaneously, where the hyperparameter $K$ denotes the number of factors.
+
+\paragraph{Disentangled Super-Network Layer} For each super-network layer, we adopt $K$ mixed operations parameterized by different $\mathbf{\alpha}$ to learn $K$-chunk graph representations:
+\begin{equation}
+\begin{aligned}
+\mathbf{H}_k \leftarrow \overline{\text{GNN}}_{\mathbf{\alpha}_k}\left(\mathbf{H}, \mathbf{A}\right),
+\end{aligned}
+\end{equation}
+where $\mathbf{A}$ is the adjacency matrix of the graph, 
+$\mathbf{H}$ 
+denotes the input graph representations, 
+and $\overline{\text{GNN}}_{\alpha_k}(\cdot)$ denotes the mixed GNN operations parameterized by $\mathbf{\alpha}_k$. For the convenience of differentiable optimization, we adopt continuous parameterization and weight-sharing mechanism~\cite{liu2018darts} to implement the mixed operations:
+\begin{equation}\label{eq:mix_op}
+\overline{\text{GNN}}_{\mathbf{\alpha}_k}(\mathbf{H},\mathbf{A})=\sum_{i=1}^{|\mathcal{O}|} \alpha_{k,i}\text{GNN}_i(\mathbf{H},\mathbf{A}),
+\end{equation}
+where $|\mathcal{O}|$ is the number of GNN operation choices, $\alpha_{k,i}=\frac{\exp(\theta_{\alpha_{k,i}})}{\sum_j \exp(\theta_{\alpha_{k,j}})}$ denotes the probability of the $i$-th operation for the $k$-th architecture $\alpha_k$, and $\theta$ is learnable parameters.
+
+\paragraph{Overall Disentangled Super-Network} The overall super-network is constructed in the form of a directed acyclic graph (DAG) with an ordered sequence of disentangled super-network layers. More details about the DAG construction and the according GNN operations for each disentangled super-network layer are included in Appendix. The output of the last layer $\mathbf{Z}=[\mathbf{H}_1,\mathbf{H}_2,\dots,\mathbf{H}_K]$ describes the various aspects of the graphs and serves as the final graph representations, which can be utilized or finetuned in downstream tasks. In this way, the architectures' operation choices $\mathbf{\alpha}=[\mathbf{\alpha}_1,\mathbf{\alpha}_2,\dots,\mathbf{\alpha}_K]$ and weights $w$ are incorporated in one super-network. For brevity, we use $f_{\alpha_k,w}(\cdot)$ to denote the $k$-th architecture induced from the super-network. Note that the design of $K$ operation choices alleviates the entanglement of architectures by providing more flexible choices of paths~\cite{guo2020single} in the super-network. For instance, the `mean' operation captures structural properties while the `max' operation captures representative elements~\cite{xu2018powerful}, and in this case, our design can capture both of them by choosing corresponding operations to learn respective representations instead of choosing only one of them which may conflict each other.
+
+\subsection{Self-supervised Training with Joint Architecture-Graph Disentanglement}
+\label{sec:ssl_train}
+Inspired by graph self-supervised learning, we utilize graph pretext tasks to measure the architectures' capabilities of capturing latent factors. Predictive pretext tasks~\cite{wu2021self}, for example, design a pseudo label generator $s(\cdot)$, and optimize the prediction probability\footnote{We take graph classification as an example for simplicity, while the case of node classification can be easily extended.} $p(s(\mathcal{G}_i)|\mathcal{G}_i)$. However, the tasks usually take holistic views of the graphs and neglect the entanglement of the latent factors, which may lead to suboptimal performance estimation. Therefore, to disentangle the factors, we transform the probability into the expectation of multiple subtasks under different latent factors by the Bayesian formula:
+\begin{equation}\label{eq:ssl-train}
+p(s(\mathcal{G}_i)|\mathcal{G}_i) = \mathbb{E}_{p(k|\mathcal{G}_i)} p(s(\mathcal{G}_i)|\mathcal{G}_i,k),
+\end{equation}
+where $p(k|\mathcal{G}_i)$ denotes the probability of latent factor $k$ given the $i$-th graph instance $\mathcal{G}_i$, and $p(s(\mathcal{G}_i)|\mathcal{G}_i,k)$ denotes the pretext task under $k$-th latent factor. An intuitive explanation of Eq.~\eqref{eq:ssl-train} is that it first infers the latent factors and then conducts factor-specific self-supervised training to capture the latent factors, which we describe in detail as follows.   
+
+\paragraph{Architecture-aware Latent Factor Inference} Directly modeling $p(k|\mathcal{G}_i)$ is difficult as we do not know prior what GNN encoders are suitable for inferring the latent factors. Intuitively, one solution is to get the architectures being searched involved in the inference stage. By the Bayesian formula, we factorize the probability w.r.t architecture choices:
+\begin{equation}
+p(k|\mathcal{G}_i)=\mathbb{E}_{p(\alpha_j | \mathcal{G}_i)} p(k|\mathcal{G}_i,\alpha_j),
+\end{equation}
+where $p(\alpha_j|\mathcal{G}_i)$ is a prior distribution, and we adopt a uniform distribution for simplicity. Then we can model the probability distributions of latent factors given the graph $\mathcal{G}_i$ by utilizing the architectures being searched:
+\begin{equation}
+p(k|\mathcal{G}_i,\alpha_j)=\frac{\exp \phi(\mathbf{z}_{i,j}||\text{Enc}(\alpha_j), \mathbf{c}_k)}{\sum_{m=1}^{K} \exp \phi(\mathbf{z}_{i,j}||\text{Enc}(\alpha_j), \mathbf{c}_m)},
+\end{equation}
+where $\mathbf{c}_k$ is a learnable vector to represent the $k$-th latent factor, and $\mathbf{z}_{i,k}=f_{\alpha_k,w}(\mathcal{G}_i)$ denotes the graph representations output by the $k$-th architecture for the graph $\mathcal{G}_i$. $\text{Enc}(\cdot)$ denotes architecture encoding techniques to obtain embeddings of operation choices $\alpha$ so that the structural properties and correlations of the neural architectures can be considered~\cite{yan2020does,luo2018neural}. 
+
+\paragraph{Factor-aware Graph Self-Supervised Learning} Under the $k$-th latent factor, we leverage the corresponding architectures $f_{\alpha_k,w}(\cdot)$ for conducting the factor-specific pretext tasks as $p(s(\mathcal{G}_i)|\mathcal{G}_i,k)$ to estimate the capturing capabilities of architectures under various factors. The overall objective is to maximize Eq.\eqref{eq:ssl-train}, and the loss can be calculated by 
+\begin{equation}
+\frac{1}{N}\sum_i -\log\mathbb{E}_{p(k|\mathcal{G}_i)}\Bigl(p(s(\mathcal{G}_i)|\mathcal{G}_i,k)\Bigr) \leq \frac{1}{N} \sum_i \mathbb{E}_{p(k|\mathcal{G}_i)} \Bigl(-\log p(s(\mathcal{G}_i)|\mathcal{G}_i,k)\Bigr),
+\end{equation}
+where $N$ is the number of samples and the upper bound is obtained by Jensen's Inequality. Then we can generalize our method to other graph self-supervised tasks with specially-designed task loss functions by defining $-\log p(s(\mathcal{G}_i)|\mathcal{G}_i,k)$ as the task loss function $l(f_{\alpha_k,w},\mathcal{G}_i)$ for the graph $\mathcal{G}_i$ under the $k$-th factor, and calculate the loss by
+\begin{equation}
+ \mathcal{L}_{w} = \frac{1}{N} \sum _i \mathbb{E}_{p(k|\mathcal{G}_i)}\Bigl(l(f_{\alpha_k,w},\mathcal{G}_i)\Bigr).
+\end{equation}
+In this way, the disentangled architectures in Sec.~\ref{sec:supernet} coupled with factors disentangled from graph data can be routed pairwisely, and trained with factor-specific self-supervision to obtain more accurate performance estimation under each factor. Similar to ~\cite{liu2018darts}, the super-network weights are updated with $w = w - \lambda_w \nabla_w \mathcal{L}_{w}$ to obtain the weights that can represent the architectures' capabilities. 
+
+\subsection{Contrastive Search with Architecture Augmentations}
+\label{sec:ssl_search}
+In this section, we focus on encouraging the disentanglement of architectures and searching architectures with distinct capabilities of capturing different factors. The main insight of our proposed search method is intuitively based on the following two observations shown in the literature: 1) As architectures similar in operation choices and topologies have similar capabilities of capturing semantics for downstream tasks~\cite{yan2020does,ying2019bench,zela2022surrogate}, slight modifying the architecture will have a slight influence on its capability. 2) Since different GNN architectures expert in different downstream tasks~\cite{you2020design}, the architectures searched for different disentangled latent factors are expected to have dissimilar capabilities under different factors. 
+
+\paragraph{Contrastive Search} Inspired by self-supervised contrastive learning~\cite{liu2021self,wang2022chaos} that capture discriminative features by pulling similar instances together and pushing dissimilar instances away in the latent space, we propose an architecture-level instance discrimination task to encourage the architectures to capture various latent factors. The task is defined as   
+\begin{equation}
+\begin{aligned}
+p(s(\alpha_k) | \mathcal{G}_i,\alpha_k)=\frac{\exp \phi(\mathbf{z}_{i,k}, \mathbf{z}_{i,s(\alpha_k)}^{\prime})}{\sum_{j=1}^N \exp \phi(\mathbf{z}_{i,j}, \mathbf{z}_{i,s(\alpha_j)}^{\prime})},
+\end{aligned}
+\end{equation}
+\begin{equation}
+\mathbf{z}_{i,k}=f_{\alpha_k,w}(\mathcal{G}_i)
+,\mathbf{z}_{i,k}^{\prime}=T_f(f_{\alpha_k,w})(\mathcal{G}_i),
+\end{equation}
+where $s(\alpha_k)$ is assigned to $k$ as surrogate labels for the architecture, $\phi(\cdot)$ calculates the similarity of two embeddings and $T_f(\cdot)$ denotes architecture augmentations that transform an architecture to another architecture with similar capabilities capturing factors, i.e., $f_{\alpha_k,w} \mapsto f^{\prime}_{\alpha_k,w}$. Then the loss function can be calculated by
+\begin{equation}
+\mathcal{L}_{\alpha}=\sum_i -\log \mathbb{E}_{p(\alpha_k|\mathcal{G}_i)}p(s(\alpha_k)| \mathcal{G}_i,\alpha_k).
+\end{equation}
+Similar to ~\cite{liu2018darts}, the architecture parameters are updated with $\alpha = \alpha - \lambda_\alpha \nabla_{\alpha} \mathcal{L}_{\alpha}$ to search architectures with better capabilities of capturing factors. 
+
+\paragraph{Architecture Augmentations} To create various views of architectures, we design three basic architecture augmentations from the perspectives of architecture operation choices $\mathbf{\alpha}$, architecture weights $w$ and the internal embeddings $\mathbf{H}$: 
+\begin{itemize}[leftmargin=0.5cm]
+    \item Operation Choice Perturbation. This augmentation randomly reshapes the distributions of the mixed operations by altering the temperature in the softmax function in Eq.~\eqref{eq:mix_op} with
+    \begin{equation}
+    \alpha_{k,i}=\frac{\exp(\theta_{\alpha_{k,i}}/\tau)}{\sum_j \exp(\theta_{\alpha_{k,j}}/\tau)},
+    \end{equation}
+    where the temperature $\tau$ is sampled from a uniform distribution $\mathcal{U}([1/r_1,r_1])$, and $r_1 \geq 1$ is a hyper-parameter controlling the perturbation degree.  
+    \item Weight Perturbation. This augmentation randomly adds Gaussian noises $\epsilon \sim \mathcal{N}(0,\sigma^2)$ to $r_2$\% of the architecture weights $w$, where $r_2$ controls the perturbation ratio, and $\sigma^2$ is the standard deviation of the weights. 
+    \item Embedding Dropout. This augmentation randomly drops $r_3$\% of the embeddings $\mathbf{H}$ output from the mixed operations, where $r_3$ controls the dropout ratio.
+\end{itemize}
+
+Note that these architecture augmentations can further be randomly composed to generate mixed augmentations. 
+
+\section{Experiments}
+In this section, we conduct experiments on 8 real-world datasets with unsupervised settings to verify the design of our method. We also include detailed ablation studies to analyze the effectiveness of each component, and 3 real-world datasets in semi-supervised settings to show that our method can alleviate the label scarcity issues by pretraining the super-network. 
+
+\paragraph{Baselines} We compare our method with 11 baselines from the following two different categories.
+\begin{itemize}[leftmargin=0.5cm]
+    \item \textbf{Manually designed GNNs.} We include five representative GNNs as our baselines, i.e., GCN~\cite{kipf2016semi}, GAT~\cite{velivckovic2018graph}, GIN~\cite{xu2018powerful}, GraphSage~\cite{hamilton2017inductive}, GraphConv~\cite{morris2019weisfeiler} and a simple baseline MLP, which constitutes our search space. For graph-level classification tasks, we adopt global mean pooling for each layer and concatenation to obtain the graph representations for these baselines. 
+    \item \textbf{Graph neural architecture search.} We include representative GNAS baselines GraphNAS~\cite{gao2020graph}, PAS~\cite{wei2021pooling} and GASSO~\cite{qin2021graph}, where PAS is specially designed for graph-level classification tasks by searching the pooling operations, and GASSO is specially designed for node-level classification tasks by searching the graph structures simultaneously. We also include two classical NAS baselines, random search and DARTS~\cite{liu2018darts}. As these baselines are not specially designed for graphs, we adopt our search space for these baselines. 
+\end{itemize}
+
+\begin{table*}[htbp]
+\centering
+\caption{Summary of dataset statistics. Unsup./Semi. denotes Unsupervised and Semi-supervised settings. Graph/Node denotes graph and node classification tasks. ACC/AUC denotes Accuracy and ROC-AUC evaluation metrics.}
+\adjustbox{max width=0.98\textwidth}{
+\begin{tabular}{cccccccccccc}
+\toprule
+\textbf{Datasets}           & \textbf{MUTAG} & \textbf{IMDB-B} & \textbf{PROTEINS} & \textbf{DD} & \textbf{Computers} & \textbf{Photos} & \textbf{CS} & \textbf{Physics} & \textbf{OGBG-Molhiv} & \textbf{OGBN-Arxiv} & \textbf{Wechat-Video} \\ \midrule
+\textbf{Setting}            & Unsup.              & Unsup.                    & Unsup.                 & Unsup.           & Unsup.                        & Unsup.                      & Unsup.                    & Unsup.                         & Semi.                    & Semi.                   & Semi.                     \\
+\textbf{Task}               & Graph              & Graph                    & Graph                 & Graph           & Node                        & Node                      & Node                    & Node                         & Graph                    & Node                   & Node                     \\
+\textbf{Evaluation Metrirc} & ACC              & ACC                    & ACC                 & ACC           & ACC                        & ACC                      & ACC                    & ACC                         & AUC                    & ACC                   & AUC                     \\
+\textbf{\# Graphs}          & 188            & 1,000                 & 1,113              & 1,178        & 1                        & 1                      & 1                    & 1                         & 41,127                & 1                   & 1                     \\
+\textbf{\# Avg. Nodes}      & 17             & 19                   & 39                & 284         & 13,752                    & 7,650                   & 18,333                & 34,493                     & 26                   & 169,343              & 60,774                 \\
+\textbf{\# Avg. Edges}      & 56             & 211                  & 183               & 1,714        & 505,474                   & 245,812                 & 182,121               & 530,417                    & 28                   & 2,484,941             & 3,182,156               \\
+\textbf{\# Features}        & 7              & 1                    & 3                 & 89          & 767                      & 745                    & 6,805                 & 8,415                      & 300                  & 128                 & 512                   \\
+\textbf{\# Classes}         & 2              & 2                    & 2                 & 2           & 10                       & 8                      & 15                   & 5                         & 2                    & 40                  & 13                    \\ \bottomrule
+\end{tabular}
+\label{tab:data}
+}
+\end{table*}
+
+\paragraph{Datasets} 
+For unsupervised settings, we conduct experiments on four graph-level classification datasets including PROTEINS~\cite{dobson2003distinguishing}, DD~\cite{shervashidze2011weisfeiler}, MUTAG~\cite{debnath1991structure}, IMDB-B~\cite{yanardag2015deep} from TUDataset~\cite{morris2020tudataset} and four node-level classification datasets Coauthor CS, Coauthor Physics from the Microsoft Academic Graph~\cite{sinha2015overview}, Amazon Computers, Amazon Photos from the Amazon Co-purchase Graph~\cite{mcauley2015image}. For semi-supervised settings, we adopt three real-world datasets, OGBG-Molhiv, OGBN-Arxiv~\cite{hu2020open} and Wechat-Video\footnote{https://algo.weixin.qq.com/}.  
+The datasets cover various graph-related fields including small molecules, bioinformatics, social networks, e-commerce networks, and academic coauthorship networks. The statistics are summarized in Table~\ref{tab:data}.
+
+\paragraph{Super-network} 
+We briefly introduce the super-network construction as follows. The super-network consists of two parts, the operation pool and the directed acyclic graph (DAG). The operation pool includes several node aggregation operations (e.g., GCN, GIN, GAT, etc.), graph pooling operations (e.g., SortPool, AttentionPool, etc.), and layer merging operations (e.g., MaxMerge, ConcatMerge, etc.). The DAG determines how the operations are connected to calculate the graph representations for the subsequent classification tasks.
+
+More details of the experiments are provided in the Appendix, including additional experiments and analyses, experimental setups, configurations, and implementation details. 
+
+\begin{table}[t]
+\small
+\centering
+\caption{The results (accuracy\%) of all the methods on the real-world datasets in unsupervised settings. Numbers after the $\pm$ signs represent standard deviations. The best results are in bold and the second-best results are underlined. As the search space of GASSO and PAS do not suit the graph-level and node-level tasks respectively, we omit their results. }
+\label{tab:main}
+\adjustbox{max w
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,252 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Vision Transformer (ViT)~\cite{dosovitskiy2020vit} consists of alternating layers of Multi-Head Self-Attention (MHSA) and Feed-Forward Network (FFN).
+Most follow-ups~\cite{touvron2021training,Xu_2021_ICCV,wang2021pyramid,wu2021cvt,jiang2021all,yu2022metaformer,liu2021swin} focus on polishing these two core modules and create various ViT variants. However, most of them do not break the basic ViT structure, \ie, a stack of transformers containing residual sub-layers, for analysis. 
+
+\begin{figure}[t]
+\setlength{\abovecaptionskip}{0.1cm}
+    \begin{subfigure}{.17\textwidth}
+        \centering
+        \includegraphics[width=0.9in]{figure_1a.jpeg}
+        \caption{}
+        \label{figure1a}
+    \end{subfigure}
+    \begin{subfigure}{.33\textwidth}
+        \centering
+        \includegraphics[width=1.7in]{figure_1b.jpeg}
+        \caption{}
+        \label{figue1b}
+    \end{subfigure}
+\label{transform}
+\end{figure}
+Residual connections~\cite{he2016deep} are universally adopted to bypass their sub-layers in ViTs, allowing data to flow from the previous layer directly to the subsequent layer. They are defined as the form
+\begin{equation}
+\label{residual}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+x_{i}=g_i(x_{i-1}) +R_i(x_{i-1}),
+\end{equation}
+where the layer function $g_i$ and $R_i$ are typically identity and main building block.
+In ViTs, we observe that nearly all the non-linear structures accord with the form of $R_i$ in Eq.~\ref{residual}, such as MHSA and FFN, and only linear structures exist between  $R_i$ and $R_{i+1}$ in most cases, so that the final feature fed into classifier can be seen as a linear combination of multi-path output. This key insightful observation inspires us that the ViTs can be viewed as a collection of many paths instead of a traditional single deep network. Specifically, we equivalently transform the traditional cascade of MHSA and FFN into three parallel paths in each transformer layer, as shown in Figure~\ref{transform}. Then, we utilize the identity connection in our new transformer form and further transform the ViT into an explicit multi-path ensemble network. Our ensemble network is equivalent to the traditional structure, which can be verified by mathematics and experiments, while the output of each path can be operated independently. 
+ In our ensemble view, each path performs two functions: the first is to provide the feature for the classifier directly, and the second is to provide the feature representation for subsequent longer paths. We propose new path combination and self-distillation to boost two functions separately to improve the performance of ViTs. We investigate the contribution of each path for the final prediction by analyzing the cosine distance and ablating different paths, and reveal that not all the paths are beneficial for the final results. Based on this observation, we design two simple and FLOPs-free path combination methods to optimize their combinations: path pruning which prunes underperforming paths, and EnsembleScale which re-weights the paths and makes the short paths focus on extracting high-quality representations for subsequent paths. Moreover, we discover that the model tends to enlarge the scales of the features of long paths to dilute the component of short paths, which increases the difficulty of optimization and raises the risk of divergence in deeper ViTs. Our EnsembleScale can make the model adjust the scale of EnsembleScale instead of features to alleviate this issue. According to the recent study of ViTs in frequency domain~\cite{wang2022anti,park2022how}, the low-pass filter property of self-attention weakens the expression of high-frequency signals. Our path combination methods can act as high-pass filters to remove partial useless low-frequency signals, and it achieves the goal of improving the first function of paths.
+
+To further improve the second function, that is, improving their representation utilized by the subsequent paths, we propose to  transfer knowledge between different paths by knowledge distillation (KD). 
+Thanks to the ensemble-like structure, we can perform self-distillation in a general teacher-student knowledge distillation way. We apply two types of distillation, prediction-logit distillation and hidden-state distillation, to allow the shorter paths to mimic the logit and feature relation of longer paths. Compared with traditional self-distillation methods~\cite{zhang2019your,kim2021self}, our method does not increase training parameters and memory cost.
+
+The contributions of this paper are summarized as below.
+\begin{itemize}
+	\item We propose a novel view of ViTs, which illustrates that ViTs can be seen as a collection of paths, instead of a traditional single-path network. We can improve ViTs by optimizing the paths.
+	\item Based on the proposed view, we investigate the contribution of different paths for the final prediction and find out that not all the paths are positive. We present path pruning and EnsembleScale to boost the ensemble performance. 
+	\item To further enhance the representation ability of the paths, we design a self-distillation for ViTs. The teacher network and student network are appropriately selected from the paths, making the knowledge transfer among the paths effectively.
+\end{itemize}
+
+
+Related work
+
+\paragraph{Vision transformers.}
+Vision transformer (ViT)~\cite{dosovitskiy2020vit} first introduces a pure Transformer backbone for image classification. ViT splits images into a sequence of tokens, and then adopts standard Transformer layers, consisting of Multi-Head Self-Attention (MHSA) and Feed-Forward Network (FFN), to model these tokens. Transformer, the core of ViT, and its sub-layers, MHSA and FFN, are improved to suit vision tasks by subsequent research and various remarkable ViT variants are proposed~\cite{touvron2021training,Xu_2021_ICCV,wang2021pyramid,chu2021conditional,wu2021cvt,jiang2021all,yu2022metaformer,liu2021swin,chu2021twins,yang2021focal,Dong_2022_CVPR,huang2021shuffle,li2022uniformer,chang2023making,yin2022avit,gao2023sparseformer}. For instance, PVT~\cite{wang2021pyramid} incorporates a spatial-reduction attention layer to achieve a high-resolution multi-scale design, favoring dense prediction tasks under limited computational cost. CVT~\cite{wu2021cvt} proposes a convolutional projection in the attention layer to combine the merits of CNNs and Transformers. Swin Transformer~\cite{liu2021swin} presents non-overlapping window partitions and restricts self-attention computation within windows to obtain linear computational complexity. Focal Transformer~\cite{yang2021focal} adopts focal self-attention to capture fine-grained local and coarse-grained global interactions. MetaFormer~\cite{yu2022metaformer} shows that replacing the self-attention with a spatial pooling operator can achieve competitive performance on many vision tasks and conclude the success of ViTs from the MetaFormer architecture. Those variants obey the basic ViT architecture, \ie, a stack of transformers containing residual sub-layers, which is the base of our ensemble view. Nearly no non-linear structures between adjacent residual blocks ensure that the final feature can be equivalently decoupled into multiple paths. 
+
+Beyond image classification, ViT variants further inspire the application of transformer to other vision tasks, such as object detection~\cite{carion2020end,zhu2020deformable,zheng2020end,dai2021up}, semantic segmentation~\cite{wang2021max,wang2021end,zheng2021rethinking}, and self-supervised learning~\cite{chen2021mocov3,caron2021emerging,li2021efficient}.
+\paragraph{Ensemble.}
+Neural network ensemble is a learning paradigm to collect a finite number of neural networks for the same task, originating from~\cite{hansen1990neural}. A neural network ensemble is normally constructed in two steps, training a number of component networks and combining the component predictions. The most classical methods of training component neural networks include Bagging~\cite{breiman1996bagging} and Boosting~\cite{schapire1990strength}. For combining the predictions of component neural networks, the most prevailing approaches are plurality voting or majority voting~\cite{hansen1990neural}, simple averaging~\cite{opitz1996actively}, and weighted averaging~\cite{perrone1992networks}. Zhou \etal~\cite{zhou2002ensembling} discuss the relationship between the ensemble and its component neural networks and uncovers that ensembling many of the components may be better than ensembling all of them. In this paper, the traditional ViTs are seen as an ensemble view and show ensemble-like behavior. We explore the contribution of each path for the vision task and improve the performance by deleting the weak components or introducing EnsembleScale to re-weight the components. Veit \etal ~\cite{veit2016residual} show that convolutional residual networks can be interpreted as a collection of many paths. The paths in~\cite{veit2016residual} are unrolled recursively from the bottom of the models, while our paths come from the linear combination of the top feature of the models. Moreover, the ensemble in~\cite{veit2016residual} is not an equivalent transformation since they neglect the non-linear structures between adjacent residual blocks in CNNs, which limits their practical application. 
+\paragraph{Knowledge distillation.}
+Knowledge distillation~\cite{hinton2015distilling} transfers knowledge from a teacher model to a student model in a teacher-student framework. It has been widely studied in convolutional networks~\cite{DBLP:journals/corr/RomeroBKCGB14,passalis2018learning,komodakis2017paying,chen2020learning,gou2021knowledge,beyer2022knowledge}. Recently, several works develop distillation techniques for ViTs. DeiT~\cite{touvron2021training} applies a distillation token to transfer the knowledge from CNNs to transformers. MiniViT~\cite{zhang2022minivit} and TinyViT~\cite{wu2022tinyvit} adopt knowledge distillation to achieve lightweight ViTs. Manifold~\cite{jia2021efficient} proposes to excavate patch-level information to enhance ViT distillation. 
+
+Besides general knowledge distillation, several works try to use the student network itself as a teacher, named self-knowledge distillation. BYOT~\cite{zhang2019your} boosts the low-level features by additional supervision from labels and the deepest layer. Xu \etal ~\cite{xu2019data} adopt different data distortions to deal with the same data and reduce their feature distance from a single network. CS-KD~\cite{yun2020regularizing} minimizes the KL divergence between predictive distributions from the same class. PS-KD~\cite{kim2021self} enhances the $k$-th epoch training model by incorporating the knowledge from the ${k-1}$-th epoch model. Although self-distillation methods avoid teacher networks, they increase other overhead, \eg, extra large-scale parameters~\cite{zhang2019your}, memory~\cite{kim2021self}, and computational cost~\cite{xu2019data,yun2020regularizing}.
+
+
+
+
+Method
+The ensemble view of ViTs is first introduced in Sec.~\ref{3.1}, followed by the proposed path combination in Sec.~\ref{3.2} and self-distillation in Sec.~\ref{3.3}.
+\subsection{The ensemble view of ViTs}
+\label{3.1}
+To make it easier to explain, we adopt the vanilla ViT~\cite{dosovitskiy2020vit} to instantiate a particular ensemble network. 
+Consider a ViT network with $N$ transformer blocks $[T_i]_{i=1}^{N}$. For transformer $T_i$ consisting of two sub-layers, MHSA and FFN, $x_{i-1}$ and $x_i$ are defined as its input and output separately. Transformer is conventionally illustrated as in Figure~\ref{figure1a}, which is a cascade of MHSA and FFN with residual connections and a natural representation is written as
+\begin{equation}
+\label{eq_mhsa}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    x_{i-1}' = x_{i-1}+MHSA_i(x_{i-1}),
+\end{equation}
+\begin{equation}
+\label{eq_ffn}
+    x_i = x_{i-1}'+FFN_i(x_{i-1}').
+\end{equation}
+In a ViT, Eq.~\ref{eq_mhsa} and Eq.~\ref{eq_ffn} are alternately executed $N$ times and the output of the last transformer $x_N$ is fed into a classifier to generate the final prediction. We observe that there are two identity skip connections bridging the input and output of MHSA and FFN, respectively, which means that the input and output of MHSA can reach the tail of this transformer directly. Therefore, we can rearrange the transformer from a two-layer cascade form to a three-path parallel form as shown in Figure~\ref{figue1b}. The three paths include an identity skip connection, an MHSA layer, and an FFN followed by an MHSA layer. Two MHSA layers are weight sharing. The mathematical expression of Figure~\ref{figue1b} is
+\begin{align}
+\label{eq_new_transformer}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    x_{i} = &x_{i-1}+MHSA_i(x_{i-1}) \notag\\
+          &+FFN_i(x_{i-1}+MHSA_i(x_{i-1})).
+\end{align}
+The three paths in Figure~\ref{figue1b} correspond to the three terms in Eq.~\ref{eq_new_transformer}. In fact, Eq.~\ref{eq_new_transformer} is equivalent to the combination of Eq.~\ref{eq_mhsa} and Eq.~\ref{eq_ffn} by eliminating $x_{i-1}'$. We combine two parameterized paths into one network $f_i$ for convenience and thus the $i$-th transformer can be represented by
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    x_{i} = x_{i-1}+f_i(x_{i-1}).
+\end{equation}
+\begin{figure}
+\setlength{\abovecaptionskip}{0.cm}
+\includegraphics[width=1.\linewidth]{figure2.jpeg}
+\centering
+\label{figure2}
+\end{figure}
+Consider the output of the last transformer $x_{N}=x_{N-1}+f_N(x_{N-1})$, it can be seen as the a linear combination of $x_{N-1}$ and $f_N(x_{N-1})$. The term $x_{N-1}$ can be further decoupled into $x_{N-2}$ and $f_{N-1}(x_{N-2})$. In this recursive paradigm, we can unroll the $x_N$ into a linear number of terms, expanding one layer at each substitution step:
+\begin{align}
+\label{eq_ensemble}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    x_{N}&=x_{N-1}+f_N(x_{N-1})\notag\\
+         &=x_{N-2}+f_{N-1}(x_{N-2})+f_N(x_{N-1})\\
+         &\cdots\notag\\
+         &=x_0+f_{1}(x_{0})+f_{2}(x_{1})+\cdots+f_N(x_{N-1}).\notag
+\end{align}
+As shown in Eq.~\ref{eq_ensemble}, we transform the top feature $x_N$ into a linear combination of $N+1$ terms. 
+The top feature $x_N$ is used to extract the class token (or average token), and then the class token (or average token) is input into a linear classifier to obtain the final predicted result. We regard the $N+1$ terms as $N+1$ paths and the final result as the ensemble of $N+1$ paths. Finally, a traditional ViT architecture is transformed to an ensemble view by the aforementioned transformation and analysis, and the ensemble view is illustrated in Figure~\ref{figure2}.
+
+We denote the path corresponding to the term $f_i(x_{i-1})$ as $p_i$ ($i\in[0, N]$, where $p_0$ represents the term $x_0$). The network of $p_i$ is composed of the $i-1$ whole transformers $[T_j]_{j=1}^{i-1}$ and the parameterized sub-layers of transformer $T_i$, \ie, $p_i=f_i(T_{i-1}(\cdots T_1(x_0)))$. Obviously, the path with greater subscript contains more layers. The original $x_i$ can be denoted as the summation of the first $i$ paths in our ensemble form:
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    x_{i} = \sum_{j=0}^i{p_j}.
+\end{equation}
+We define the ensemble feature fed into the classifier as $\hat{x}$, \ie, $\hat{x}=\sum_{i=0}^N{p_i}$. For a standard ViT, $\hat{x} = x_N$.
+
+Note that the new nodes $p_i$ in our view are not explicitly present in the traditional ViT architecture. \textbf{Our ensemble view provides a new perspective for ViTs, which involves developing ViT by optimizing the $\boldsymbol{N+1}$ paths.} We can process the paths to influence the final results. Moreover, the paths with different lengths also can be regarded as different frequency components of the final feature $\hat{x}$. Recent works~\cite{wang2022anti,park2022how,rao2021global,bai2022improving} have revealed the importance of frequency characteristics for ViTs. We show the Fourier analysis of paths in Figure~\ref{figure3c}. The frequency of paths show a trend from raising to declining. Many low-frequency components are concentrated in the short paths.  Adjusting the feature frequency also can be achieved by processing the paths.
+The above discussion pertains to the most basic and simple ViT paradigm~\cite{dosovitskiy2020vit}. However, most state-of-the-art ViT models adopt a hierarchical structure to utilize multi-scale features~\cite{wu2021cvt,wang2021pyramid,liu2021swin,chu2021twins,yang2021focal,Dong_2022_CVPR}. These models split transformers into multiple stages and insert downsampling layers to reduce resolution after each stage. The downsampling layer typically comprises linear layers which include a normalization layer and a linear or convolutional layer, without non-linear layers. As a result, hierarchical ViTs can also be transformed into our ensemble form. 
+The normalization layer needs to be particularly expounded. ViTs widely employ LayerNorm~\cite{ba2016layer} as the normalization layer in the downsampling layer. In our ensemble view, each path calculates the standard deviation independently, which makes the forward propagation of our ensemble view and the standard view not equivalent, unless synchronizing the standard deviations. We conduct extensive experiments to study this issue and find that the model can adapt to asynchronous standard deviation. Additionally, the performance of asynchronous standard deviation slightly outperforms synchronous standard deviation when we train the models in the ensemble form from scratch. Therefore, we directly adopt the asynchronous standard deviation in subsequent studies.
+
+For non-hierarchical ViTs~\cite{dosovitskiy2020vit,touvron2021training,jiang2021all}, all the intermediate variables of our ensemble form are also computed in the standard form. Hence, the FLOPs and throughput of our ensemble form are equal to the standard form. However, for hierarchical ViTs, the downsampling layers need to be implemented in each path in our ensemble view, which incurs significant computational cost. To address this issue, we apply the strategy of ``summation before downsampling". Unlike computing the output of all the paths before combining, we sum all the existing paths once encountering downsampling layers. In this way, the computational complexity from additional downsampling layers is linear to the number of downsampling layers rather than linear to the number of transformers. In the next subsection, we can see that the extra computational complexity can be reduced further. The practical FLOPs increase is negligible.
+
+Figure \ref{figure2} makes clear the processes of the well-known ViT in a novel ensemble view, where the data flow along multiple paths with different depth to form the ensemble prediction and each path also acts as the bottom network of the longer paths. 
+Consequently, each path performs two functions: the first is to provide the feature for the classifier, and the second is to extract semantic representation for subsequent long paths. Based on these observations, we formulate the following questions: is ensembling all the paths the optimal solution? If not, how to optimize the combination of paths? Besides the classification supervision, do we have a better manner to improve the representation of the paths?
+
+\begin{figure*}[t]
+\setlength{\abovecaptionskip}{0.1cm}
+    \begin{subfigure}{.33\textwidth}
+        \centering
+        \includegraphics[height=1.6in]{figure3c.png}
+        \caption{}
+        \label{figure3c}
+    \end{subfigure}
+    \begin{subfigure}{.33\textwidth}
+        \centering
+        \includegraphics[height=1.4in]{figure3a.jpeg}
+        \caption{}
+        \label{figure3a}
+    \end{subfigure}
+    \begin{subfigure}{.33\textwidth}
+        \centering
+        \includegraphics[height=1.4in]{figure3b.png}
+        \caption{}
+        \label{figure3b}
+    \end{subfigure}
+\end{figure*}
+
+\subsection{Path combination}
+\label{3.2}
+
+The ensemble feature $\hat{x}=\sum_{i=0}^N{p_i}$ is fed into the linear classifier to produce prediction (the extraction of class token or average pooling is ignored for brevity). 
+This procedure can be simplified as $y = \hat{x}w+b$, where $y$ is the predicted result and $w$ and $b$ are the weight and the bias of the classifier. $w$ can be regarded as a set of $c$ vectors, \ie, $[w_1, w_2, \cdots, w_c]$, where $c$ is the number of classes. Assuming that the class $gt$ corresponding to $w_{gt}$ is the ground truth, the model is expected to make $\hat{x}w_{gt} > \hat{x}w_{i}$ ($i\in [1,c]$ and $i\ne gt$). From the view of high dimensional space, it is equivalent to minimize the angle between $\hat{x}$ and $w_{gt}$. We use $\hat{x}$ to approximately substitute $w_{gt}$ to measure the classification ability of each path. A toy experiment is conducted by taking a ViT-S model with 12 transformer layers pre-trained on the ImageNet-1K training set. We normalize the output of the paths and project the cosine similarity between each path and $\hat{x}$ in the interval $[0, \pi]$ as shown in Figure~\ref{figure3a}. The features from short paths are nearly orthogonal to $\hat{x}$, reflecting their weak classification ability. 
+
+Short paths with weak classification ability can play two roles in the combination of final prediction: (i) providing low-level information to revise the results of long paths; (ii) acting as the noise to be diminished by enlarging the scale of the features of long paths or sparsifying classifier weight $w$.
+We conduct another experiment to evaluate this ViT-S with different combinations of the paths on the validation set and show the results in Table~\ref{table path}.
+Note that the model is not fine-tunned even though it has been changed due to path ablation. Table \ref{table path} presents that several long paths contribute the majority of accuracy. In particular, the last three paths, \ie, $p_{10}$, $p_{11}$, and $p_{12}$ attain 99.9\% of the baseline accuracy. Moreover, we notice that the combination of $[p_i]_{i=2}^{12}$ is slightly superior to the baseline even though the parameters of normalization layer and classifier are optimized for the baseline. According to these evidences, we recognize that the features of short paths do not necessarily benefit the final prediction. 
+
+We use the $l_1$ norm to calculate the scales of $[p_i]_{i=0}^{12}$ and plot them in Figure \ref{figure3b}. The scale curve presents an obvious escalating trend and reaches the peak at $p_{11}$, which indicates that the model fights against the noisy features by enhancing the scale of the main components. However, this way increases the difficulty of optimization and makes the model unstable with more layers. We argue that this is one of the factors causing performance saturation in deeper ViTs~\cite{touvron2021going,wang2022anti}.
+
+\begin{table}[t]
+\small
+\begin{center}
+\begin{tabular}{c|c}
+            \toprule
+            The combination of paths & Top-1 Acc (\%) \\
+            \midrule
+            Baseline ($p_{12}$, $p_{11}$, $\cdots$, $p_{0}$) & 80.31* \\
+            \midrule
+            $p_{12}$ & 78.70 \\
+            $p_{11}$ & 79.70 \\
+            $p_{12}$, $p_{11}$ & 80.14 \\
+            $p_{12}$, $p_{11}$, $p_{10}$ & 80.22 \\
+            $p_{12}$, $p_{11}$, $\cdots$, $p_{2}$ & 80.36 \\
+            \bottomrule
+        \end{tabular}
+\end{center}
+\label{table path}
+\end{table}
+
+Built on the above analysis, we propose path pruning and EnsembleScale to optimize the path combination. 
+\paragraph{Path pruning.} We prune some short paths as shown in Figure \ref{figure4} and force the shallow transformers to focus on extracting low-level semantic representation for subsequent layers. % 不影响优化，不等同于在原始结构图上改
+We restate that the paths in our ensemble view are not explicit in the traditional view of Figure~\ref{figure1a}. Path pruning is not equivalent to removing residual connections in Figure \ref{figure1a}. We only prevent the ensemble prediction from combining the predictions from short paths. The shallow layers can be optimized well by residual connection in the remaining paths.
+
+Path pruning has different effects on the computational complexity of non-hierarchical and hierarchical ViTs. Non-hierarchical ViTs remain unaffected by path pruning, whereas for hierarchical ViTs, it can help reduce the additional FLOPs required by downsampling layers.
+Take Swin-T~\cite{liu2021swin} as an example of the latter. Swin-T needs to compute three additional downsampling layers in the ensemble form. If we remove the first three paths, the downsampling layer following stage 1 is not needed. The FLOPs of the ensemble form are equal to those of the standard form when only the last two paths are saved.
+\begin{figure}
+\setlength{\abovecaptionskip}{0.1cm}
+\includegraphics[width=1.\linewidth]{figure4.jpeg}
+\centering
+\label{figure4}
+\end{figure}
+\paragraph{EnsembleScale.} We propose EnsembleScale which is a per-channel multiplication of the vector produced by each path to adaptively re-weight the combination of the paths. Formally, EnsembleScale is a multiplication by a diagonal matrix on the output of each path, denoted as 
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    \hat{x} = \sum_{i=0}^{N}{diag(\lambda_{i,1}, \cdots,\lambda_{i,d})\times p_i},
+\end{equation}
+where the parameters $\lambda_{i,j}$ are learnable weights and $d$ is the number of channels. We initialize the EnsembleScale progressively from $10^{-5}$ to $1.0$ based on the analysis of short paths. EnsembleScale can be regarded as a soft path pruning. Another functionality of EnsembleScale is that the model can adjust the scale of paths by EnsembleScale rather than features in case that the scale of the feature expands with depth, which can help ViTs go deeper.
+The effectiveness of our path combination strategies comes from two folds. First, the features generated by short paths focus on providing low-level representation for subsequent longer paths instead of minimizing the classification error. Second, 
+from the perspective of frequency domain, our path combination methods mainly filter out useless low-frequency signals, amounting to amplifying the effect of high-frequency signals. Recent works~\cite{wang2022anti,park2022how,rao2021global,bai2022improving} validate that the high-frequency components are generally overwhelmed in ViTs and appropriately compensating for them can boost the performance.
+
+\subsection{Self-distillation}
+\label{3.3}
+Path combination solves the combination of the paths, but it cannot actively optimize the training of the paths. To enhance their representation, we introduce self-distillation to transfer knowledge from the longer paths to the shorter paths.  
+Two types of distillation are considered, \ie, prediction-logit distillation and hidden-state distillation.
+
+\paragraph{Prediction-logit distillation.}
+Given two paths, the path with the deeper network is selected as the teacher $p_t$ and the other as the student $p_s$. Then,  the classifier of the overall model is employed to extract their logits, to avoid introducing additional networks. Finally, we force  $p_s$ to imitate $p_t$ to regularize the student path. This is achieved by a Kullback-Leibler divergence loss as below:
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    \mathcal{L}_{pl} = KL(\sigma(\frac{Cls(p_s)}{T}) || \sigma(\frac{Cls(p_t)}{T})),
+\end{equation}
+where $\sigma(\cdot)$ is the Softmax function, $T$ is a temperature value controlling the smoothness of the logits, and $Cls$ denotes the classifier including a LayerNorm and a linear layer. We do not update the parameters of the classifier in this loss.
+
+\paragraph{Hidden-state distillation.}
+We compute the relations among tokens in $p_s$ and $p_t$, respectively, and obtain two relation matrices defined by $R_i = \textit{softmax}(p_i\cdot p_i^T/\sqrt{d})$. The hidden-state distillation loss based on relation matrices is achieved by another Kullback-Leibler divergence loss:
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+    \mathcal{L}_{hidden} = KL(R_s || R_t).
+\end{equation}
+
+In experiments, we find that a large representation gap between the teacher and the student leads to inferior performance. Thus, a distance constant $\Delta$ is set to constrain teacher-student pair, \ie, $p_{i+\Delta}$ teaching $p_i$. $\Delta$ is set to $2$ by default. The final distillation objective function is formulated as
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\label{overall loss}
+    \resizebox{0.85\hsize}{!}{
+    $\mathcal{L}_{kd} = \sum_{i=s}^{N-\Delta}{\alpha_i\mathcal{L}_{pl}(p_i, p_{i+\Delta})+\beta_i\mathcal{L}_{hidden}(p_i, p_{i+\Delta})},$
+    }
+\end{equation}
+where $s$ represents the subscript of the starting path, and $\alpha_i$ and $\beta_i$ are hyperparameters to balance the loss.
+
+
+
+Experiments
+\label{4}
+In this section, we report our experimental results related to path combination and self-distillation.
+\paragraph{Experimental settings.}
+Our method is verified on two representative ViT models, DeiT~\cite{touvron2021training} and Swin~\cite{liu2021swin}. All the models are trained on the ImageNet~\cite{deng2009imagenet} with 1.28M training images and 50K validation images from 1,000 classes. The image resolution in training and inference is $224\times 224$. All the models are trained for a total of 300 epochs, while the batch size is set to 1,024. The augmentation and regularization strategies follow the original papers of DeiT and Swin.
+
+\subsection{Path combination}
+\paragraph{Main results.} 
+Our results of path combination on DeiT and Swin are summarized in Table~\ref{ta
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

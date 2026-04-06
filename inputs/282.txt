@@ -1,0 +1,264 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Semantic segmentation is an important computer vision task that requires the model to identify a class label for each pixel in an image. For traditional (or fully supervised) semantic segmentation, models are trained and evaluated on a fixed dataset with a specific set of classes, and the test set has the same classes and image distribution as the training set. For this task, many effective methods \cite{long2015fully, noh2015learning, liang2015semantic, chen2018encoder, cheng2021per, kirillov2019panoptic, xiao2018unified, cheng2022masked, xie2021segformer} have been proposed, and they have significantly improved the prediction accuracy. However, models designed for this task always fail to segment images in the real world well, because they were only trained on specific datasets with fixed sets of classes.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{figures/overview.pdf}
+    \caption{Illustration of our main idea. (\textit{a}) Our AdaB Decoder(Adaptively Balanced Decoder) outputs image embeddings for both training classes(classes existing in the training set during test) and new classes(classes not existing in training set). By adaptively balancing these embeddings, our model performs better at both training and new classes. (\textit{b}) We propose SSC Loss(Semantic Structure Consistency loss) that aligns the distribution of the image embeddings with that of the text embeddings. The SSC Loss helps our model learn the semantic structure of CLIP better and achieve better generalization capability for new classes.}
+    \label{fig:overview}
+\end{figure}
+
+To address this problem, the open-vocabulary semantic segmentation task was introduced. In this task, given an image and an arbitrary set of classes, the model is expected to classify each pixel into its most corresponding class. This task is much closer to the real-world applications. Many works utilize the CLIP \cite{radford2021learning} model for this task because CLIP was trained on a large-scale image-text pair dataset and has strong generalization capability for open-vocabulary tasks.
+
+Some existing works like \cite{li2022languagedriven, ghiasi2022scaling} propose to finetune models on semantic segmentation datasets. However, models finetuned on a semantic segmentation dataset often overfit to the training classes. 
+Some others \cite{ding2021decoupling, xu2022simple, liang2023open} adopt a two-stage framework. Firstly, a category-agnostic mask generator is used to extract masks. Then, the masks are used to crop the input image to get many crops which will be fed into a frozen CLIP model for classification results. This framework incurs high computational costs as the CLIP model has to process many crops of the image. 
+Since this framework does not leverage the discriminate features from CLIP in the mask generation process and lacks context in the classification process, it gets sub-optimal results.
+
+Recently, some new methods adopting one-stage frameworks have emerged. ODISE \cite{xu2023open} employs a frozen diffusion model \cite{rombach2022high} to extract image features as the input for a Mask2former \cite{cheng2022masked} head. It \cite{xu2023open} leverages the strengths of both the diffusion model and the CLIP model to accomplish the open vocabulary segmentation task. However, ODISE faces high computational costs, as the diffusion model is very large (with about 1.5 billion parameters). MaskCLIP \cite{ding2023open} also uses a category-agnostic mask generator like \cite{ding2021decoupling, xu2022simple, liang2023open} but it \cite{ding2023open} does not crop the input image. 
+MaskCLIP \cite{ding2023open} proposes a Relative Mask Attention module that applies the masks in the self-attention layers of CLIP image encoder as attention masks to produce mask attention embeddings for mask classification. 
+SAN \cite{xu2023side} adds a lightweight image encoder to get masks and attention masks corresponding to each mask. Like MaskCLIP \cite{ding2023open}, the attention masks are fed to the last few layers of CLIP to obtain mask attention embeddings for mask classification. 
+
+Although these methods are effective, they still face a challenge.
+The challenge is that training on a specific semantic segmentation dataset often makes the model overfit to the training classes, impairing the generalization ability of the model, especially for large models.
+
+To overcome the challenge, we present EBSeg (image Embedding Balancing for open-vocabulary semantic Segmentation). It consists of the Adaptively Balanced Decoder (AdaB Decoder) and the Semantic Structure Consistency loss (SSC Loss). 
+The AdaB Decoder generates mask attention embeddings, fully supervised embeddings specialized for training classes and frozen embeddings with excellent generalization for new classes. The mask attention embeddings come from a Mask Attention module introduced in MaskCLIP \cite{ding2023open} and SAN \cite{xu2023side}. The fully supervised embeddings are directly supervised by a cross-entropy loss with the training classes. The frozen embeddings are extracted from a frozen CLIP image encoder.
+These three types of embeddings are then adaptively balanced to form a final representation of the input image for the final prediction.
+Thus, AdaB Decoder could take full advantage of the superior features learned on training classes and the excellent generalizing ability on new classes at the same time.
+On the other hand, SSC Loss aims at aligning the class-level affinity between the image features and text features.
+Hence, our model could encode a more consistent class-level semantic structure from the CLIP feature space to enhance the generalization on new classes. 
+Additionally, we utilize a frozen SAM \cite{kirillov2023segment} image encoder to complement the spatial information of CLIP features to address the issue that image feature maps of CLIP lack important spatial details for semantic segmentation.
+
+We conduct extensive experiments on challenging open-vocabulary segmentation datasets to prove the effectiveness of our method EBSeg. Following previous works \cite{xu2022simple, xu2023side, liang2023open}, we train our model on COCO-Stuff \cite{caesar2018coco} and evaluate the model on VOC \cite{everingham2012pascal}, Pascal Context-59 \cite{mottaghi2014role}, Pascal Context-459 \cite{mottaghi2014role}, ADE20K-150 \cite{zhou2017scene} and ADE20K-847 \cite{zhou2017scene}. Our method achieves state-of-the-art results, with an average of 2.3\% mIoU improvements on these 5 benchmarks when using the CLIP ViT-B/16 model and an average of 2.3\% mIoU improvements with the CLIP ViT-L/14 model.
+
+Our contributions are as follows:
+
+\begin{itemize}
+    \item We propose Adaptively Balanced Decoder (AdaB Decoder). By adaptively balancing different image embeddings, AdaB Decoder can fully leverage their ability to recognize training classes and generalization capability for new classes that do not exist in the training set.
+    \item We introduce the Semantic Structure Consistency loss (SSC Loss). The SSC Loss aligns the inter-classes affinity in the image feature space with that in the text feature space of CLIP. This loss helps our model learn a consistent semantic structure from CLIP and improves the generalization ability of our model.
+    \item In our model, we propose to fuse the image features of SAM and CLIP to complement the spatial information of CLIP image features.
+    \item Our method EBSeg establishes a new state-of-the-art in the open-vocabulary semantic segmentation task.
+    
+\end{itemize}
+
+
+
+Related works
+\label{sec:related}
+
+\begin{figure*}
+    \centering
+     \includegraphics[width=\linewidth]{figures/model_architecture.pdf}
+    \caption{The architecture of our model EBSeg. We first obtain image features from two frozen image encoders and fuse them in a feature fusion module. After that, the fused features are input into our AdaB Decoder, which outputs masks $\mathbf{M}$ and image embeddings (including mask attention embeddings $\mathbf{B}$, fully supervised embeddings $\mathbf{A}$ and frozen embeddings $\mathbf{D}$). During training, we apply the SSC Loss to learn a consistent semantic structure from CLIP. During inference, we adaptively balance the three embeddings output by AdaB Decoder and obtain semantic segmentation results with the masks, balanced image embeddings, and text embeddings.}
+    \label{fig:model architecture}
+\end{figure*}
+
+\textbf{CLIP and its transfer learning on downstream tasks.}  
+CLIP \cite{radford2021learning} is proposed to align images and texts in a shared semantic space, enabling cross-modal understanding and transfer learning. It is trained on a large dataset of image-text pairs with contrastive loss to get a strong open-vocabulary recognition ability. CLIP can be directly used in the zero-shot image classification task.
+
+After CLIP was released, many works have explored using it in various downstream tasks. For few-shot image classification, CoOp \cite{zhou2022learning} and CoCoOp \cite{zhou2022conditional} use prompt tuning \cite{zhong2021factual, li2021prefix, lester2021power} to adapt the text embeddings of CLIP to task-specific classes with relatively low cost.\
+For fully supervised dense prediction, DenseCLIP \cite{rao2022denseclip} directly finetunes the CLIP model and proposes a vision-to-language prompting method to leverage the prior knowledge of image contexts. CLIP Surgery \cite{li2023clip} explores using surgery-like modifications for CLIP inference architecture and features, achieving good explainability and enhancement in multiple open-vocabulary tasks.
+
+Our work explores how to fully leverage the powerful image-text alignment capability of CLIP in the challenging task of open-vocabulary semantic segmentation. 
+
+\noindent \textbf{Open-vocabulary semantic segmentation.}
+Some early works \cite{zhao2017open, bucher2019zero, xian2019semantic} on this task focused on how to project image features and text features into a shared feature space, which is hard because images and texts are in two different modalities. Recently, benefiting from the powerful open-vocabulary recognition ability of CLIP, many works have attempted to apply the CLIP model on this task. \cite{ding2021decoupling, liang2023open, xu2022simple} adopt a two-stage framework, where a mask generator is leveraged to extract category-agnostic masks. Then the masks are used to get many crops of the input image and the crops will be fed into CLIP for mask classification results. MaskCLIP \cite{ding2023open} also uses a category-agnostic mask generator, but it does not use the masks to crop the input image. MaskCLIP \cite{ding2023open} proposes a Relative Mask Attention module where it uses the masks as attention masks in the self-attention layers of CLIP image encoder to get mask attention embeddings. ODISE \cite{xu2023open} explores using a frozen diffusion model \cite{rombach2022high} to extract image features as the input for a Mask2former \cite{cheng2022masked} head.
+SAN \cite{xu2023side} adds a lightweight image encoder to get masks and attention masks corresponding to each mask. Like MaskCLIP \cite{ding2023open}, the attention masks are fed to the last few layers of CLIP to obtain mask attention embeddings for mask classification. 
+Different from MaskCLIP \cite{ding2023open}, the attention masks in SAN \cite{xu2023side} are per-head, which means SAN \cite{xu2023side} produces different attention masks for each attention head in CLIP image encoder.
+
+Our work explores how to overcome the overfitting challenge faced by CLIP-based methods. To achieve this goal, we design the AdaB Decoder and SSC Loss for better generalization on new classes. 
+
+
+Method
+\label{sec:method}
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=0.75\linewidth]{figures/decoder.pdf}
+    \caption{Detailed structure of AdaB Decoder. We first input fused image features into the Pixel Decoder. The outputs of the first three stages are then fed to the Transformer Decoder which outputs image embeddings $\mathbf{A}$ and $\mathbf{A}^{'}$. Then we obtain masks $\mathbf{M}$ with $\mathbf{A}$ and the largest feature map $\mathbf{F}_{1}^{'}$ from the Pixel Decoder. We obtain per-head attention masks $\mathbf{M}_{attn}$ with per-head embeddings $\mathbf{A}^{'}$ and $\mathbf{F}_{1}^{'}$. Finally, we perform masked self-attention in the last few blocks of CLIP image encoder with $\mathbf{M}_{attn}$ to get mask attention embeddings $\mathbf{B}$.}
+    \label{fig:decoder}
+\end{figure*}
+
+\subsection{Method Overview}
+
+In \cref{fig:model architecture}, we present the architecture of our open-vocabulary semantic segmentation model EBSeg. In this framework, we first input the image into both frozen CLIP and SAM image encoders. The obtained image features from the two image encoders are then fused in a fusion module (\cref{subsec:feature extract and fuse}). After that, the fused features are fed into our AdaB Decoder which outputs masks and image embeddings (including mask attention embeddings $\mathbf{B}$, fully supervised embeddings $\mathbf{A}$ and frozen embeddings $\mathbf{D}$) (\cref{subsec:decoder}). In our model, we apply the Semantic Structure Consistency loss (SSC Loss) to learn a consistent semantic structure from CLIP (\cref{subsec:loss}). During inference, we propose to adaptively balance the three different image embeddings to fully exploit their ability to recognize training classes and the excellent generalization ability for new classes (\cref{subsec:inference}). Finally, we obtain semantic segmentation results with the masks, balanced image embeddings, and text embeddings.
+
+\subsection{Image Feature Extraction and Fusion}
+\label{subsec:feature extract and fuse}
+As mentioned before, the feature maps of CLIP lack important spatial information for semantic segmentation. Therefore, we propose to utilize a frozen SAM image encoder to complement the spatial information.
+
+Given an image $\mathbf{I}\in \mathbb{R}^{H \times W \times 3}$, we input it into the SAM image encoder and get image features $\mathbf{F}_{a}^{i} \in \mathbb{R}^{h_a \times w_a \times C_a} (i=1,2,3)$ from the last three global attention blocks. Meanwhile, we downsample $\mathbf{I}$ to $\mathbf{I}^{'} \in \mathbb{R}^{\frac{H}{p} \times \frac{W}{p} \times 3}$ (where $p$ is the downsample ratio). We then feed $\mathbf{I}^{'}$ into CLIP image encoder to get image features $\mathbf{F}_{b}^{i} \in \mathbb{R}^{h_b \times w_b \times C_b} (i=1,2,3)$ from the number $L/4, L/2,$ and $3L/4$ blocks of CLIP ($L$ is the total number of blocks in CLIP image encoder; $L=12$ for CLIP ViT-B and $L=24$ for CLIP ViT-L).
+
+We employ a simple addition approach to fuse the image features from two frozen models. Firstly, we use a linear layer to match the channel number of $\mathbf{F}_{b}$ to that of $\mathbf{F}_{a}$. Then, we upsample or downsample $\mathbf{F}_{a}$ and $\mathbf{F}_{b}$ to $\mathbf{F}_{v}^{i} \in \mathbb{R}^{\frac{H}{s} \times \frac{W}{s} \times C_{a}} (v=a,b; i=1,2,3; s=2^{i+2})$. Finally we perform element-wise addition with $\mathbf{F}_{a}$ and $\mathbf{F}_{b}$, obtaining fused features $\mathbf{F}^{i} \in \mathbb{R}^{\frac{H}{s} \times \frac{W}{s} \times C_a} (i=1,2,3; s=2^{i+2})$:
+
+\begin{equation}
+  \mathbf{F}^{i} = \mathbf{F}_{a}^i + \mathbf{F}_{b}^{i}.
+  \label{eq:add fusion}
+\end{equation}
+
+\subsection{AdaB Decoder}
+\label{subsec:decoder}
+In this section, we show the detailed architecture of our AdaB Decoder (\cref{fig:decoder}). Note that we will present how to adaptively balance the image embeddings later in \cref{subsec:inference}.
+
+The AdaB Decoder consists of three components: Pixel Decoder, Transformer Decoder, and CLIP Mask Attention Decoder. The Pixel Decoder and Transformer Decoder follow Mask2former \cite{cheng2022masked}, and the CLIP Mask Attention Decoder follows the mask attention module in SAN \cite{xu2023side}.
+
+Similar to Mask2former \cite{cheng2022masked}, we input the fused multi-scale image features $\mathbf{F}^{i}$ into the Pixel Decoder. The outputs of the first three stages in Pixel Decoder are then fed into the Transformer Decoder, from which we get the fully supervised mask image embeddings $\mathbf{A} \in \mathbb{R}^{N \times C}$ ($N$ is the number of queries of the Transformer Decoder). We then perform matrix multiplication between $\mathbf{A}$ and the largest feature map $\mathbf{F}^{'}_{1} \in \mathbb{R}^{\frac{H}{4} \times \frac{W}{4} \times C}$ from Pixel Decoder to obtain masks $\mathbf{M} \in \mathbb{R}^{\frac{H}{4} \times \frac{W}{4} \times N}$: 
+\begin{equation}
+  \mathbf{M} = \mathbf{F}^{'}_{1} \times \mathbf{A}^T.
+  \label{eq:mask}
+\end{equation}
+
+Furthermore, we increase the channel numbers of $\mathbf{A}$ to $C \times n$ using a linear layer ($n$ is the number of heads in the multi-head self-attention layers of CLIP image encoder), getting per-head image embeddings $\mathbf{A}^{'} \in \mathbb{R}^{N \times (C \times n)}$. We then perform matrix multiplication between $\mathbf{A}^{'}$ and $\mathbf{F}^{'}_{1}$, obtaining per-head attention masks $\mathbf{M}_{attn} \in \mathbb{R}^{\frac{H}{4} \times \frac{W}{4} \times n \times N}$ which will be used in the CLIP Mask Attention Decoder.
+
+In the CLIP Mask Attention Decoder, we use the last $l$ ($l=\frac{L}{4}$) transformer blocks from CLIP image encoder. Firstly, we get the output tokens $\mathbf{U}$ from the last ($l+1$)th block of CLIP image encoder. Then we duplicate the CLS token of $\mathbf{U}$ $N$ times as queries for the CLIP Mask Attention Decoder. Then, we concatenate the queries and $\mathbf{U}$ together and input them into the CLIP Mask Attention Decoder, with $\mathbf{M}_{attn}$ as the per-head attention masks for the multi-head self-attention layers of those $l$ CLIP transformer blocks. The output of CLIP Mask Attention Decoder is mask attention embeddings $\mathbf{B} \in \mathbb{R}^{N \times C}$.
+
+During inference, to improve the recognition ability for new classes that do not exist in the training set, we perform mask pooling with $\mathbf{M}$ and the final output $\mathbf{F}_{clip} \in \mathbb{R}^{\frac{H}{16} \times \frac{W}{16} \times C}$ of CLIP image encoder to get frozen image embeddings $\mathbf{D} \in \mathbb{R}^{N \times C}$:
+\begin{equation}
+  \mathbf{D} = MaskPooling(\mathbf{M}, \mathbf{F}_{clip}).
+  \label{eq:mask_pooling}
+\end{equation}
+
+\subsection{SSC Loss}
+\label{subsec:loss}
+
+In this section, we will introduce the Semantic Structure Consistency Loss (SSC Loss).
+Our SSC Loss draws inspiration from unsupervised segmentation methods like STEGO \cite{hamilton2021unsupervised}.
+Works like STEGO \cite{hamilton2021unsupervised} mainly focus on the unsupervised segmentation task and
+usually aim to distill image feature semantic similarity from a pretrained image encoder.
+Designed for OVSS, our SSC loss is proposed to enhance generalization ability for new classes by distilling semantic similarity from text features output by frozen CLIP text encoder to image features.
+By introducing the SSC Loss, our model learns more about the latent knowledge from the CLIP feature space. Thus our model can learn a consistent semantic structure from CLIP and gain a stronger generalization ability for new classes that do not exist in the training set.
+
+During training, assuming that an image has $k$ ground truth masks and classes, after Hungarian matching, we match these $k$ ground truth masks with $k$ prediction masks (from $\mathbf{M}$) and $k$ image embeddings $\mathbf{IE}_k \in \mathbb{R}^{k \times C}$ (from $\mathbf{A}$).
+
+After that, we calculate the cosine similarities $\mathbf{CS}_{text}^{i,j} \in \mathbb{R}^{1}$ between the text embeddings $\mathbf{TE}_k \in \mathbb{R}^{k \times C}$ (produced by the CLIP text encoder) of the $k$ ground truth classes:
+\begin{equation}
+  \mathbf{CS}_{text}^{i,j} = \frac{\mathbf{TE}_k^i \cdot \mathbf{TE}_k^j}{|\mathbf{TE}_k^i| * |\mathbf{TE}_k^j|},
+  \label{eq:cs_1}
+\end{equation}
+where $\mathbf{TE}_k^i$, $\mathbf{TE}_k^j \in \mathbb{R}^{1 \times C}$ from $\mathbf{TE}_k$, $i$, $j \leq k$, and $\cdot$ denotes dot product. Then, we calculate the cosine similarities $\mathbf{CS}_{image}^{i,j} \in \mathbb{R}^{1}$ between the matched $k$ image embeddings $\mathbf{IE}_k \in \mathbb{R}^{k \times C}$ (from $\mathbf{A} \in \mathbb{R}^{N \times C}$):
+\begin{equation}
+  \mathbf{CS}_{image}^{i,j} = \frac{\mathbf{IE}_k^i \cdot \mathbf{IE}_k^j}{|\mathbf{IE}_k^i| * |\mathbf{IE}_k^j|},
+  \label{eq:cs_2}
+\end{equation}
+where $\mathbf{IE}_k^i$, $\mathbf{IE}_k^j \in \mathbb{R}^{1 \times C}$ from $\mathbf{IE}_k$ and $i$, $j \leq k$. 
+
+Finally, we compute the $L2$ distance between $\mathbf{CS}_{image}^{i,j}$ and $\mathbf{CS}_{text}^{i,j}$ as the SSC Loss:
+\begin{equation}
+  L_{SSC} = \frac{1}{k^2} \sum_{i=1}^{k} \sum_{j=1}^{k} \|\mathbf{CS}_{text}^{i,j} - \mathbf{CS}_{image}^{i,j}\|_2.
+  \label{eq:relationship loss}
+\end{equation}
+
+During training, we apply the semantic segmentation loss in Mask2former \cite{cheng2022masked}. Our total loss during training is:
+\begin{equation}
+  L_{total} = L_{sem\_seg} + \lambda L_{SSC}.
+  \label{eq:total loss}
+\end{equation}
+
+\subsection{Adaptively Balancing and Inference}
+\label{subsec:inference}
+In this section, we show how to adaptively balance the image embeddings (mask attention embeddings $\mathbf{B}$, fully supervised embeddings $\mathbf{A}$ and frozen embeddings $\mathbf{D}$) for better recognition ability on both training and new classes.
+
+During inference, we assume that there are $K$ classes $C_{test}$ in the test set, where $f$ ($f<K$) classes exist in the training classes. Firstly, we use the CLIP text encoder to extract text embeddings $\mathbf{TE}_{test} \in \mathbb{R}^{K \times C}$ for $C_{test}$:
+\begin{equation}
+  \mathbf{TE}_{test} = \Theta (C_{test})
+  \label{eq:text_embeddings},
+\end{equation}
+where $\Theta$ denotes the CLIP Text Encoder.
+
+Then, we adaptively balance image embeddings ($\mathbf{A}$, $\mathbf{B}$ and $\mathbf{D} \in \mathbb{R}^{N \times C}$) with weights ($\alpha$, $\beta$ and $\gamma$) for both training and new classes:
+\begin{equation}
+  \mathbf{E}_{train} = \alpha*\mathbf{A} + \beta*\mathbf{B} + (1-\alpha-\beta)*\mathbf{D},
+  \label{eq:mean_embed_1}
+\end{equation}
+\begin{equation}
+  \mathbf{E}_{new} = \gamma*\mathbf{A} + \beta*\mathbf{B} + (1-\gamma-\beta)*\mathbf{D},
+  \label{eq:mean_embed_2}
+\end{equation}
+where $\mathbf{E}_{train}$, $\mathbf{E}_{new} \in \mathbb{R}^{N \times C}$ are balanced embeddings for training and new classes respectively; $\odot$ denotes element-wise multiplication.
+In \cref{eq:mean_embed_1} and \cref{eq:mean_embed_2}, we use arithmetic mean to obtain balanced embeddings. However, we find that using geometric mean achieves 
+slightly higher accuracy. Please refer to the supplementary materials for more details and experiments about this.
+
+Next, we get mask classification predictions for both training and new classes:
+\begin{equation}
+  \mathbf{P}_{train} = \mathbf{E}_{train} \times \mathbf{TE}_{train}^T,
+  \label{eq:logit_1}
+\end{equation}
+\begin{equation}
+  \mathbf{P}_{new} = \mathbf{E}_{new} \times \mathbf{TE}_{new}^T,
+  \label{eq:logit_2}
+\end{equation}
+where $\mathbf{TE}_{train} \in \mathbb{R}^{f \times C}$ and $\mathbf{TE}_{new} \in \mathbb{R}^{(K-f) \times C}$ from $\mathbf{TE}_{test}$, $\mathbf{P}_{train} \in \mathbb{R}^{N \times f}$ and $\mathbf{P}_{new} \in \mathbb{R}^{N \times (K-f)}$. The mask classification predictions $\mathbf{P} \in \mathbb{R}^{N \times K}$ for all test classes are:
+\begin{equation}
+  \mathbf{P} = Concatenate(\mathbf{P}_{train},\mathbf{P}_{new}).
+  \label{eq:logit}
+\end{equation}
+Please note that we rearrange the order of $\mathbf{P}$ along the second dimension to match the order of the ground truth labels.
+
+Finally, we obtain the semantic segmentation results $\mathbf{S} \in \mathbb{R}^{\frac{H}{4} \times \frac{W}{4} \times K}$:
+\begin{equation}
+  \mathbf{S}=\mathbf{M} \times \mathbf{P}.
+  \label{eq:sem_seg}
+\end{equation}
+
+Note that "adaptively" means using different preset balancing weights specific for training and test classes to achieve better open vocabulary recognition ability, rather than automatically setting balancing weights. We will try using learnable balancing weights in our future work.
+
+
+Experiments
+\label{sec:experiments}
+\begin{table*}[htpb]
+  \centering
+  \begin{tabular}{c|c|c|c|c|c|c|c}
+    \toprule
+    Method & VLM & Training Dataset & A-847 & PC-459 & A-150 & PC-59 & VOC \\
+    \midrule
+    LSeg+ \cite{li2022languagedriven} & ALIGN RN-101 & COCO-Stuff & 2.5 & 5.2 & 13.0 & 36.0 & 59.0\\ 
+    OpenSeg \cite{ghiasi2022scaling} & ALIGN RN-101 & COCO Panoptic\cite{kirillov2019panoptic1} & 4.0 & 6.5 & 15.3 & 36.9 & 60.0\\
+    \midrule
+    LSeg+ \cite{li2022languagedriven} & ALIGN EN-B7 & COCO-Stuff & 3.8 & 7.8 & 18.0 & 46.5 & -\\ 
+    OpenSeg \cite{ghiasi2022scaling} & ALIGN EN-B7 & COCO Panoptic\cite{kirillov2019panoptic1}+Loc.Narr. & 8.8 & 12.2 & 28.6 & 48.2 & 72.2\\
+    \midrule
+    ZegFormer \cite{ding2021decoupling} & CLIP ViT-B/16 & COCO-Stuff & 5.6 & 10.4 & 18.0 & 45.5 & 89.5\\
+    SimSeg \cite{xu2022simple} & CLIP ViT-B/16 & COCO-Stuff & 6.9 & 9.7 & 21.1 & 51.9 & 91.8\\
+    OVSeg \cite{liang2023open} & CLIP ViT-B/16 & COCO-Stuff+COCO Caption\cite{chen2015microsoft} & 7.1 & 11.0 & 24.8 & 53.3 & 92.6\\
+    SAN \cite{xu2023side} & CLIP ViT-B/16 & COCO-Stuff & 10.1 & 12.6 & 27.5 & 53.8 & 94.0\\
+    EBSeg(ours) & CLIP ViT-B/16 & COCO-Stuff & \textbf{11.1} & \textbf{17.3} & \textbf{30.0} & \textbf{56.7} & \textbf{94.6}\\
+    \midrule
+    SimSeg \cite{xu2022simple} & CLIP ViT-L/14 & COCO-Stuff & 7.1 & 10.2 & 21.7 & 52.2 & 92.3\\
+    MaskCLIP \cite{ding2023open} & CLIP ViT-L/14 & COCO Panoptic & 8.2 & 10.0 & 23.7 & 45.9 & -\\
+    OVSeg \cite{liang2023open} & CLIP ViT-L/14 & COCO-Stuff & 9.0 & 12.4 & 29.6 & 55.7 & 94.5\\
+    ODISE \cite{xu2023open} & SD+CLIP ViT-L/14 & COCO Panoptic & 11.1 & 14.5 & 29.9 & 57.3 & -\\
+    SAN \cite{xu2023side} & CLIP ViT-L/14 & COCO-Stuff & 12.4 & 15.7 & 32.1 & 57.7 & 94.6\\
+    EBSeg(ours) & CLIP ViT-L/14 & COCO-Stuff & \textbf{13.7} & \textbf{21.0} & \textbf{32.8} & \textbf{60.2} & \textbf{96.4}\\
+    \bottomrule
+  \end{tabular}
+  \caption{Comparison with state-of-the-art methods. We use mIoU as the evaluation metric. VLM denotes vision-language model. ALIGN \cite{jia2021scaling} is a vision-language model. EN-B7 \cite{tan2019efficientnet} is the image backbone used by ALIGN \cite{jia2021scaling}. Loc.Narr. stands for Localized Narrative \cite{pont2020connecting}, which contains detailed natural language descriptions for multiple datasets. SD denotes the stable diffusion model \cite{rombach2022high}.}
+  \label{tab:main table}
+\end{table*}
+\subsection{Experiment Setup}
+\textbf{Datasets and evaluation protocol.} We train our model on the COCO-Stuff \cite{caesar2018coco} dataset, and evaluate the model on five other benchmarks, including Pascal VOC \cite{everingham2012pascal}, Pascal Context-59 (PC-59) \cite{mottaghi2014role}, Pascal Context-459 (PC-459) \cite{mottaghi2014role}, ADE20K-150 (A-150) \cite{zhou2017scene}, ADE20K-847 (A-847)\cite{zhou2017scene}. There are 171 densely annotated classes in the COCO-stuff dataset, which contains 118K training images, 5K validation images, and 41K test images. We train our model on the training set of COCO-Stuff. Pascal VOC has 20 classes, with 1464 training and 1449 validation images. Pascal Context has 5K training images and 5K validation images, with two types of annotations: 59 classes annotated in Pascal Context-59 and 459 classes annotated in Pascal Context-459. ADE20K contains 20K training images and 2K validation images, and it has two sets of annotated classes: ADE20K-150 with 150 classes and ADE20K-847 with 847 classes. Same as early works, we adopt mean Intersection over Union (mIoU) as the evaluation metric for all our experiments.
+
+\noindent \textbf{Implement details.} We use OpenAI pretrained CLIP model \cite{radford2021learning} in our experiments, including a ViT-B/16 model and a ViT-L/14 model. The ViT-B model of SAM \cite{kirillov2023segment} is used for all our experiments. The input image resolution is $640^{2}$, and the downsample ratio $p$ for the CLIP image encoder is set to $0.5$ and $0.7$ for our ViT-B and ViT-L models respectively. For the CLIP and SAM image encoders, we freeze all their parameters except for their positional embeddings. For the AdaB Decoder, the Transformer Decoder in it has 9 layers and 100 queries. The hidden dimension of the Transformer Decoder is 256, and its output dimension $C$ is set to the same as the dimension of CLIP features (512 for CLIP ViT-B and 640 for CLIP ViT-L). For adaptively image embedding balancing, we set $\alpha=0.2$, $\beta=0.7$ and $\gamma=0$ by default. We use CLIP Surgery \cite{li2023clip} to get better CLIP final output $\mathbf{F}_{clip}$ for frozen embeddings $\mathbf{D}$. For SSC loss, the loss weight $\lambda$ is set to 10. An auxiliary loss (the loss $L_{sem\_seg}$) is added to every intermediate Transformer Decoder layer. Note that we only apply our SSC Loss to fully supervised embeddings $A$ from the last layer of the Transformer Decoder. 
+Our models are implemented with Pytorch \cite{paszke2019pytorch} and Detectron2 \cite{wu2019detectron2}. AdamW \cite{loshchilov2017decoupled} optimizer is used with the initial learning rate of $1 \cdot 10^{-4}$, weight decay of $5 \cdot 10^{-2}$. We set the batch size to $16$, and train models for $120k$ iterations.
+
+\subsection{Comparison with State-of-the-Art methods}
+
+\begin{table}[]
+    \centering
+    \begin{tabular}{c|c|c|c}
+     \toprule
+     AIB & AdaB Decoder & SSC Loss & mIoU \\
+     \midrule
+       Swin-B \cite{liu2021swin} &  &  & 27.9  \\
+       SAM-B \cite{kirillov2023segment}&  &  & 28.5  \\
+       SAM-B \cite{kirillov2023segment}& \checkmark &  & 29.2  \\
+       SAM-B \cite{kirillov2023segment}& & \checkmark & 29.0  \\
+       SAM-B \cite{kirillov2
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

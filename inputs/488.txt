@@ -1,0 +1,193 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Graph Neural Networks (GNNs) have achieved remarkable performance in various tasks, such as drug discovery~\cite{stokes2020deep, gaudelet2020utilising}, social networks~\cite{monti2019fake,pal2020pinnersage}, traffic flow~\cite{derrowpinion2021traffic}, and recommendation systems~\cite{DBLP:journals/csur/WuSZXC23}. Most GNNs are based on the message-passing scheme~\cite{DBLP:conf/icml/GilmerSRVD17}, hierarchically aggregating information from multi-hop neighbors by stacking multiple layers. During this procedure, a rooted subtree can be generated for each node, representing the node's neighborhood structure. Nodes with similar neighborhood structures possess similar subtrees, which leads to similar node representations~\cite{DBLP:conf/nips/FengCLSZ22}.
+
+\emph{Local attention} in graph learning can be seen as a natural combination of the message-passing scheme and the self-attention mechanism. By adaptively assigning weights among one-hop neighbors in a single layer, the local attention mechanism allows each node to focus on the most task-relevant neighbors~\cite{DBLP:conf/iclr/VelickovicCCRLB18, DBLP:journals/corr/abs-1803-03735, DBLP:journals/corr/abs-1910-11945, DBLP:conf/iclr/Brody0Y22}. %Although yielding satisfactory results, 
+However, local attention limits the receptive field to one-hop neighbors. While stacking multiple local-attention layers to build a deep model can increase the receptive field, such message-passing-based deep architectures face challenges in capturing long-range dependencies~\cite{DBLP:conf/icml/DaiKDSS18} due to issues such as over-smoothing~\cite{DBLP:conf/aaai/ChenLLLZS20} and over-squashing~\cite{DBLP:conf/iclr/0002Y21}.
+
+On the other hand, the \emph{global attention} mechanism originated from vanilla Transformer~\cite{DBLP:conf/nips/VaswaniSPUJGKP17} has been widely adopted in graph learning domain~\cite{DBLP:conf/nips/KreuzerBHLT21,DBLP:journals/corr/abs-2012-09699,DBLP:conf/nips/YingCLZKHSL21,DBLP:journals/corr/abs-2202-08455,DBLP:journals/corr/abs-2302-04181}, leveraging the fully-attentional architecture to address the aforementioned issues. % Despite the decent performance, 
+However, the global attention employed by graph transformers cannot reflect the hierarchical neighborhood structure and fails to capture fine-grained local information, which is crucial in many real-world scenarios~\cite{DBLP:conf/iccv/LinW021, DBLP:conf/interspeech/GulatiQCPZYHWZW20, DBLP:conf/iclr/WuLLLH20, DBLP:conf/iclr/YuDLZ00L18}. To mitigate this deficiency, recent studies try to directly assemble global attention %fully-attentional structures
+and message-passing-based models by combining GNNs and Transformers, including simultaneously applying GNNs and Transformers~\cite{DBLP:journals/corr/abs-2001-05140} or building Transformers on top of GNNs~\cite{DBLP:conf/nips/RongBXX0HH20, DBLP:journals/corr/abs-2106-05667, DBLP:conf/nips/WuJWMGS21}. % However, these strategies are still a direct assembly of fully-attentional structures and message-passing-based models, without effectively addressing their inherent drawbacks.
+
+Considering the limitations of both local and global attention, we propose a multi-hop graph attention mechanism, termed SubTree Attention (STA). It allows the root node to directly attend to further neighbors in the subtree, enabling the root node % and then applying a hop-wise aggregation
+to gather information from the entire rooted subtree within one layer. It provides two main advantages: (i) Compared to deep architectures with multiple local attention layers, STA avoids issues associated with the message-passing scheme such as over-smoothing and over-squashing. (ii) Compared to global attention, STA can hierarchically capture the neighborhood structure by enabling each node to focus on its own rooted subtree. 
+
+Due to the exponential growth in neighborhood size with increased hops, directly calculating attention among multi-hop neighbors becomes impractical. Meanwhile, powers of the adjacency matrix have to be stored for the calculation among multi-hop neighbors. To address these issues, we employ kernelized softmax~\cite{DBLP:conf/icml/KatharopoulosV020} to develop an algorithm that reduces the quadratic time complexity to linear while avoiding the need to store the powers of the adjacency matrix. This efficient algorithm can be viewed as keys and values performing a random walk on the graph and eventually landing on queries. 
+
+Furthermore, we provide a theoretical analysis of STA, demonstrating that under extreme settings, \(\textnormal{STA}\) converges to the global self-attention. As a result, STA can be regarded as a bridge between local and global attention, effectively combining the benefits of both approaches. In addition, we present the STA module with multiple attention heads. We introduce a hop-wise gating mechanism, enabling attention heads to be specialized in capturing information from specific hops.
+
+We then propose a simple yet performant multi-hop graph attention network, named STAGNN, which can leverage multi-hop information and in the meantime acts as a fully-attentional model. As for the evaluation, we test the performance of STAGNN on ten common node classification datasets. Despite its relatively simple architecture, STAGNN consistently outperforms existing GNNs and graph transformers. Furthermore, we demonstrate that STAGNN maintains a competitive performance with an extremely deep architecture. Additional ablation studies are conducted to show the effectiveness of subtree attention even in the presence of global attention.
+
+
+
+Background
+
+Let \(\mathcal{G}=(\mathcal{N}, \mathcal{E})\) be an undirected graph, with the associated nodes set \(\mathcal{N}\) and edges set \(\mathcal{E}\). We use \(N=|\mathcal{N}|\) to represent the number of nodes. \(\mathbf{X} \in \mathbb{R}^{N \times f}\) denotes the node feature, where \(f\) denotes the number of features. Let \(\mathbf{A}\) be the adjacency matrix of \(\mathcal{G}\) and
+let \(\mathbf{D}\) be the diagonal degree matrix of \(\mathbf{A}\). \(\mathbf{A}_{\text {sym}}=\mathbf{D}^{-1 / 2} \mathbf{A} \mathbf{D}^{-1 / 2}\) denotes the symmetric normalized adjacency matrix, while \(\mathbf{A}_{\text {rw}}= \mathbf{A}\mathbf{D}^{-1}\) denotes the random walk matrix. Let \(\hat{\mathbf{A}}\) be an arbitrary transition matrix, including \(\mathbf{A}_{\text {rw}}\), \(\mathbf{A}_{\text {sym}}\) or other matrices representing message propagation. We use \(\mathbf{M}_{i:}\) and \(\mathbf{M}_{: j}\) to indicate the \(i^{\text {th}}\) row and the \(j^{\text {th}}\) column of the matrix \(\mathbf{M}\), respectively. And let \([\![0, K]\!]\) denote the set \(\{0,1, \ldots, K\}\).
+
+\subsection{Multi-Hop Representations}
+Many existing GNNs and diffusion-based models perform multi-hop message-passing in a single layer, taking advantage of multi-hop representations~\cite{DBLP:conf/iclr/ChienP0M21,DBLP:conf/icml/Abu-El-HaijaPKA19, DBLP:conf/icml/XuLTSKJ18, DBLP:conf/iclr/KlicperaBG19, DBLP:conf/nips/ZhaoDDKT21}. Among them, decoupled GCN~\cite{DBLP:conf/icml/WuSZFYW19} is a typical representative. One important reason for the over-smoothing problem in GCN is that neighborhood aggregation and feature transformation are coupled~\cite{DBLP:journals/corr/abs-1909-03211}. To address this issue, decoupled GCNs perform feature transformation and neighborhood aggregation, respectively. A general form of decoupled GCN can be described as follows~\cite{DBLP:conf/iclr/ChienP0M21}:
+\begin{equation}
+\mathbf{O} = \sum_{k=0}^K \alpha_k \textnormal{PROPAG}_k(\mathbf{H}),~ \textnormal{PROPAG}_k(\mathbf{H}) = \hat{\mathbf{A}}^k\mathbf{H},~
+\mathbf{H} =  \textnormal{MLP}(\mathbf{X})
+\label{eq:decoupled GCN}
+\end{equation}
+where \(\{\alpha_k\}_{k\in[\![0,K]\!]}\) are the aggregation weights for different hops. \(K\) represents the number of propagation steps, which also corresponds to the height of the resulting rooted subtree. Although there exist various strategies to assign weights to different hops, these methods all apply a \(K\)-step propagation with transition matrix \(\hat{\mathbf{A}}\), which inevitably results in over-smoothing when \(K\) is large.
+
+There are relatively few attention-based methods that leverage multi-hop information. As a representative, Wang~et~al.~(2021)~\cite{DBLP:conf/ijcai/WangY0L21} generalized GAT by Personalized PageRank~\cite{DBLP:conf/iclr/KlicperaBG19}. Yet, this strategy only employs attention scores from one-hop neighbors and necessarily acts as a low-frequency filter. In a recent work, Chen~et~al.~(2022)~\cite{DBLP:journals/corr/abs-2206-04910} began with aggregating \(K\)-hop representations and subsequently processed them as a sequence of length \(K\) using a Transformer model. Despite the decent performance, this approach still adopts a \(K\)-step propagation to capture multi-hop information before taking the attention mechanism into account, which leads to the aforementioned issues. This observation inspires us to incorporate the attention mechanism into the propagation phase, rather than adhering to the \(K\)-step propagation with transition matrix \(\hat{\mathbf{A}}\).
+
+\subsection{Global Self-Attention and Kernelized Softmax}
+In graph learning domain, the Global Self-Attention function $\textnormal{SA}(\cdot,\cdot,\cdot)$ computes a weighted sum of all positions for each node. It first projects the node feature matrix into three subspaces:
+\begin{equation}
+\mathbf{Q}=\mathbf{X}\mathbf{W}_Q,~
+\mathbf{K}=\mathbf{X}\mathbf{W}_K,~
+\mathbf{V}=\mathbf{X}\mathbf{W}_V
+\end{equation}
+where \(\mathbf{W}_Q\in \mathbb{R}^{d \times d_K}, \mathbf{W}_K\in \mathbb{R}^{d \times d_K}\) and \(\mathbf{W}_V \in \mathbb{R}^{d \times d_V}\) are learnable projection matrices. Then the new representation of the \(i^{\text {th}}\) node is computed as follows:
+\begin{equation}
+    \textnormal{SA}(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} = \frac{\sum_{j=1}^N \textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\mathbf{V}_{j:}}{\sum_{j=1}^N \textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})}
+    \label{eq:general_sim}
+\end{equation}
+where \(\textnormal{sim}(\cdot,\cdot): \mathbb{R}^d\times\mathbb{R}^d\rightarrow\mathbb{R}\) is a function used to evaluate the similarity between queries and keys. A common form of self-attention is called softmax attention, which applies the exponential of the dot product to compute similarity: \(\textnormal{sim}(\mathbf{ Q}_{i:},\mathbf{K}_{j:}) = \exp{\left(\frac{\mathbf{Q}_{i:}\mathbf{K}_{j:}^T}{\sqrt{d_K}}\right)}\).
+
+In fact, we can use an arbitrary positive-definite kernel \(\kappa\) to serve as \(\textnormal{sim}(\cdot,\cdot)\). Given a selected kernel \(\kappa\) and its corresponding feature map \(\phi\), we can rewrite \(\textnormal{sim}(\cdot,\cdot)\) as: \(\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:}) = \phi(\mathbf{Q}_{i:})\phi( \mathbf{K}_{j:})^T\).
+Thus, \autoref{eq:general_sim} becomes:
+\begin{equation}
+ \textnormal{SA}(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:}=\frac{\sum_{j=1}^N \phi(\mathbf{Q}_{i:})\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}}{\sum_{j=1}^N  \phi(\mathbf{Q}_{i:})\phi(\mathbf{K}_{j:})^T}=\frac{\phi(\mathbf{Q}_{i:})\sum_{j=1}^N\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}}{\phi(\mathbf{Q}_{i:})\sum_{j=1}^N\phi(\mathbf{K}_{j:})^T}
+    \label{eq:efficient_sa}
+\end{equation}
+There are many potential choices for the feature map \(\phi\). e.g., Tsai~et~al.~(2019)~\cite{DBLP:conf/emnlp/TsaiBYMS19} verified that RBF kernels perform on par with exponential kernels on neural machine translation and sequence prediction, and Choromanski~et~al.~(2021)~\cite{DBLP:conf/iclr/ChoromanskiLDSG21} opted for Positive Random Features (PRF).
+
+The key advantage of \autoref{eq:efficient_sa} is that all nodes share two identical summations \(\sum_{j=1}^N\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}\) and \(\sum_{j=1}^N\phi(\mathbf{K}_{j:})^T\), which only need to be computed once. By doing so, we can avoid computing the full attention matrix \(\{\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\}_{i\in N, j\in N}\) and reduce the complexity from \(\mathcal{O}(N^2)\) to \(\mathcal{O}(N)\).
+
+
+
+The Proposed Attention Mechanism: SubTree Attention
+In this section, we present a detailed introduction to an efficient multi-hop attention mechanism called \textbf{S}ub\textbf{T}ree \textbf{A}ttention (STA). First, we give the definition of STA, followed by an efficient algorithm for computing STA based on kernelized softmax and the message-passing scheme. We then explain how multi-head STA makes attention heads hop-aware by incorporating a gate into each hop. Finally, we prove that STA approximates the global self-attention when the height of the subtree is \(\mathcal{O}\left(\log{N}\right)\).
+\begin{figure}[!t]
+    \centering
+    \begin{subfigure}[b]{0.38\textwidth}
+        \includegraphics[width=\textwidth]{STA_fixed.pdf}
+        \label{fig:STA}
+            \caption{SubTree Attention}
+    \end{subfigure}
+    \begin{subfigure}[b]{0.61\textwidth}
+        \includegraphics[width=\textwidth]{STA-calcul_fixed.pdf}
+        \caption{Efficient algorithm of SubTree Attention}
+        \label{fig:STA-calcul}
+    \end{subfigure}
+        \caption{\textbf{(Left):} Definition of SubTree Attention (STA).
+        \(\textnormal{STA}_k\) represents that each node attends to the \(k^{\textnormal{th}}\) level of the rooted subtree, and then \(\textnormal{STA}\) aggregates information from the entire subtree. \textbf{(Right):} An efficient algorithm for computing subtree attention. We first compute \(\phi(\mathbf{K}_{i:})\) and \(\phi(\mathbf{K}_{i:})^T\mathbf{V}_{i:}\) for each node, and then let \(\phi(\mathbf{K}_{i:})\) and \(\phi(\mathbf{K}_{i:})^T\mathbf{V}_{i:}\) perform \(K\)-step random walk, respectively. After each step of random walk, we compute attention weights using \(\phi(\mathbf{Q}_{i:})\) and the aggregated keys and values. The computation of  \(\{\textnormal{STA}_k\}_{k\in[\![1, K]\!]}\) can be seen as a nested process.}
+    \label{fig:both}
+\end{figure}
+
+\subsection{SubTree Attention}
+In this subsection, we give the definition of our proposed multi-hop graph attention mechanism named subtree attention. Similar to the global self-attention function \(\textnormal{SA}(\cdot,\cdot,\cdot)\), subtree attention takes queries, keys, and values as inputs and outputs new values.
+
+We first define the method for computing attention weights among the \(k^{\textnormal{th}}\) hop neighbors, which we refer to as \(\textnormal{STA}_k\). For the \(i^{\text {th}}\) node, this process can be described as follows:
+\begin{equation}
+\begin{split}
+\textnormal{STA}_0(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} &= \mathbf{V}_{i:},\\
+\textnormal{STA}_k(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} &= \frac{\sum_{j=1}^N \hat{\mathbf{A}}_{ij}^k ~\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\mathbf{V}_{j:}}{\sum_{j=1}^N \hat{\mathbf{A}}_{ij}^k ~\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})} ~~~\forall k \in [\![1, K]\!]
+\label{eq:defn_sta_k}
+\end{split}
+\end{equation}
+\(\textnormal{STA}_k(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:}\) represents the  \(i^{\textnormal{th}}\) node attending to its \(k^{\textnormal{th}}\) hop neighbors, which are also the \(k^{\textnormal{th}}\) level of its rooted subtree. SubTree Attention \(\textnormal{STA}: \left(\mathbb{R}^{n\times d_k},\mathbb{R}^{n\times d_k},\mathbb{R}^{n\times d_v}\right)\to\mathbb{R}^{n\times d_o} \) can then be calculated by aggregating the results from all levels of the rooted subtree:
+\begin{equation}
+\textnormal{STA}(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} = \textnormal{AGGR}\left(\{\textnormal{STA}_k(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} ~|~ k \in [\![0,K]\!]\}\right)
+\label{eq:defn_sta}
+\end{equation}
+\(\textnormal{AGGR}\) can be any aggregation function, such as sum, concat~\cite{DBLP:conf/nips/HamiltonYL17}, attention-based readout~\cite{DBLP:journals/corr/abs-2206-04910}, or the GPR-like aggregation~\cite{DBLP:conf/iclr/ChienP0M21} which we present in \autoref{sec:stagnn}.
+
+In simple terms, \(\textnormal{STA}_k\) allows each node to attend to the \(k^{\textnormal{th}}\) level of its own subtree. Meanwhile, STA aggregates the results from all levels to gather information from the entire subtree. \autoref{fig:both} shows the process of STA.
+
+In contrast to global attention, subtree attention enables each node to compute attention weights on its own subtree, thus taking advantage of the key insight of Message-Passing GNNs (MP-GNNs). e.g., even if the majority of nodes within the receptive fields are the same for two different nodes, they will still gather different information through subtree attention if they have different subtree structures.
+
+\subsection{An Efficient Algorithm for SubTree Attention}
+\label{sec: efficient sta}
+\autoref{eq:defn_sta_k} gives a straightforward method to calculate \(\textnormal{STA}_k\): we first compute the complete similarity matrix \(\{\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\}_{i\in N, j\in N}\) and then calculate its Hadamard product with \(\hat{\mathbf{A}}^k\) to obtain \(\{\hat{\mathbf{A}}^k_{ij}\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\}_{i\in N, j\in N}\). In short, we treat \(\hat{\mathbf{A}}^k\) as a mask for the similarity matrix. This algorithm exhibits two primary disadvantages: (i) The computational cost associated with calculating the entire similarity matrix is \(\mathcal{O}(N^2)\). (ii) \(\hat{\mathbf{A}}^k\) quickly converges to a dense matrix. Storing \(\hat{\mathbf{A}}^k\) in the GPU memory for computing the Hadamard product leads to considerable space complexity.  Considering these two limitations, utilizing \(\hat{\mathbf{A}}^k\) as a mask for the similarity matrix is suboptimal.
+
+We now present an efficient algorithm for subtree attention. Considering the close relationship between rooted subtrees and MP-GNNs, we leverage the message-passing scheme to implement the computation of subtree attention. By permitting keys and values to propagate along the edges, we can achieve an algorithm that has linear time complexity and avoids the need to store \(\hat{\mathbf{A}}^k\).
+
+Learning from \autoref{eq:efficient_sa}, we use a feature map \(\phi\) to replace \(\textnormal{sim}(\cdot,\cdot)\). The choice of feature map is not the main focus of our work. Our model adopts a simple yet effective approach proposed by Katharopoulos~et~al.~(2020)~\cite{DBLP:conf/icml/KatharopoulosV020} that chooses $\phi(x)=elu(x)+1$ as the feature map and demonstrates empirically that it performs on par with softmax attention. We can rewrite \autoref{eq:defn_sta_k} as follows:
+\begin{equation}
+\textnormal{STA}_k(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:}=\frac{\sum_{j=1}^N \hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{Q}_{i:})\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}}{\sum_{j=1}^N  \hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{Q}_{i:})\phi(\mathbf{K}_{j:})^T}
+=\frac{\phi(\mathbf{Q}_{i:})\sum_{j=1}^N\hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}}{\phi(\mathbf{Q}_{i:})\sum_{j=1}^N\hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{K}_{j:})^T}
+\label{eq:efficient_sta_k}
+\end{equation}
+Note that there are two summations \(\sum_{j=1}^N\hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}\) and \(\sum_{j=1}^N\hat{\mathbf{A}}_{ ij}^k ~\phi(\mathbf{K}_{j:})^T\) in \autoref{eq:efficient_sta_k}. We can think of these two summations as a kind of \emph{message propagation}. That is to say, we first compute \(\phi(\mathbf{K}_{i:})\) and \(\phi(\mathbf{K}_{i:})^T\mathbf{V}_{i:}\) for each node. Then we let \(\phi(\mathbf{K}_{i:})\) and \(\phi(\mathbf{K}_{i:})^T\mathbf{V}_{i:}\) undergo \(k\) steps message passing. Finally, we use the aggregated keys and values \(\sum_{j=1}^N\hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{K}_{j:})^T\mathbf{V}_{j:}\) and \(\sum_{j=1}^N\hat{\mathbf{A}}_{ij}^k ~\phi(\mathbf{K}_{j:})^T\) in conjunction with the node's own query \(\phi(\mathbf{Q}_{i:})\) to complete the computation of subtree attention. \autoref{fig:both} illustrates the whole process of this efficient algorithm. When we choose \(\mathbf{A}_{\text {rw}}\) as the transition matrix, this process can be regarded as keys and values performing a random walk on the graph, eventually landing on different queries. Note that message passing occurs on each edge, thus reducing the computational cost from \(\mathcal{O}(N^2)\) to \(\mathcal{O}(|\mathcal{E}|)\). Additionally, message passing only requires the sparse adjacency matrix \(\mathbf{A}\), thereby circumventing the need to store \(\hat{\mathbf{A}}^k\). Furthermore, \(\{\textnormal{STA}_i\}_{i\in[\![1,K]\!]}\) can be viewed as a nested process, calculated one after another.
+
+Based on this algorithm, we can say that STA is an attempt to incorporate the message-passing scheme into the fully-attentional architecture. In fact, STA serves as a message-passing module for keys and values. In \autoref{sec:stagnn}, we design a novel multi-hop graph attention network employing STA for message propagation.
+
+\subsection{SubTree Attention with Multiple Heads}
+In this subsection, we present STA with multiple attention heads. Kim~et~al.~(2022)~\cite{DBLP:conf/nips/KimNMCLLH22} discovered empirically that different attention heads tend to concentrate on neighbors at different hops. Certain attention heads can attend to remote nodes, while others consistently focus on nearby nodes, suggesting that attention heads can be specialized in capturing information from specific hops. To make better use of multiple attention heads in this context, we propose a hop-aware method of mixing them.
+
+Suppose there are a total of \(H\) attention heads. STA with multiple attention heads, noted as MSTA, can be described as follows:
+\begin{equation}
+\begin{split}
+&\textnormal{MSTA}(\mathbf{Q},\mathbf{K},\mathbf{V}) = \textnormal{AGGR}\left(\{\textnormal{MSTA}_k(\mathbf{Q},\mathbf{K},\mathbf{V}) ~|~ k \in [\![0,K]\!]\}\right)\\
+   &\textnormal{MSTA}_k(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \left[\operatorname{head}^1_k , \ldots, \operatorname{head}^H_k\right] \mathbf{W}_O\quad\forall k \in [\![1,K]\!],\quad\textnormal{MSTA}_0(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \mathbf{V}\\
+   &\operatorname{head}^h_k = \hat{g}_k^h ~ \textnormal{STA}_k(\mathbf{Q^h}, \mathbf{K^h}, \mathbf{V^h})\quad\forall h \in [\![1,H]\!],\quad
+    \hat{\boldsymbol{g}}_k= \operatorname{softmax}(\boldsymbol{g}_k)
+\end{split}
+\end{equation}
+where \(\left[~\right]\) denotes row-wise concatenation. \(\mathbf{Q^h}, \mathbf{K^h}\), and \(\mathbf{V^h}\) represent the query, key, and value matrices for the \(h^{\text{th}}\) head, respectively. \(\mathbf{W}_O\) denotes a linear projection matrix. \(\boldsymbol{g}_k \in \mathbb{R}^H\) is an \(H\)-dimensional vector and \(g_k^h\) is its  \(h^{\text{th}}\) element, representing the weight of the  \(h^{\text{th}}\) attention head at the  \(k^{\text{th}}\) hop. Compared to STA with a single attention head, we introduce in total \(H\times K\) additional learnable parameters: \(\{\boldsymbol{g}_i\}_{i\in[\![1, K]\!]}\). We can regard \(\boldsymbol{g}_k\) as a hop-wise gate that determines the weight of each attention head at the \(k^{\text{th}}\) hop. 
+
+In other words, we can reconsider the multi-hop attention mechanism in terms of multi-task learning. Different attention heads are seen as different experts, while aggregating information from different hops is seen as different task. \(\boldsymbol{g}_k\) signifies the process of selecting appropriate experts for each task.
+
+\subsection{Theoretical Analysis of SubTree Attention}
+MP-GNNs suffer from issues like over-smoothing or over-squashing when the height of the subtree increases. In this subsection, we theoretically demonstrate that STA avoids the issues associated with the message-passing scheme despite employing the same rooted subtree as MP-GNNs. Notice that we employ the random walk matrix \(\mathbf{A}_{\text {rw}}\) as the transition matrix in the STA module,\emph{i.e.}, we have \(\hat{\mathbf{A}}=\mathbf{A}_{\text {rw}}\) in this subsection.
+
+We first employ a slightly modified approach to rewrite the global self-attention module \(\textnormal{SA}\), which can be described as:
+\begin{equation}
+\textnormal{SA}(\mathbf{Q},\mathbf{K},\mathbf{V})_{i:} = \frac{\sum_{j=1}^N \boldsymbol{\pi}_i  ~\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})\mathbf{V}_{j:}}{\sum_{j=1}^N \boldsymbol{\pi}_i~\textnormal{sim}(\mathbf{Q}_{i:},\mathbf{K}_{j:})}
+\label{eq:defn_sa_pi}
+\end{equation}
+where \(\boldsymbol{\pi}_i = \frac{d(i)}{\sum_{j=1}^Nd(j)}\) and \(d(j)\) denotes the degree of the \(j^{\text{th}}\) node. Note that \autoref{eq:defn_sa_pi} is consistent with \autoref{eq:general_sim}.
+
+Comparing \autoref{eq:defn_sta_k} and \autoref{eq:defn_sa_pi}, we find that the only difference between \(\textnormal{SA}\) and \(\textnormal{STA}_k\) lies in the mask for the similarity matrix. \(\textnormal{STA}_k\) employs \(\hat{\mathbf{A}}_{ij}^k\) as the mask, whereas \(\textnormal{SA}\) employs \(\boldsymbol{\pi}_i\). We now demonstrate that when the height \(K\) of the rooted subtree takes the same order of magnitude as \(\log(N)\), \(\textnormal{STA}_k\) can be approximately considered as \(\textnormal{SA}\).
+\begin{thm}
+Let \(\hat{\mathbf{A}}\in \mathbb{R}^{N\times N}\) denote the random walk matrix of a connected and non-bipartite graph, \emph{i.e.}, \(\hat{\mathbf{A}} = \mathbf{A}\mathbf{D}^{-1}\). Let \(1=\lambda_1\geq\dots\geq\lambda_N\) be the eigenvalues of \(\hat{\mathbf{A}}\). Then we have the following results:
+\begin{equation}
+    \forall i,j  \in [\![1,N]\!]^2,~ \forall \epsilon>0,~ \exists K_0 \in \mathbb{N},~ \forall k>K_0,~ |\hat{\mathbf{A}}_{ij}^k-\boldsymbol{\pi}_i|\leq\epsilon
+    \label{eq:random_walk_converge}
+\end{equation} 
+And for a given \(\epsilon\), the smallest \(K_0\) that satisfies the condition shown in \autoref{eq:random_walk_converge} is at most \(\mathcal{O}\left(\frac{\log{\frac{N}{\epsilon}}}{1-\textnormal{max}\{\lambda_2, |\lambda_n|\}}\right)\). If we had more information about \(\mathbf{V}\), we could specify the convergence rate of \(\textnormal{STA}_k\). e.g., if \(\mathbf{V}\) is computed by \(\mathbf{V}=\sigma\left(\mathbf{X}\mathbf{W}_V\right)\) where \(\sigma\) is a non-negative activation function, then:
+\begin{equation}
+    \forall i,j  \in [\![1,N]\!]^2,~ \forall \eta\in ]0,1[,~ \exists K_1 \in \mathbb{N},~ \forall k>K_1,~ \frac{1-\eta}{1+\eta}\leq\frac{\textnormal{STA}_k(\mathbf{Q},\mathbf{K},\mathbf{V})_{ij}}{\textnormal{SA}(\mathbf{Q},\mathbf{K},\mathbf{V})_{ij}}\leq\frac{1+\eta}{1-\eta}
+    \label{eq:conditioned_STA_convergence}
+\end{equation} 
+holds true when none of the denominators is equal to zero. And for a given \(\eta\), the smallest \(K_1\) that satisfies the condition shown in \autoref{eq:conditioned_STA_convergence} is at most \(\mathcal{O}\left(\frac{\log{\frac{N}{\eta}}}{1-\textnormal{max}\{\lambda_2, |\lambda_n|\}}\right)\).
+\end{thm}
+
+\autoref{eq:random_walk_converge} demonstrates that \(\hat{\mathbf{A}}_{ij}^k\) converges to \(\boldsymbol{\pi}_i\) with logarithmic complexity, indicating that under general conditions, \(\textnormal{STA}_k\) quickly tends to \(\textnormal{SA}\). Notice that although \(\textnormal{STA}_k\) is a multi-hop graph attention module implemented using the message-passing mechanism, it displays the characteristics of global attention when the height of the subtree is \(\mathcal{O}\left(\log{N}\right)\). This property prevents STA from the issues associated with the message-passing scheme such as over-smoothing and over-squashing. From this perspective, subtree attention serves as a bridge connecting local and global attention. \(\textnormal{STA}_1\) plays the role of local attention, while \(\textnormal{STA}_{\mathcal{O}\left(\log{N}\right)}\) acts as the global self-attention. Subtree attention achieves a hierarchical attention computation by a hop-wise aggregation of \(\{\textnormal{STA}_k\}_{k\in[\![1,\mathcal{O}\left(\log{N}\right)]\!]}\).
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=0.8\textwidth]{STA-GNN_fixed.pdf}
+    \caption{Overall architecture of STAGNN. STAGNN can be decomposed into two parts: Transformation and STA-based Propagation, the latter of which can be seen as an STA module using GPR-like aggregation as HopAggregation function. According to the algorithm introduced in \autoref{sec: efficient sta}, employing STA here is equivalent to letting keys and values propagate on the graph.}
+    \label{fig:STA-GNN}
+\end{figure}
+
+
+
+The Proposed Multi-Hop Graph Attention Network: STAGNN
+
+In this section, we present a simple yet effective multi-hop graph attention network, named STAGNN. This model is built upon decoupled GCN, but employs STA as the message-passing module instead. STAGNN can be divided into two steps: first, we apply MLP to compute queries, keys, and values for each node; then, we use STA to propagate information. Formally, it can be described as:
+\begin{equation}
+\mathbf{O} = \sum_{k=0}^K \alpha_k \textnormal{STA}_k(\mathbf{Q}, \mathbf{K}, \mathbf{V}),~
+\mathbf{Q}=\mathbf{H}\mathbf{W}_Q,~
+\mathbf{K}=\mathbf{H}\mathbf{W}_K,~
+\mathbf{V}=\mathbf{H}\mathbf{W}_V,~
+\mathbf{H} =  \textnormal{MLP}(\mathbf{X})
+\label{eq:stagnn}
+\end{equation}
+where \(\mathbf{X}\) is the input node feature and \(\mathbf{O}\) is the learned representation for each node. We adopt the GPR-like aggregation~\cite{DBLP:conf/iclr/ChienP0M21} for HopAggregation in STA. To be precise, we assign learnable parameters \(\{\alpha_k\}_{k\in[\![0, K]\!]}\) to each hop (initialized simply to 1), and then the nodes aggregate information from each hop based on these learned weights. \autoref{fig:STA-GNN} shows the overall architecture of STAGNN.
+
+Comparing \autoref{eq:decoupled GCN} and \autoref{eq:stagnn}, the only difference between decoupled GCN and STAGNN lies in the propagation method. Decoupled GCN relies on high powers of the normalized adjacency matrix to capture long-range information, which inevitably results in over-smoothing. In contrast, STAGNN utilizes subtree
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

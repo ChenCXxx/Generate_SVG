@@ -1,0 +1,154 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Distillation-aware Neural Architecture Search (DaNAS) aims to search for an optimal student architecture that obtains the best performance and efficiency on a given dataset when distilling the knowledge from the given teacher to it~\citep{liu2020search, Gu2020SearchFB, kim2022revisiting}. For the DaNAS task, we need to design a framework that considers the effect of Knowledge Distillation (KD), yet, conventional NAS frameworks may be sub-optimal as they do not consider KD components at all by searching for an architecture according to its evaluations trained from scratch. As explained in~\cite{liu2020search}, the sub-optimality of conventional NAS methods on DaNAS tasks results from: 1) For the same target dataset, an optimal student architecture for distilling the knowledge from the teacher and an optimal student architecture for learning from scratch with only ground-truth labels may be different. 2) Even for the same dataset, the optimal student architecture may depend on the specific teacher. To tackle such challenges, existing DaNAS methods guide the search process using the KD loss~\citep{liu2020search} or propose a proxy to evaluate distillation performance~\citep{kim2022revisiting}.
+
+However, such existing DaNAS methods do not generalize to multiple tasks, require training for any combination of dataset and teachers, and may result in excessive computational cost (e.g., 5 days with 200 TPUv2, for each task~\citep{liu2020search}). This hinders their applications to real-world scenarios since optimal student architectures may vary depending on the type of datasets, teacher, and resource budgets. Therefore, we need a rapid and lightweight DaNAS method that can be generalized across different settings. 
+
+For standard NAS tasks without KD, there has been some progress in the development of rapid NAS methods that are computationally efficient, such as 1) meta-learning-based transferable NAS methods~\citep{lee2021rapid, lee2021hardware, jeong2021task} and 2) zero-cost proxies~\citep{mellor2021neural, abdelfattah2021zero}. The former meta-NAS methods learn the generalized search process over multiple tasks, allowing it to adapt to a novel unseen task by transferring the knowledge obtained over the meta-learning phase to the new task without training the NAS framework from scratch. To this end, meta-NAS methods generally utilize a task-adaptive prediction model, which rapidly adapts to novel datasets and devices. They outperform baseline NAS methods on multiple benchmark datasets~\citep{lee2021rapid} and real-world datasets~\citep{jeong2021task}, as well as with various devices~\citep{lee2021hardware}, significantly reducing the architecture search time to less than a few GPU seconds on an unseen setting. The latter, zero-cost NAS methods have proposed several proxies that can be obtained from the first mini-batch without fully training the architecture on the target dataset.
+
+\input{Figure/fig_1_concept}
+However, despite the success of such rapid NAS methods on standard NAS tasks, they may be sub-optimal for DaNAS scenarios since they assume training from scratch, not KD from a teacher, which may significantly impact the actual accuracy of the architecture retrieved from the search. Therefore, to overcome the high search cost of DaNAS methods and the sub-optimality of rapid NAS methods, we propose a rapid distillation-aware meta-prediction model, \textbf{DaSS} (\textbf{D}istillation-\textbf{a}ware \textbf{S}tudent \textbf{S}earch), for DaNAS tasks (\cref{fig:concept}). Following the previous works on meta-NAS, we leverage meta-learning to learn a prediction model that can rapidly adapt to an unseen target task. However, our approach has two main differences.: 1) Distillation-aware design of the meta-prediction model and 2) a meta-learning scheme that utilizes already trained teachers, both of which are optimized for the DaNAS task.
+First, we propose a distillation-aware task encoding function that considers the output from the student whose parameters are remapped from the teacher to estimate the teacher's impact on the actual performance of the distilled student network.
+Second, we use the accuracy of the teacher to guide the gradient-based adaptation of the meta-prediction model. This allows a more accurate and rapid estimation of the architecture's performance on a target task (dataset) with a specific teacher. %Furthermore, we empirically show that remapping parameters from the teacher network to the student architecture improves the prediction performance of zero-cost proxies in DaNAS scenarios.
+
+We meta-learn the proposed distillation-aware prediction model on the subsets of TinyImageNet and neural architectures from the ResNet search space. Then we validate its prediction performance on heterogeneous unseen datasets such as CUB, Stanford Cars, DTD, Quickdraw, CropDisease, EuroSAT, ISIC, ChestX, and ImageNet-1K. 
+The experimental results show that our meta-learned prediction model adapts to novel target tasks to estimate the actual performance of an architecture distilled by an unseen teacher within 3.45 (wall clock sec) on average without direct training on the target tasks.
+Further, the DaNAS framework with the proposed distillation-aware meta-prediction model outperforms existing meta-NAS and zero-cost proxies on the same set of datasets.
+To summarize, our contributions in this work are as follows:
+\begin{itemize}
+
+\item We propose a novel meta-prediction model, DaSS, that generalizes across datasets, architectures, and teachers, which can accurately predict the performance of an architecture when distilling the knowledge of the given teacher.
+\item We propose a novel distillation-aware task encoding based on the functional embeddings of a specific teacher and parameter-remapped student architecture candidates.
+
+\item We enable a rapid gradient-based one-shot adaptation of the meta-prediction model on a target task by guiding it with a teacher-accuracy pair. 
+
+\item We experimentally validate that our meta-prediction model successfully estimates the actual accuracies of the student architectures for a given teacher on multiple unseen datasets, significantly outperforming existing methods in the correlation between prediction and GT accuracies and in the end-to-end DaNAS performances.
+\end{itemize}
+
+
+
+
+
+Related Work
+\paragraph{Distillation-aware NAS} 
+Knowledge Distillation (KD) is an efficient model compression technique under the resource budgets by transferring the knowledge from the large teacher to the smaller student architecture. Since distilling performance depends on architectures as verified in ~\citet{liu2020search}, it is important to search for an optimal student architecture given the dataset and teacher.
+Recently, while Neural Architecture Search (NAS) suggests automating designing the optimal architecture~\citep{zoph2016neural, baker2016, zhong2018practical,real2017large, liu2017hierarchical, elsken2018efficient, real2019regularized,liu2018darts} that aims to search for an optimal architecture that has high accuracy when trained with only the ground-truth label, it might be suboptimal for searching for an architecture optimized for distilling given the teacher.  %using reinforcement learning~\citep{zoph2016neural, baker2016, zhong2018practical}, evolutionary algorithms~\citep{real2017large, liu2017hierarchical, elsken2018efficient, real2019regularized}, and differentiable search~\citep{liu2018darts}.
+\cite{liu2020search} verified the assumption with the RL agent, which KD-trains sampled architecture for a few epochs to obtain a KD-guided accuracy proxy. It takes 5 days with 200 TPUv2 on a single task, so it cannot be applied to real-world KD scenarios.
+\cite{kim2022revisiting} suggested the trust region with a Bayesian optimization search algorithm and a new KD-guided score. However, it cannot be generalized to multiple tasks, which makes rapid search impossible. %\cite{kim2022revisiting} reduces the total number of generations required for finding an effective student architectures by suggesting trust region bayesian optimization search algorithm and new KD-guided score. However, it still requires proxy KD task to get a KD-guided score in the search process and cannot generalized to multiple tasks which makes rapid search impossible. 
+To obtain a pruned student architecture,~\citep{Gu2020SearchFB} specify scaling factors for all channels of a teacher and optimize that with KD-aware loss function applying a structured pruning method. As the optimization should be performed repeatedly for each task to get the optimal student architecture, the total time is still too large.
+\paragraph{Meta-learning and Meta-prediction Model} 
+Meta-learning (learning to learn)~\citep{thrun98} allows a model to quickly adapt to an unseen task, by learning to generalize over the distribution of tasks and transferring the meta-knowledge to the unseen task. One of the main meta-learning approaches is a gradient-based meta-learning~\citep{finn2017model, li2017meta}, which learns an initialization parameter shared across multiple tasks to be optimal for any tasks within a few gradient-based updates from the initial parameter. %While \cite{elsken2020meta, lian2019towards, shaw2019meta} have combined the supernet-based differentiable NAS~\citep{liu2018darts} and the gradient-based meta-learning, they are only limited to an artificial and small-size task that the total instance number is under 50 for each task due to the heavy computation cost of the bi-level optimization to the supernet. 
+Recently, meta-learning-based NAS (Meta-NAS) frameworks~\citep{lee2021rapid, jeong2021task, lee2021hardware} have been proposed, which are rapid and transferable to large-scale unseen tasks. MetaD2A~\citep{lee2021rapid} and TANS~\citep{jeong2021task} designed the accuracy prediction models and \cite{lee2021hardware} proposed the latency prediction model. %They significantly outperformed previous baselines on multiple datasets, real-world datasets, and hardware devices, respectively. 
+MetaD2A and TANS proposed the set encoder for task-adaptive accuracy prediction models. However, none of them do consider the teacher and distillation process, thereby an architecture obtained by them might be suboptimal when distilling knowledge from the teacher to the architecture. Due to the high cost and time to collect architecture-accuracy pairs as samples for adaptation on unseen tasks, they do not leverage the advantage of the few-shot adaptation on a target task. On the other hand, we utilize a teacher-accuracy pair for adaptation, allowing the predictive model to do gradient-based adaptation to new tasks. 
+The additional required time is the time for a forward pass to obtain the accuracy of the teacher.
+
+
+
+
+Background
+\input{Table/tbl_comparison}
+This section describes existing accuracy prediction models designed for NAS and their limitations in using the models rapidly across multiple tasks of searching for optimal student architectures to distill the knowledge from teacher networks. In~\cref{tbl:comparison}, we briefly summarize differences between task-specific accuracy prediction models (Task-spec.), existing meta-accuracy prediction models (MetaD2A~\citep{lee2021rapid}, TANS~\citep{jeong2021task}), and the proposed meta-accuracy prediction model for DaSS (Ours). As the task-specific model needs to be trained on each task, the total training time increases as the number of tasks increases ($O(N)$). Since meta-prediction models including ours can be generalized to multiple unseen tasks (datasets) after one-time meta-training, the training time is constant even if the number of tasks increases ($O(1))$. However, while ours is generalized for unseen teacher networks (Unseen Teach.) and estimate distillation-aware accuracy (Distil-aware.), existing meta-prediction models have difficulty doing them. Furthermore, we empirically demonstrate the efficacy of the gradient-based one-shot fast adaptation with teacher-accuracy pair to improve the prediction performance of the meta-prediction model on an unseen task in NAS (Fast Adapt.).
+
+\paragraph{Task-specific Accuracy Prediction Model} During the search process, training each architecture candidate on a task until convergence to obtain its final performance, which is a single-scalar value, is wasteful. 
+Thus, many NAS methods~\citep{luo2018neural, wang2020hat, cai2020once} leverage a task-specific accuracy prediction model as a proxy to reduce the excessive search cost spent on training the models. Let us assume a task specification $\tau=\{\mathbf{D}^\tau, \mathbf{S}, \mathbf{Y}^\tau\}$ where $\mathbf{D}^\tau \subset \mathcal{D}$ is a dataset, $\mathbf{S} \subset \mathcal{S}$ is a set of neural architectures, and $\mathbf{Y}^\tau \subset \mathcal{Y}$ is a set of accuracies obtained by training each architecture $s \in \mathbf{S}$ on the dataset $\mathcal{D}^\tau$. The task-specific accuracy prediction model $f^{\tau}(s; \bm{\phi}): \mathcal{S} \rightarrow \mathbb{R}$ parameterized by $\bm{\phi}$ is trained for each task $\tau$ that estimates the accuracy $y^{\tau} \in \mathbf{Y}^\tau$ of a neural architecture $s \in \mathbf{S}$ for a given dataset $\mathbf{D}^\tau$ by minimizing empirical loss, $\mathcal{L}$ (e.g. mean squared error) defined on the predicted values $f^{\tau}(\mathbf{s};\bm{\phi})$ and actual measurements $y^\tau$ as follows:
+\begin{align}
+    \min_{\bm{\phi}} \mathcal{L} \big(f^\tau\big(\mathbf{S};\bm{\phi}\big), \mathbf{Y}^\tau\big) \label{eq:pp_objective}
+\end{align} 
+However, the task-specific accuracy prediction model is highly limited in its practical application to a real-world setting. Since it will not generalize to a new task (dataset), we need to learn a task-specific accuracy prediction model on the new target dataset. However, this is highly time-consuming since we need to collect many architecture-accuracy pairs (at least thousands of samples) by training sampled architectures on the new dataset.
+\paragraph{Meta-accuracy Prediction Model} To address such inefficiency in task-specific NAS and enable transferrable NAS on multiple tasks, \cite{lee2021rapid} and \cite{jeong2021task} proposed generalizable accuracy prediction models that can rapidly adapt to unseen datasets \textbf{within a few GPU seconds} after a single round of meta-learning. Specifically, such rapid search is made possible by meta-learning the prediction model conditioned on the given dataset: $f(s, \mathbf{D}^\tau; \bm{\phi}): \mathcal{S} \times \mathcal{D} \rightarrow \mathbb{R}$. This enables it to support \textbf{multiple} datasets with a \textbf{single} prediction model since the predicted accuracy $y \leftarrow (s, \mathbf{D}^{\tau})$ is dependent on both the dataset type $\mathbf{D}^\tau$ and the architecture $s$. Then, they train the prediction model to generalize over the task distribution $p(\tau)$ by sampling task $\tau$ per iteration via amortized meta-learning as follows:
+\begin{align}
+	\min_{\bm{\phi}} \sum_{\tau \sim p(\tau)} \mathcal{L}\big(f\big(\mathbf{S}, \mathbf{D}^\tau ; \bm{\phi} \big), \mathbf{Y}^\tau\big)
+	\label{eq:our}
+\end{align}
+After this one-time meta-learning, the set-conditioned accuracy prediction model $f(\cdot; \bm{\phi}^*)$ with meta-learned parameters $\bm{\phi}^*$ can be transferred to an unseen task $\hat{\tau}$ to search for an architecture optimized for $\hat{\tau}$. Note that the meta-learned prediction model works well on an unseen dataset $\hat{\mathbf{D}}^{\hat{\tau}}$ which has no overlap with datasets $\{\mathbf{D}^{\tau}\}$ used in the meta-training phase. This reduces the meta-prediction model's complexity from $O(N)$ to $O(1)$ on $N$ tasks.  
+\paragraph{Limitations} While the meta-accuracy prediction models are promising as they enable rapid search on multiple tasks, directly using the existing meta-accuracy prediction model for distillation-aware NAS problems is suboptimal. This is because they do not consider the teacher and may be inaccurate for DaNAS scenarios due to the following reasons:
+
+\begin{enumerate}	
+    \item \textbf{Distillation-independent accuracy prediction.} DaNAS is different from the existing NAS problems in that a task $\tau$ in the distillation-aware NAS domain includes a teacher $\mathbf{t}( \cdot; \bm{\tilde{\theta}})^\tau$ which is parameterized by $\bm{\tilde{\theta}}$ and is trained on a dataset $\mathbf{D}^{\tau}$. Thus, for the same dataset, the optimal student architectures can be different if the teachers are different. However, the existing meta-prediction model does not encode the teacher and thus will search for the same student architecture for different teachers, which might be sub-optimal. Thus, we need a teacher-conditioned accuracy prediction model for DaNAS. 
+
+    \item \textbf{No gradient-guided task adaptation.} 
+   Existing Meta-NAS frameworks aim to learn a generalized accuracy prediction for multiple tasks with amortized meta-learning conditioned on the task embeddings, not leveraging the power of gradient-based adaptation steps~\citep{finn2017model, li2017meta}. This was mainly done to expedite the meta-training step and reduce the adaptation time on a new task since gradient-based adaptation requires obtaining few-shot architecture-accuracy samples of the target dataset, which takes at least a few GPU min to hours and renders rapid NAS impossible. 
+\end{enumerate}
+
+\input{Figure/fig_meta_train_test}
+To address the above issues, we aim to design a teacher-conditioned accuracy prediction model and the accuracy of teacher-guided meta-learning for rapid DaNAS tasks. In our work, we reveal that teacher-conditioned accuracy prediction is more accurate than set-conditioned accuracy prediction when estimating actual performances of student architectures in DaNAS scenarios. In addition, we show that it is possible to perform gradient-guided task adaptation using the accuracy of the teacher. Please refer to~\cref{fig:meta_train_test}, which illustrates our distillation-aware performance prediction model, DaSS.
+
+
+Method
+\label{sec:method} 
+\paragraph{Distillation-aware Accuracy Prediction Model}
+For each task $\tau=\{\mathbf{S}, \mathbf{Y}^\tau, \mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau) \}$ from a distillation-aware NAS domain, we propose  a distillation-aware accuracy meta-prediction model $f(\cdot;\bm{\phi})$ parameterized by $\bm{\phi}$ as follows: %=\{\bm{\phi}, \bm{\phi}, \bm{\phi}\}$:
+\begin{align}
+f(s, \mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau); \bm{\phi}): \mathcal{S} \times \mathcal{T} \rightarrow \mathbb{R}
+\end{align}
+that can estimate an accuracy of a student architecture $s$ differently depending on the student architecture $s$ and the teacher $\mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau)$ which is trained on the target dataset, $\mathbf{D}^\tau$. We encode a task $\tau$ by utilizing the teacher which is trained on the target dataset and the student architecture in a distillation-aware way. To this end, we encode each sampled student architecture candidate $s(\cdot; \bm{\theta})$ in a teacher-adaptive manner by leveraging a parameter remapping $\tilde{\bm{\theta}}^\tau_{s} = g(\bm{\tilde{\theta}}^\tau)$ with the remapping function $g$ from the parameters $\bm{\tilde{\theta}}^\tau$ of the teacher trained on the dataset $\mathbf{D}^\tau$ to the parameters $\bm{\tilde{\theta}}_s^\tau$ of each student architecture $s(\cdot; \bm{\tilde{\theta}}_s^\tau)$, which can be done at almost no cost. More detailed descriptions about the parameter remapping function, $g$ is in~\cref{suppl:implementation}. Next, we embed each remapped student candidate $s(\cdot; \bm{\tilde{\theta}}_s^\tau)$ and the teacher $\mathbf{t}^\tau( \cdot; \bm{\tilde{\theta}}^\tau)$
+by feeding in a fixed Gaussian random noise $\mathbf{z}$~\citep{jeong2021task} as input as follows:
+\begin{align}
+  s(\mathbf{z}; \bm{\tilde{\theta}}_s^\tau)= \bm{h}_{z, s}^\tau 
+  ,\quad \textbf{t}^\tau(\mathbf{z}; \bm{\tilde{\theta}}^\tau)= \bm{h}_{z, t}^\tau 
+  \label{eq:pr}
+\end{align}
+
+In addition, as described in~\cref{suppl:search_space}, our ResNet search space is factorized hierarchical search space, and all architecture candidates in this search space are composed of $4$ stages. Student architecture candidates in this search space can have various depths and channel widths at each stage. As suggested in~\citet{cai2020once}, the architecture configuration, such as depth and channel widths at each stage of $s$, can be represented as a one-hot encoding vector. Concatenating one-hot encoding vectors for all stages, we can obtain the embedding for the whole architecture, $\bm{h}_a$. 
+The accuracy prediction model takes three embeddings $\bm{h}_a$, $\bm{h}_{z, s}^\tau$ and $\bm{h}_{z, t}^\tau$ as inputs and outputs the estimated accuracy, with additional nonlinear projection layers. %Finally, inspired by \cite{zagoruyko2017paying}, We use the attention map as the last feature map instead of the feature map computed from simple mean pooling, to improve the prediction performance. 
+For the detailed descriptions, please refer to~\cref{suppl:implementation}. %\textbf{Implementation Details} in the Section~\ref{suppl:implementation}. 
+
+
+\paragraph{Adaptation Guided with Teacher-Accuracy Pair} To obtain meta-learned $f(\cdot; \bm{\phi}^*)$, we meta-learn the proposed accuracy prediction model over task samples from the task distribution $p(\tau)$ as follows:
+\begin{align}
+	\min_{\bm{\phi}} \sum_{\tau \sim p(\tau)} \mathcal{L}\big(
+	f\big(\mathbf{S}, \mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau); \bm{\phi}\big), \mathbf{Y}^\tau\big)
+	\label{eq:our}
+\end{align}
+where $\mathcal{L}$ is the Mean Square Error loss. Differently from the previous meta-accuracy prediction models~\citep{lee2021rapid, jeong2021task} based on the amortized meta-learning, we further perform a guided adaptation on the target task with the teacher $\bm{t}^\tau$ and its accuracy $\tilde{y}^\tau$ evaluated on the target dataset, by conducting the inner gradient updates with them as follows:
+\begin{align}
+\bm{\phi}_{(i+1)}^\tau = \bm{\phi}_{(i)}^\tau - \alpha\nabla_{\bm{\phi}_{(i)}}  \mathcal{L}\big(
+	f\big(\mathbf{t}^\tau, \mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau); \bm{\phi}_{(i)}), \tilde{y}^{\tau}) \quad \text{for}\ \  i=1,\dots,I
+	\label{eq:guide}
+\end{align}
+
+where $i$ denotes the $i$-th inner gradient step, $I$ is the total number of inner gradient steps, and $\alpha$ is the multi-dimensional inner learning rate vector~\citep{li2017meta}. This meta-learning scheme enables the accuracy prediction model to start from the knowledge learned from the meta-training tasks and rapidly adapt to the new task with guidance from the teacher-accuracy pair. Note that while there are gradient-based meta-learning methods~\citep{finn2017model, li2017meta, lee2021hardware}, our work is the first to train the meta-accuracy prediction model for distillation-aware NAS that can generalize to unseen datasets via gradient-based guided adaptation. Furthermore, by introducing the simple yet effective approach of using the teacher and its accuracy pair as few-shot training instances for task adaptation, we significantly reduce the time-consuming collection of the student architecture-accuracy pairs for each task, which allows efficient adaptation to each task. The final meta-learning objective reflecting~\cref{eq:our} and~\cref{eq:guide} is given as follows:
+\begin{align}
+   &	\min_{\bm{\phi}} \sum_{\tau \sim p(\tau)} \mathcal{L}\big(f\big(\mathbf{S}, \mathbf{t}^\tau( \cdot; \mathbf{D}^\tau, \bm{\tilde{\theta}}^\tau) ; \bm{\phi}_{(I+1)}^\tau \big), \mathbf{Y}^\tau\big)
+	\label{eq:final}
+\end{align}
+
+
+\paragraph{Adapting the Meta-prediction Model on Unseen Tasks (Meta-test)}
+In~\cref{fig:meta_train_test}, we utilize the meta-learned prediction model $f(\cdot; \bm{\phi}^*)$ on a novel distillation task $\hat{\tau}$ that was unseen during meta-training. Given a task $\hat{\tau}=\{\mathbf{D}^{\hat{\tau}}, \mathbf{S}, \mathbf{Y}^{\hat{\tau}}, \mathbf{t}^{\hat{\tau}}( \cdot; \bm{\tilde{\theta}}^{\hat{\tau}}) \}$, we first compute the accuracy  $\tilde{y}^{\hat{\tau}}=\mathbf{t}^{\hat{\tau}}( \mathbf{D}^{\hat{\tau}}; \bm{\tilde{\theta}}^{\hat{\tau}})$ of the teacher through the forward process on the validation. Then, we update the meta-learned parameters $\bm{\phi}_{(1)}^{\hat{\tau}} = \bm{\phi}^*$ by adapting it to the unseen task by taking inner gradient steps, using~\cref{eq:guide} to obtain $\bm{\phi}^{\hat{\tau}}_{(I+1)}$ with $\{\mathbf{t}^{\hat{\tau}}( \cdot; \mathbf{D}^{\hat{\tau}}, \bm{\tilde{\theta}}^{\hat{\tau}}), \tilde{y}^{\hat{\tau}} \}$. Then, for each student architecture candidate $s$, we remap parameters and compute $\bm{h}^{\hat{\tau}}_{z, t}$ and $\bm{h}^{\hat{\tau}}_{z, s}$ with~\cref{eq:pr} and obtain $\bm{h}^{\hat{\tau}}_a$. Finally, we concatenate $\bm{h}^{\hat{\tau}}_{z, s}$, $\bm{h}^{\hat{\tau}}_a$ and $\bm{h}^{\hat{\tau}}_{z, t}$ and compute the estimated accuracy of $s$ on the task $\hat{\tau}$ with $f(\bm{h}^{\hat{\tau}}_{z, t}, \bm{h}^{\hat{\tau}}_{z, s}, \bm{h}^{\hat{\tau}}_a; \bm{\phi}^{\hat{\tau}}_{(I+1)})$.
+
+
+
+
+
+
+
+
+
+Experiment
+\label{experiment}
+We first validate and analyze our meta-prediction model, DaSS, in terms of 1) a novel distillation-aware task encoding and 2) a gradient-based one-shot adaptation strategy with the teacher by predicting the distillation performance of unseen student architectures on an unseen dataset with an unseen teacher in~\cref{exp:efficacy_predictor}. Second, we report the time efficiency of DaSS compared with few-shot meta-prediction models in~\cref{exp:time_sample_efficiency}. Next, we demonstrate the performance of DaSS on end-to-end DaNAS tasks compared against existing rapid NAS methods in~\cref{exp:end2end}. In addition to this, we compared the performance of ours and the existing Meta-NAS methods through end-to-end DaNAS tasks on cross-domain datasets in~\cref{exp:cross_domain}.
+Lastly, we validated DaSS on ImageNet-1K which is one of the representative large-scale datasets with $256 \times 256$ pixels in~\cref{exp:imagenet}. A detailed description of our search space throughout the experiments is in~\cref{suppl:search_space}, and we use the largest architecture in our search space as teacher architecture for all experiments.
+\paragraph{Meta-Training Database} Following \cite{ryu2020metaperturb}, we use TinyImageNet~\citep{tinyimagenet} as the source dataset for meta-training. We generate a heterogeneous set of tasks by class-wisely splitting the dataset into $10$ splits. We use subsets consisting of $8$ and $2$ splits for meta-training and meta-validation, respectively. Please refer to~\cref{suppl:train-details} for the more detailed explanation.
+
+\input{Table/tbl_efficacy.tex}
+\paragraph{Generalization to Unseen Datasets} We transfer the meta-knowledge of the prediction model trained over the meta-training phase to meta-test tasks. Each meta-test task consists of an unseen dataset, an unseen teacher trained on the unseen dataset, and multiple unseen student architecture candidates. 
+We covered $9$ datasets, including %STL10 (STL)~\citep{coates2011analysis}, 
+fine-grained datasets (CUB~\citep{WahCUB_200_2011}, Stanford Cars~\citep{stanford_cars} (Cars), CropDisease~\citep{guo2020broader} - agriculture images), out-of-distribution datasets (DTD~\citep{cimpoi2014describing} - texture images, Quick Draw~\citep{quick} (Draw) - black-and-white drawing images, EuroSAT~\citep{guo2020broader} - satellite images, ISIC~\citep{guo2020broader} - medical images about skin lesions, ChestX~\citep{guo2020broader} - X-ray images), and large-scale dataset - ImageNet-1K~\citep{russakovsky2015imagenet}.
+
+
+\subsection{Efficacy of the Proposed Meta-prediction Model on Unseen Datasets}
+\label{exp:efficacy_predictor}
+We validate whether our novel distillation-aware task encoding and meta-learning strategy, which is a gradient-based one-shot adaptation with the teacher, help improve the performance of the accuracy prediction model. We use fixed $50$ student architectures and distill knowledge from the teacher on each unseen dataset to compute Spearman's rank correlation (the higher, the better) between the predicted and actual performances and report the efficacy of each method.
+In~\cref{tbl:efficacy}, \textbf{Arch.} means taking architecture configuration, \textbf{Set Enc.} means taking dataset embedding, \textbf{Distill-aware.} means taking the functional embeddings of student architecture candidate and teacher, and \textbf{Guide} means the adaptation strategy guided by teacher-accuracy pair in a meta-learning scheme. 
+
+DaSS (Ours, Guide) outperforms all rapid meta-prediction models~\citep{finn2017model, li2017meta, lee2021rapid, jeong2021task} 
+on $4$ unseen datasets. MAML and Meta-SGD, which learn accuracy prediction models by taking only the architecture configuration (Arch.) of a student candidate as an input, show poor performance, as they predict the distillation performance without consideration of a target dataset and teacher. Set-conditioned (Set Enc.) prediction models (MetaD2A and TANS) also achieve significantly lower performance than ours since they search architectures in a teacher-agnostic manner, which greatly impacts the performance of the student trained with distillation. On the other hand, using the proposed distillation-aware embeddings of a student and a teacher (Distill-aware.), DaSS (Ours, Guide) significantly outperforms all baselines on all $4$ unseen tasks.
+Furthermore, we observe that adaptation to the target task by guiding our meta-prediction model with the accuracy of the teacher on the target dataset largely improves the prediction performance over the non-guided search, DaSS (Ours, Non-Guide).
+In sum, the results show the clear advantage of both the design of our distillation-aware task encoding and the teacher-guided meta-lea
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

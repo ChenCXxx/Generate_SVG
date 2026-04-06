@@ -1,0 +1,333 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:introduction}
+
+LiDAR segmentation aims to infer the semantic information of each point in point clouds and plays an indispensable role in the autonomous driving~\cite{yurtsever2020survey, chen2023end, yolop, depthformer}. With the advent of deep learning, a large quantity of LiDAR segmentation algorithms~\cite{cylinder3d,randla-net,2dpass,sphereformer,uniseg} have been put forward.
+Despite their impressive results,
+the segmentation performance is still constrained by the inherent sparsity of point clouds.
+To alleviate this, it is desirable to aggregate temporal data.
+Previous multi-frame models \cite{temporallidarseg,svqnet,mars3d} can only fuse a few LiDAR frames due to the GPU memory constraint, which restricts them from utilizing rich information hidden in the long-term temporal point clouds. 
+Although MSeg3D~\cite{mseg3d} stacks dozens of LiDAR frames, the memory and time overhead are intolerable. 
+Moreover, previous attempts concentrate on utilizing temporal point clouds, ignoring the valuable information hidden in temporal images. 
+
+To better leverage long-term temporal information, we propose a \textit{Temporal LiDAR Aggregation and Distillation} (TLAD) algorithm. It can perform efficient multi-frame aggregation while achieving higher accuracy. TLAD consists of \textit{Flexible Step Aggregation} (FSA) and \textit{Mask Distillation}. FSA is based on the observation that the model needs different amounts of temporal points for different classes.
+For difficult classes, such as bicyclists, more points are needed to yield accurate predictions. However, for easy classes, such as cars and roads, it is unnecessary to aggregate too many point cloud frames for them. 
+Therefore, we propose to assign different aggregation steps for different classes in point cloud sequences, which can significantly save memory and computation overhead on easy classes while providing sufficient temporal points for difficult classes.
+To identify classes of temporal point clouds, historical predictions are used, considering the temporal data is processed in chronological order, which is consistent with practical applications.
+
+Interestingly, by assigning different classes with different steps, FSA actually injects historical priors into the aggregated point clouds. For classes with different steps, their patterns can be more discriminative due to their different densities. This makes the point cloud frames accumulated by FSA more conducive for segmentation. Experimental results show that FSA can not only reduce memory and time costs but also enhance overall performance. To further verify our idea, we directly replace historical predictions of temporal point clouds with their ground truth labels for FSA. We find the performance boosts greatly. This inspires us to use the model injected with gt priors to distill the model injected with historical priors, which we term \textit{Mask Distillation}.
+
+To fully use the informative temporal images, we devise a \textit{Temporal Image Aggregation and Fusion} (TIAF) module. Previous multi-modal fusion methods usually suffer from limited image features due to the different FOVs (field of views) between the LiDAR and the camera. We observe that as the ego-vehicle moves forward, cameras can capture different FOVs. By aggregating images of different timestamps, the FOV of the present camera can be enlarged greatly.
+In addition, temporal images can provide different views for the same region at different timestamps, which can supply richer information.
+Our TIAF leverages temporal LiDAR points in the FOV of the corresponding temporal camera to transform historical image features to the present coordinate with the pose matrix. After aggregating all temporal image features, we use a series of 3D sparse convolutions to fuse them and convert them to voxel representation. Ultimately, we use temporal LiDAR points to gather temporal image features for temporal multi-modal fusion. The fused features embrace both temporal LiDAR and temporal image information, which contribute to more precise segmentation results. To our knowledge, we are the first to leverage temporal point clouds and temporal images simultaneously for LiDAR semantic segmentation.
+
+Moreover, in the multi-scan task, the model needs to distinguish the motion states (moving or static) of a movable object, which is very challenging. In this paper, we make full use of temporal information to remarkably increase the multi-scan perception ability of the model. Specifically, we propose a data augmentation strategy named \textit{Static-Moving Switch Augmentation} (SMSA). It manipulates temporal point clouds of a movable object to switch its motion state. In this way, we can increase the quantity of static and moving samples significantly, even in the absence of training samples of static or moving classes.
+
+In summary, our major contributions are listed as follows:
+\begin{itemize}[leftmargin=*]
+\item We propose a \textit{Temporal LiDAR Aggregation and Distillation} algorithm, which uses \textit{Flexible Step Aggregation} and \textit{Mask Distillation} techniques to largely reduce memory and time costs while achieving higher accuracy.
+
+\item We devise a \textit{Temporal Image Aggregation and Fusion} module, which exploits temporal images to enlarge the camera FOV and enhance present features. It also delivers a scheme for temporal multi-modal fusion.
+
+\item We design a \textit{Static-Moving Switch Augmentation} algorithm to enable static and moving objects to switch their motion states freely. With this technique, we can greatly increase static and moving training samples.
+
+\item Our Temporal Aggregation Network, dubbed~\textbf{TASeg}, achieves impressive results on SemanticKITTI and nuScenes benchmarks. Notably, our TASeg \textit{ranks 1$^{st}$} on three challenging tracks. Thorough ablation studies are provided to demonstrate the efficacy of our approach.
+\end{itemize}
+
+
+Related Work
+\label{sec:relatedwork}
+
+\noindent \textbf{LiDAR Semantic Segmentation.} 
+LiDAR semantic segmentation aims to assign a unique class label to each point in the input point cloud sequence. Recent years have witnessed an explosion of LiDAR segmentation algorithms~\cite{pointnet++,minkunet,af2s3net,spvnas,pvkd,2dpass,sphereformer,mseg3d,rangeformer,uniseg}. 
+For example, \cite{pointnet} is the pioneering work that approximates the permutation-invariant function with a per-point and shared Multi-Layer Perceptron. 
+\cite{cylinder3d} changes traditional cubic grids to cylindrical grids and designs a network of asymmetrical 3D convolutions. \cite{sphereformer} divides the space with the radial window, which increases the receptive field smoothly and helps improve the performance. 
+Despite their good segmentation performance, these methods still take the single LiDAR frame as input, which does not utilize the rich semantic and geometric information hidden in temporal data.
+
+\noindent \textbf{Multi-Frame LiDAR Perception.}
+Compared to a single LiDAR scan, multiple LiDAR scans can provide more sufficient information. Recently, many research efforts have been put on temporal LiDAR segmentation \cite{4d-pls,4d-stop,eq-4d, SpSequenceNet,4d_minknet,ASAP-Net, temporallidarseg, mars3d, deeptemporalseg, mseg3d}. 
+For example, \cite{deeptemporalseg} leverages a Bayes filter to explore the temporal consistency.
+\cite{svqnet} shunts the historical points into two groups to utilize historical frames efficiently.
+Despite the success of previous multi-frame methods, they can not leverage the valuable information hidden in long-term temporal point clouds due to the GPU memory constraint. Although \cite{mseg3d} stacks dozens of LiDAR scans, the memory and time overhead are intolerable. In this paper, we present an efficient multi-frame aggregation algorithm, which can greatly save memory and computation consumption while achieving higher performance.
+
+\noindent \textbf{Multi-Modal Fusion.}
+Since LiDAR and camera are two complementary sensors for 3D semantic segmentation, multi-modal fusion has gained increasing attention in recent years \cite{pmf,el2019rgb,fuseseg,lcps,uniseg}.
+However, these multi-modal fusion methods usually suffer from limited overlapped regions between the LiDAR and camera due to their different FOVs. \cite{2dpass} proposes a cross-modal knowledge distillation method, which is free from images at inference, while it causes much loss of the RGB information. \cite{mseg3d} completes the missing camera features using predicted pseudo-camera features, while the used image information is still restricted to the present camera FOV. In this paper, we fully take advantage of temporal images to enlarge the FOV of the present camera and enhance present image features.
+
+\noindent \textbf{Knowledge Distillation for LiDAR Perception.}
+Knowledge distillation \cite{kd} is widely used in various fields in that it can improve the performance of the student without sacrificing inference efficiency.
+In LiDAR perception, \cite{sparsekd, pvkd} compress a cumbersome teacher to a lightweight student to reinforce the representation learning of the student as well as maintain high efficiency.
+\cite{2dpass} distills the prior of 2D images to 3D point clouds with well-designed cross-modal knowledge distillation module.
+\cite{sparse2dense,smf-ssd} utilizes a multi-frame teacher to help a single-frame student learn dense 3D features.
+By contrast, our method aims to transfer knowledge from a multi-frame teacher injected with gt priors to a multi-frame student injected with historical priors.
+
+\begin{figure*}[t]
+	\begin{center}
+		\setlength{\fboxrule}{0pt}
+		\fbox{\includegraphics[width=0.98\textwidth]{figures/overview.png}}
+	\end{center}
+	\caption{Overview of our Temporal Aggregation Network (TASeg).
+(1) \textit{Temporal LiDAR Aggregation and Distillation} leverages the proposed Flexible Step Aggregation (FSA)
+to assign different temporal steps for different classes, and it utilizes a teacher injected with gt priors for knowledge distillation. 
+(2) \textit{Temporal Image Aggregation and Fusion} takes temporal 
+LiDAR points as mediums to transform historical image 
+features to the present coordinate. 3D sparse convolutions are employed to fuse temporal image features.
+Finally, we use temporal LiDAR points to gather voxel-wise temporal image features for temporal multi-modal fusion.
+}
+	\label{fig:overview}
+\end{figure*}
+
+
+Methodology
+\label{sec:methodology}
+\subsection{Temporal LiDAR Aggregation and Distillation}
+A simple solution to utilize the temporal information of a consecutive point cloud sequence is to concatenate all points of the sequence, as shown in the following equation:
+\begin{equation}
+\begin{aligned}
+    X_{t} &= \text{concat}(P_{t}, T_{t-1}P_{t-1},  \dots, T_{t-\Delta t}P_{t-\Delta t}),\\
+    Y_{t} &= \text{concat}(L_{t},  L_{t-1},  \dots,  L_{t-\Delta t}),\\
+\end{aligned}
+\end{equation}
+where $P_{t-i}$ and $L_{t-i}$ denote the $(t-i)^{th}$ point cloud frame and the corresponding point-wise label. $T_{t-i}$ is the transformation matrix that transforms the coordinate from the $(t-i)^{th}$ frame to the $t^{th}$ frame. $\Delta t$ is the window size of temporal point clouds and $\text{concat}(.)$ denotes the concatenation operation. $X_{t}$ and $Y_{t}$ are the aggregated LiDAR frame and point-wise label.
+Although simple, there are some problems. On the one hand, direct concatenation consumes much GPU memory. On the other hand, the huge memory cost constrains the multi-frame model from utilizing more historical frames, thereby limiting the ultimate performance.
+
+\subsubsection{Flexible Step Aggregation}
+To reduce the GPU memory consumption, we can sample temporal frames with a step, while this method is also sub-optimal. A small step introduces huge memory overhead, whilst a large step cannot utilize sufficient temporal information. 
+To this end, we propose Flexible Step Aggregation (FSA). Our method is based on the observation that for different classes, the model needs different amounts of temporal information. For difficult classes, such as bicycles, more points are needed to yield accurate predictions. For easy classes, such as cars and buildings, it is unnecessary to aggregate many point cloud frames for them. 
+Based on the above analysis, we propose to assign different steps for different classes according to their learning difficulty. Specifically, we leverage historical predictions to divide the temporal point clouds into several class groups and assign a specific sampling step for each group. Then, we aggregate temporal points for each group with the corresponding step. Eventually, temporal points of all groups are concatenated with the current frame, resulting in an aggregated frame. 
+
+The group division is not strict as long as it follows the principle that more difficult classes need smaller steps. For example, we can simply divide all classes 
+into three groups according to their segmentation performance, such as [0, 80) mIoU, [80, 90) mIoU and [90, 100] mIoU. Then, we assign the three groups with a step of 2, 4 and $\infty$ ($\infty$ means we do not aggregate temporal points for the group). 
+To save more memory and computation without sacrificing performance, a more fine-grained division can be used. 
+Formally, suppose we divide temporal point clouds into $g$ groups. We aggregate temporal points for the $k^{th}$ group as below:
+\begin{equation}
+\begin{aligned}
+    X_{t}^{k} &= \text{concat}( T_{o_1}P_{o_1}M_{o_1}^k, \dots, T_{o_n}P_{o_n}M_{o_n}^k),\\
+    Y_{t}^{k} &= \text{concat}(L_{o_1}M_{o_1}^k,  \dots,  L_{o_n}M_{o_n}^k).\\
+\end{aligned}
+\end{equation}
+Here $o=\{o_i|o_i=t-i \times s_k, i=1,2,...,n, n=\lfloor\Delta t/s_k\rfloor\}$. $s_k$ is the sampling step for the $k^{th}$ class group and $\lfloor . \rfloor$ is the floor operation. $M^k_{o_i}$ is the group mask that indicates which point of $P_{o_i}$ belongs to the $k^{th}$ class group. It can be obtained from historical predictions. Finally, we concatenate points and labels of all groups with the current frame:
+\begin{equation}
+\begin{aligned}
+    X_{t} &= \text{concat}(P_{t}, X_{t}^{1}, \dots, X_{t}^{k}, \dots, X_{t}^{g}),\\
+    Y_{t} &= \text{concat}(L_{t}, Y_{t}^{1}, \dots, X_{t}^{k}, \dots, Y_{t}^{g}).
+\end{aligned}
+\end{equation}
+
+In this way, we discard massive redundant temporal points while maintaining essential temporal information. 
+Since easy classes are usually large and hold a large quantity of points, the GPU memory overhead can be further reduced.
+Moreover, by assigning different classes with different steps, FSA actually injects historical priors into the aggregated point clouds. 
+For classes with different steps, their patterns can be more discriminative due to their different densities (steps), 
+which makes it easier to segment the multi-frame point clouds aggregated by FSA. 
+Experiments in Table \ref{tab:kitti_fsa} verify that the proposed FSA can not only save memory and time costs but also achieve better performance.
+
+\subsubsection{Mask Distillation}
+In FSA, we use historical predictions to generate group masks, which we call pseudo masks.
+Since ground truth labels are more accurate than historical predictions,
+a natural question arises: what if we use gt masks (the group masks generated by ground truth labels) for FSA?
+Our experiment shows that the performance can be improved greatly.
+Actually, using gt masks for FSA can produce more discriminative patterns for classes with different steps.
+This motivates us to simulate features of a model trained on temporal point clouds aggregated with gt masks.
+In this way, our model is guided to learn more discriminative features to distinguish different classes. We call this \textit{Mask Distillation}.
+Specifically, we formulate the distillation on the feature map of student $F^s \in \mathbb{R}^{N^s \times C}$ and 
+the feature map of teacher $F^t \in \mathbb{R}^{N^t \times C}$:
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{\text{KD}} = \mathbb{E}[\| F^s m^s - F^t m^t \|_2].
+\end{aligned}
+\end{equation}
+Since temporal point clouds aggregated with pseudo masks and gt masks are different, we use masks $m^s$ and $m^t$ to select voxels that appeared in both $F^s$ and $F^t$. Note that our Mask Distillation is distinct from the methods that distill a multi-frame model to a single-frame model~\cite{sparse2dense, smf-ssd}. Both the student and teacher in our method are multi-frame models.
+
+\subsection{Temporal Image Aggregation and Fusion}
+Previous multi-modal fusion methods only focus on leveraging present images while ignoring the precious value of temporal images.
+Temporal images can provide broader camera FOVs and richer information.
+Besides, they can enable more robust multi-modal fusion under the malfunction condition on some cameras.
+In this section, we provide an effective solution for aggregating temporal image features and performing temporal multi-modal fusion.
+
+\textit{Temporal Aggregation and Fusion.} Since temporal images are in different feature spaces, it is difficult to 
+establish the relationship between different images for feature aggregation.
+In our method, we take temporal LiDAR points as mediums to transform temporal image features to the present coordinate with the pose information. 
+This way, temporal image features are unified to the present 3D space.
+Specifically, given an image $I_{t-\Delta t} \in \mathbb{R}^{H \times W \times 3}$ and point cloud $P_{t-\Delta t} \in \mathbb{R}^{N \times 3}$, 
+we use an image network to extract the image feature $Z_{t-\Delta t} \in \mathbb{R}^{H \times W \times C}$. 
+According to the sensor calibration, we can establish the pixel-to-point mapping between 2D pixels and 3D points. 
+Hence, we can project image feature $Z_{t-\Delta t}$ to 3D space, resulting in point-wise image feature $Q_{t-\Delta t} \in \mathbb{R}^{M \times C}$,
+where $M$ is the number of LiDAR points located on $Z_{t-\Delta t}$. 
+By transforming $Q_{t-\Delta t}$ to the present coordinate with the pose matrix, 
+we realize the aggregation of temporal image features:
+\begin{equation}
+\begin{aligned}
+    \overline{X}_{t} &= \text{concat}(Q_{t}, T_{o_1}Q_{o_1}, \dots, T_{o_n}Q_{o_n}),\\
+\end{aligned}
+\end{equation}
+where $o=\{o_i|o_i=t-i \times s, i=1,2,...,\lfloor \Delta t/s\rfloor\}$ and $s$ is the sampling step for temporal images.
+With temporal images aggregated, the FOV of the present camera is expanded greatly. 
+Moreover, temporal image feature fusion becomes convenient because they are 
+unified to the same 3D space. Concretely, we can use several 3D sparse convolutions 
+to fuse aggregated temporal image features, which also endows them with geometric information, as shown in Equation \ref{eq:voxelization}. In addition, feature map downsampling is also utilized to generate multi-scale voxel features, providing richer information for subsequent temporal multi-modal fusion.
+
+\begin{equation}
+\begin{aligned}
+    \overline{V}_{t} &= \text{SparseConv}_{\text{3D}}(\text{Voxelization}(\overline{X}_{t})).\\
+\end{aligned}
+\label{eq:voxelization}
+\end{equation}
+
+\textit{Temporal Multi-Modal Fusion.}
+Benefiting from the temporal image aggregation, associating temporal image features with temporal LiDAR points also becomes convenient. 
+Specifically, given temporal image features converted to unified voxel representation $\overline{V}_t$, 
+we can establish a point-to-voxel association between temporal LiDAR points and $\overline{V}_t$.
+For each temporal LiDAR point, we generate its image feature by pooling its nearby 
+voxel-wise temporal image features with trilinear interpolation instead of hard indexing. 
+To extract richer image features, we perform interpolation on multi-scale feature maps.
+Finally, we concatenate the point cloud features and aggregated multi-scale image features, 
+resulting in fused features, which convey powerful information of both temporal point clouds and temporal images.
+
+\textit{2D and 3D Supervision.}
+To make the extracted image features more informative, we add 2D supervision and 3D supervision on the 2D backbone and 3D convolutions in the image branch, respectively. The 3D supervision is just the label of point clouds.
+The 2D supervision is obtained by projecting labels of point clouds to the image plane.
+
+\subsection{Static-Moving Switch Augmentation}
+In the multi-scan task, the model is required to distinguish the motion state of movable objects. 
+To enable the model to explore a large data space, 
+we design an effective data augmentation, Static-Moving Switch Augmentation (SMSA).
+SMSA enables a movable object to switch its motion state freely, which can remarkably increase the sample quantity of static and moving objects.
+Concretely, considering that a unique object $b$ has the same instance id in all frames of a sequence, 
+we can use its instance mask to crop its temporal point clouds, which is denoted as $\mathcal{B}$ = $\{\mathcal{B}_{o_i} | i=0,1,...,\lfloor \Delta t/s\rfloor, \mathcal{B}_{o_i} \in \mathbb{R}^{N \times 3}\}$. 
+Here $o=\{o_i|o_i=t-i \times s, i=1,2,...,\lfloor \Delta t/s\rfloor\}$, $s$ is the sampling step and $\mathcal{B}_{o_i}$ is the temporal part of $b$ at $t_{o_i}$.
+By manipulating $\mathcal{B}$, we can change the motion state of $b$. 
+
+\begin{figure}[t]
+	\begin{center}
+		\setlength{\fboxrule}{0pt}
+		\fbox{\includegraphics[width=0.48\textwidth]{figures/smsa.png}}
+	\end{center}
+	\caption{Visualization of the augmented samples by our Static-Moving Switch Augmentation (SMSA). Our SMSA switches the motion state by manipulating the temporal parts of objects.}
+	\label{fig:smsa}
+\end{figure}
+
+\textit{Static to Moving.}
+If $b$ is static, all temporal parts of $b$ locate at the same position, 
+as shown in the upper-left of Figure \ref{fig:smsa}.
+To change $b$ to a moving object, we can shift each temporal part of $b$ with an offset.
+Considering that objects typically move at a constant speed within a short time, we set the offset between adjacent temporal parts to be the same. 
+For offset itself, it is a random value to increase the diversity of resulting moving samples.
+As for the direction of the offset, it can be roughly estimated by comparing the 
+width and height of the minimum bounding box of $b$. 
+Since static objects often park on the side of the road, which is crowded,
+the shifted temporal parts of static objects may overlap with other objects.
+To alleviate this, we define a set of anchor points around $b$ and 
+a coverage area for each anchor point. 
+Then, we shift all temporal parts of $b$ to the anchor point whose coverage area contains the fewest LiDAR points (refer to the supplementary material for more details).
+
+\textit{Moving to Static.}
+If $b$ is moving, different temporal parts of $b$ locate at different positions.
+To switch its motion state to static, we can shift all its temporal parts to the same position.
+In particular, we calculate the centers of each temporal part of $b$, 
+which are denoted as $\mathcal{C}$ = $\{\mathcal{C}_{o_i}| \mathcal{C}_{o_i} \in \mathbb{R}^{3}\}$.
+Considering the trajectory of moving objects in a short time is approximate to a line 
+and the speed is a constant, we simply use $q = \mathcal{C}_{o_0} - \mathcal{C}_{o_1}$ as 
+the offset of adjacent temporal parts of $b$. Eventually, we can obtain a static object 
+by shifting all temporal parts of $b$ to ${C}_{o_0}$ (see Figure \ref{fig:smsa}).
+
+It should be noted that our SMSA is an online and plug-and-play data augmentation strategy, 
+which consumes negligible storage and computation costs.
+
+\subsection{Training Objective}
+The final training objective is comprised of LiDAR segmentation loss, mask distillation loss, 
+fusion segmentation loss, 2D and 3D supervision loss on the image branch:
+\begin{equation}
+\begin{aligned}
+\mathcal{L} = \mathcal{L}_{\text{LiDAR}} + 
+\alpha \mathcal{L}_{\text{KD}} + 
+\beta \mathcal{L}_{\text{Fusion}} + 
+\gamma (\mathcal{L}_{\text{2D}} + \mathcal{L}_{\text{3D}}),
+\end{aligned}
+\end{equation}
+where $\alpha, \beta, \gamma$ are the coefficients to control the effect of different losses. We set $\alpha=1, \beta=1, \gamma=1$ by default.
+
+
+Experiments
+\label{sec:experiments}
+\begin{table*}[t]
+    \renewcommand\tabcolsep{1.5pt}
+    \begin{center}
+        {\fontfamily{cmr}
+            \resizebox{\textwidth}{!}{
+                \begin{tabular}{lc|ccccccccccccccccccc}
+\hline
+Method&
+\rotatebox{90}{mIoU}& \rotatebox{90}{car}& \rotatebox{90}{bicycle}& \rotatebox{90}{motorcycle}&
+\rotatebox{90}{truck}& \rotatebox{90}{other-veh.}& \rotatebox{90}{person}& \rotatebox{90}{bicyclist}&
+\rotatebox{90}{motorcyclist~}& \rotatebox{90}{road}& \rotatebox{90}{parking}& \rotatebox{90}{sidewalk}&
+\rotatebox{90}{other-gro.}& \rotatebox{90}{building}& \rotatebox{90}{fence}& \rotatebox{90}{vegetation}&
+\rotatebox{90}{trunk}& \rotatebox{90}{terrain}& \rotatebox{90}{pole}& \rotatebox{90}{traffic sign}\\
+\hline
+\hline
+SqueezeSegV2~\cite{squeezesegv2} & 39.7& 81.8 & 18.5 & 17.9 & 13.4 & 14.0 & 20.1 & 25.1 & 3.9 & 88.6 & 45.8 & 67.6 & 17.7 & 73.7 & 41.1 & 71.8 & 35.8 & 60.2 & 20.2 & 26.3  \\
+RangeNet53++~\cite{rangenet++} & 52.2& 91.4 & 25.7 & 34.4 & 25.7 & 23.0 & 38.3 & 38.8 & 4.8 & 91.8 & 65.0 & 75.2 & 27.8 & 87.4 & 58.6 & 80.5 & 55.1 & 64.6 & 47.9 & 55.9  \\
+RandLA-Net~\cite{randla-net} & 55.9& 94.2 & 29.8 & 32.2 & 43.9 & 39.1 & 48.4 & 47.4 & 9.4 & 90.5 & 61.8 & 74.0 & 24.5 & 89.7 & 60.4 & 83.8 & 63.6 & 68.6 & 51.0 & 50.7  \\
+SqueezeSegV3~\cite{squeezesegv3} & 55.9& 92.5 & 38.7 & 36.5 & 29.6 & 33.0 & 45.6 & 46.2 & 20.1 & 91.7 & 63.4 & 74.8 & 26.4 & 89.0 & 59.4 & 82.0 & 58.7 & 65.4 & 49.6 & 58.9  \\
+JS3C-Net~\cite{js3c-net} & 66.0& 95.8 & 59.3 & 52.9 & 54.3 & 46.0 & 69.5 & 65.4 & 39.9 & 88.9 & 61.9 & 72.1 & 31.9 & 92.5 & 70.8 & 84.5 & 69.8 & 67.9 & 60.7 & 68.7  \\
+SPVNAS~\cite{spvnas} & 67.0& 97.2 & 50.6 & 50.4 & 56.6 & 58.0 & 67.4 & 67.1 & 50.3 & 90.2 & 67.6 & 75.4 & 21.8 & 91.6 & 66.9 & 86.1 & 73.4 & 71.0 & 64.3 & 67.3  \\
+Cylinder3D~\cite{cylinder3d} & 68.9& 97.1 & 67.6 & 63.8 & 50.8 & 58.5 & 73.7 & 69.2 & 48.0 & 92.2 & 65.0 & 77.0 & 32.3 & 90.7 & 66.5 & 85.6 & 72.5 & 69.8 & 62.4 & 66.2  \\
+RPVNet~\cite{rpvnet} & 70.3& 97.6 & 68.4 & 68.7 & 44.2 & 61.1 & 75.9 & 74.4 & 43.4 & 93.4 & 70.3 & 80.7 & 33.3 & 93.5 & 72.1 & 86.5 & 75.1 & 71.7 & 64.8 & 61.4  \\
+(AF)$^2$-S3Net~\cite{af2s3net} & 70.8& 94.3 & 63.0 & 81.4 & 40.2 & 40.0 & 76.4 & 81.7 & 77.7 & 92.0 & 66.8 & 76.2 & 45.8 & 92.5 & 69.6 & 78.6 & 68.0 & 63.1 & 64.0 & 73.3  \\
+PVKD~\cite{pvkd} & 71.2& 97.0 & 69.3 & 53.5 & 67.9 & 60.2 & 75.1 & 73.5 & 50.5 & 91.8 & 77.5 & 70.9 & 41.0 & 92.4 & 69.4 & 86.5 & 73.8 & 71.9 & 64.9 & 65.8  \\
+2DPASS~\cite{2dpass} & 72.9& 97.0 & 63.6 & 63.4 & 61.1 & 61.5 & 77.9 & 81.3 & 74.1 & 89.7 & 67.4 & 74.7 & 40.0 & 93.5 & 72.9 & 86.2 & 73.9 & 71.0 & 65.0 & 70.4  \\
+SphereFormer~\cite{sphereformer} & 74.8& 97.5 & 70.1 & 70.5 & 59.6 & 67.7 & 79.0 & 80.4 & 75.3 & 91.8 & 69.7 & 78.2 & 41.3 & 93.8 & 72.8 & 86.7 & 75.1 & 72.4 & 66.8 & 72.9  \\
+UniSeg~\cite{uniseg} & 75.2 & 97.9 & 71.9 & 75.2 & 63.6 & 74.1 & 78.9 & 74.8 & 60.6 & 92.6 & 74.0 & 79.5 & 46.1 & 93.4 & 72.7 & 87.5 & 76.3 & 73.1 & 68.3 & 68.5 \\\hline
+TASeg (Ours) & \textbf{76.5} & 97.7 & 71.8 & 71.4 & 65.2 & 78.7 & 79.9 & 84.6 & 78.6 & 91.6 & 74.0 & 78.0 & 39.3 & 93.5 & 73.4 & 86.6 & 75.0 & 71.7 & 69.6 & 73.8 \\\hline
+                \end{tabular}
+        }}
+    \end{center}
+    \caption{Comparison with state-of-the-arts on \textit{SemanticKITTI} test set (single-scan). All results can be found on the online leaderboard.}
+    \label{tab:kitti_test}
+\end{table*}
+
+\begin{table*}[th]		
+    \renewcommand\tabcolsep{1.5pt} 
+    \begin{center}
+        {\fontfamily{cmr}
+            \resizebox{0.7\textwidth}{!}{%
+                \begin{tabular}{lc|cccccccccccc}
+                    \hline 
+                    Method & 
+                    \rotatebox{90}{mIoU}&
+                    \rotatebox{90}{car-s}&
+                    \rotatebox{90}{car-m}&
+                    \rotatebox{90}{truc.-s}&
+                    \rotatebox{90}{truc.-m}&
+                    \rotatebox{90}{othe.-s}&
+                    \rotatebox{90}{othe.-m~}&
+                    \rotatebox{90}{pers.-s}&
+                    \rotatebox{90}{pers.-m}&
+                    \rotatebox{90}{bicy.-s}&
+                    \rotatebox{90}{bicy.-m}&
+                    \rotatebox{90}{moto.-s}&
+                    \rotatebox{90}{moto.-m~} \\
+                    \hline 
+                    \hline
+LatticeNet~\cite{latticenet} & 45.2 & 91.1  & 54.8  & 29.7  & 3.5   & 23.1  & 0.6   & 6.8   & 49.9  & 0.0   & 44.6  & 0.0   & 64.3  \\
+TemporalLidarSeg~\cite{temporallidarseg} & 47.0 & 92.1  & 68.2  & 39.2  & 2.1   & 35.0  & 12.4  & 14.4  & 40.4  & 0.0   & 42.8  & 0.0   & 12.9  \\
+(AF)$^2$-S3Net~\cite{af2s3net} & 56.9  & 91.8  & 65.3  & 15.7  & 5.6   & 27.5  & 3.9   & 16.4  & 67.6  & 15.1 & 66.4  & 67.1 & 59.6  \\
+MarS3D~\cite{mars3d} & 52.7 &95.1 &78.4 &39.7 &5.1 &36.6 &10.0 &16.2 &58.0 &1.2 &67.3 &0.0 &36.3  \\
+SVQNet~\cite{svqnet} & 60.5 &96.0 &80.1 &41.0 &5.1 &60.4 &7.1 &28.7 &85.1 &0.0 &72.4 &0.0 &88.1 \\
+2DPASS~\cite{2dpass} &  62.4 & 96.2  & 82.1  & 48.2  & 16.1  & 52.7  & 3.8   & 35.4  & 80.3  & 7.9   & 71.2  & 62.0  & 73.1  \\
+\hline
+TASeg (Ours) & \textbf{65.7} & 94.8 & 72.8     & 53.6 & 35.2    & 71.4 & 53.2    & 36.7 & 80.4    & 32.4 & 75.2    & 12.3 & 89.6 \\
+\hline
+        \end{tabular}}}
+    \end{center}
+    \caption{Comparison to the state-of-the-art methods on \textit{SemanticKITTI} test set (multi-scan). \textit{-s} indicates static and \textit{-m} stands for moving.}
+    \label{tab:kitti_multi_test}
+\end{table*}
+
+\noindent \textbf{Datasets \& Evaluation Metrics.} Following~\cite{cylinder3d,pvkd}, we evaluate the performance on two popular LiDAR segmentation benchmarks, \emph{i.e.}, SemanticKITTI and nuScenes. SemanticKITTI contains 22 point cloud sequences, where sequences 0-10, 8, 11-21 are selected as training, validation and testing, respectively. As for nuScenes, it collects 1, 000 driving scenes, where 850 scenes are chos
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

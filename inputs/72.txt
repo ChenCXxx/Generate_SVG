@@ -1,0 +1,287 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Time series forecasting plays an important role in many real-world application domains \cite{wen2022robust}, such as energy consumption prediction, weather forecasting, and disease transmission. 
+Recently, a multitude of deep learning models have been designed for time series forecasting based on Convolutional Neural Networks \cite{bai2018empirical,wang2022micn,wu2022timesnet}, Recurrent Neural Networks \cite{lai2018modeling,salinas2020deepar}, and Transformers \cite{chen2022learning,kitaev2019reformer,zhou2021informer,wu2021autoformer}. 
+Inspired by the prominent performance gained by Foundation Models (FMs) in the realms of Natural Language Processing (NLP) \cite{DBLP:conf/naacl/DevlinCLT19,radford2018improving,radford2019language,touvron2023llama} and Computer Vision (CV) \cite{touvron2021training,bao2021beit}, great research interests have been triggered to build pretrained FMs for time series community \cite{zhang2022self,deldari2022beyond,jin2023large,liang2024foundation,zhang2024self}.
+Nonetheless, due to significant time series data scarcity, these FMs are of poor capability to cultivate general representations, failing to promise remarkable fine-tuning or zero-shot performance for diverse downstream forecasting tasks \cite{jin2024timellm,zhou2024one}.
+As a result, a collection of methods have been proposed to borrow the pretrained language FMs to time series community by \emph{cross-modality adaption} \cite{chang2023llm4ts,jin2024timellm,zhou2024one}, thus unlocking the tapped potential of language models (LMs) for time series modeling.
+
+While these endeavors provide FMs for time series forecasting, the incorporated cross-modality adaption modules and unfrozen components of pretrained LMs need training from scratch for specific domains, thus restricting the mining of underlying temporal commonality in cross-domain time series data.
+As is shown in Figure \ref{motivation}(a), disease and economics datasets are employed for training the FM respectively to obtain domain-optimal model parameters, hardly generalizing to other domains.
+\cite{liu2024unitime} proposes to train a unified model (named UniTime) on the mixture of  cross-domain time series data (Figure \ref{motivation}(b)), which ensures the cultivation of general-purpose representations, thus promising the zero-shot performance on unseen domains.
+Despite its effectiveness, they adopt the \textbf{centralized} training mode, where the historical records of time series across diverse domains are uploaded to a central server for optimizing the unified model. 
+\emph{Due to copyright protection and privacy concerns, data owners may hesitate to share the access to these domain-specific raw records.}
+
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{motivation.pdf}
+    \caption{(a) Specific prediction models are trained for diverse domains. (b) A unified model is trained for cross-domain time series. (c) The current in-modality adaption in FL setting fine-tunes LM for NLP tasks, with all the trained parameters are exchanged between clients and the server. (d) Our proposal investigates how to construct a FM by unlocking the potential of LM for cross-domain time series forecasting in FL paradigm.
+    }
+    \label{motivation}
+    \vskip -0.1in
+\end{figure}
+
+Federated Learning (FL) \cite{mcmahan2017communication,li2020federated} provides the mainstream solution for the aforementioned problem, where data owners train prediction models locally and exchange the intermediate model parameters or gradients with the central server, without the disclosure of raw data records.
+Moreover, in UniTime, a retractable prediction head is introduced to accommodate the heterogeneous output needs whereas FL paradigm makes it possible to construct domain-customized heads.
+However, current efforts are merely focused on how to fine-tune LMs in federated setting for NLP tasks (i.e., \emph{in-modality adaption} of LMs for target tasks in Figure \ref{motivation}(c)) \cite{zhang2023fedpetuning,che2023federated,su2024titanic,zhang2024towards}, rather than cross-modality adaption of LMs for time series forecasting.
+The realization of this federated FM is non-trivial technically, given the ubiquitous heterogeneity in cross-domain time series data.
+\textbf{(1) Heterogeneous inputs}: Cross-domain time series data input into the FM are heterogeneous in terms of dimensions and historical readings, posing evident difficulty to modality alignment.
+\textbf{(2) Rigid instructions as prompts}: Prompts are adopted to bootstrap LMs for time series reasoning hinging on rigid domain-specific instructions \cite{liu2024unitime,jin2024timellm}, rather than the understanding of LMs, exhibiting poor robustness for unseen domains.
+\textbf{(3) Conflicts between generalization and personalization}: The ideal FM needs to learn the common temporal representations across domains and simultaneously enable the personalized prediction for domain-specific inputs.
+
+To address the challenges, we propose \textsc{Time-FFM}, a \textsc{F}ederated \textsc{F}oundation \textsc{M}odel for \textsc{Time} series forecasting by repurposing LMs (Figure \ref{motivation}(d)). 
+First, we perform modality alignment by transforming time series data into text tokens to empower the pretrained LM for time series reasoning.
+Second, we design a prompt adaption module to dynamically determine domain-specific prompts, which can bootstrap the LM for cross-domain time series analysis from the perspective of LM itself, rather than from human cognition by employing hand-crafted instructions as prompts.
+To tackle the data heterogeneity across domains, we introduce a personalized federated training strategy by learning a global encoder and personalized prediction heads, given the shared representations across domains.
+Our main contributions are summarized as follows.
+\begin{itemize}[leftmargin=*]
+    \item We present the first attempt to build a federated FM for time series forecasting by exploiting the sequence reasoning potential of LMs, avoiding the disclosure of local data.
+    \item We propose \textsc{Time-FFM}, which firstly aligns the modality from time series data to natural language and adaptively determines prompts to guide the LM for time series reasoning. Moreover, we introduce a personalized FL strategy to strike a balance between sharing common temporal knowledge and ensuring customized prediction results.
+    \item The extensive evaluation results demonstrate that \textsc{Time-FFM} leads to state-of-the-art performance in mainstream forecasting tasks, especially in few-shot or zero-shot forecasting settings.
+    
+\end{itemize}
+
+
+
+Related Work
+
+\textbf{{FMs for Time Series Forecasting.}}
+Recent studies have demonstrated the effectiveness of fine-tuning pretrained FMs for various downstream tasks, such as BERT \cite{DBLP:conf/naacl/DevlinCLT19}, GPT \cite{radford2018improving}, GPT2 \cite{radford2019language}, and LLaMA \cite{touvron2023llama} in NLP and DEiT \cite{touvron2021training} and BEiT \cite{bao2021beit} in CV.
+Inspired by the success, some efforts have been focused on developing FMs for time series community, such as \cite{zhang2022self,deldari2022beyond,zhang2024self,woo2024unified}. 
+However, due to data deficiencies, these pretrained models cannot guarantee the learning of general-purpose representations for time series analysis and hence fail to apply to a multitude of downstream tasks.
+Another line of researches attempt to leverage pretrained FMs in NLP or CV for time series analysis by cross-modality adaption strategies \cite{yang2021voice2series,yin2023survey,chen2024model,chang2023llm4ts,zhou2024one,jin2024timellm}, such as fine-tuning and model reprogramming, which hinges on the powerful generalization capability of Transformers for sequence tokens.
+\cite{zhou2024one} freezes the self-attention modules and feedforward layers of GPT2, and only fine-tunes the positional embedding and normalization layers. The proposed GPT4TS outperforms the relevant models in most time series tasks.
+On the contrary, \cite{jin2024timellm} freezes the LM as a whole and transforms the modality of time series to natural language by patch reprogramming. 
+These methods enable unified model structure rather than unified parameters for diverse downstream tasks, which makes the proposed FMs learn impaired temporal commonality.
+\cite{liu2024unitime} proposes to train a unified prediction model for cross-domain time series forecasting, which enables to learn the intrinsic temporal patterns. 
+However, the centralized training mode brings privacy concerns for cross-domain data owners and FL paradigm may provide a promising solution.
+
+\textbf{{Federated Fine-tuning of LMs.}}
+Given the exceptional performance of LMs and the emerging privacy preserving resolutions, incorporating LMs with FL is becoming a popular research trend.
+There have been some implementation frameworks \cite{kuang2023federatedscope,che2023federated,ye2024openfedllm,fan2023fate} to support fine-tuning LMs in FL setting.
+Moreover, considering the immense communication cost, some communication-efficient federated fine-tuning methods have been proposed, such as \cite{fan2023fate,sun2022conquering,su2024titanic,zhang2023fedpetuning}.
+A few researches aim to investigate the effects of data heterogeneity on fine-tuning performance, and then propose the personalized federated instruction tuning methods, e.g., \cite{zhang2024personalized,che2023federated,zhang2024towards}.
+Nonetheless, these methods concentrate on fine-tuning or fully-tuning pretrained LMs in FL paradigm for NLP tasks, but fail to cover the cross-modality adaption of LMs for time series forecasting.
+
+
+
+Methodology
+\label{methodology}
+\subsection{Problem Definition}
+Given $N$ domains, let $\bm{x}_{i,t} = \{x_{i,t}^1, \cdots, x_{i,t}^{c_i}\} \in \mathbb{R}^{c_i}$ denote the observation of domain $i$ at the time step $t$, where $c_i$ represents the number of dimensions (channels).
+In the context of time series forecasting, we denote 
+$\bm{X}_{i} = \{ \bm{x}_{i,1}, \cdots, \bm{x}_{i,L_i} \} \in \mathbb{R}^{L_i \times c_i}$ as the input of the prediction model $f_i(\cdot)$, where $L_i$ represents the domain-variant lookback window.
+The ground truths can be denoted as $\bm{Y}_{i} = \{ \bm{x}_{i,L_i + 1}, \cdots, \bm{x}_{i,L_i + F_i} \} \in \mathbb{R}^{F_i \times c_i}$, where $F_i$ represents the future prediction window.
+Let $\mathcal{D}_i = \left\{ \left(\bm{X}_{i}; \bm{Y}_{i}\right)\right\}$ denote the local data set of $i$ and $D_i = \left| \mathcal{D}_i \right|$ the data size.
+Given the set of personalized model parameters $\{w_i\}$, the objective of federated FM for cross-domain time series forecasting can be formulated as 
+\begin{equation}
+    \label{eq1}
+    \min_{\{w_1,\cdots, w_N\}} \mathcal{L} =  \frac{1}{N} \sum_{i=1}^{N} \frac{1}{D_i} {\textstyle \sum_{(\bm{X}_i;\bm{Y}_i)\in \mathcal{D}_i }} \parallel \bm{Y}_i-f_i(w_i;\bm{X}_i)\parallel _2^2.
+\end{equation}
+
+\begin{figure}[!t]
+\vskip 0.1in
+    \centering
+    \includegraphics[width=0.89\linewidth]{method.pdf}
+    \caption{Overall architecture of \textsc{Time-FFM}. Each round begins with \ding{192} downloading global parameters of modality alignment and prompt adaption modules. 
+    We \ding{193} conduct modality alignment to generate patch tokens and \ding{194} adaptively determine prompt tokens.
+    \ding{195} The two tokens are input into the LM backbone and \ding{196} the outputs are projected to generate the prediction results.
+    After local optimization, \ding{197} the updated parameters of modality alignment and prompt adaption modules are uploaded to the server for aggregation.
+    } 
+    \label{method}
+    \vskip -0.1in
+\end{figure}
+
+\subsection{Model Structure}
+
+The model architecture is elaborated in Figure \ref{method}. 
+Our model encompasses three components: (1) modality alignment and prompt adaption, (2) LM backbone, and (3) prediction head.
+The modules of modality alignment and prompt adaption are designed for cross-modality alignment and adaptive prompt determination.
+We employ the backbone of GPT2 \cite{radford2019language} with freezing all parameters.
+The prediction head enables domain-specific prediction results. 
+
+{\textbf{Modality Alignment.}} Here we transform time series into the modality of text tokens. 
+To accommodate domain-variant channels $c_i$, we adopt the channel-independent strategy \cite{nie2022time} to split multivariate time series $\bm{X}_{i}$ into $c_i$ univariate series and individually process each. Let $\bm{X}_i^j=\{ x_{i,1}^j, \cdots x_{i,L_i}^j\} \in \mathbb{R}^{1\times L_i}$ denote the $j$-th univariate series from $\bm{X}_{i}$. 
+Then we normalize each series $\bm{X}_i^j$ to mitigate the effect of distribution diversity \cite{kim2021reversible}.
+Since each data point of $\bm{X}_i^j$ does not have explicit semantic knowledge like words in sentences, we adopt the patching technique \cite{nie2022time} to segment $\bm{X}_i^j$ into subseries (termed \emph{patches}), each of which can \textit{aggregate the local information and better retain the temporal knowledge}.
+Specifically, let $P$ denote the patch length and $S_i$ denote the stride length of domain $i$. Hence, the number of patches can be defined as $B_i=\left \lceil \frac{L_i-P}{S_i}  \right \rceil +1$. We denote $\bm{X}_{i,S}^j \in \mathbb{R}^{B_i \times P}$ as the generated patches from $\bm{X}_i^j$. We subsequently employ a linear layer to project the patches into tokens $\hat{\bm{X}}_{i,S}^j \in \mathbb{R}^{B_i \times D}$, where $D$ is the input dimension size of the LM backbone. 
+$\hat{\bm{X}}_{i,S}^j$ together with prompt tokens (in the next part) will be input into the LM backbone.
+
+\textbf{{Prompt Adaption.}}
+In the time series forecasting FMs based on LMs, domain instructions are designed as prompts to complement the patch tokens and inform the LM backbone of domain-specific knowledge \cite{jin2024timellm,liu2024unitime}. 
+These manually-designed prompts depend completely on experts’ knowledge and may vary from each other due to different understandings.
+Furthermore, according to the results, more detailed instructions can always yield better prediction performance \cite{jin2024timellm}, which may make us naturally draw a conclusion that the ultimate performance hinges on the length of prompts. 
+However, longer prompt tokens will present substantial challenge on the computation burden.
+Different from images \cite{misra2023reprogramming} or acoustic data \cite{yang2021voice2series}, which can be ``translated'' into natural language seamlessly, the manually-crafted prompts are error-prone to describe the characteristics of the raw time series.
+\textbf{To this end, a better way is to design prompts from LM's understandings of the patch tokens rather than human cognition of raw time series data.}
+Here, we propose to adaptively determine prompts based on patch tokens from the source corpus of pretrained LM (which includes $V$ pretrained word embeddings, denoted as $\bm{E} \in \mathbb{R}^{V\times D}$).
+Similar to \cite{jin2024timellm}, we project $\bm{E}$ to a smaller collection of \textit{text prototypes}, denoted as $\bm{E}' \in \mathbb{R}^{V' \times D}$ by a linear layer, with $V' \ll V$, to avoid the potential large parameter space.
+We adopt a modified multi-head attention layer to obtain the correlation between $\bm{E}'$ and $\hat{\bm{X}}_{i,S}^j$, and subsequently select $M$ mostly related text prototypes as prompts.
+Concretely, for each head $h \in \{1, \cdots, H\}$, we have the query matrix $\bm{Q}_{i,h}^j = \bm{E}' \bm{W}_h^Q$ and the key matrix
+$\bm{K}_{i,h}^j = \hat{\bm{X}}_{i,S}^j \bm{W}_h^K$, where $\bm{W}_h^Q, \bm{W}_h^K \in \mathbb{R}^{D\times d}$ and $d = \left \lfloor \frac{D}{H}  \right \rfloor$. Since we do not aim to return a weighted value matrix according to the given query but merely evaluate the correlation of text prototypes and patch tokens, we omit the value matrix here. The attention score matrix is denoted as $\bm{O}_{i,h}^j \in \mathbb{R}^{V' \times B_i}$ and can be calculated as
+\begin{equation}
+    \bm{O}_{i,h}^j  = \textsc{Softmax}(\frac{\bm{Q}_{i,h}^j \bm{K}_{i,h}^{j\top} }{\sqrt{d}}).
+\end{equation}
+We obtain $\hat{\bm{O}}_{i,h}^j \in \mathbb{R}^{V' \times 1}$ by calculating the summation of $\bm{O}_{i,h}^j$ per row. 
+Each value in $\hat{\bm{O}}_{i,h}^j$ represents the correlation degree of the corresponding text prototype in $\bm{E}'$ to all patch tokens $\hat{\bm{X}}_{i,S}^j$. 
+We select $M$ prototypes from $\bm{Q}_{i,h}^j$ with top attention scores to form the potential prompts $\bm{Z}_{i,h}^j \in \mathbb{R}^{M \times d}$, i.e., $\bm{Z}_{i,h}^j = \bm{Q}_{i,h}^j \left[ \textsc{TopM}(\hat{\bm{O}}_{i,h}^j) \right]$. We can obtain $\bm{Z}_{i}^j \in \mathbb{R}^{M \times D}$ by aggregating $\bm{Z}_{i,h}^j$ from all $H$ heads. Finally, we employ a linear layer to project $\bm{Z}_{i}^j$ to the prompt tokens $\hat{\bm{Z}}_{i}^j \in \mathbb{R}^{M\times D}$.
+
+\textbf{{Prediction Head.}}
+We input the concat of $\hat{\bm{Z}}_{i}^j$ and $\hat{\bm{X}}_{i,S}^j$ into the LM backbone and obtain the representations $\bm{R}_{i}^{j} \in \mathbb{R}^{(M+B_i) \times D}$, which will be flattened and projected to the final results $\hat{\bm{Y}}_i^{j} \in \mathbb{R}^{1\times F_i}$ by a linear layer.
+
+\textbf{Personalized Strategy.}
+Time series across different domains could be substantially heterogeneous. Consequently, a generalized global model in FL may fail to capture the disparate temporal patterns and ultimately compromises the prediction performance. 
+Inspired by \cite{collins2021exploiting}, which indicates that diverse data may share common feature representations, we propose to learn a global encoder (i.e., \textit{modality alignment}, \textit{prompt adaption} and \textit{LM backbone}) and domain-customized \textit{prediction heads}. 
+The underlying motivation is to strike a balance between generalization and personalization: (1) increasing the generalization of modality alignment and prompt adaption by access to cross-domain temporal patterns; (2) ensuring prediction results specific for certain domains by personalized heads.
+Since we keep the LM backbone intact, in each federating round, \textit{only the parameters of modality alignment and prompt adaption are communicated}.
+The server performs aggregation by averaging strategy.
+
+\subsection{Training Process}
+We denote $w^g_t$ as the global parameters of modality alignment and prompt adaption at the $t$-th federated round and $w^p_{i,t}$ as prediction head parameters of $i$ at the $t$-th round.
+We clarify that $(\bm{X}_i, \bm{Y}_i)$ here is reused to represent a training batch.
+$\hat{\bm{X}}_{i,S}, \hat{\bm{Z}}_i, \bm{R}_i$, and $\hat{\bm{Y}}_i$ denote the patch tokens, prompt tokens, representations and prediction results of such batch respectively.
+The training procedure of \textsc{Time-FFM} is elaborated in Algorithm \ref{ag1}.
+\textbf{(1)} In the $t$-th federated round, the server distributes the global parameters $w^g_t$ (Line 8 and 9).
+\textbf{(2)} Each domain loads the global parameters and local head parameters to perform prediction following modality alignment, prompt adaption as well as representation obtaining from LM backbone (Line 12-15) and uploads $w^g_{t,i}$ to the server after optimization.
+\textbf{(3)} Finally, the server aggregates local updated parameters by averaging mechanism to obtain the fresh global parameters $w^g_{t+1}$ for the $(t+1)$-th round (Line 6).
+\begin{algorithm}[!ht]
+	\caption{Training process of \textsc{Time-FFM}.}
+	\label{ag1}
+	\LinesNumbered
+        \begin{multicols}{2}
+	\KwIn{Global round number $T$, local epoch \\number $E$, initial global encoder parameters \\$w_0^g$, initial personalized head parameters \\ $\{ w^p_{i,0}\}$, local batch number $b_i$.}
+        \KwOut{Optimized global encoder parameters \\$w^g_T$, optimized parameters of personalized \\heads $\{w^p_{i,T} \}$.}
+	\SetKwFunction{Fexecute}{LocalExecute}
+
+	\textsc{\textbf{ServerExecute:}}
+ 
+         
+	\For{$t= 0, 1, \cdots, T-1$}{
+            
+            \For {$i=1,2,\cdots,N$ \textbf{in parallel}}
+            {
+                \begin{spacing}{1.2}
+                    $w^g_{t,i} \gets$\Fexecute$(i, w^g_t)$
+                \end{spacing}
+            }
+
+            \begin{spacing}{0.9}
+                $w^g_{t+1} = \frac{1}{N}\sum\nolimits_{{i} \in [1,N]} {{w^g_{t,i}}}$
+            \end{spacing}
+	}
+        \begin{spacing}{1.0}
+            // \textit{for local training}
+        \end{spacing}
+        
+	\SetKwProg{Fn}{Function}{:}{}
+	\Fn{\Fexecute{$i$, $w^g_t$}}{
+            $w^g_{t,i} \gets w^g_t$
+
+            \For {$e=1,2,\cdots,E$}{
+                
+                \For{$(\bm{X}_i,\bm{Y}_i)$ in $b_i$ batches}
+                {
+                    $\hat{\bm{X}}_{i,S}, \hat{\bm{Z}}_i \gets g(w^g_{t,i}; \bm{X}_i, \bm{E})$
+
+                    $\bm{R}_i \gets {\rm LM}({\rm concat}(\hat{\bm{X}}_{i,S} || \hat{\bm{Z}}_i))$ 
+
+                    $\hat{\bm{Y}}_i \gets p(w^p_{i,t}; \bm{R}_n) $
+
+                    $loss \gets || \bm{Y}_i - \hat{\bm{Y}}_i||_2^2$
+                    
+                    Update $w^g_{t,i}$ and $w^p_{i,t}$ via gradient descent.
+
+                }
+            }
+            $w^p_{i,t+1} \gets w^p_{i,t} $
+            \begin{spacing}{1.0}
+                \KwRet $w^g_{t,i}$
+            \end{spacing}
+
+	}
+
+\end{multicols}
+\end{algorithm}
+
+ 
+         
+            
+                
+
+                    
+
+            
+
+
+
+Experiments
+\label{experiments}
+We comprehensively compare the proposed \textsc{Time-FFM} with state-of-the-art models in FL or centralized settings, especially those by fine-tuning LM for time series forecasting. The numerical results demonstrate the effectiveness of \textsc{Time-FFM} in time series forecasting.
+We employ GPT2 backbone of the first 6 layers as the default LM backbone and freeze all parameters. 
+To guarantee a fair comparison, we adhere to the experimental configurations in \cite{liu2024unitime}.
+
+\textbf{Baselines.} Our baselines cover a board collection of relevant methods, which can be categorised into 3 types: \textbf{TY1} (\textit{federated fine-tuning methods}): FedIT \cite{zhang2024towards}, FedAdapter$^{\rm H}$ \cite{houlsby2019parameter,sun2022conquering}, and FedAdapter$^{\rm P}$ \cite{pfeiffer2021adapterfusion,sun2022conquering};
+\textbf{TY2} (\textit{across-dataset centralized methods}): UniTime \cite{liu2024unitime}, GPT4TS \cite{zhou2024one}, and PatchTST \cite{nie2022time}; \footnote{Here we modify the original GPT4TS and PatchTST as per \cite{liu2024unitime}.}
+\textbf{TY3} (\textit{dataset-specific centralized methods}): TimesNet \cite{wu2022timesnet}, DLinear \cite{zeng2023transformers}, FEDformer \cite{zhou2022fedformer}, Autoformer \cite{wu2021autoformer}, and Informer \cite{zhou2021informer}.
+We directly cite the results from \cite{liu2024unitime} if applicable.
+
+\textbf{Setups.} We evaluate on 8 benchmark datasets from various domains: ETTh1, ETTh2, ETTm1, ETTm2, Electricity, Weather, Exchange, and ILI, which have been widely adopted for evaluating time series forecasting performance.
+Each dataset corresponds to a FL participant.
+ 
+We use Mean Square Error (MSE) and Mean Absolute Error (MAE) as the evaluation metrics.
+
+\subsection{Main Results}
+Main forecasting results are presented in Table \ref{main}. 
+\textsc{Time-FFM} consistently outperforms the other FL methods (in \textbf{TY1}) on all datasets, except ETTh2. Specifically, \textsc{Time-FFM} can improve the performance gains over all datasets by 39.01\% in terms of MSE, compared with the second best-performed FL method.
+Furthermore, the averaged prediction results of \textsc{Time-FFM} are even superior to those of the centralized models. 
+When compared with UniTime, the recently-proposed centralized unified model for cross-domain time series forecasting, \textsc{Time-FFM} can provide more performance gains, which underscores the effectiveness of the proposed cross-modality adaption modules and personalized approach.
+\begin{table}[htbp]
+  \tiny
+  \centering
+  \tabcolsep=0.03cm
+  \renewcommand\arraystretch{1.2}
+  \caption{Forecasting performance comparisons. 
+  All results are averaged over four prediction windows, i.e., $F_i \in \{ 24, 36, 48, 60\}$ for ILI and \{ 96, 192, 336, 720\} for others. 
+  \colorbox{best}{Yellow}: the best in \textbf{TY1}; \colorbox{second}{Blue}: the second best in \textbf{TY1}. \textbf{\underline{Underline}}: the best over all types; \textbf{Bold}: the second best over all types. Full results are presented in Table \ref{add-main}.
+  }
+    \begin{tabular}{c|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc}
+    \toprule
+    Type  & \multicolumn{8}{c|}{\textbf{TY1}}                              & \multicolumn{6}{c|}{ \textbf{TY2}} & \multicolumn{10}{c}{ \textbf{TY3}} \\
+    \midrule
+    Method & \multicolumn{2}{c|}{\textsc{Time-FFM}} & \multicolumn{2}{c|}{FedIT} & \multicolumn{2}{c|}{FedAdapter$^{\rm H}$} & \multicolumn{2}{c|}{FedAdapter$^{\rm P}$} & \multicolumn{2}{c|}{UniTime} & \multicolumn{2}{c|}{GPT4TS} & \multicolumn{2}{c|}{PatchTST} & \multicolumn{2}{c|}{TimesNet} & \multicolumn{2}{c|}{DLinear} & \multicolumn{2}{c|}{FEDformer} & \multicolumn{2}{c|}{Autoformer} & \multicolumn{2}{c}{Informer} \\
+    \midrule
+    Metric & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE   & MSE   & MAE \\
+    \midrule
+    ETTh1 & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{0.442}  & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.434} } & \cellcolor[rgb]{ .557,  .663,  .859}0.481  & \cellcolor[rgb]{ .557,  .663,  .859}0.461  & 0.488  & 0.467  & 0.503  & 0.479  & \textbf{0.442}  & \textbf{0.448}  & 0.502  & 0.461  & 0.472  & 0.451  & 0.458  & 0.450  & 0.456  & 0.452  & \textbf{\underline{0.440} } & 0.460  & 0.496  & 0.487  & 1.040  & 0.795  \\
+    \midrule
+    ETTh2 & 0.382  & 0.406  & \cellcolor[rgb]{ .557,  .663,  .859}\textbf{0.374 } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.396} } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.373} } & \cellcolor[rgb]{ .557,  .663,  .859}\textbf{0.398 } & 0.380  & 0.403  & 0.378  & 0.403  & 0.386  & 0.406  & 0.398  & 0.416  & 0.414  & 0.427  & 0.559  & 0.515  & 0.437  & 0.449  & 0.450  & 0.459  & 4.431  & 1.729  \\
+    \midrule
+    ETTm1 & \cellcolor[rgb]{ 1,  .851,  .4}0.399  & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{0.402 } & 0.644  & 0.517  & 0.643  & \cellcolor[rgb]{ .557,  .663,  .859}0.511  & \cellcolor[rgb]{ .557,  .663,  .859}0.640  & 0.516  & \textbf{0.385 } & \textbf{\underline{0.399} } & 0.551  & 0.483  & 0.971  & 0.629  & \textbf{\underline{0.383} } & 0.406  & 0.403  & 0.407  & 0.448  & 0.452  & 0.588  & 0.517  & 0.961  & 0.734  \\
+    \midrule
+    ETTm2 & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.286} } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{0.332 } & 0.297  & 0.341  & \cellcolor[rgb]{ .557,  .663,  .859}0.295  & \cellcolor[rgb]{ .557,  .663,  .859}0.340  & 0.298  & 0.342  & 0.293  & 0.334  & 0.321  & 0.356  & 0.340  & 0.373  & \textbf{0.291 } & \textbf{\underline{0.322} } & 0.350  & 0.401  & 0.305  & 0.349  & 0.327  & 0.371  & 1.410  & 0.810  \\
+    \midrule
+    Electricity & \cellcolor[rgb]{ 1,  .851,  .4}0.216  & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{0.299 } & 0.390  & 0.478  & 0.408  & 0.489  & \cellcolor[rgb]{ .557,  .663,  .859}0.334  & \cellcolor[rgb]{ .557,  .663,  .859}0.420  & 0.216  & 0.305  & 0.251  & 0.338  & 0.221  & 0.311  & \textbf{\underline{0.193} } & \textbf{\underline{0.295} } & \textbf{0.212 } & 0.300  & 0.214  & 0.327  & 0.227  & 0.338  & 0.311  & 0.397  \\
+    \midrule
+    Weather & \cellcolor[rgb]{ 1,  .851,  .4}0.270  & \cellcolor[rgb]{ 1,  .851,  .4}0.288  & \cellcolor[rgb]{ .557,  .663,  .859}0.282  & 0.310  & \cellcolor[rgb]{ .557,  .663,  .859}0.282  & \cellcolor[rgb]{ .557,  .663,  .859}0.308  & 0.287  & 0.309  & \textbf{\underline{0.253} } & \textbf{\underline{0.276} } & 0.293  & 0.309  & 0.304  & 0.323  & \textbf{0.259 } & \textbf{0.287 } & 0.265  & 0.317  & 0.309  & 0.360  & 0.338  & 0.382  & 0.634  & 0.548  \\
+    \midrule
+    Exchange & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.338} } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.391} } & 0.389  & 0.423  & 0.382  & 0.419  & \cellcolor[rgb]{ .557,  .663,  .859}0.380  & \cellcolor[rgb]{ .557,  .663,  .859}0.417  & 0.364  & \textbf{0.404 } & 0.421  & 0.446  & 0.411  & 0.444  & 0.416  & 0.443  & \textbf{0.354 } & 0.414  & 0.519  & 0.500  & 0.613  & 0.539  & 1.550  & 0.998  \\
+    \midrule
+    ILI & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{2.107} } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.924} } & \cellcolor[rgb]{ .557,  .663,  .859}4.423  & \cellcolor[rgb]{ .557,  .663,  .859}1.448  & 5.247  & 1.621  & 5.251  & 1.600  & \textbf{2.137 } & \textbf{0.929 } & 3.678  & 1.372  & 4.210  & 1.480  & 2.139  & 0.931  & 2.616  & 1.090  & 2.847  & 1.144  & 3.006  & 1.161  & 5.137  & 1.544  \\
+    \midrule
+    Average  & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.555} } & \cellcolor[rgb]{ 1,  .851,  .4}\textbf{\underline{0.434} } & \cellcolor[rgb]{ .557,  .663,  .859}0.910  & \cellcolor[rgb]{ .557,  .663,  .859}0.547  & 1.015  & 0.569  & 1.009  & 0.561  & \textbf{0.559 } & \textbf{0.437 } & 0.800  & 0.521  & 0.916  & 0.553  & 0.569  & 0.445  & 0.652  & 0.487  & 0.690  & 0.505  & 0.756  & 0.532  & 1.934  & 0.944  \\
+    \midrule
+    {$1^{\rm st}$ Count}& \multicolumn{2}{c|}{{{8}} } & \multicolumn{2}{c|}{1 } & \multicolumn{2}{c|}{1 } & \multicolumn{2}{c|}{0 } & \multicolumn{2}{c|}{3 } & \multicolumn{2}{c|}{0 } & \multicolumn{2}{c|}{0 } & \multicolumn{2}{c|}{{4} } & \multicolumn{2}{c|}{0 } & \multicolumn{2}{c|}{1 } & \multicolumn{2}{c|}{0 } & \multicolumn{2}{c}{0 } \\
+    \bottomrule
+    \end{tabular}%
+  \label{main}%
+\end{table}%
+
+\subsection{Few-Shot Forecasting}
+Given the remarkable few-shot learning performance of LMs, we evaluate w
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,249 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:introduction}
+
+3D object detection, as a fundamental task in the 3D scene, has made significant progress. It aims to recognize and localize objects from point clouds and paves the way for several real applications like autonomous driving~\citep{kitti}, robotic system\citep{3dssd}, and augmented reality~\citep{ar}.
+
+The structure of point clouds is sparse, unordered, and semantically deficient, making it difficult to encode point features like highly structured image features. To eliminate this barrier, voxel-based methods are proposed to organize the overall point cloud as neatly distributed voxels. Therefore, the naive 3D convolution or its efficient variant, \emph{i.e.}, 3D sparse convolution~\citep{second}, can be used to extract voxel features like image processing manner. Although the voxel-based methods bring convenience to the processing of point cloud, they are prone to drop detail information, making it inescapable to suffer from suboptimal performance. Another stream of methods are point-based methods~\citep{3dssd,sasa,ia_ssd} inspired from PointNet++~\citep{pointnetpp}. They employ a series of operations, \emph{i.e.}, farthest point sample (FPS), query, and grouping, to directly extract informative features from the naive point cloud. However, the straightforward pipeline is cumbersome and costly. 3D-SSD~\citep{3dssd} first propose a single stage architecture, \emph{i.e.}, using encoder-only architecture, which replaces the geometric Distance-based FPS (D-FPS) with the Feature similarity-based FPS (F-FPS) to recall more foreground point features and further discard feature propagation (FP) layers for reducing latency. Although eliminating the overhead of FP layer, F-FPS operations still occupy vast latency. IA-SSD~\citep{ia_ssd} further proposes a contextual centroid prediction module to replace F-FPS, which directly predicts the classification scores of each point and adopts efficient top-k operation to further recall more foreground, and further cut computation overhead.
+
+The current advanced designs mainly credit to efficient foreground recall, but they may still have redundancy in the other parts like the background points or the network structure. In this paper, we conduct several empirical analyses of IA-SSD~\citep{ia_ssd} on two representative benchmarks, \emph{i.e.}, KITTI~\citep{kitti} and Waymo~\citep{waymo}, to uncover the full picture of its inference speed bottleneck. 
+We first calculate the latency distribution of all detector modules to figure out which parts are the main speed bottlenecks.
+Then we count the ratio of background points and the scale distribution of all objects to further explore potential redundancy clues over the cumbersome modules.
+Our study reveals three valuable points: (1) MLP network occupies over half latency. (2) Tremendous spatial redundancy exists in background point features that appear in each stage of the detector. (3) The size of each object is varying, making it unusable to align each receptive field of the conventional multi-scale grouping (MSG) and suffering from branch redundancy in MSG.
+The above valuable finding motivates us to further build a more efficient detector with higher speed by reducing the redundant background points and blocking useless MSG branches. As shown in Fig.~\ref{fig:overall}, we propose Dynamic Ball Query (DBQ) to replace the vanilla ball querying module, where the vanilla ball querying means the sampling technique proposed by PointNet++~\citep{pointnetpp}. It dynamically activates useful and compact point features, and blocks redundant background point features for each branch of MSG. For each point feature sampled by FPS or top-k classification score, we design a dynamic query multiplexer to determine which branch to go through. Specifically, we apply a light-weight MLP network for point features to predict N masks corresponding to N branches of MSG, where the value of the mask is $\{0, 1\}$ corresponding to blocking and activating states. The overall dynamic router procedure is data-driven so that the point features are adaptively activated or blocked with a suitable combination among all receptive fields of MSG. Ultimately, we introduce a resource budget loss for DBQ to learn a trade-off between latency and performance.
+
+To verify the efficiency of our method, we conduct extensive experiments on three typical datasets, \emph{i.e.}, KITTI~\citep{kitti}, Waymo~\citep{waymo}, ONCE~\citep{once}. Our Dynamic Ball Query enables the 3D detector to cut the latency from 9.85 ms (102 FPS) to 6.172 ms (162 FPS) on KITTI scene and speed up the inference speed from 20 FPS to 30 FPS on Waymo and ONCE scene while keeping the comparable performance. In particular, some evaluation metrics show significant improvements.
+
+
+Related Work
+\label{sec:related_work}
+
+\subsection{3D Detectors}
+The task of 3D detection is to predict 3D bounding boxes and class labels for each object in a point cloud scene. The detection algorithms can be split into voxel-based~\citep{voxelnet,second,pointpillars,sassd} and point-based~\citep{pointrcnn,3dssd,sasa,ia_ssd} methods. Voxel-based methods convert the point cloud into regular voxels or pillars, making it natural to apply 3D convolution or its sparse variant~\citep{second} for feature extraction. This regular partition method may lead to detailed information lost, so point-based methods are proposed to directly process vanilla point cloud. Inspired by PointNet++~\citep{pointnetpp} and Faster R-CNN~\citep{fasterrcnn}, PointRCNN~\citep{pointrcnn} employs SA and FP layers to extract feature for each point and designs a region proposal network (RPN) to produce proposals, and utilizes an extra stage of the module to predict bounding boxes and class labels. 
+In addition, PV-RCNN~\citep{pvrcnn} integrates voxel and point features to the RPN for generating higher-quality proposals. Pyramid R-CNN~\citep{pyramidrcnn} introduces a pyramid RoI head with learnable radii to boost accuracy at the expense of latency overhead. In contrast, our method aims to achieve more efficient inference by adaptively selecting the network branches for each input point.
+Other efforts are similar to single-stage 2D detectors~\citep{retinanet,fcos,wang2021end,song2019tacnet,zhang2019glnet}. 3DSSD~\citep{3dssd} and IA-SSD~\citep{ia_ssd} discard the region proposal network and use encoder-only architecture to localize 3D objects. Our work focus on dynamically dropping the redundant background point features for single-stage point-based detector, which is rarely researched in previous works. Our method endows the detector with super inference speed.
+
+\subsection{Efficient 3D Point-based Detectors}
+The point-based methods need to process large-scale vanilla point features, which requires to build cumbersome models and suffers expensive computation costs. Therefore, several works~\citep{3dssd,sasa,ia_ssd} aim at designing a lightweight and effective point-based detector. 3DSSD~\citep{3dssd} proposes a feature-based fastest point sampling (F-FPS) strategy by measuring the similarity of point features to replace the geometric distance of D-FPS~\citep{pointnetpp}. The policy makes it reasonable to discard FP layers since F-FPS can recall more foreground points instead of compensating for foreground information by cumbersome FP layers. Even so, the F-FPS operation suffers from high complexity bottleneck. IA-SSD introduces a contextual centroid prediction module for replacing the F-FPS operation to efficiently recall more foreground points. It predicts the classification score for each point feature and applies the efficient top-k operation to all points ordered by category independent scores. Instead of focusing on the foreground part by efficient sampling policies, we explore the spatial redundancy of background points. We introduce a dynamic network mechanism to adaptively reduce useless background points in a data-dependent regime.
+
+\subsection{Dynamic Network}
+Dynamic networks target to adaptively change the structure of networks and parameters in a data-driven manner. In the field of model automation designing, dynamic network mechanism is used to drop blocks~\citep{wu2018blockdrop,huang2017multi,mullapudi2018hydranets,wang2018skipnet}, pruning channels~\citep{lin2018accelerating,you2019gate,jiang2018human}, adjusting layer-level scales~\citep{li2020learning, yang2020resolution} and changing spatial typologies~\citep{song2019learnable,song2020rethinking}. DRNet~\citep{li2020learning} aims at learning an automatic scale transformation for a feature pyramid network in the semantic segmentation scene. 
+Switch Transformer~\citep{fedus2021switch} employs the Mixture of Experts (MoE)~\citep{shazeer2017outrageously} model to choose different parameters for each input data. Deformable convolution~\citep{dai2017deformable} learns a convolution of arbitrary shapes by predicting an offset for each parameter. Dynamic Grained Encoder~\citep{song2021dynamic} adopts a dynamic gate mechanism to select the spatial granularity of input query in the transformer network. Dynamic Convolution~\citep{verelst2020dynamic}, Dynamic Head~\citep{song2020fine} focus on learning a sparse mask for network to discard redundant image features. In this paper, we focus on 3D detection on point cloud scenes and aim at designing a point-wise dynamic network to drop redundant background points.
+
+\begin{figure}[t]
+\subfigure[Latency]{
+    \includegraphics[width=0.28\linewidth]{Figures/latency.pdf}
+    \label{fig:motivation_1}
+    }
+    \subfigure[Background ratio]{
+    \includegraphics[width=0.36\linewidth]{Figures/background_ratio.pdf}
+    \label{fig:motivation_2}
+    }
+    \subfigure[Scale distribution]{
+    \includegraphics[width=0.305\linewidth]{Figures/gt_scale.pdf}
+    \label{fig:motivation_3}
+    }
+\centering
+\caption{Statistics of latency, background ratio, and size distribution on both KITTI \emph{val}~\citep{kitti} and Waymo \emph{val}~\citep{waymo} sets. (a) reveals that the MLP network occupies the largest latency. "Q \& G" means query and grouping operation. (b) reflects that redundant background points significantly dominate the input points of each stage. (c) means the distribution on varying object sizes (measuring in $\sqrt[3]{volume}$, where $volume$ is the volume of ground truth).}
+\label{fig:motivation}
+\end{figure}
+
+
+
+Analysis and Motivation
+\label{sec:analysis}
+
+To explore what hampers the higher speed for 3D detection task, we conduct several experiments on both KITTI \emph{val} and Waymo \emph{val} sets with the state-of-the-art point-based 3D-detector~\citep{ia_ssd}. To establish a strong baseline, we split the point cloud into four parallel parts to speed up the first FPS operation. We first measure the \emph{latency} on each detector module. As shown in Fig.~\ref{fig:motivation_1}, the MLP network occupies the major part of the overall time overhead, \emph{i.e.,} 6.44 ms (65.4\%) and 28.56 ms (56.5\%) on KITTI and Waymo scenes, respectively. Therefore, optimizing the cumbersome and costly MLP network is a top priority for building an efficient detector. 
+
+Decreasing the input scale of points or network parameters is a natural and empirical manner for reducing the latency but the policies are prone to damage the performance. To avoid both notorious drawbacks, we attempt to analyze the redundancy of background points in each backbone stage. As shown in Fig.~\ref{fig:motivation_2}, it indicates that the number of background points (point features) dominates the proportion of over 70\% at any network level. The phenomenon reveals that significant redundancy exists in background points which may be discarded for speeding up the detection procedure.
+
+Going one step further, we point out that the conventional multi-scale grouping (MSG) operation~\citep{pointnetpp} of the set abstraction (SA) layer may be also redundant. As shown in Fig.~\ref{fig:motivation_3}, it reflects that the size of each object varies in either KITTI or Waymo scenes. Therefore, the given receptive field of MSG may not entirely align with the size of objects. In this regime, some grouping branches of MSG are useless. The valuable observation motivates us to choose optimal grouping branches, which can further make the detector efficient.
+
+
+
+Dynamic Ball Querying
+\label{method}
+
+\begin{figure}[t]
+\includegraphics[width=\linewidth]{Figures/overall.png}
+\centering
+\caption{The pipeline of dynamic ball query in a set abstraction layer. `NS' indicates
+the nearest sampling, which samples the query features from the input features. The query multiplexer generates gating masks to adaptively select a subset of input queries for each group. The remap operator is used to map the sparse features to the dense form.}
+\label{fig:overall}
+\end{figure}
+
+Our DBQ-SSD framework is established on the efficient IA-SSD framework, which adopts set abstraction (SA) layers to encode point features.
+To achieve a better balance between effectiveness and efficiency, we introduce the dynamic network mechanism into the IA-SSD framework. 
+Specifically, we propose Dynamic Ball Querying (DBQ) to replace the vanilla ball querying in each set of abstraction layer, which is shown in Fig.~\ref{fig:overall}.
+It is able to adaptively select a subset of input points as queries and extract local features in a suitable spatial radius.
+Dynamic ball querying is a generic module which can be easily embedded into the encoder blocks in mainstream point-based 3D detection frameworks.
+
+Given an input point sequence $\mathbf{x_c}\in {\mathbb{R}^{N\times 3}}$ with the corresponding features $\mathbf{x_f}\in {\mathbb{R}^{N\times C}}$, $N$ denotes the length of sequence and $C$ indicates the number of feature channels.
+Besides, the coordinate sequence of input queries is denoted as $\mathbf{q_c}\in {\mathbb{R}^{N_q\times 3}}$, where $N_q$ is the number of queries.
+For efficiency, most previous point-based methods~\citep{3dssd,ia_ssd} use Farthest Point Sampling (FPS) or its variants ({\em e.g.,} dividing point cloud by multiple parallel parts to reduce computational complexity) to generate the query points. For each query, the vanilla ball querying samples a predefined number of local points within a specific spatial radius.
+Since different object instances require different receptive fields, in a set abstraction layer, the previous 3D detectors~\citep{3dssd,ia_ssd} typically adopt multiple groups of vanilla ball querying with different radii to increase feature diversity.
+
+Specifically, for one set abstraction layer, we define the set of predefined radii as $R=\{r_k\}^K$ and the number of sampling points as $\Phi=\{\phi_k\}^K$, where $K$ indicates the number of groups.
+Based on these, we establish a set of $K$ vanilla ball querying blocks.
+As shown in Fig.~\ref{fig:overall}, our dynamic ball querying is made up of a query multiplexer and a set of vanilla ball querying blocks.
+Similar to the gate-based dynamic networks~\citep{song2021dynamic,wang2018skipnet,li2020learning}, the query multiplexer adopts a fine-grained routing process to select a suitable combination of vanilla ball querying blocks for each query.
+
+\subsection{Inference}
+For an input query $i\in \{1, 2, ..., N_q\}$ with coordinate $\mathbf{q_c}(i)$, we first obtain the corresponding query feature according to its coordinate for the query multiplexer.
+The query feature can be used as the basis for dynamic decisions.
+Specifically, we adopt the nearest sampling technique to obtain its representation from the features of input points. Albeit the sampling process with more sample points, {\em e.g.}, top-k sampling, and ball gathering, can lead to a slight performance gain, it causes a significant decrease in efficiency.
+The top-k sampling indicates choosing a set of points with the smallest distance under a specific metric.
+Additionally, ball gathering means sampling and concatenating features according to the coordinates of points.
+The previous variants of ball querying employ heuristic and hand-designed rules.
+Different from them, the routing process of our query multiplexer is performed in a data-dependent way.
+To achieve it, we aggregate input features for each query from the nearest input point and predict the gating logits for each query by a linear projection:
+\begin{equation}
+    \mathbf{h}(i) = \mathbf{x_f}(\mathop{\arg\min}_{j} \left \|\mathbf{q_c}(i) - \mathbf{x_c}(j) \right \|)\mathbf{W} + b\in \mathbb{R}^{1\times K},
+\end{equation}
+where $\mathbf{W}\in \mathbb{R}^{C\times K}$ and $b\in \mathbb{R}^{1\times K}$ denotes the weight and bias, respectively. Moreover, the binary gating masks for the $i$-th query and the $k$-th group are generated by quantizing the gating logits:
+\begin{equation}
+    \mathbf{m}(i,k) = \mathrm{step}(\mathbf{h}(i,k)),~\mathrm{where}~\mathrm{step}(\mathbf{h}(i,k))=\begin{cases}
+ & 1 ,\text{ if } \mathbf{h}(i,k)\geq 0 \\ 
+ & 0 ,\text{ if } otherwise
+\end{cases}
+\end{equation}
+The gating masks control which ball querying group is enabled, {\em i.e.}, the group with a positive mask value is enabled and vice versa.
+Based on this, we can adaptively reduce the number of queries and obtain the coordinates of sparse queries for each group:
+\begin{equation}
+\label{eq:sparse_select}
+    \hat{\mathbf{q_c}}(k) = \{\mathbf{q_c}(i) | \mathbf{m}(i, k) \neq 0, \forall i \in {1, 2, ..., N_q}\}, \forall k \in \{1,2,...,K\},
+\end{equation}
+Furthermore, the sparse coordinates are used to guide the vanilla ball querying with corresponding settings to generate the sparse query features.
+Following the conventional protocols in the PointNet-like methods, the sparse query features are then transformed by the predefined MLP layers and max pooling operator:
+\begin{equation}
+    \mathbf{\hat{z}}(k) = \textrm{MaxPool}(\textrm{MLP}_k(\textrm{VanillaBallQuery}(\hat{\mathbf{q_c}}(k) ;\mathbf{x_c},\mathbf{x_f},r_k,\phi_k))),
+\end{equation}
+To fuse the sparse transformed features in different groups, we remap them into the dense form according to the gating mask.
+The remap operator is similar to the unpooling process, which projects each enabled feature to the original position and fills zero to the disabled positions.
+The output feature of the SA layer are then blended by summation:
+\begin{equation}
+    \mathbf{y_f} = \sum_{k\in\{1, ..., K\}} \mathbf{z}(k),~\mathrm{where} ~\mathbf{z}(k)={\textrm{Aggregation}_k(\textrm{Remap}(\mathbf{\hat{z}}(k);\mathbf{h}))},
+\end{equation}
+where the $\textrm{Aggregation}_k$ is a linear layer, which is used to transform the features in different groups into the same dimension.
+
+\subsection{Training}
+Since the sparse selection in Eq.~\ref{eq:sparse_select} is non-differentiable, it is nontrivial for the dynamic ball querying to enable fully end-to-end training.
+To achieve it, we replace the determined decisions in Eq.~\ref{eq:sparse_select} with a stochastic sampling process.
+Concretely, we consider the gating logits unnormalized log probabilities under the Bernoulli distribution.
+To this end, with noise samples $g$ and $g'$ drawn from a standard Gumbel distribution~\citep{gumbel1954statistical}, a discrete gating mask can be yielded:
+\begin{equation}
+\label{eq:theta_gumbel}
+\mathbf{m}(i,k) = \mathrm{step}(\mathbf{h}(i,k)+g-g'),~\mathrm{where}~g, g'\sim \mathrm{Gumbel}(0, 1).
+\end{equation}
+To enable end-to-end training, we use the Gumbel-Sigmoid technique~\citep{gumbel1954statistical} to give a differentiable approximation for the Eq.~\ref{eq:theta_gumbel} by replacing the hard step function with the soft sigmoid function.
+The likelihood of the $i$-th query in $k$-th group being selected is:
+\begin{equation}
+\label{eq:p}
+\mathbf{\pi}(i,k)=\frac{\exp({(\mathbf{h}(i,k)+g)/\tau})}{\exp({(\mathbf{h}(i,k)+g)/\tau})+\exp(g'/\tau)} \in [0, 1],
+\end{equation}
+where $\tau$ is the temperature coefficient. 
+In the training phase, we use the Eq.~\ref{eq:theta_gumbel} as the gating mask to select the sparse queries and employ a straight-through estimator~\citep{bengio2013estimating,verelst2020dynamic} to obtain the gradients of gating logits:
+\begin{equation}
+\label{eq:output}
+\mathbf{y_f}(i)=\left\{
+\begin{array}{lcl}
+\sum_k^K\mathbf{z}(i, k) &      & {\mathrm{forward}}\\
+\sum_k^K\pi(i,k)\cdot \mathbf{z}(i, k) &      & {\mathrm{backward}}\\
+\end{array} \right. 
+\end{equation}
+
+\subsection{Latency Constraint}
+Without latency constraint, dynamic ball querying typically enables more queries for each group to obtain high accuracy.
+To achieve a better balance between effectiveness and efficiency, we introduce the latency constraint as a training target to reduce the inference time.
+Different from the computational complexity employed in many previous dynamic networks~\citep{song2021dynamic,wang2018skipnet,li2020learning}, the latency can represent the actual runtime in specific devices.
+To this end, we first establish a latency map for each group in each SA layer, which records the latency with regard to the number of queries.
+Based on this, we can calculate the latency ratio of all the SA layers with dynamic ball querying:
+\begin{equation}
+\Psi = \frac{\sum_{l}\sum_{k}\Psi_{l, k}(\sum_{i}{\mathbf{m}^l(i,k))})}{\sum_{l}\sum_{k}\Psi_{l, k}(N^l_q)},
+\end{equation}
+where $\Psi_{l, k}$ indicates the latency map of $k$-th group in $l$-th layer. Finally, the latency is constrained by using the Euclidean distance to design a budget loss, thus the total loss is:
+
+\begin{equation}
+\label{eq:loss}
+\mathcal{L}=\mathcal{L}_{\mathrm{tasks}}+\lambda \mathcal{L}_{\mathrm{budget}},~\mathrm{where}~\mathcal{L}_{\mathrm{budget}}=|\Psi-\gamma|.
+\end{equation}
+
+For simplicity, the objective latency budget $\gamma$ is set to 0 in all experiments. The hyper-parameter $\lambda$ is used to scale the budget loss. In addition, if the input is batched format, $\Psi$ needs to be averaged along the batch dimension to estimate the average overhead of the network.
+
+\begin{figure}[t]
+    \subfigure[Performance \& Latency]{
+    \includegraphics[width=0.475\linewidth]{Figures/fig_fps.pdf}
+    \label{fig:res_Performance}
+    }
+    \subfigure[Layer ($\lambda=0.1$)]{
+    \includegraphics[width=0.475\linewidth]{Figures/latency_ratio.pdf}
+    \label{fig:res_Layer}
+    }
+    \subfigure[Activation ($\lambda=0.1$)]{
+    \includegraphics[width=0.475\linewidth]{Figures/activate_ratio.pdf}
+    \label{fig:res_Activation}
+    }
+    \subfigure[Group ($\lambda=0.1$)]{
+    \includegraphics[width=0.465\linewidth]{Figures/group_ratio.pdf}
+    \label{fig:res_Group}
+    }
+\centering
+\caption{Illustration of the effects on Dynamic Ball Query. All experiments are evaluated on KITTI {\em val} set. $\lambda$ is the scale parameter of resource budget loss in Eq.~\ref{eq:loss}. Latency here is evaluated by a single RTX2080Ti GPU with a batch size of 16. (a) reports the comparison on both accuracies of {\em Car} class and overall latency distribution. (b) indicates the latency reduction of query \& grouping operation and MLP network in different SA layers. (c) reflects the activation distribution of point features in different SA layers. (d) shows the proportion of point features go through different groups of MSG. "Small" and "Large" means activating on group branches with small and large radii respectively. "Kill" represents blocking all groups, while "Small \& Large" means going through all scales of groups.}
+\label{fig:res}
+\end{figure}
+
+
+
+Experiment
+
+\subsection{Setting}
+\paragraph{Dataset} We evaluate our detector on two representative datasets: KITTI dataset~\citep{kitti} and Waymo dataset~\citep{waymo}. KITTI dataset includes 7,481 training point clouds/images and 7,518 test point clouds/images. The KITTI scene contains three classes, \emph{i.e.}, {\em Car}, {\em Pedestrian}, and {\em Cyclist}. 
+Waymo scene contains 798 training, 202 validation, and 150 testing sequences with three classes of {\em Vehicle}, {\em Pedestrian}, and {\em Cyclist}. Each sequence includes nearly 200 frames with a 360-degree lidar point cloud. 
+
+\paragraph{Evaluation metrics.} For KITTI scene, we report the performance of all classes by measuring the average precision (AP) metric. Follow most of state-of-the-art methods, we adopt 0.7, 0.5, and 0.5 of the IoU thresholds for {\em Car}, {\em Pedestrian}, and {\em Cyclist}, respectively. In addition, three levels of difficulty (“Easy”, “Moderate”, and “Hard”) are also reported. To evaluate Waymo, we use the official metrics, Average Precision (AP) and Average Precision weighted by Heading (APH), and report the performance on LEVEL 1 (L1) and LEVEL 2 (L2) difficulty levels.
+
+\paragraph{Implementation Details}
+Following the stream of single-stage point-based methods, we use encoder-only architecture like \citep{3dssd,sasa,ia_ssd}. Specially, we split the point features into four parallel fan parts to speed up D-FPS of the first sampling layer, which will be acted as the “Efficient Baseline”. Other sampling layers follow the default setting of \citep{ia_ssd}. We employ two groups of each MSG with different radius ([0.2, 0.8], [0.8, 1.6], [1.6, 4.8], [4.8, 6.4]) to aggregate point features. We set the temperature $\tau=1$ for all the experiments. 
+
+\subsection{Evaluation on KITTI Dataset}
+We randomly sample 16,384 points from the overall point cloud per single view frame. We train our model by ADAM~\citep{adam} optimizer with onecycle learning strategy~\citep{cycle}. The batch size is set to 16 with 8 GPUs. The initial learning rate is 0.01 and is decayed by 0.1 at 35 and 45 epochs.
+
+\paragraph{Dynamic vs Static} To verify the efficiency of our method, we first report the performance and latency on KITTI scene. As shown in Fig.~\ref{fig:res_Performance}, our detector achieves super speed while maintaining comparable performance with other detectors. When $\lambda$ is set to 0.1, the performance surpasses the efficient baseline. Therefore, we set the scale parameter to 0.1 for all experiments by default. As increasing the supervision of resource budget loss, the speed is further improved to 223 FPS. The impressive results show that our method endows point-based 3D detector with efficient detection capability. Going one step further, we report the reduction of latency on two revenue modules, {\em i.e.}, query \& grouping operation, and MLP network. As shown in Fig.~\ref{fig:res_Layer}, our method cut the considerable overhead of both in different SA layers. It verifies that adaptively turning off useless points by DBQ can speed up the computation of both modules.
+\begin{figure}[t]
+\includegraphics[width=\linewidth]{Figures/vis.pdf}
+\centering
+\caption{Visualization results on KITTI {\em val} set. The 3D boxes in the figures are the prediction boxes. Green, cyan, and yellow represent {\em Car, Pedestrian, and Cyclist}. Red and white points represent activation and blocking points, respectively. "Small" and "Large" means the scale of group in MSG, and the digital in parentheses is the index of SA layer.}
+\label{fig:vis}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Performance of dynamic gating with different routing manners on KITTI {\em val} set. The scale parameter $\lambda$ is set to 0.1. ``Layer'' indicates controlling an entire SA layer. ``Share'' means whether to share masks to all groups. ``Point'' indicates using point-wise routing instead of layer-wise routing.}
+\resizebox{0.9\textwidth}{!}{
+\begin{tabular}{c|ccc|ccc|ccc|ccc|c}
+\toprule
+\multirow{2}{*}{Dynamic} & \multicolumn{3}{c|}{Routing} & \multicolumn{3}{c|}{3D Car (IoU=0.7)} & \multicolumn{3}{c|}{3D Pedestrian (IoU=0.5)} & \multicolumn{3}{c|}{3D Cyclist (IoU=0.5)} & Latency\\
+~ & Layer & Share & Point & Easy & Moderate & Hard & Easy & Moderate & Hard & Easy & Moderate & Hard & (FPS)\\
+\midrule
+\XSolidBrush & - & - & - & 88.89 & 79.17 & 77.96 & 61.01 & 58.11 & 52.62 & 84.83 & 69.29 & 65.72 & 102\\
+\midrule
+\multirow{3}{*}{\Checkmark} & \Checkmark  & & & 89.19 & 79.33 & 78.31 & 61.32 & 58.60 & 52.75 & 85.81 & 70.77 & 66.04 & 120 \\
+~ & & \Checkmark & \Checkmark & 87.28 & 77.34 & 76.29 & 60.43 & 56.79 & 51.45 & 84.83 & 68.88 & 65.12 & \textbf{165}\\
+~ & & & \Checkmark & \textbf{89.60} & \textbf{79.56} & \textbf{78.51} & \textbf{61.57} & \textbf{58.82} & \textbf{53.11} & \textbf{85.92} & \textbf{71.03} & \textbf{66.33} & 162\\
+\bottomrule
+\end{tabular}}
+\label{tab:gate}
+\end{table}
+
+\paragraph{Activation and Blocking Points} To explore which points are activated or blocked, we conduct quantitative and qualitative experiments using visualization and statistics respectively. Fig.~\ref{fig:res_Activation} counts the activation ratios of point features in different layers. It indicates that a considerable large part of points is discarded.
+Next, we dip into visualization results to figure out the reason for the quantitative results. As shown in Fig.~\ref{fig:vis}, the deeper the network goes, the blocking point ratio is larger. This is because it learns rich semantic information to judge useful foreground and redundant background points when going deeper into the network. As for the early layer, high-level semantic knowledge is difficult to extract. Therefore, the model is hard to make decisions to block out background points. In general, it reflects clearly that the most activating points (red points) in the deeper layer are distributed around objects, while other points away from the objects are blocked.
+It reveals that our method discards most redundant background points which may be useless for the localization and classification of objects, making it reasonable for the detector to speed up inference. The remaining foreground points and surrounding points are used to support the structure of objects and enrich context information. Therefore, our method does not damage the performance of detection. It echoes our analysis in Sec.~\ref{sec:analysis}.
+
+\paragraph{Routing Manner and Branch Redundancy} Tab.~\ref{tab:gate} compares the effectiveness between layer-wise and point-wise routing manner. During inference, the layer-
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

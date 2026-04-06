@@ -1,0 +1,178 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Multi-Modal Continual Test-Time Adaptation for 3D Semantic Segmentation
+
+% ArXiv ID: 2303.10457
+
+
+
+
+\hbadness=2000000000
+\vbadness=2000000000
+\hfuzz=100pt
+
+\setlength{\abovedisplayskip}{1.5pt}
+\setlength{\belowdisplayskip}{1.5pt}
+\setlength{\textfloatsep}{10pt plus 1.0pt minus 1.0pt}
+\newcolumntype{a}{>{\columncolor{Gray}}m{1.3em}}
+
+\setlength{\parskip}{0pt}
+
+\title{Multi-Modal Continual Test-Time Adaptation for 3D Semantic Segmentation}
+
+\author{Haozhi Cao, Yuecong Xu, Jianfei Yang, Pengyu Yin, Shenghai Yuan, Lihua Xie\\
+School of Electrical and Electronic Engineering, Nanyang Technological University, Singapore\\
+50 Nanyang Avenue, Singapore 639798\\
+{\tt\small \{haozhi002, xuyu0014, yang0478, pengyuu001, syuan003\}@e.ntu.edu.sg, elhxie@ntu.edu.sg}
+}
+
+\maketitle
+\ificcvfinal\thispagestyle{empty}\fi
+
+
+\begin{abstract}
+Continual Test-Time Adaptation (CTTA) generalizes conventional Test-Time Adaptation (TTA) by assuming that the target domain is dynamic over time rather than stationary. In this paper, we explore Multi-Modal Continual Test-Time Adaptation (MM-CTTA) as a new extension of CTTA for 3D semantic segmentation. The key to MM-CTTA is to adaptively attend to the reliable modality while avoiding catastrophic forgetting during continual domain shifts, which is out of the capability of previous TTA or CTTA methods. To fulfill this gap, we propose an MM-CTTA method called Continual Cross-Modal Adaptive Clustering (CoMAC) that addresses this task from two perspectives. On one hand, we propose an adaptive dual-stage mechanism to generate reliable cross-modal predictions by attending to the reliable modality based on the class-wise feature-centroid distance in the latent space. On the other hand, to perform test-time adaptation without catastrophic forgetting, we design class-wise momentum queues that capture confident target features for adaptation while stochastically restoring pseudo-source features to revisit source knowledge. We further introduce two new benchmarks to facilitate the exploration of MM-CTTA in the future. Our experimental results show that our method achieves state-of-the-art performance on both benchmarks.
+\end{abstract}
+
+\section{Introduction}
+Test-Time Adaptation (TTA) proposes a realistic domain adaptation scenario, which adapts pre-trained models to the target domain during the testing process. Unlike previous Unsupervised Domain Adaptation (UDA) \cite{hoffman2018cycada,wu2019squeezesegv2,zou2019confidence,xu2022aligning}, TTA performs adaptation online without accessing the data from the source domain. Typical TTA \cite{wang2020tent,shin2022mm,su2022revisiting} methods assume a stationary target domain, while real-world scenarios are dynamic over time. To fulfill this gap, a previous work \cite{wang2022continual} proposes a general extension of TTA named Continual Test-Time Adaptation (CTTA) which assumes that the target domain is continually changing rather than static. Compared to TTA, CTTA is more challenging since the performance is easily affected by error accumulation \cite{chen2019progressive} and catastrophic forgetting \cite{mccloskey1989catastrophic} during the continual adaptation.
+
+\begin{figure}[t]
+\centering{
+\includegraphics[width=.9\linewidth]{Intro_1_v2.pdf}}
+\caption{Illustration of how continual domain shifts affect multi-modal segmentation and our method. Unlike the source domain where predictions from both modalities are reliable, the reliability of each modality varies in MM-CTTA due to different domain shifts. CoMAC tackles MM-CTTA by attending to the reliable modality (\textcolor{blue}{\cmark}) rather than the noisy one (\textcolor{red}{\xmark}). Meanwhile, source knowledge is stochastically revisited to avoid catastrophic forgetting. Figure best viewed in color and zoomed in.}
+\label{Fig:Intro}
+\end{figure}
+
+For 3D semantic segmentation, multi-modal sensors are frequently leveraged in different tasks, such as scene understanding \cite{bultmann2023real,mccormac2018fusion} and semantic map construction \cite{mccormac2017semanticfusion,wang2021multi}. For some specific applications like semantic-based localization \cite{chen2019suma++} and autonomous driving \cite{xu2021rpvnet, wu2018squeezeseg}, multi-modal information is the key to robust performance under adverse conditions. However, their collaboration has been proven to be sensitive toward domain drifts \cite{bayoudh2021survey,shin2022mm}. In real-world scenarios, such collaboration deterioration could be more severe considering that the target domain is continually changing as in CTTA (e.g., the operating environments of 24/7 AGVs are continually changing due to altering weather or illumination conditions). Hence, it is essential for multi-modal networks to adapt to the dynamic target domain in an online manner. In this work, we aim to study Multi-Modal Continual Test-Time Adaptation (MM-CTTA) for 3D semantic segmentation, where networks are continually adapted to a changing target domain taking 3D point clouds and 2D images as input without accessing the source data.
+
+Intuitively, one can address MM-CTTA by utilizing CTTA \cite{niu2022efficient,wang2022continual} or TTA \cite{boudiaf2022parameter,sun2020test} methods on 2D and 3D networks separately. However, this simple extension can not achieve satisfactory performance since it cannot correctly attend to the reliable modality for adaptation when others suffer from severe domain shifts. Take Fig.~\ref{Fig:Intro} as an example: predictions from the 2D image are more accurate at the beginning of the target domain, while 2D results become unreliable and 3D predictions prevail as the illumination level significantly changes over time. Although previous CTTA or TTA methods have attempted to mitigate this intra-modal prediction noise by augmentations \cite{wang2022continual} or entropy minimization \cite{wang2020tent,niu2022efficient}, the domain drift in Fig.~\ref{Fig:Intro} is too severe to be effectively rectified by image input itself, leading to inevitable error accumulation. Previous works have proposed different cross-modal fusion methods to mitigate the effect of the noisy modality during adaptation, such as cross-modal consistency \cite{jaritz2020xmuda} for UDA or pseudo-label fusion based on student-teacher consistency \cite{shin2022mm} for TTA. However, their methods rely on the premise that the target domain is static, and therefore suffer from catastrophic forgetting in MM-CTTA, leading to degenerated results.
+
+
+For MM-CTTA, an ideal solution is to suppress the contribution from the noisy modality and attend more to the reliable one in an online manner. Typically, the reliability of prediction can be estimated based on its corresponding feature location in the latent space. A prediction with features close to the centroid is more likely to be reliable, suffering less from the domain shift and vice versa. On the other hand, to ensure the validity of centroid-based reliability estimation, class-wise centroids should actively adapt to the continually changing target domain while stochastically revisiting the source knowledge to avoid catastrophic forgetting. To this end, we propose an MM-CTTA method called \textbf{C}ontinual Cr\textbf{o}ss-\textbf{M}odal \textbf{A}daptive \textbf{C}lustering (CoMAC) for 3D semantic segmentation. CoMAC consists of three main modules: (i) Intra-Modal Prediction Aggregation (iMPA), (ii) Inter-Modal Pseudo-Label Fusion (xMPF), and (iii) Class-Wise Momentum Queues (CMQs). On one hand, the proposed iMPA and xMPF are utilized to suppress prediction noise based on the centroid-based reliability estimation from intra-modal and inter-modal perspectives, respectively. On the other hand, CMQs are designed to actively adapt class-wise centroids for iMPA and xMPF while avoiding catastrophic forgetting. Additionally, a class-wise contrastive loss is introduced to regularize the extracted features from drifting too far from centroids.
+
+
+In summary, our main contributions are three-fold. (i) We explore a new task MM-CTTA where multi-modal input is utilized to perform continual test-time adaptation for 3D semantic segmentation and propose an effective method named CoMAC to leverage multi-modal information for MM-CTTA. (ii) We propose iMPA and xMPF to generate accurate cross-modal pseudo-labels by attending to a reliable modality. CMQs are introduced to actively adapt to the target domain without catastrophic forgetting. (iii) We introduce two 3D semantic segmentation benchmarks to facilitate the future exploration of MM-CTTA. Extensive experiments show that our method achieves state-of-the-art performance, outperforming previous methods significantly by $6.9\%$ on the challenging benchmark.
+
+\section{Related Works}
+\textbf{Test-Time Adaptation}
+Describing a more realistic adaptation scenario, Test-Time Adaptation (TTA) is receiving more and more attention. Different from previous Unsupervised Domain Adaptation (UDA), TTA forbids access to raw source data and adapts the source pre-trained model during test time. As one of the primary works, TENT \cite{wang2020tent} highlights the fully test-time setting and proposes to update the batch normalization layers by entropy minimization. The following works mainly address TTA by aligning batch normalization statistics \cite{niu2022efficient,lim2023ttn,zhao2023delta}, self-training with pseudo labeling \cite{goyaltest, wang2022towards}, feature alignment \cite{liu2021ttt++}, or augmentation invariance \cite{zhang2021memo,kundu2022balancing}. The aforementioned TTA methods strictly follow the one-pass protocol as mentioned in \cite{su2022revisiting}, where networks immediately infer each sample in an online manner and forbid multiple training epochs. On the other hand, some previous works \cite{liang2020we,fleuret2021uncertainty,chen2022contrastive,xu2022source} follow the multi-pass protocol by adapting the model for multiple epochs in an offline manner. As one of the primary works, Source Hypothesis Transfer (SHOT) \cite{liang2020we} proposes to update only the encoder parameters and align source and target representation by entropy minimization and pseudo-labeling. While most existing TTA methods are proposed for image classification, some recent works \cite{fleuret2021uncertainty, kundu2021generalize, liu2021source} aim to explore TTA for image semantic segmentation. Specifically, \cite{fleuret2021uncertainty} proposes to minimize the prediction entropy while maximizing its robustness toward feature noise. \cite{kundu2021generalize} divides the TTA problem into source domain generalization and target domain adaptation. \cite{liu2021source} proposes a dual attention distillation method to transfer contextual knowledge and patch-level pseudo labels for self-supervised learning.
+
+\textbf{Continual Test-Time Adaptation}
+The definition of Continual Test-Time Adaptation (CTTA) is first proposed in CoTTA\cite{wang2022continual}, which aims to adapt the model to continually changing target domains in an online manner without any source data. Specifically, CoTTA proposes to use the moving teacher model and augmentation-average predictions for noise suppression and the model stochastic restoration to avoid catastrophic forgetting. Following the scheme of CoTTA, some recent works \cite{gan2022decorate,gongnote,niu2022efficient} have addressed CTTA from different perspectives. Specifically, \cite{gongnote} leverages the temporal correlations of streamed input by reservoir sampling and instance-aware batch normalization. \cite{gan2022decorate} proposes domain-specific prompts and domain-agnostic prompts to preserve domain-specific and domain-shared knowledge, respectively. EATA \cite{niu2022efficient} performs adaptation on non-redundant samples for an efficient update.
+
+\textbf{Multi-Modal Adaptation for Segmentation}
+Thanks to the emerging multi-modal datasets \cite{behley2019semantickitti,caesar2020nuscenes,sun2020scalability,ros2016synthia,yang2022deep}, recent works start to explore how to leverage multi-modal information between 2D images and 3D point clouds to perform domain adaptation under different settings. xMUDA \cite{jaritz2020xmuda} proposes the first Multi-Modal Unsupervised Domain Adaptation (MM-UDA) method for 3D semantic segmentation. Specifically, it leverages the cross-modal prediction consistency by minimizing the prediction discrepancy from additional classifiers. Following the scheme of cross-modal learning, DsCML \cite{peng2021sparse} designs a deformable mapping between pixel-point correlation for MM-UDA while \cite{liu2021adversarial} introduces adversarial training to mitigate domain discrepancy. In addition to UDA settings, \cite{shin2022mm} proposes the first multi-modal test-time adaptation for semantic segmentation which generates intra-modal and inter-modal pseudo labels by attending to the one with more consistent predictions across student and teacher models. 
+
+In this work, we propose MM-CTTA as a new extension of CTTA with a specific method CoMAC. While our proposed dual-stage modules (i.e., iMPA and xMPA) and CMQs share some similar merit with previous TTA methods \cite{shin2022mm,su2022revisiting}, our method is explicitly designed for MM-CTTA. Unlike previous work \cite{shin2022mm} measuring prediction reliability by teacher-student consistency, our reliability measurement relies on the feature-centroid distance to encourage feature clustering around the adapting centroids. Different from \cite{su2022revisiting} utilizing queues to measure target distribution, the objective of our CMQs is to actively update class-wise centroids to ensure the validity of iMPA and xMPA while avoiding catastrophic forgetting.
+
+\begin{figure*}[t]
+\centering{
+\includegraphics[width=.83\textwidth]{Main_Method.pdf}}
+\caption{The main structure of our proposed method. From the source domain, we preserve the source centroids and the pre-trained model for each modality as the initialization of the class-wise centroids and all the models in the target domain, respectively. To generate reliable intra-modal predictions, Intra-Modal Prediction Aggregation (iMPA) attends to the reliable prediction whose feature shares a closer distance with the class-wise centroids in an intra-modal manner. Inter-Modal Pseudo-Label Fusion (xMPF) then fuses the intra-modal predictions by estimating the reliability of predictions from each modality for noise suppression. Class-Wise Momentum Queues (CMQs) are designed to achieve a good balance between target domain adaptation and source knowledge preservation.}
+\label{Fig:Main_Method}
+\vspace{-1em}
+\end{figure*}
+
+\section{Proposed Method}
+\textbf{Problem definition and notations}. At timestamp $t$, the 2D image $x_{\mathcal{T},t}^{\textrm{2D}} \in \mathbb{R}^{H\times W\times 3}$ and the 3D point cloud $x_{\mathcal{T},t}^{\textrm{3D}} \in \mathbb{R}^{N\times4}$ are observed in the target domain $\mathcal{T}$, where $N$ denotes the number of 3D points located in the camera FOV. Modal-specific pre-trained networks $\phi_{\theta,t}^{m}(\cdot)=f^{m}_t(g^{m}_t(\cdot)),m\in \{\textrm{2D},\textrm{3D}\}$ consisting of the feature extractor $f^{m}_t$ and the classifier $g^{m}_t$ are used to predict the semantic labels for each point. Inspired by the fact that moving average models can provide more stable predictions \cite{tarvainen2017mean}, we utilize a fast student network $\phi_\theta^m(\cdot)=f^{m}_\theta(g^{m}_\theta(\cdot))$ and a slow teacher network $\phi_{\theta'}^m(\cdot)=f^{m}_{\theta'}(g^{m}_{\theta'}(\cdot))$ for each modality similar to previous works \cite{shin2022mm,wang2022continual}. Given $x_{\mathcal{T},t}^{m}$ as input, the features extracted by $f^{m}_t$ is denoted as $z^{m}_{\mathcal{T},t}\in\mathcal{R}^{N\times F^m}$, where $F^m$ denotes the channel number. Here we adopt the same projection protocol of previous works \cite{jaritz2020xmuda,shin2022mm} for cross-modal alignment, which projects features from the 2D branch back to 3D points, resulting in the 2D feature $z^{\textrm{2D}}_{\mathcal{T},t}$ of shape $N\times F^{\textrm{2D}}$. By default, the subscript of the target domain $\mathcal{T}$ and the timestamp $t$ are omitted for clarity. Given the multi-modal input $x_{\mathcal{T},t}^{\textrm{2D}}$, $x_{\mathcal{T},t}^{\textrm{3D}}$, the goal of MM-CTTA is to output reliable cross-modal predictions by continuously adapting to the changing target domain. In this work, we interpret the core of MM-CTTA as two-fold: (i) attending to the reliable modality for noisy suppression, and (ii) revisiting source knowledge to prevent catastrophic forgetting.
+
+To this end, we propose Continual Cross-Modal Adaptive Clustering (CoMAC) to tackle MM-CTTA from the aforementioned perspectives. Specifically, as shown in Fig.~\ref{Fig:Main_Method}, the class-wise centroids are initialized from the source domain and pseudo-source features are randomly sampled around the centroids as source knowledge (Sec.~\ref{Section: Method-Init}). Given the raw and augmentation-average predictions from the teacher models as input, Intra-Modal Prediction Aggregation (iMPA) generates stable intra-modal predictions as their weighted sum based on their feature distance to the class-wise centroids (Sec.~\ref{Section: Method-iMPA}). Inter-Modal Pseudo-Label Fusion (xMPF) then combines the intra-modal predictions from each modality based on their reliability and output cross-modal pseudo-labels as supervision signals for student networks (Sec.~\ref{Section: Method-xMPF}). Given raw samples as input, confident target features from student networks are utilized to update Class-Wise Momentum Queues (CMQs), while pseudo-source features are stochastically restored to avoid catastrophic forgetting (Sec.~\ref{Section: Method-CMQ}). 
+
+\subsection{Source Models and Class-Wise Centroids}\label{Section: Method-Init}
+To effectively avoid catastrophic forgetting and inspired by previous TTA methods \cite{EasMasWilSch21,su2022revisiting} which preserve trivial source domain information, we utilize pseudo-source features sampled around source offline feature centroids as source representatives. The source offline centroids and pseudo-source features are treated as the prior knowledge from the source domain, which plays an essential role in preventing catastrophic forgetting detailed in Sec.~\ref{Section: Method-CMQ}. Specifically, given a specific semantic category $k$, the corresponding source offline centroid is modeled as Gaussian distribution, and pseudo-source features are denoted as:
+\begingroup
+\allowdisplaybreaks
+\begin{align}
+C_{src}^{m,k} &= \mathcal{N}(\mu_{src}^{m,k}, \sigma_{src}^{m,k}),\label{Equation:offline_centroids}\\
+\mathcal{Z}^{m,k}_{src} &= \{z^{m,k}_{src,i}\sim C_{src}^{m,k}\mid i\in [1,N_q]\},\label{Equation:Pseudo_Source}
+\end{align}
+\endgroup
+where $N_q$ is the number of pseudo-source features. $\mu_{src}^{m,k}$ and $\sigma_{src}^{m,k}$
+denote the mean and standard deviation of normalized source features from the category $k$, respectively. Here we use the features generated by the pre-trained extractor $g_0^m(\cdot)$ for the centroid construction.
+
+\subsection{Intra-Modal Prediction Aggregation}\label{Section: Method-iMPA}
+In MM-CTTA, the prediction from each modality could be unreliable due to continual domain shifts, causing severe noise to the multi-modal fusion. To mitigate the intra-modal noise, iMPA aims to generate reliable intra-modal predictions for each modality. Although previous methods \cite{wang2022continual, sun2020test} regard the augmentation-average prediction as a more stable alternative, we argue that its superiority is not certain since test-time augmentations may introduce inductive bias to the prediction \cite{shanmugam2021better} (e.g., resizing image as in \cite{wang2022continual} could cause ambiguity to small-scale classes). Unlike the previous work \cite{wang2022continual}, we propose an adaptive mechanism to fuse the raw and the augmentation-average prediction as the weighted sum based on their feature distance between class-wise centroids. Given the input sample $x^m$ and its augmented variants $\{\widetilde{x}^m_i\mid i\in[1,N^m_{aug}]\}$, the features and predictions are extracted by the teacher model $\phi_{\theta'}^m$ as:
+\begingroup
+\allowdisplaybreaks
+\begin{align}
+p(x^m) &= f^m_{\theta'}(g^m_{\theta'}(x^m)) = f^m_{\theta'}(z^m),\label{Equation:Teacher_Inf_Start}\\
+\widetilde{p}(x^m) &= \frac{1}{N^m_{aug}}\sum_{i=1}^{N^m_{aug}}f^m_{\theta'}(g^m_{\theta'}(\widetilde{x}^m_i)),\label{Equation:Teacher_Inf_End}
+\end{align}
+\endgroup
+where $p(x^m)$ and $\widetilde{p}(x^m)$ represent the raw and the augmentation-average prediction, respectively. Both predictions are of shape $N\times N_c$, where $N_C$ is the number of classes and $N^m_{aug}$ denotes the number of augmentations. The normalized augmentation-average feature is computed as $\widetilde{z}^m=\sum_{i=1}^{N^m_{aug}}g^m(\widetilde{x}^m_i)/(\|g^m(\widetilde{x}^m_i)\|\cdot N^m_{aug})$. Subsequently, the weights for predictions $p(x^m), \widetilde{p}(x^m)$ are computed based on their corresponding feature distance to the class-wise centroid in a point-wise manner, so that each point of the intra-modal prediction $\hat{p}(x^m)$ can attend more to the confident prediction located closer to the cluster in the latent space. Taking a point $(j)$ as an example, given its predictions $p_{(j)}(x^{m})$, $\widetilde{p}_{(j)}(x^{m})$ and features $z^{m}_{(j)}$, $\widetilde{z}^{m}_{(j)}$:
+\begingroup
+\allowdisplaybreaks
+\begin{align}
+w^{m}_{(j)} &= \frac{\exp(\langle \mu^{m,k}, z^{m}_{(j)}\rangle)}{\sum_{i\in N_c}\exp(\langle \mu^{m,i},z^{m}_{(j)}\rangle)},\label{Equations:iMPA-start} \\
+\widetilde{w}^{m}_{(j)} &= \frac{\exp(\langle \mu^{m,\widetilde{k}},\widetilde{z}^{m}_{(j)} \rangle)}{\sum_{i\in N_c}\exp(\langle \mu^{m,i},\widetilde{z}^{m}_{(j)} \rangle)},\\
+\hat{p}_{(j)}(x^m) &= \frac{w^{m}_{(j)} p_{(j)(x^m)} + \widetilde{w}^{m}_{(j)} \widetilde{p}_{(j)}(x^m)}{w^{m}_{(j)} + \widetilde{w}^{m}_{(j)}},\label{Equations:iMPA-end}
+\end{align}
+\endgroup
+where $w^{m}_{(j)}$, $\widetilde{w}^{m}_{(j)}$ are termed as the raw weight and augmentation-average weight, respectively. $k$, $\widetilde{k}$ are the largest element locations of $p_{(j)}(x^m)$, $\widetilde{p}_{(j)}(x^m)$. $\mu^{m,k}$ denotes the mean of class $k$ centroid, which is actively updated as shown in Sec.~\ref{Section: Method-CMQ}. $\langle a,b \rangle$ represents the inner product of vectors $a$ and $b$. Our empirical results show that this adaptive fusion between the raw and augmentation-average predictions results in more stable intra-modal predictions.
+
+\subsection{Inter-Modal Pseudo-Label Fusion}\label{Section: Method-xMPF}
+Given the output of iMPA, the goal of xMPF is to generate pseudo-labels by estimating their reliability in a cross-modal manner. Since domain shifts can affect the reliability of each modality variously (e.g., images in day and night), the cross-modal pseudo-label should adaptively attend to the reliable modality for noise suppression. Motivated by this idea, the proposed xMPF generates the cross-modal pseudo-labels as the weighted sum of intra-modal predictions from iMPA. Specifically, taking point $(j)$ as an example, the inter-modal weight $\hat{w}^m_{(j)}$ is computed as the summation of both weights if their corresponding predictions indicate the same class, or the maximum one otherwise. This can be viewed as an implicit way to encourage point-wise prediction consistency for each modality. Formally, the inter-modal weight $\hat{w}^m_{(j)}$ is computed as follows:
+\begin{equation}\label{Equation:Weight_xMPF}
+\hat{w}^m_{(j)}=\begin{cases}
+w^{m}_{(j)} + \widetilde{w}^{m}_{(j)},\ \ \textrm{if} \ \ k=\widetilde{k}\\
+\max(w^{m}_{(j)}, \widetilde{w}^{m}_{(j)}),\ \ \textrm{if} \ \ k\neq\widetilde{k}
+\end{cases}.
+\end{equation}
+The cross-modal prediction is then computed as the weighted sum in a cross-modal manner:
+\begingroup
+\allowdisplaybreaks
+\begin{align}
+\hat{p}^{\textrm{xM}}_{(j)}(x) &= \frac{\hat{w}^{\textrm{2D}}_{(j)} \hat{p}^{\textrm{2D}}_{(j)}(x) + \hat{w}^{\textrm{3D}}_{(j)} \hat{p}^{\textrm{3D}}_{(j)}(x)}{\hat{w}^{\textrm{2D}}_{(j)} + \hat{w}^{\textrm{3D}}_{(j)}},\\
+\hat{y}_{(j)} &= \arg \max_{k\in N_c}(\hat{p}^{\textrm{xM}}_{(j)}(x)^{(k)}),\label{Equation:xMPsLabel}
+\end{align}
+\endgroup
+where $\hat{p}^{\textrm{xM}}_{(j)}(x)$, $\hat{y}_{(j)}$ denote the cross-modal prediction and pseudo-label, respectively. The cross-modal pseudo-label can therefore attend to the more reliable modality with confident intra-modal predictions.
+
+\subsection{Class-Wise Moving Queues}\label{Section: Method-CMQ}
+Both iMPA and xMPF greatly depend on the quality of class-wise centroids. Initialized from the source offline centroids as in Eq.~\ref{Equation:offline_centroids}, the class-wise centroids should continually adapt to the target domain to ensure the validity of iMPA and xMPF. Meanwhile, the source knowledge should be occasionally played back during the centroid adaptation so that it can be revisited during the reliability estimation in iMPA and xMPF without catastrophic forgetting. To achieve a balance between adaptation and source knowledge preservation, we propose CMQs which utilize momentum queues \cite{he2020momentum} to actively estimate feature clustering of the target domain by capturing confident target features while stochastically restoring pseudo-source features for each modality. Specifically, the CMQ of the class $k$ is initialized by the pseudo-source features $\mathcal{Z}^{m,k}_{src}$ as in Eq.~\ref{Equation:Pseudo_Source}. For each iteration, taking the raw sample as input, the normalized point features from the student network $\phi_\theta^m$ with confident predictions are preserved by threshold-based filtering. Given the CMQ of class $k$ from the previous step denoted as $\mathcal{\hat{Q}}_{t-1}^{m,k}$, the CMQ of current step is updated as:
+\begingroup
+\allowdisplaybreaks
+\begin{align}
+\mathcal{Z}_{cf}^{m,k} &= \mathbbm{1}^k_{cf}[g_\theta^m(x^m)/\|g_\theta^m(x^m)\|],\label{Equation:CMQ_Start} \\
+\mathcal{\widetilde{Q}}_{t}^{m,k} &= \Phi(\mathcal{\hat{Q}}_{t-1}^{m,k}, \mathcal{Z}_{cf}^{m,k}),\\
+\mathcal{\hat{Q}}_{t}^{m,k} &= \begin{cases}
+\mathcal{\widetilde{Q}}_{t}^{m,k}, &\textrm{if} \ \ \gamma_t> p_{rs}\\
+\Phi(\mathcal{\hat{Q}}_{t-1}^{m,k}, \mathbbm{1}^{k}_{rs}\mathcal{Z}^{m,k}_{src}), &\textrm{if} \ \ \gamma_t\leq p_{rs}
+\end{cases},
+\end{align}
+\endgroup
+where $\mathbbm{1}^k_{cf}$ is the confidence index for class $k$ where $\mathbbm{1}^k_{cf}\phi_\theta^m(x^m)^{(k)}\geq\tau_{cf}$ and $\mathbbm{1}^{k}_{rs}$ denotes the source restoring index which randomly samples $N_{enq}$ pseudo-source features from $\mathcal{Z}^{m,k}_{src}$. $\Phi(a,b)$ denotes the operation of enqueuing $b$ in $a$ as in \cite{he2020momentum}. $\gamma_t$ is a restoring flag uniformly sampled from $[0,1]$ at timestamp $t$ and $p_{rs}$ denotes the hyper-parameter of restoring probability. Different from the image classification problem which can capture all confident samples \cite{su2022revisiting}, the number of confident points from each class can be huge (i.e., more than 1,000), which is too aggressive and expensive to enqueue all points. Therefore, we limit the index number of $\mathbbm{1}^{k}_{cf}$ by an upper bound $N_{enq}$ through selecting features with the top $N_{enq}$ confident predictions.
+
+For each optimization step, the mean of the class-wise centroid for the next step $\mu_{t+1}^{m,k}$ is updated as the average of CMQ of the current timestamp $\mathcal{\hat{Q}}_{t}^{m,k}$ so that the class-wise centroids can adapt to the feature clustering of target domain without catastrophic forgetting. Additionally, we propose a class-wise contrastive loss modified from \cite{khosla2020supervised} as a regularizer so that the target confident features can revisit source knowledge through clustering around the class-wise centroids. Specifically, given any confident target feature from Eq.~\ref{Equation:CMQ_Start} as the anchor, the positive samples are the features from the CMQ that shares the same modality and semantic class, denoted as $P(k)=\{\hat{q}_p \mid \hat{q}_p\in \mathcal{\hat{Q}}_t^{m,k}\}$. The negative samples are the features from the CMQs of the same modality but different classes denoted as $A(k)=\{\hat{q}_n \mid \hat{q}_n\in \mathcal{\hat{Q}}_t^{m,a}, \forall a\neq k \bigcap a\in N_c\}$. The class-wise contrastive loss $\mathcal{L}^m_{cts}$ is computed as:
+\begingroup
+\begin{align}
+\mathcal{L}_{cts}^m = &\sum_{i\in |\mathcal{Z}_{cf}^{m,k}|} \frac{-1}{|P(k)|}\nonumber \\
+&\sum_{q_p\in P(k)}\frac{\exp{(\hat{z}_{t,(i)}^{m,k} \cdot q_p)}}{\sum_{q_n\in N(k)}\exp{(\hat{z}_{t,(i)}^{m,k} \cdot q_n)}}.\label{Equation:CMQ_End}
+\end{align}
+\endgroup
+
+\begin{algorithm}[t]
+\SetKwInput{kwModelInit}{Init Model}
+\SetKwInput{kwCMQInit}{Init CMQ}
+\DontPrintSemicolon
+\SetInd{0.2em}{0.2em}
+\kwModelInit{Teacher $\phi_{\theta'}^m$, student $\phi_{\theta}^m$, $m\in\{\text{2D},\text{3D}\}$} \kwCMQInit{$\mathcal{\hat{Q}}_{0}^{m,k}=\mathcal{Z}^{m,k}_{src}$, $m\in\{\text{2D},\text{3D}\}, k\in N_c$}
+\For{$t\in|\mathcal{X}_{\mathcal{T}}|$, $x=(x^{\text{2D}},x^{\text{3D}})\in\mathcal{X}_{\mathcal{T}}$}{
+\For{$m\in\{\textrm{2D},\textrm{3D}\}$}{
+1. Augmented input to get $\{\widetilde{x}^m_{i} \mid i\in N^m_{aug}\}$\;
+2. Get predictions and features with $\phi_{\theta'}^m$ by Eq.~\ref{Equation:Teacher_Inf_Start}-\ref{Equation:Teacher_Inf_End}\;
+3. Get intra-modal $\hat{p}^m(x^m)$ by iMPA through Eq.~\ref{Equations:iMPA-start}-\ref{Equations:iMPA-end}\;
+}
+4. Get inter-modal $\hat{y}$ by xMPF through Eq.~\ref{Equation:Weight_xMPF}-\ref{Equation:xMPsLabel}\;
+5. Update CMQs and compute $\mathcal{L}^m_{cts}$ by Eq.~\ref{Equation:CMQ_Start}-\ref{Equation:CMQ_End}\;
+6. Update $\phi_{\theta}^m$ by Eq.~\ref{Equation:Total_Loss} and $\phi_{\theta'}^m$ by Eq.~\ref{Equation:Teacher_Update}\;
+}
+\caption{The proposed CoMAC}\label{Algorithm:PsCode}
+\end{algorithm}
+
+\subse
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,170 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:introduction}
+
+Recently, transformer architectures originated from natural language processing (NLP)~\citep{vaswani2017attention} demonstrate considerable capacity in computer vision~\citep{dosovitskiy2020image,touvron2021training,liu2021swin}. Vision transformers, along with traditional convolutional neural networks (CNNs)~\citep{krizhevsky2012imagenet,he2016deep,simonyan2014very}, are widely used as feature extractors to generate strong and general visual representations via deriving knowledge from massive images. Thanks to the abundant information in such representations, we can adapt the pre-trained models to downstream tasks by a simple fine-tuning strategy.
+
+However, fine-tuning is not a good solution for adaptation. As is well known, the scale of vision models grows faster and faster in recent years. On the one hand, fine-tuning which tunes all parameters in such a huge model easily falls into an overfitting situation, leading to inferior performance. On the other hand, fine-tuning inflicts heavy storage burdens. Since fine-tuning intensively tunes all parameters, it maintains a full copy of the model's parameters for each task. Therefore, fine-tuning can cause a huge storage burden when there are many tasks to be adapted, resulting in impracticality in real-world scenarios, especially in resource-constrained situations, \eg, embedded systems.
+
+Efforts have been made to improve the performance as well as reduce the storage overhead of fine-tuning. For example, adapter~\citep{houlsby2019parameter,karimi2021compacter}, prompt tuning~\citep{li2021prefix,lester2021power,zhou2021learning} and LoRA~\citep{hu2021lora} inject tunable parameters and freeze the backbone during adaptation. In the vision field, VPT~\citep{jia2022vpt} directly leverage learnable prompts, AdaptFormer~\citep{chen2022adaptformer} adopts parallel adapter, NOAH~\citep{zhang2022noah} searches for the optimal combinations of the three representative modules, \ie, adapter, LoRA, and VPT, and SSF~\citep{lian2022ssf} use additional scaling and shifting parameters for adaptation. Despite their acceptable performance, existing methods suffer from two common conflicts: 1. trade-off between the inference efficiency and the adaptation performance, and 2. trade-off between the adaptation performance and the number of stored parameters. Previous works~\citep{houlsby2019parameter} show that introducing more tunable parameters can achieve more fruitful results. However, extra parameters can bring significantly larger computation and storage cost, resulting in low inference efficiency and more storage space. Therefore, one essential question is raised: \textit{can we design a module that can share the same inference cost as an ordinary model while enjoying superior capacity against existing methods}?
+
+In this paper, we propose a generic module, dubbed consolidator, to tackle the aforementioned issues. The proposed consolidator is designed as a mergeable adapter that accompanies the fully connected (FC) layer in the vision models. Specifically, to enrich the model capacity under a limited parameter budget, we take inspiration from the success of group-wise convolution~\citep{howard2017mobilenets,ma2018shufflenet,liu2022convnet} and build our consolidator as grouped connected (GC) layers. To enhance the flexibility, we further reorder channels for each group connection, followed by a droppath regularizer. Benefiting from the inference-time linearity of GC, channel reorder, and droppath operations, the proposed consolidator can be perfectly consolidated into the original FC layer of a vision model, leading to no extra inference cost.
+
+Our consolidator can be easily expanded as a multi-branch topology without breaking the linearity. Practically, we can simultaneously equip several GC layers with channel reordering for communications between different groups of feature channels. After adaptation, we can first consolidate the multi-branch GC layers into one single sparse parameter matrix and store the sparse matrix for each task. Such property can enhance the model's transferability and achieve a considerable storage reduction when the number of tasks scales up. During inference, such a sparse parameter matrix can be merged into the backbone model as well, resulting in no inference cost. Thanks to the twice consolidation, the proposed consolidator can greatly promote efficient and effective visual adaptation.
+
+To verify the superiority of consolidator, we conduct extensive experiments and analysis on a series of downstream recognition tasks. Experimental results show that our consolidator can surpass full fine-tuning by 7.56 top-1 accuracy with merely 0.35\% parameters per task. Compared to state-of-the-art methods, such as NOAH, AdaptFormer and SSF our method can consistently reach better performance while enjoying no inference cost. On other fundamental visual tasks, \ie, object detection and semantic segmentation, our consolidator shows great power as well. 
+Overall, we summarize our contributions as follows. 
+(i) We propose a basic module, dubbed consolidator, for effective and efficient visual transfer learning. To enhance the transferability under limited tunable parameters, our consolidator is designed as a mergeable grouped connected (GC) layer with a channel reorder layer and a droppath regularizer. We extend the single branch to a multi-branch topology for better flexibility and transferability.
+(ii) We design a two-stage consolidation scheme by merging corresponding parameters in the training-storage phase and loading-inference phase. In this way, we can maximally dig the adaptation capacity of the model under a constrained storage budget, with no extra inference cost.
+(iii) We conduct extensive experiments and analysis on various downstream tasks. Results show that the proposed consolidator method can consistently outperform state-of-the-art methods with fewer stored parameters but superior performance.
+
+
+
+Related Works
+\label{related_works}
+
+\textbf{Parameter-efficient transfer learning.} In the language field, works~\citep{houlsby2019parameter,pfeiffer2021adapterfusion,li2021prefix,lester2021power,zaken2021bitfit,hu2021lora,karimi2021compacter,liu2021p,ding2022delta} have been done to efficiently transfer the knowledge of pre-trained transformers to downstream language tasks. In the field of visual adaptation, several explorations have also been made to adapt vision transformers efficiently. \citet{jia2022vpt} and \citet{bahng2022visual} directly apply prompt-tuning. \citet{jie2022convolutional} integrates additional tunable convolution layers. NOAH~\citep{zhang2022noah} first trains a large supernet with three modules, VPT, LoRA, and adapter, and then searches for the optimal configurations of each module for every transformer block using evolution algorithm~\citep{chen2021AutoFormer}. AdaptFormer~\citep{chen2022adaptformer} adds parallel adapters instead of serial ones. SSF~\citep{lian2022ssf} tunes additional scaling and shifting parameters for adaptation. It is also shown that classic methods such as LoRA~\citep{hu2021lora} and adapter~\citep{houlsby2019parameter} can lead to good performance for vision transformers. However, existing methods suffer from the two trade-offs as we discussed in \cref{sec:introduction}, resulting in difficulties in fully digging the adaptation capacity of vision models efficiently. To solve the problems, we present a mergeable adapter, named consolidator, and introduce a two-stage consolidation design to perfectly balance the trade-offs, leading to efficient and effective visual adaptation.
+
+\begin{figure}
+  \begin{subfigure}{\linewidth}
+  \centering
+  \includegraphics[width=0.75\linewidth]{imgs/Consolidator_6x6.pdf}
+  \end{subfigure}
+  \setlength{\belowcaptionskip}{-0.55cm}
+  \caption{Consolidator tuning versus full fine-tuning. Consolidator adds tunable multi-branch grouped connected layers to the original fully connected layers. The tunable parameters are merged via addition into one single sparse matrix before storage to reduce the needed storage space. Between loading and inference, the parameters in the sparse matrix will be merged back into the original fully connected layer. Consolidator greatly enlarges the model's adaptation capacity under a constrained storage budget with no extra inference cost. \textbf{Best viewed in color.}}
+  \label{fig:Consolidator}
+\end{figure}
+
+\textbf{Inference-efficient structures.} Many works~\citep{ding2019acnet,guo2020expandnets,ding2021diverse,ding2021repvgg,ding2021resrep,ding2022scaling31} strive to design a generic convolution architecture to realize superior capacity while enjoying no inference cost. For example, RepVGG~\citep{ding2021repvgg} integrates an extra 1$\times$1 convolution to strengthen the main 3$\times$3 convolution. However, existing methods are typically designed for CNNs. As for the popular vision transformer architectures, rare works investigate how to effectively strengthen their capacity while introducing no extra inference cost. LoRA~\citep{hu2021lora} and SSF~\citep{lian2022ssf} offer possible solutions, but they do not explore the consolidation process between training and storage, leading to inferior performance under a given storage budget.  In this paper, we adopt parallel GC layers to replace the functionality of the original FC layers in vision models, which shows strong abilities for visual adaptation. Furthermore, we expand the existing one-stage training-inference consolidation to a two-stage process: 1. training-storage consolidation, and 2. loading-inference consolidation. Such a two-stage design can maximally dig the adaptation capacity of the pre-trained model under a constrained storage budget, with no extra inference cost. Extensive experiments show that our consolidator can outperform state-of-the-art methods in both the number of tunable parameters and the adaptation performance. 
+
+
+Methodology
+\label{methodology}
+\subsection{Preliminaries}
+
+In this paper, we mainly focus on the adaptation for vision transformers~\citep{dosovitskiy2020image,liu2021swin}. A typical vision transformer~\citep{dosovitskiy2020image} consists of $L$ serial blocks. In each encoder, there are a multi-head self-attention module (MHSA) and a multi-layer perceptron (MLP). Formally, a batch of input images $\textbf{x}_{input}\in \mathbb{R}^{B\times 3\times H\times W}$ will be first reshaped into a sequence of flattened 2D patches $\textbf{x}_{p}\in \mathbb{R}^{B\times N\times(P^{2}\cdot C)}$, where $C$ is the number of channels and $(P,P)$ is the resolution of each patch, and $N=NW/P^{2}$ is the number of patches. Then the patches are mapped to $D$ channel dimensions with a linear projection. Next, a classification token is appended and we can get $\textbf{x}_{1}\in \mathbb{R}^{B\times (N+1)\times D}$. Here we use $\textbf{x}_{l}\in \mathbb{R}^{B\times (N+1)\times D}$ to denote the input of $l$-th ($1\leq l\leq L$) block. Its output $\textbf{x}_{l+1}=\textbf{x}_{l}'+\mbox{MLP}(\mbox{LayerNorm}(\textbf{x}_{l}'))$ where $\textbf{x}_{l}'=\textbf{x}_{l}+\mbox{MHSA}(\mbox{LayerNorm}(\textbf{x}_{l}))$. For MHSA, the input features are first processed by three FC layers to generate matrices $Q,K,V$, and the output is calculated by $\mbox{Softmax}(\frac{QK^T}{\sqrt{d}})V$ and then projected by another FC layer. Therefore, the parametric components of MHSA are four FC layers. The parametric components of MLP are two FC layers as well. Therefore, we formulate our consolidator for the FC layers (see \cref{fig:Consolidator}), covering all the parametric components in each MHSA and MLP. We will show that such a design can realize both efficiency and effectiveness in \cref{sec:experiments}. Notably, our method is also applicable for MLP~\citep{lian2022mlp} and CNN~\citep{liu2022convnet} and can reach good results as in \cref{tab:generalization_experiment}.
+
+\subsection{Consolidator}
+
+For efficient transfer learning, we merely tune and store the parameters in consolidators while freezing other parameters in the pre-trained model. In this subsection, we will introduce our design of consolidator, an efficient and effective module for adapting vision transformers, in detail. 
+
+\textbf{Grouped connections.} Inspired by the success of group convolution in extracting visual features, we hence assume that the cross-channel information exchange is redundant in visual adaptation, and aim to design consolidator by reducing the cross-channel connections between sequential features to minimize the number of stored parameters for downstream tasks while keeping maximum capacity. Therefore, for each FC layer, we add a concurrent module consisting of a grouped connected layer. Formally, for an input $\textbf{x}\in \mathbb{R}^{D}$, the output $\textbf{x}'\in \mathbb{R}^{E}$ of a GC layer with group $g$, weight $\textbf{W}\in \mathbb{R}^{g\times \frac{E}{g}\times \frac{D}{g}}$ and bias $\textbf{b}\in \mathbb{R}^{E}$ is formulated by $\textbf{x}'=\mbox{GC}(\textbf{x})=\sum_{j=1}^{g}{\mbox{Pad}(\textbf{W}_{j}\textbf{x}_{\frac{(j-1)D}{g}:\frac{jD}{g}}, j)}+\textbf{b}$.
+
+Here $\mbox{Pad}(\textbf{z}, j)$ prepends $\frac{(j-1)D}{g}$ zeros and appends $\frac{(g-j)D}{g}$ zeros for $\textbf{z}\in \mathbb{R}^{\frac{E}{g}}$ according to another input $j$. In this way, the output channels in the $j$-th group only interact with the input channels in the $j$-th group, and thus we reduce the cross-channel connections as expected.
+
+To flexibly reach different ratios of stored parameters, we adopt a multi-branch topology in our consolidator. There is a GC layer with weight $\textbf{W}^{(i)}\in \mathbb{R}^{g^{(i)}\times \frac{E}{g^{(i)}}\times \frac{D}{g^{(i)}}}$ and bias $\textbf{b}_{i}\in  \mathbb{R}^{E}$ for $i$-th branch with group $g^{(i)}$. During adaptation, consolidator and the original FC layer take the same input and their outputs are summed up to produce the new output $\textbf{y}$. Formally, for each FC layer with weight $\textbf{W}\in \mathbb{R}^{E\times D}$ and bias $\textbf{b}\in \mathbb{R}^{E}$, the output of the whole layer modified by $m$ GC branches is $\textbf{y}=\textbf{W}\textbf{x}+\textbf{b}+\sum_{i=1}^{m}(\sum_{j=1}^{g^{(i)}}{\mbox{Pad}(\textbf{W}_{j}^{(i)}\textbf{x}_{\frac{(j-1)D}{g^{(i)}}:\frac{jD}{g^{(i)}}}, j)}+\textbf{b}^{(i)})$.
+
+\textbf{Channel reorder.}
+To flexibly tune the total number of parameters and enrich the exchange of information flow, we prepend a ``ChannelReorder'' operation to every branch in our consolidator by manually adjusting the permutation of input features along the channel dimension. In general, we adopt shuffle operation~\citep{zhang2018shufflenet,ma2018shufflenet} to accomplish such a purpose. 
+
+Formally, given input $\textbf{x}\in \mathbb{R}^{\ast\times D}$ where ``$\ast $'' means any number of dimensions including none, we shuffle it into $g$ groups and perform recombination across the last dimension. Formally, we first reshape $\textbf{x}$ into $\textbf{x}'\in \mathbb{R}^{\ast\times g\times \frac{D}{g}}$, and then transpose the last two dimension and get $\textbf{x}''\in \mathbb{R}^{\ast\times \frac{D}{g} \times g}$, and then reshape $\textbf{x}''$ into $\textbf{x}'''\in \mathbb{R}^{\ast\times D}$, which is the final output. A pythonic style formulation is $\mbox{ChannelReorder}(g, \textbf{x})=(\textbf{x}.\mbox{reshape}(\ast, g,\frac{D}{g})).\mbox{transpose}(-2, -1).\mbox{reshape}(\ast, D)$
+
+We set shuffle groups $g=g_{i}$ in the $i$-th branch, where $g_{i}$ is the group of the corresponding GC layer. In this way, there are few overlaps between the weight matrices of distinct branches, and the model capacity is greatly expanded each time a new branch is contained.
+
+\textbf{Stochastic depth of pre-trained weight.}
+To further enlarge the model's adaptation capacity, we append a droppath~\citep{huang2016droppath} layer to each branch. For small downstream datasets, dropping the consolidator path with a higher ratio $p$ can help reduce overfitting and catastrophic forgetting, which may be beneficial to the performance. Empirically shown in \cref{subsec:ablation}, droppath is more effective than standard dropout~\citep{srivastava2014dropout} in the current situation probably for the following reasons. The parameters of the whole layer degrade into the pre-trained weight parameters with probability $p$. The frozen pre-trained parameters contain domain-generic knowledge, which may help the adaptation. Overall, a model modified by consolidator will have a stochastic depth of pre-trained state of parameters during each forward pass, and different consolidators will be activated for different training samples. 
+
+\textbf{Two-stage consolidation.}
+Now we have constructed all the elements of a consolidator. Formally, the output of the whole layer after being modified by consolidator is
+$\textbf{y}=\textbf{W}\textbf{x}+\textbf{b}+\mbox{Droppath}(p, \sum_{i=1}^{m}(\sum_{j=1}^{g^{(i)}}{\mbox{Pad}(\textbf{W}_{j}^{(i)}\mbox{ChannelReorder}(g^{(i)},\textbf{x})_{\frac{(j-1)D}{g^{(i)}}:\frac{jD}{g^{(i)}}}, j)}+\textbf{b}^{(i)}))$.
+Since all the operations in a consolidator are inference-time linear, we can easily consolidate the domain-specific knowledge into the domain-agnostic knowledge in the pre-trained backbone model, in both the training-storage phase and the loading-inference phase. 
+
+1. Training-storage consolidation. All we need to store in a consolidator are $\textbf{W}^{(i)}$ and $\textbf{b}^{(i)}$. However, there are some parameters corresponding to the same entry, and thus they can be merged into a single one. As shown in \cref{fig:Consolidator}, we also tune the bias of the original FC layer in addition to the parameters in consolidator. It is easy to find that the duplicate biases in all branches and the original bias can be merged into a single one. And there are some duplicate entries in the weight matrix as well, so we can merge all weight matrices into one single sparse matrix. Consolidating such duplicate entries can largely benefit storage. Formally, we use $\widetilde{\textbf{W}}$ and $\widetilde{\textbf{b}}$ to denote the matrix that we need to store on the disk. Since channel reorder is a linear operation, we can apply a reverse operation to $\textbf{W}^{(i)}$ to simulate the effect of the reorder applied to $\textbf{x}$. And we have $\widetilde{\textbf{W}}=\sum_{i=1}^{m}{\mbox{ChannelReorder}^{-1}(g^{(i)},\mbox{Compact}(\textbf{W}^{(i)}))}$. Here $\mbox{Compact}$ reshapes the input matrix for the preparation of reordering its channels. It is easy to verify that $\mbox{ChannelReorder}^{-1}(g^{(i)},\bullet)=\mbox{ChannelReorder}(\frac{D}{g^{(i)}},\bullet)$.
+
+2. Loading-inference consolidation. After loading the merged sparse weight matrix and merged bias matrix to memory, we can directly add them back to the weight matrix and bias matrix of the original FC layer. Formally, we use $\hat{\textbf{W}}$ and $\hat{\textbf{b}}$ to denote the final weight and bias of the FC layer for inference. Then $\hat{\textbf{W}}=\textbf{W}+\widetilde{\textbf{W}}$, $\hat{\textbf{b}}=\widetilde{\textbf{b}}$. In this way, no additional inference cost is brought.
+
+Overall, our consolidator reduces the storage space by using grouped connected layers and consolidating some duplicate entries. The training time non-linearity, \eg, droppath, which turns out to be linear in inference time, effectively enriches model capacity under a constrained storage budget. Finally, we can consolidate the task-specific knowledge into the backbone model by merging the inference time linear components to enjoy free, efficient, and effective transfer learning.
+
+
+
+Experiments
+\label{sec:experiments}
+\subsection{Experimental settings}
+
+\textbf{Baselines.} We select several state-of-the-art parameter-efficient methods as our baselines, including Full, Head, Bias~\citep{zaken2021bitfit}, Adapter~\citep{houlsby2019parameter}, VPT~\citep{jia2022vpt}, LoRA~\citep{hu2021lora}, AdaptFormer~\citep{chen2022adaptformer}, NOAH~\citep{zhang2022noah} and SSF~\citep{lian2022ssf}. Note that Adapter, AdaptFormer, VPT, and NOAH will bring heavy inference cost to the pre-trained model which may cause troubles in resource-limited devices, while LoRA, SSF and our consolidator are more friendly for deployment with no extra inference cost brought.
+
+\textbf{VTAB-1k.} We first run experiments on VTAB-1k~\citep{zhai2019vtab} benchmark, which covers a wide range of visual domains in 19 datasets. Each dataset contains 1000 images picked from the original dataset for training, and the size of test set stays unchanged, varying from 711 to 73728.
+
+\textbf{Full data setting.} VTAB-1k merely has a small number of training images, and thus the capacity of a huge transformer is redundant to some extent. Therefore, to check the performance of parameter-efficient methods in a data-sufficient situation, we select 10 widely-used datasets for visual recognition in various domains and use the original training, validation, and test split for experiments. On average, a dataset in this setting contains a lot more images for training, leaving huge space for the model to adapt. The chosen datasets include natural pictures (Caltech101~\citep{fei2004caltech101}, Cifar10~\citep{krizhevsky2009cifar}, Cifar100~\citep{krizhevsky2009cifar}), fine-grained classification (CUB200~\citep{wah2011cub}, OxfordFlowers~\citep{nilsback2008flowers}, OxfordPets~\citep{parkhi2012pets}, StanfordDogs~\citep{khosla2011stanforddogs}), textures (DTD~\citep{cimpoi2014dtd}), scene classification (SUN397~\citep{xiao2010sun}) and satellite images (EuroSAT~\citep{helber2019eurosat}).
+
+\begin{table}[]
+\fontsize{7.2}{8.7}
+\selectfont
+\setlength{\tabcolsep}{0.7mm}
+\begin{center}
+\setlength{\belowcaptionskip}{-0.3cm}
+\caption{Full results on the VTAB-1k~\citep{zhai2019vtab} benchmark. The bold font denotes the best accuracy and the underline font denotes the second best accuracy in each column. Consolidator gives the strongest results, surpasses full fine-tuning by 7.56 accuracy on average, and outperforms the state-of-the-art methods with low storage overhead and no inference cost.}
+\label{tab:in21k_vit_base_vtab}
+\begin{tabular}{lc|ccccccc|cccc|cccccccc|c}
+\toprule
+& & \multicolumn{7}{c}{\textbf{Natural}} \vline & \multicolumn{4}{c}{\textbf{Specialized}} \vline & \multicolumn{8}{c}{\textbf{Structured}} \vline & \\
+    & \rotatebox{90}{\# params} & \rotatebox{90}{Cifar100} & \rotatebox{90}{Caltech101} & \rotatebox{90}{DTD}  & \rotatebox{90}{Flowers102} & \rotatebox{90}{Pets} & \rotatebox{90}{SVHN} & \rotatebox{90}{Sun397} & \rotatebox{90}{Camelyon} & \rotatebox{90}{EuroSAT} & \rotatebox{90}{Resisc45} & \rotatebox{90}{Retinopathy} & \rotatebox{90}{Clevr-Count} & \rotatebox{90}{Clevr-Dist} & \rotatebox{90}{DMLAB} & \rotatebox{90}{KITTI-Dist} & \rotatebox{90}{dSpr-Loc} & \rotatebox{90}{dSpr-Ori} & \rotatebox{90}{sNORB-Azim} & \rotatebox{90}{sNORB-Ele} & \rotatebox{90}{Average} \\
+\midrule
+Full          & 100\%  & 68.9     & 87.7       & 64.3 & 97.2               & 86.9        & 87.4 & 38.8   & 79.7            & 95.7    & 84.2     & 73.9                  & 56.3         & 58.6        & 41.7  & 65.5  & 57.5          & 46.7          & 25.7           & 29.1           & 68.97          \\
+Head              & 0.04\% & 63.4     & 85.0       & 63.2 & 97.0               & 86.3        & 36.6 & 51.0   & 78.5            & 87.5    & 68.6     & 74.0                  & 34.3         & 30.6        & 33.2  & 55.4  & 12.5          & 20.0          & 9.6            & 19.2           & 57.64          \\
+Bias              & 0.10\% & 72.8     & 87.0       & 59.2 & 97.5               & 85.3        & 59.9 & 51.4   & 78.7            & 91.6    & 72.9     & 69.8                  & 61.5         & 55.6        & 32.4  & 55.9  & 66.6          & 40.0          & 15.7           & 25.1           & 65.22          \\
+\midrule
+VPT               & 0.75\% & \textbf{78.8}     & 90.8       & 65.8 & 98.0               & 88.3        & 78.1 & 49.6   & 81.8            & \textbf{96.1}    & 83.4     & 68.4                  & 68.5         & 60.0        & 46.5  & 72.8  & 73.6          & 47.9          & \textbf{32.9}           & 37.8           & 71.97          \\
+Adapter           & 0.36\% & 69.8     & 91.2       & 68.8 & 99.0               & 89.9        & 85.7 & 53.8   & 82.3            & 95.5    & 83.7     & \textbf{76.1}                  & 82.4         & 65.0        & 48.2  & 80.5  & 74.5          & 49.7          & 29.8           & 39.2           & 74.28          \\
+LoRA              & 0.34\% & 68.1     & 90.1       & 69.8 & 98.9               & 90.8        & 84.8 & 54.0   & 83.2            & 95.6    & 84.2     & 73.9                  & 82.4         & \underline{68.7}        & 49.4  & 80.0  & \underline{81.7}          & 46.1          & 31.4           & \underline{41.8}           & 74.64          \\
+AdaptFormer              & 0.36\% & 71.0     & 91.1       & 69.9 & 99.3               & 90.5        & 87.4 & \underline{54.8}   & 84.1            & 95.9    & 85.9     & 75.8                  & \textbf{83.1}         & 63.8       & 49.6  & 79.6  & 76.5          & 45.1          & 30.9           & 39.2           & 74.82          \\
+NOAH              & 0.52\% & 69.6     & \textbf{92.7}       & 70.2 & 99.1               & 90.4        & 86.1 & 53.7   & 84.4            & 95.4    & 83.9     & 75.8                  & \underline{82.8}         & \textbf{68.9}        & 49.9  & \underline{81.7}  & \textbf{81.8}          & 48.3          & \underline{32.8}           & \textbf{44.2}           & 75.48          \\
+SSF              & 0.29\% & 69.0     & \underline{92.6}       & \textbf{75.1} & \underline{99.4}               & \textbf{91.8}        & \underline{90.2} & 52.9   & \textbf{87.4}            & \underline{95.9}    & \textbf{87.4}     & 75.5                  & 75.9         & 62.3        & \textbf{53.3}  & 80.6  & 77.3          & \textbf{54.9}          & 29.5           & 37.9           & \underline{75.69}          \\
+Ours & 0.35\% & \underline{74.2}     & 90.9       & \underline{73.9} & \textbf{99.4}               & \underline{91.6}        & \textbf{91.5} & \textbf{55.5}   & \underline{86.9}            & 95.7    & \textbf{86.6}     & \underline{75.9}                  & 81.2         & 68.2        & \underline{51.6}  & \textbf{83.5}  & 79.8          & \underline{52.3}          & 31.9           & 38.5           & \textbf{76.53}         \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+\subsection{Main results}
+
+We first choose a ViT-B~\citep{dosovitskiy2020image} with 86M parameters as a base model. 
+
+\textbf{VTAB-1k} \cref{tab:in21k_vit_base_vtab} presents the full results on VTAB-1k benchmark. Overall, our consolidator is the best parameter-efficient method. On 12 of 19 datasets, consolidator achieves the best or second best top-1 accuracy. Notably, consolidator surpasses the state-of-the-art methods NOAH and SSF by a clear margin, with low storage overhead and no inference cost.
+
+\textbf{Full data setting} \cref{tab:in21k_vit_base_full_data} presents the full results on full data setting. Overall, our consolidator still performs best. An interesting observation is that the rank of full fine-tuning rises as the training data increase. None of the parameter-efficient methods can reach comparable performance with full tine-tuning other than our consolidator within 0.5\% parameter storage overhead. In contrast, the parameter-efficient methods can reach at least 5\% higher accuracy on VTAB-1k than full fine-tuning under comparable or even lower storage budget (around 0.5\%), as shown in \cref{tab:in21k_vit_base_vtab}.
+
+
+\begin{table}
+\begin{minipage}[t]{0.62\linewidth}
+\fontsize{7.2}{8.7}
+\selectfont
+\setlength{\tabcolsep}{0.8mm}
+\centering
+\caption{Full results on data-sufficient scenarios. It is more challenging to take full advantage of a large amount of data within a fairly small number of stored parameters. Consolidator earns the best or second best in all 10 datasets.}
+
+\label{tab:in21k_vit_base_full_data}
+\begin{tabular}{lc|cccccccccc|c}
+\toprule
+& & \multicolumn{10}{c}{Full data} \vline\\
+& \rotatebox{90}{\# params} & \rotatebox{90}{Caltech101} & \rotatebox{90}{Cifar10} & \rotatebox{90}{Cifar100} & \rotatebox{90}{CUB} & \rotatebox{90}{DTD} & \rotatebox{90}{Flowers102} & \rotatebox{90}{Pets} & \rotatebox{90}{Dogs} & \rotatebox{90}{Sun397} & \rotatebox{90}{EuroSAT} & \rotatebox{90}{Average}\\
+\midrule
+Full & 100\% & 90.9 & \underline{99.1} & \textbf{92.6} & \textbf{87.7} & \textbf{75.6} & 98.9 & \textbf{93.9} & 84.8 & 70.9 & \textbf{98.6} & \underline{89.30}\\
+Head & 0.10\% & 90.0 & 88.8 & 71.6 & 83.5 & 71.3 & 98.2 & 90.5 & 78.4 & 67.0 & 95.6 & 83.49\\
+Bias & 0.22\% & 90.2 & 99.0 & 91.9 & 86.4 & 73.5 & 98.5 & 92.6 & 85.4 & 71.0 & 97.7 & 88.62\\
+\midrule
+Adapter & 0.55\% & \underline{91.0} & 99.0 & 92.2 & 86.3 & 72.6 & 98.7 & 92.5 & \underline{85.9} & \underline{71.9} & 97.4 & 88.75\\
+LoRA & 0.53\% & 90.1 & 99.0 & 91.8 & 85.4 & 71.9 & 98.1 & 92.1 & 85.6 & 71.3 & 97.2 & 88.25\\
+AdaptFormer & 0.55\% & 90.9 & 99.0 & 92.3 & 86.5 & 73.4 & \underline{98.9} & 92.9 & 85.2 & 71.4 & 97.1 & 88.76\\
+SSF & 0.30\% & 90.9 & 99.0 & 92.1 & 85.7 & 72.6 & 98.3 & 92.3 & 85.7 & 71.6 & 97.8 & 88.60\\
+Ours & 0.50\% & \textbf{91.4} & \textbf{99.1} & \underline{92.5} & \underline{87.0} & \underline{74.5} & \textbf{99.0} & \underline{93.2} & \textbf{86.4} & \textbf{72.1} & \underline{97.9} & \textbf{89.31}\\
+\bottomrule
+\end{tabular}
+\end{minipage}\qquad
+\begin{minipage}[t]{0.32\linewidth}
+\fontsize{7.}{8.7}
+\selectfont
+\setlength{\tabcolsep}{0.8mm}
+\centering
+\makeatletter\def\@captype{table}\makeatother\caption{Adaptation results for a self-supervised model, MoCo v3 ViT-B. Consolidator earns the best average accuracy}.
+\label{tab:mocov3_vit_base_both}
+\begin{tabular}{l|cc|cc}
+\toprule
+& \multicolumn{2}{c}{VTAB-1k} \vline & \multicolumn{2}{c}{Full data} \\
+& \rotatebox{90}{\# params} & \rotatebox{90}{Average} & \rotatebox{90}{\# params} & \rotatebo
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

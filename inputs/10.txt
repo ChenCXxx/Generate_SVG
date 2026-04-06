@@ -1,0 +1,232 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:introduction}
+
+Tremendous efforts have been made in crafting lightweight deep neural networks applicable to the real-world scenarios. Representative methods include network pruning~\citep{he2017channel}, model quantization~\citep{habi2020hmq}, neural architecture search (NAS)~\citep{wan2020fbnetv2}, and knowledge distillation (KD)~\citep{bucilua2006model,Hinton2015DistillingTK}, \emph{etc}. Among them, KD has recently emerged as one of the most flourishing topics due to its effectiveness~\citep{liu2021exploring, zhao2022dkd, chen2021reviewkd, heo2019comprehensive} and wide applications \citep{yang2021focal,monodistill,Liu_2019_CVPR,Yim_2017_CVPR,zhang2020improve}.
+
+Particularly, the core idea of KD is to transfer the distilled knowledge from a well-performed but cumbersome teacher to a compact and lightweight student. Based on this, numerous methods have been proposed and achieved great success. However, with the deepening of research, some related issues are also discussed.
+In particular, several works \citep{cho2019efficacy,mirzadeh2020improved,Hinton2015DistillingTK,liu2021exploring} report that with the increase of teacher model in performance, the accuracy of student gets saturated (which might be unsurprising). To make matters worse, when playing the role of a teacher, the large teacher models lead to \emph{significantly worse} performance than the relatively smaller ones. For example, as shown in Fig.\ref{fig:degradation}, ICKD \citep{liu2021exploring}, a strong baseline model which also points out this issue, performing better under the guidance of small teacher models, whereas applying a large model as the teacher would considerably degrade the student performance.
+
+Same as \citep{cho2019efficacy,mirzadeh2020improved}, we attribute the cause of this issue to the capacity gap between the teachers and the students. More specifically, the small student is hard to `understand' the high-order semantics extracted by the large model.}. Note that this problem also exists for humans, and human teachers often tell students some \emph{prior knowledge} to facilitates their learning in this case. Moreover, the experienced teachers can also \emph{adjust} the amounts of provided prior knowledge accordingly for different students to fully develop their potentials.
+
+\begin{wrapfigure}{r}{0.5\textwidth}
+\includegraphics[width=0.5\textwidth]{./figures/introduction.pdf}
+\caption{{\bf Top-1 accuracy of ResNet-18 w.r.t. various teachers on ImageNet.} Different from the baseline model (ICKD \citep{liu2021exploring}), our method shows better performance and makes the performance of student positively correlated with that of the teacher.}
+\label{fig:degradation}
+\end{wrapfigure}
+
+Inspired by the above observations from human teachers, we propose the dynamic prior knowledge (DPK) framework for feature distillation. Specifically, to provide the prior knowledge to the student, we replace student's features at some random spatial positions with corresponding teacher features at the same positions. Besides, we further design a ViT~\citep{dosovitskiy2020image}-style module to fully integrate this `prior knowledge' with student's features. Furthermore, our method also dynamically adjusts the amounts of the prior knowledge, reflected in the proportion of teacher features in the hybrid feature maps. Particularly, DPK dynamically computes the differences of features between the student and the teacher in the training phase, and updates the ratio of feature mixtures accordingly. In this way, students always learn from the teacher at an appropriate difficulty, thus alleviating the performance degradation issue.
+
+We evaluate DPK on two image classification benchmarks (\ie ~CIFAR-100 \citep{krizhevsky2009learning} and ImageNet \citep{deng2009imagenet}) and an object detection benchmark (\ie~MS COCO \citep{lin2014microsoft}). Experimental results indicate that DPK outperforms other baseline models under several settings. More importantly, our method can be further improved by applying larger teachers (see Fig. \ref{fig:degradation} for an example). We argue that this characteristic of DPK not only further boosts student performance, but also provides a quick solution in model selection for finding the best teacher for a given student.
+In addition, we conduct extensive ablations to validate each design of DPK in detail.
+
+In summary, the main contributions of this work are:
+\begin{itemize}
+\item We propose the prior knowledge mechanism for feature distillation, which can fully excavate the distillation potential of big models. To the best of our knowledge, our method is the first to take the features of teachers as `input', not just `target' in knowledge distillation.
+
+\item Based on our first contribution, we further propose the dynamic prior knowledge (DPK). Our DPK provides a solution to the \textit{`larger models are not always better teachers'} issue. Besides, it also gives better (or comparable) results under several settings.
+\end{itemize}
+
+
+
+Methodology
+\label{sec:methodology}
+In this section, we first provide the background of KD, and then introduce the framework and details of the proposed DPK.
+
+\subsection{Preliminary} % (fold)
+\label{sub:preliminary}
+The existing KD methods can be grouped into two groups. In particular, the logits-based KD methods distill the \emph{dark knowledge} from the teacher by aligning the soft targets between the student and teacher, which can be formulated as a loss item:
+\begin{equation}
+\begin{aligned}
+	\mathcal{L}_{logits}=\mathcal{D}_{logits}(\sigma(\bm{z^{s}};\tau),\sigma(\bm{z}^{t};\tau)),
+\end{aligned}
+\label{eq:logits_kd}
+\end{equation}
+where $\bm{z}^{s}$ and $\bm{z}^{t}$ are the logits from the student and the teacher. $\sigma(\cdot)$ is the softmax function that produces the category probabilities from the logits, and $\tau$ is a non-negative temperature hyper-parameter to scale the smoothness of predictive distribution. Specifically, we have $\sigma_{i}(\bm{z};\tau)\!=\!\operatorname{softmax}(\exp(z_{i}/\tau))$.
+$\mathcal{D}_{logits}$ is a loss function which can capture the difference between two categorial distributions, \eg~ Kullback-Leibler divergence.
+Similarly, the feature-based KD methods, whose main idea is to mimick the feature representations between students and teachers, can also be represented as an auxiliary loss item:
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{feat} = \mathcal{D}_{feat}(\mathsf{T}_{s}({\bf F}^{s}), \mathsf{T}_{t}({\bf F}^{t})),
+\end{aligned}
+\label{eq:feat_kd}
+\end{equation}
+where ${\bf F}^{s}$ and ${\bf F}^{t}$ denote the feature maps from the student and the teacher, respectively.
+$\mathsf{T}_{s}, \mathsf{T}_{t}$ denote the student and the teacher transformation module respectively, which align the dimensions of ${\bf F}^{s}$ and ${\bf F}^{t}$ (and transform the feature representations, such as \citep{Tung2019SimilarityPreservingKD}). $\mathcal{D}_{feat}$ denotes the function which can compute the distance between two feature maps, such as $\ell_{1}$- or $\ell_{2}$-norm. So the KD methods can be represented by a generic paradigm. The final loss is the weighted sum of the classification loss $\mathcal{L}_{cls}$ (the original training loss), the logits distillation loss, and the feature distillation loss:
+\begin{equation}
+\begin{aligned}
+\mathcal{L} = \mathcal{L}_{cls} +\alpha \mathcal{L}_{logits} + \beta \mathcal{L}_{feat},
+\end{aligned}
+\label{eq:all_loss}
+\end{equation}
+where $\{\alpha, \beta\}$ are hyper-parameters controlling the trade-off between these three losses.
+
+\subsection{Dynamic Prior Knowledge}
+\label{sub:masked_feature_distillation}
+An overview of the proposed DPK is presented in Fig. \ref{fig:pipeline}. As a feature distillation method, the main contributions of the DPK include the prior knowledge mechanism and dynamic mask generation. Here we give the details of these two designs.
+
+\noindent
+\textbf{Prior knowledge.} To introduce the prior knowledge, the teacher provides part of its features to the student, and the Eq.~\ref{eq:feat_kd} can be reformulated as:
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{feat} = \mathcal{D}_{feats}(\mathsf{T}_{s}({\bf F}^{s}, {\bf F}^{t}), \mathsf{T}_{t}({\bf F}^{t})),
+\end{aligned}
+\label{eq:feat_kd_dpk}
+\end{equation}
+and then we introduce how to build the hybrid feature map, \ie~the student transformation module $\mathsf{T}_{s}$.
+Specifically, given the paired  feature maps $\mathbf{F}^{s}$ and $\mathbf{F}^{t}$ from the student and the teacher, we divide them into several non-overlapping patches using a $k \times k$ convolution with stride $k$, where $k$ is the pre-defined size of the patches. Meanwhile, we also align the dimension of the features with this convolution layer. Then we randomly mask a subset of feature patches of the student under an uniform distribution with the ratio $\pi$, and also generate the complementary feature patches from the teachers. We take these feature patches as \emph{token sequences} and use two ViT~\citep{dosovitskiy2020image}-based encoders to further process them. After that, we stitch these token sequences together to generate the hybrid features (tokens), add the positional embedding to these hybrid tokens, and further integrate them with another ViT-based decoder. 
+Finally, we re-organize generated token sequences into original shape and apply the feature distillation loss on the hybrid features and original teacher features. The transformation module $\mathsf{T}_{t}$ for teacher feature is an identical mapping.
+
+\begin{figure}
+\centering
+\includegraphics[width=1.0\textwidth]{./figures/pipeline2.pdf}
+\caption{{\bf Illustration of the proposed DPK.} For each feature distillation stage, the student feature map and the teacher feature map are sent to corresponding encoders to generate the $\mathbf{F}^{s}$ and $\mathbf{F}^{t}$. Then, a subset of student feature patches is replaced by that of the teacher (the $\uplus$ denotes the feature stitching operation).  After that, DPK further integrates the hybrid feature $\mathbf{F}^{h}$ with a decoder before applying feature distillation loss. Note that the proportion of $\mathbf{F}^{s}$ and $\mathbf{F}^{t}$ in $\mathbf{F}^{h}$ is dynamically generated, which is omitted in this figure.
+}
+\label{fig:pipeline}
+\end{figure}
+
+\noindent
+\textbf{Dynamic mechanism.} In the above solution, we mix the features of teacher and student with the  hyper-parameter $\pi$. Furthermore, we empirically find that: ({\it i}) the optimal $\pi$ for different model combinations is different (see Table~\ref{tb:masking_ratio} for related experiments), and ({\it ii}) the feature gap is different in the early and late stages of training phase. These facts inspire us to adjust the value of the masking ratio flexibly and dynamically according to the teacher-student gap, \eg~when the teacher-student gap is large, students need more prior knowledge to guide them.  Upholding this principle, given a minibatch of feature sets for a teacher-student pair, we flatten them to yield $\mathbf{F}_{t}\in\mathbb{R}^{B\times\mathsf{c}\times\mathsf{h}\times\mathsf{w}} \mapsto \mathbf{X} \in \mathbb{R}^{B \times p_1}$ and $\mathbf{F}_{s}\in\mathbb{R}^{B\times \mathsf{c}\times\mathsf{h}\times\mathsf{w}} \mapsto \mathbf{Y} \in \mathbb{R}^{B \times p_2}$.
+We then set the iteration-specific masking ratio $\pi$ at the $i$\textsuperscript{th} minibatch as :
+\begin{equation}
+\pi_{i} = 1- \mathrm{CKA}_\mathrm{minibatch}(\mathbf{X}_{i},\mathbf{Y}_{i}),
+\label{eq:dy_mask}
+\end{equation}
+where $i$ indexes the minibatch within a training epoch. $\mathrm{CKA}_\mathrm{minibatch}$~\cite{nguyen2020wide} is the minibatch version of the Centered Kernel Alignment (CKA)~\cite{kornblith2019similarity}, which is representation similarity measure that is widely used for quantitative understanding the representations learned by neural networks. Specifically, CKA takes the two feature representations $\mathbf{X}$ and $\mathbf{Y}$ as input and computes their normalized similarity in terms of the Hilbert-Schmidt Independence Criterion (HSIC). $\mathrm{CKA}_\mathrm{minibatch}$ instead uses an unbiased estimator of HSIC~\cite{song2012feature}, called $\mathrm{HISC_{1}}$, 
+\begin{align}
+    \mathrm{HSIC}_1(\mathbf{K},\mathbf{L}) &= \frac{1}{n(n-3)}\left(\text{tr}(\mathbf{\tilde K}\mathbf{\tilde L}) + \frac{\mathbf{1}^\mathsf{T}\mathbf{\tilde K}\mathbf{1}\mathbf{1}^\mathsf{T}\mathbf{\tilde L}\mathbf{1}}{(n-1)(n-2)} - \frac{2}{n-2}\mathbf{1}^\mathsf{T}\mathbf{\tilde K}\mathbf{\tilde L}\mathbf{1}\right),
+\end{align}
+where $\mathbf{\tilde K}$ and $\mathbf{\tilde L}$ are obtained by setting the diagonal entries of similarity matrices $\mathbf{K}$ and $\mathbf{L}$ to zero. Then $\mathrm{CKA}_\mathrm{minibatch}$ can be computed by averaging $\mathrm{HISC_{1}}$scores over $k$ minibatches:
+\begin{align}
+     \mathrm{CKA}_\mathrm{minibatch}&\!=\!\frac{\frac{1}{k} \sum_{i=1}^k \mathrm{HSIC}_1(\mathbf{X}_i\mathbf{X}_i^\mathsf{T}, \mathbf{Y}_i\mathbf{Y}_i^\mathsf{T})}{\sqrt{\frac{1}{k}  \sum_{i=1}^k \mathrm{HSIC}_1(\mathbf{X}_i\mathbf{X}_i^\mathsf{T}, \mathbf{X}_i\mathbf{X}_i^\mathsf{T})}\sqrt{\frac{1}{k} \sum_{i=1}^k \mathrm{HSIC}_1(\mathbf{Y}_i\mathbf{Y}_i^\mathsf{T}, \mathbf{Y}_i\mathbf{Y}_i^\mathsf{T})}},
+     \label{equ:cka}
+\end{align}
+where $\mathbf{X}_i \in \mathbb{R}^{B \times p_1}$ and $\mathbf{Y}_i \in \mathbb{R}^{B \times p_2}$ are now matrices containing activations of the $i$\textsuperscript{th} minibatch of $B$ examples sampled without replacement. 
+
+\noindent
+{\bf Remarks.} Eq.~(\ref{equ:cka}) allows us to efficiently and robustly estimate feature dissimilarity between the teacher-student pair using minibatches. A lower CKA indicates a greater feature gap between students and teachers. And the higher the masking ratio, the larger the feature regions masked by the student and the larger the countparts provided by the teacher. Eq.~(\ref{eq:dy_mask}) naturally establishes the connection between feature gap and masking ratio, with its effectiveness and design choices verfied in Sec.~\ref{exp:ablations}.
+
+Due to the space limitation, we only introduce the main designs of our DPK, and more details ({\it e.g.
+
+
+Experiments
+\label{sec:experiments}
+We conduct extensive experiments on \emph{image classification} and \emph{object detection}. Moreover,
+we present various \emph{ablations} and \emph{analysis} for the proposed method. 
+Besides, our codes as well as training recipes will be publicly available for reproducibility.
+\subsection{Image Classification}
+\label{sub:image_classification} 
+ We compare DPK with a wide range of baseline models, including KD~\citep{Hinton2015DistillingTK}, FitNets~\citep{Romero2015FitNetsHF}, FT~\citep{kim2018paraphrasing}, AB~\citep{heo2019knowledge}, AT~\citep{Zagoruyko2017PayingMA}, PKT~\citep{Passalis2018LearningDR}, SP~\citep{Tung2019SimilarityPreservingKD}, SAD~\citep{Ji2021ShowAA}, CC~\citep{peng2019correlation}, RKD~\citep{Park2019RelationalKD}, VID~\citep{Sungsoo19Variational}, CRD~\citep{Tian2020ContrastiveRD}, OFD~\citep{heo2019comprehensive}, ReviewKD~\citep{chen2021reviewkd}, DKD~\citep{zhao2022dkd}, ICKD-C~\citep{liu2021exploring} and MGD~\citep{yang2022masked}.
+\textbf{Results on CIFAR-100.} We first evaluate DPK on the CIFAR-100 dataset and summarize the results on  Table~\ref{tb:homogeneous}. From these results, we can observe that the proposed DPK performs best for all six teacher-student pairs, which firmly demonstrates the effectiveness of our method.
+\input{tables/main_results_cifar_100}
+
+\noindent
+\textbf{Results on ImageNet.} We also conduct experiments on the large-scale ImageNet to evaluate our DPK. In particular, following the previous conventions~\citep{Tian2020ContrastiveRD,chen2021reviewkd}, we present the performance of ResNet-18 guided by ResNet-34 in Table \ref{tb:resnet18}. The results show the superiority of DPK in performance to other baselines. 
+
+\input{tables/main_results_imagenet}
+\input{tables/main_results_imagenet_heterogeneous}
+
+\noindent
+{\bf KD for heterogeneous models.} Table \ref{tb:homogeneous} and \ref{tb:resnet18} show the experiments for homogeneous models (\eg~ResNet18 and ResNet34), and we show our method can also be applied to heterogeneous models (\eg~MobileNet and ResNet50) in this part.
+
+\noindent
+{\bf Better teacher, better student.}
+The above experiments show DPK performs well for the common teacher-student pairs. Here we show our method can be further improved with better teachers. As illustrated in Fig. \ref{fig:btbs_1}, the accuracy of the student model trained by our method is continuously improved by progressively replacing larger teacher models, while the model trained by other algorithms fluctuates in performance. Meanwhile, our method surpasses it counterparts at each stage and progressively widen the performance gap. To show the generalization, we also present the performance change for other teacher-student combinations in Fig.~\ref{fig:btbs_2}, which confirms the same conclusion again. Note that it is a reasonable phenomenon that the performance of the given student tends to be saturated gradually, but the performance fluctuation will cause many difficulties in practical application.
+
+\begin{figure}[!htbp]
+\centering
+\begin{tabular}{@{}@{}cc@{}@{}}
+\includegraphics[width=0.44\textwidth]{./figures/better_teacher.pdf}&
+\includegraphics[width=0.43\textwidth]{./figures/better_teacher_2_single.pdf}
+\end{tabular}
+\caption{{\bf Better teacher, better student.} We show the top-1 accuracy of our method and some baselines on the CIFAR-100 (\emph{left}) and ImageNet (\emph{right}).}
+\label{fig:btbs_1}
+\end{figure}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.\textwidth]{./figures/better_novel.pdf}
+\caption{{\bf More teacher-student combinations}, covering the lightweight ShuffleNetV2 \citep{ma2018shufflenetv2} to the recently ConvNeXt \citep{liu2022convnet}.
+Top-1 accuracy (\%) on ImageNet val set is reported. Both \textit{homogeneous} and \textit{heterogeneous} settings are considered. By changing the teacher size, we see that, \emph{larger models are always better teachers} holds true when applying DPK. Best viewed in color with zoom in.}
+\label{fig:btbs_2}
+\end{figure}
+
+
+\subsection{Object Detection} 
+\label{sub:object_detection}
+DPK can also be applied to other tasks, and we evaluate it on a popular one, \ie ~object detection.
+
+\noindent
+{\bf Comparison with SOTA methods.} As presented in Table~\ref{tb:coco}, we evaluate our model on a one-stage detector (RetinaNet~\citep{lin2017focal}) and a two-stage detector (Faster-RCNN~\citep{ren2015faster}) with several strong baselines, including FGFI \citep{wang2019distilling}, GID \citep{dai2021general}, FGD \citep{yang2021focal}, and DeFeat \citep{guo2021distilling}. Following the previous conventions, we first adopt the ResNet101-FPN as the teacher model and ResNet50-FPN as the student model, and our model achieves better (or matched) performance than other baselines, \ie ~our model gets a matched performance with FGD, and significantly surpasses other baselines in accuracy.
+
+\noindent
+{\bf Better teacher, better student.}
+Similar to image classification, our method also benefits from better teacher model for object detection. In particular, we enlarge the capacity gap between the teacher and student models, and the results in Table~\ref{tb:coco} suggest that effectiveness of our method can be further improved by replacing more powerful teacher models. For instance, replacing teacher model from ResNet101-FPN to ResNet152-FPN further improves the student's performance (ResNet50-FPN, Faster RCNN) by 0.6 mAP, while the number for FGD~\citep{yang2021focal} is 0.1 for the same setting. This conclusion also stands for other teacher-student pairs and frameworks.
+
+\input{tables/main_results_object_detection}
+
+\subsection{Ablation Studies}
+\label{exp:ablations}
+In this section, we provide extensive ablation studies to analyze the effects of each component of DPK. The experiments are conducted on ImageNet for classification task, ResNet34 and ResNet18 are adopted as teacher and student. Only last stage distillation is applied unless stated otherwise.
+
+\input{tables/ablation_mask_ratio}
+
+\textbf{Mask ratio.}
+Feature masking (and stitching) is a key component of our method, and Table~\ref{tb:masking_ratio}  reports the results of various DPK variants under different mask ratios. Surprisingly, a \emph{broad} range of masking ratios from 15\% to 95\% can offer considerable performance gains for students. This implies that the prior knowledge provided by teachers is very beneficial to students' network learning. Besides, note that the optimal mask ratio is \emph{inconsistent} under different teacher-student pairs, {\it e.g.} 55\% mask ratio performs best for ResNet-18 and ResNet34, while the optimal one for ResNet-18 and ResNe101 is 75\%.
+Table~\ref{tb:masking_ratio} also shows students achieve the best accuracy using the proposed dynamic masking strategy, which suggests the necessity and effectiveness of the proposed \emph{dynamic masking strategy} for automatic selection of mask ratio.
+\begin{wraptable}{r}{0.4\textwidth}
+\input{tables/ablation_masking_strategy}
+\end{wraptable}
+\textbf{Mask strategy.} Table~\ref{tb:masking_strategy} summarizes the effects of different mask strategies. ResNet34 and ResNet18 are adopted as teacher and student for all experiments in this part. For the fixed mask ratio, we take the simple random mask as baseline, and consider the \texttt{block-wise} mask strategy, introduced by BEIT~\citep{bao2021beit}. We also consider \texttt{grid-wise} mask, which regularly retains one of every four patches, similar to MAE~\citep{he2021masked}.  Besides fixed mask designs, several alternatives for realizing a dynamic mask ratio are explored. Particularly, the \texttt{cosinesimi} indicates that we use the cosine similarity to measure the teacher-student feature gap. The \texttt{exponential} decay schedule divides the mask ratio by the same factor every epoch, which can be expressed as $\pi_{i}\!=\!\pi_{0}*(0.95)^{\mathrm{epoch}_{i}}$, where $\pi_{0}$ is the initial mask ratio and is set to 1.0. The \texttt{linear} schedule decreases the mask ratio by the same decrement every epoch, which is defined as $\pi_{i}\!=\!\pi_{0}\!-\!(\mathrm{epoch_{i}}*\mathrm{decrement})$, and we set $\mathrm{decrement}\!=\!0.95$. The results reveal that: \textit{i}) simple random sampling works best for our DPK when using fixed mask ratios. \textit{ii}) $\mathrm{1\!-\!CKA}$ outperforms its competitors, and we use it to generate dynamic mask ratios by default. We also observe that both $1-$\texttt{cosinesimi} and $\mathrm{1\!-\!CKA}$ outperform the manually-set heuristic masking strategies, \eg, \texttt{linear decay}, demonstrating the advantage of dynamically adjusting the ratio of teacher prior knowledge based on the teacher-student feature gap. Furthermore, the $\mathrm{CKA}$ is superior to the \texttt{cosinesimi}, indicating that our $\mathrm{CKA}$ can efficiently measure the similarity of the hidden representations between teachers and students using minibatches, and provide a robust way to automatically determine the masking ratio.
+\noindent
+\textbf{Prior knowledge.} Table~\ref{tb:mask_token} ablates the significance of integrating teacher's knowledge in building hybrid student features (Eq.~\ref{eq:feat_kd_dpk}). Specifically, we use \texttt{zero-padding} and  \texttt{learnable} mask token to play the role of teacher's feature in the masked position. The results show that no teacher-provided prior knowledge leads to worse performance, as it aggravates the burden of feature mimicking from students to teachers. This strongly confirms the effectiveness of offering students the prior knowledge from teachers via feature masking and stitching.
+
+\noindent\textbf{Transformation module.} For feature-based distillation methods, the feature transformation modules $\mathsf{T}_{s}$ and $\mathsf{T}_{t}$ are required to convert the features into an easy-to-transfer form. We take FitNets~\citep{Romero2015FitNetsHF} as baseline, which does not reduce the dimension of teacher's feature map and use a $1\!\times\!1$ convolutional layer to transform the feature dimension of the student to that of the teacher. In our method, we adopt the ViT-based encoder-decoder as the default transformation module. For further investigation, we also remove the encoder, and use a MLP layer to align the feature dimension (MLP-Decoder). Besides, the convolution-based encoder-decoder structure is also explored  (Conv).
+
+Table~\ref{tb:transform} shows the results, and we can observe that \texttt{encoder-decoder} reaches the best performance.
+
+\begin{table}[!t]
+\begin{minipage}[t]{0.3\linewidth}
+\input{tables/ablation_mask_token}
+\end{minipage}
+\hspace{1.6em}
+\begin{minipage}[t]{0.32\linewidth}
+\input{tables/ablation_transformation}
+\end{minipage}
+\hspace{0.8em}
+\begin{minipage}[t]{0.3\linewidth}
+\input{tables/ablation_target}
+\end{minipage}
+\vskip -15pt plus 0fil
+\end{table}
+
+\noindent\textbf{Loss.} In the training phase, we apply the mean squared error (MSE) loss between the hybrid student features and teacher features in Eq.~\ref{eq:feat_kd_dpk}, while the loss can be on only the non-masked regions of student features, namely \texttt{non-masked}, or full feature maps, namely \texttt{full}. Table~\ref{tb:target} shows the ablation results for these two settings. As can be seen, computing the loss on the full features performs better.
+
+\subsection{Visualizations}
+
+\begin{figure}[!b]
+\centering
+\begin{tabular}{@{}@{}ccc@{}@{}}
+\includegraphics[width=0.31\textwidth]{./figures/resnet_compare_34_18_de_paper.png} &
+\includegraphics[width=0.31\textwidth]{./figures/resnet_compare_34_18_ickd_de_paper.png} &
+\includegraphics[width=0.31\textwidth]{./figures/resnet_compare_34_18_ours_de_paper.png}
+\end{tabular}
+\caption{{\bf CKA similarity between ResNet18 and ResNet34.} We visualize the CKA similarity between the original models (\emph{left}), the models trained by ICKD (\emph{middle}), and the models trained by our DPK (\emph{right}). The experiments are conducted on the sampled ImageNet validation set (12,800 samples).  We compute  CKA with a batch size of 32 for the last stage, so these are 400 CKA values for each experiment. For better 
+presentation, we rank these values and organize them as the heatmap representation. The larger the value, the more similar the features are.}
+\label{fig:visualization1}
+\end{figure}
+
+In this part, we present some visualizations to show that our DPK does bridge the teacher-student gap in the feature-level. In particular, we visualize the feature similarity between ResNet18 and ResNet34 in Fig.~\ref{fig:visualization1}. We can find that our DPK significantly improves the feature similarity (measured by CKA) between the student and the teacher. ICKD gets a lower similarity than the baseline, probably due to the fact that it models the feature relationships, instead of the features themselves.
+
+
+Related Work
+
+\textbf{Knowledge distillation.} Existing studies on knowledge distillation (KD) can be roughly categorized into two groups: \emph{logits-based} distillation and \emph{feature-based} distillation. {\bf The former}, pioneered by~\citet{Hinton2015DistillingTK}, is known as the classic KD, aiming to learn a compact student by mimicking the softmax outputs (logits) of an over-parameterized teacher. This line of work focuses on proposing effective regularization and optimization techniques~\citep{Zhang2018DeepML}. Recently, DKD~\citep{zhao2022dkd} proposes to decouple the classical KD loss into two parts, \ie, target class KD and non-target KD. Besides, several works~\citep{phuong2019towards,cheng2020explaining} also attempt to interpret the classical KD. \textbf{The latter}, represented by  FitNet~\citep{Romero2015FitNetsHF}, encourages students to mimic the intermediate-level features from the hidden layers of teacher models. Since features are more informative than logits, feature-based distillation methods usually perform better than logits-based ones in the tasks that involve the localization information, such as object detection~\citep{li2017mimicking,wang2019distilling,dai2021general,guo2021distilling,yang2021focal}. This line of work mainly investigates what kinds of intermediate representations of features should be. These representations include singular value decomposition~\citep{lee2018self}, attention maps~\citep{Zagoruyko2017PayingMA}, Gramian matrices~\citep{Yim2017AGF}, gradients~\citep{srinivas2018knowledge}, pre-activations~\citep{heo2019knowledge}, similarities and dissimilarities~\citep{Tung2019SimilarityPreservingKD}, instance relationships~\citep{liu2019knowledge,Park2019RelationalKD}, inter-channel correlations~\citep{liu2021exploring}. A noteworthy work similar to DPK is {AGNL}~\citep{zhang2020improve}. In particular, {AGNL} has two attractive properties: \textit{i}) attention-guided distillation, letting students’ learning focus on the foreground objects and suppresses students’ learning on the background pixels; and \textit{ii}) non-local distillation, transferring the relation between different pixels from teachers to students. At a high level, both DPK and AGNL apply the masking strategy (random mask and attention-guided mask) and non-local relation modeling module (transformer and a self-designed non-local module).The key difference is that DPK integrates features of students and teachers with a dynamic mechanism. 
+
+\noindent{\textbf{Performance degradation.}} Prior works \citep{cho2019efficacy,mirzadeh2020improved,Hinton2015DistillingTK,liu2021exploring} also report that the performance of distilled student \emph{degrades} when the gap between students and teachers becomes \emph{large}. To solve this issue, ESKD~\citep{cho2019efficacy} stops the teacher training early to make it under convergence and yield more softened logits. Different from the abo
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

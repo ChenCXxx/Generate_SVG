@@ -1,0 +1,270 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Pose estimation is a fundamental and significant computer vision task, which aims to produce the locations of pre-defined semantic part of object instance in 2D image.
+Recently, it has received increasing attention in the computer vision community due to its wide applications in virtual reality, augmented reality, human-computer interaction, robot and automation.
+However, most pose estimation methods are trained with category-specific data and thus cannot be applied for novel classes, especially when they have different keypoint classes.
+Therefore, category-agnostic pose estimation (CAPE) \cite{POMNet,CapeFormer} is recently proposed to localize desired keypoints for arbitrary classes given one or few support images annotated with keypoints.
+
+\input{figs/overview.tex}
+
+Unlike the standard pose estimation task where the keypoint classes are pre-defined, the desired keypoints in CAPE are defined by support keypoints.
+Therefore, existing methods \cite{POMNet,CapeFormer} intuitively extract features at support keypoints and then rely on them to predict or refine the keypoints on query image, as shown in Fig.~\ref{fig:overview}~(a).
+Although such straightforward pipeline has achieved considerable success, the information provided by a few feature vectors are local \cite{nonlocal,nonlocal2} and inadequate, especially when support keypoints are partially occluded or blurred.
+Furthermore, above methods focus on learning pixel-level correspondences and neglect to mine inherent and complementary information of keypoints, which is a fundamental issue of CAPE.
+
+We conjecture that there are some inherent or universal points in each object, based on the insight that human can quickly grasp the essentials of keypoints of arbitrary objects without any reference or support image.
+We refer to such class-agnostic potential points as meta-points, which may seem similar to object proposal \cite{PropBox1,PropBox2,PropBox3} or mask proposal \cite{PropMaskDeep,PropMask1,PropMask2} but actually have significant characteristics.
+For single object, meta-points could provide fine-grained and structural information with a sparse representation.
+For two objects, meta-points of the same semantic part should have consistent contact.
+For example, a lion and a bird may have consistent meta-points (\emph{e.g.}, eye) and individual meta-points (\emph{e.g.}, wing). 
+Therefore, meta-point learning is a fundamental yet challenging issue.
+
+In this paper, we propose a novel pipeline for CAPE, which first predicts meta-points without support and then assign and refine them to desired keypoints according to support, as illustrated in Fig.~\ref{fig:overview}~(b).
+Specifically, we maintain learnable meta-embeddings to store the inherent information of various keypoints for producing meta-points.
+Given a query image, these meta-embeddings will interact with its feature maps via a transformer decoder to mine the inherent information and thus could produce meta-points without support.
+To bridge the gap between inherent meta-points and desired keypoints, we first employ bipartite matching-based assignment to assign optimal meta-points for desired keypoints according to support.
+Afterwards, we employ the support feature vectors together with the mined inherent information to refine assigned meta-points via another transformer decoder.
+Thanks to the meta-points and mined inherent information, our framework could produce more precise keypoints for CAPE.
+In addition, we propose a progressive deformable point decoder, which progressively mines fine-grained features to decode points with last points as reference based on deformable attention \cite{DeformDETR}.
+We also propose a slacked regression loss to reduce the immature gradients of auxiliary decoder layers.
+
+We evaluate our framework on the largest dataset for CAPE, \emph{i.e.}, Multi-category Pose (MP-100) dataset \cite{POMNet}.
+The in-depth studies demonstrate that our method could learn meaningful meta-points for arbitrary classes without support.
+And the comprehensive experiments indicate that our meta-points could dramatically facilitate CAPE and lead to better performance against existing methods.
+Our contributions could be summarized as: 
+\textbf{1)} To the best of our knowledge, we are the first to learn class-agnostic potential keypoints for CAPE. 
+\textbf{2)} We propose a novel framework for CAPE based on meta-point learning and refining. 
+\textbf{3)} Two minor contributions are progressive deformable point decoder and slacked regression loss for better prediction and supervision.
+\textbf{4)} Our method not only produces meaningful meta-points but also predicts more precise keypoints against existing methods in CAPE.
+
+
+Related Works
+\subsection{Category-Specific Pose Estimation}
+Pose estimation is a fundamental task in computer vision, which aims to localize the pre-defined keypoints of objects in the input image.
+Most pose estimation methods are class-specific, \emph{e.g.}, estimating pose for human \cite{humanpose1,humanpose2}, animals \cite{animalpose1,animalpose2}, and vehicles \cite{carpose1,carpose2}.
+Technically, existing pose estimation methods could be roughly categorized into regression-based methods \cite{reg1,reg_RLE,reg_DEKR}, heatmap-based methods \cite{heatmap1,heatmap2,heatmap3}, and query-based methods \cite{query_PETR,query1,query2}.
+To name a few, Li \emph{et al.} \cite{reg_RLE} proposed a novel regression paradigm with Residual Log-likelihood Estimation to learn the change of the distribution to facilitate the training process.
+Geng \emph{et al.} \cite{reg_DEKR} proposed to employ multi-branch structure for disentangled keypoint regression, which could be able to attend to the keypoint regions and thus improve the performances.
+Luo \emph{et al.} \cite{heatmap_SAHR} proposed to estimate scale-adaptive heatmaps, which adaptively adjusts the standard deviation for each keypoint and thus is tolerant of various scales and ambiguities.
+Shi \emph{et al.} \cite{query_PETR} proposed to learn multiple pose queries for reasoning a set of full-body poses and then use a joint decoder to refine by exploring kinematic relations.
+Although above works have achieved great success for estimating pose of specific classes, they are inapplicable for novel classes, especially when the novel classes have different number and kinds of keypoints.
+In this work, we focus on estimating pose for arbitrary classes with a few support images annotated with desired keypoints.
+
+\subsection{Category-Agnostic Pose Estimation}
+Few-shot learning \cite{fsl1} focuses on learning novel classes using only a few samples and has been applied in extensive visual tasks, \emph{e.g.}, classification \cite{fsl-cls1,m2}, object detection \cite{fsl-det1,fsl-det2}, segmentation \cite{fsl-seg1,fsl-seg2,m4}.
+For keypoint estimation, previous few-shot methods mostly focus on specific domains, \emph{e.g.}, facial images \cite{face1,face2}, clothing images \cite{Metacloth}, or X-ray images \cite{x0,x1}.
+For wider classes, Lu \emph{et al.} \cite{FSKD} explored a flexible few-shot scenario including novel/base classes and novel/base keypoints.
+Later, Lu \emph{et al.} \cite{SFSKD} proposed a saliency-guided transformer for above scenario and transductive scenario.
+He \emph{et al.} \cite{FewShot3DKP} explored to estimate keypoints using a few examples combined with unlabeled images.
+Recently, POMNet \cite{POMNet} elaborated a large-scale dataset including 100 classes and set the task of category-agnostic pose estimation.
+Technically, POMNet \cite{POMNet} proposed a keypoint matching framework, which extracts the features at support keypoints and employs their matching similarities to every pixels to retrieve the desired keypoints.
+Afterwards, CapeFormer \cite{CapeFormer} enhanced the similarity modeling in above matching pipeline, and proposed to further refine each keypoint via a elaborate transformer decoder.
+Although above methods \cite{POMNet,CapeFormer} have great promoted the development of CAPE, they only rely on the local features at support keypoints and neglect to mine inherent and universal information of keypoints.
+In contrast, we propose to mine the inherent or universal points in objects without any support, and propose a progressive deformable point decoder to progressively mines fine-grained features to decode points more precisely.
+
+\subsection{Category-Agnostic Proposal Learning}
+Category-agnostic proposal learning is a long-standing research topic in computer vision and has extensive downstream tasks.
+Early methods rely on low-level features (\emph{e.g.}, edges, super-pixels, or saliency) to produce bounding box proposals \cite{PropBox1,PropBox2} or mask proposals \cite{PropMask1,PropMask2,m1,m3}.
+Recent methods employ various network to learn box proposals \cite{PropBoxD1,FasterRCNN} or mask proposals \cite{PropMaskD1,PropMaskD2}.
+To name a few, one of the most impressive works is Faster R-CNN \cite{FasterRCNN}, which first learns class-agnostic box proposals and then refines them to object bounding boxes.
+Pinheiro \emph{et al.} \cite{PropMaskDeep} proposed to learn the class-agnostic segmentation masks and their object likelihood scores. 
+Therefore, proposal learning is a significant and foundational task and could greatly facilitate downstream tasks in the second stage.
+Nevertheless, there are few works on learning class-agnostic keypoints, and we propose to learn potential keypoints and name our learned points as meta-points. 
+Basically, our meta-point could provide fine-grained and structural information with a sparse representation.
+Furthermore, our meta-points have consistent contact for the same semantic part of different objects.
+Therefore, such meta-points not only reveals the inherency of keypoints but also serves as meaningful proposals for downstream tasks.
+Although the coarse keypoints in \cite{CapeFormer} are named as ``proposals'', their ``proposals'' are predicted according to support keypoints and thus do not have the class-agnostic properties.
+
+
+
+Method
+Class-agnostic pose estimation (CAPE) aims to estimate desired keypoints on query image given a few support images annotated with keypoints for novel classes.
+For $N$-shot setting, CAPE could be formulated as a function:
+\begin{equation}
+    \bm{P}_q=\mathcal{F}_{cape}(\bm{x}_q,\{\bm{x}_{s_{n}}\}_{n=1}^N,\{\bm{P}^*_{s_{n}}\}_{n=1}^N)
+\end{equation}
+where $N$ support images $\{\bm{x}_{s_{n}}\}_{n=1}^N$ and their ground-truth (GT) keypoints $\{\bm{P}^*_{s_{n}}\}_{n=1}^N$ are given, and the task is to estimate the desired keypoints $\bm{P}_q$ on query image $\bm{x}_q$.
+To evaluate the generalization capacity for arbitrary classes, all classes in benchmark are split into non-overlapping base classes and novel classes, and query and support images are sampled from only base (\emph{resp.}, novel) classes for training (\emph{resp.}, evaluating).
+For simplicity, we first introduce our method in 1-shot setting, and then clarify the intuitive extension with more support images.
+Specifically, the function is simplified as $\bm{P}_q=\mathcal{F}_{cape}(\bm{x}_q,\bm{x}_s,\bm{P}^*_s)$, where $\bm{x}_q,\bm{x}_s \in \mathbb{R}^{3\times H\times W}$ and $\bm{P}_q,\bm{P}^*_s \in \mathbb{R}^{K\times 2}$.
+For brevity of description, we employ subscript to indicate the variable source and use square bracket to show the index in variable, \emph{e.g.}, $\bm{P}_q[k]$ for the $k$-th keypoint on query image.
+To tackle such problem, we propose a novel framework based on meta-point learning and refining, which not only reveals the keypoint inherency but also produces precise keypoints.
+The detailed framework is illustrated in Fig. \ref{fig:framework}, we first introduce the pipelines of two-stages and then clarify the architecture of our point decoder used in pipelines.
+
+\input{figs/framework.tex}
+
+\subsection{Predicting Meta-Point without Support} \label{sec:pred_meta}
+Considering that human is able to quickly abstract keypoints for arbitrary classes without support, we propose to model such fundamental ability to facilitate CAPE.
+As shown in the upper part of Fig. \ref{fig:framework}, we maintains $M$ trainable meta-embeddings $\Tilde{\bm{E}} \in \mathbb{R}^{M\times D}$ in our model (\emph{e.g.}, $M=100$), which are shared by all samples and store the inherent and universal information of keypoints.
+For the input sample $\bm{x}_q$, our model first employs ResNet-50 \cite{ResNet} backbone to extract pyramid feature maps $\{\bm{F}^r_q\}_{r=1}^{R}$, where $\bm{F}^r_q \in \mathbb{R}^{D^r\times H^r\times W^r}$ corresponds to the $r$-th residual layer in deep-to-shallow order ($R=3$ by default).
+Afterwards, the meta-embeddings interact with image feature maps to mine inherent information, which could be summarized as:
+\begin{equation}
+\left \{\left[\Tilde{\bm{P}}^l_q; \Tilde{\bm{E}}^l_q\right]\right\}_{l=1}^{L}=\mathcal{D}^L_{meta}(\Tilde{\bm{E}}, \Tilde{\bm{P}}_{init}, \{\bm{F}^r_q\}_{r=1}^{R}).
+\end{equation}
+Specifically, $\mathcal{D}_{meta}$ is implemented with our Progressive Deformable Point Decoder, which employs DeformAttn\cite{DeformDETR} to progressively decode $L$ layers of points with last points as reference points and will be clearly introduced in Sec. \ref{sec:decoder}.
+$\Tilde{\bm{P}}_{init} \in \mathbb{R}^{M\times 2}$ are the initial points, and we adopt uniform grid points to launch the decoding for meta-points.
+From the $l$-th decoder layer in $\mathcal{D}_{meta}$, we obtain the query meta-points $\Tilde{\bm{P}}^l_q \in \mathbb{R}^{M\times 2}$ and query meta-embeddings $\Tilde{\bm{E}}^l_q \in \mathbb{R}^{M\times D}$. 
+We use the predictions from the last layer as the proposals for following processes.
+Because not all meta-points are visible for arbitrary objects, we employ a lightweight binary classifier to predict the visibilities $\Tilde{\bm{v}}_q \in \mathbb{R}^{M}$ according to the last query meta-embeddings.
+
+In this way, we are able to produce meta-points $\Tilde{\bm{P}}^L_q$ and their visibilities $\Tilde{\bm{v}}_q$ without any support, which reveal the inherency of keypoints and serve as meaningful proposals to facilitate downstream tasks.
+
+\subsection{Refining Meta-Point with Support}
+Due to the inevitable gap between keypoint inherency and annotation, we have to refine above meta-points to desired keypoints $\bm{P}_q$ with GT support keypoints $\bm{P}^*_s$.
+The support information includes two aspects, \emph{i.e.}, desired identity and desired detail, which will be described as follows.
+
+\subsubsection{Identity Assignment}
+Each annotated keypoint has its identity/index, and thus we need to determine the index mapping $\delta(\cdot)$ between meta-points and desired keypoints, \emph{i.e.}, the $\delta(k)$ meta-point corresponds to the $k$-th keypoint.
+Specifically, we employ the bipartite matching-based assignment as in \cite{MaskFormer,DETR} to solve the mapping according to a cost matrix $\mathcal{C}\in \mathbb{R}^{M\times K}$, where each entry $\mathcal{C}[m,k]$ indicates the cost for assigning the $m$-th meta-point to the $k$-th annotated keypoint.
+To solve the assignment according to support, we obtain the meta-points $\{\Tilde{\bm{P}}^l_s\}_{l=1}^L$ and visibilities $\Tilde{\bm{v}}_s$ on support image as the same pipeline in Sec. \ref{sec:pred_meta}.
+Then, we compute the cost by:
+\begin{equation}\label{eqn:cost}
+    \mathcal{C}_s[m,k]= \sum_{l=1}^L{\mathcal{L}_{sl_1}(\Tilde{\bm{P}}^l_s[m],\bm{P}^*_s[k],l) -\alpha {\rm log}(\Tilde{\bm{v}}_s[m])},
+\end{equation}
+where $\mathcal{L}_{sl_1}$ measures the $l_1$ deviation with slacks on auxiliary decoder layers and will be introduced in Sec. \ref{sec:loss}.
+The second term considers the classification of meta-point visibility, with a trade-off hyper-parameter $\alpha=0.5$.
+Finally, we use $\mathcal{C}_s$ to obtain the optimal assignment $\delta(\cdot)$.
+In this way, each desired keypoint is assigned with a meta-point, \emph{i.e.}, the $k$-th keypoint is assigned with $\Tilde{\bm{P}} [\delta(k)]$.
+Because we set $K \leq M$, and the unassigned meta-points are treated as ignore.
+For brevity, we employ $\delta(\Tilde{\bm{P}})\in \mathbb{R}^{K\times 2}$ and $\delta(\Tilde{\bm{E}}) \in \mathbb{R}^{K\times D}$ to denote the assigned meta-points and meta-embeddings re-ordered in desired sequence.
+
+\subsubsection{Details Enhancement}
+Besides the desired identities, we refine meta-points to desired coordinates according to the support information.
+By default, we employ the prediction of the last decoder layer in $\mathcal{D}_{meta}$ to refine and omit the decoder layer index for brevity, \emph{i.e.}, we use assigned meta-points $\delta(\Tilde{\bm{P}}_q)$ and their embeddings $\delta(\Tilde{\bm{E}}_q)$ to launch the refinement.
+Basically, we derive support keypoint features $\bm{F}_s$ via ``soft'' ROI pooling as in previous works \cite{CapeFormer,POMNet}, which contain information of local details in support image.
+We also collect the meta-embeddings assigned to support keypoints $\delta(\Tilde{\bm{E}}_s)$, which have absorbed the global inherent information in support image.
+Afterwards, we squeeze the concatenation of above embeddings to obtain comprehensive embeddings $\bm{E}_q \in \mathbb{R}^{K\times D}$ for keypoints, \emph{i.e.}, $\bm{E}_q =f_{sqz}([\delta(\Tilde{\bm{E}}_q);\delta(\Tilde{\bm{E}}_s);\bm{F}_s])$.
+Then, the assigned meta-points $\delta(\Tilde{\bm{P}}_q)$ are progressively refined according to $\bm{E}_q$ and image feature maps, as:
+\begin{equation}
+\left \{\left[\bm{P}^l_q; \bm{E}^l_q\right]\right\}_{l=1}^{L}=\mathcal{D}^L_{ref}(\bm{E}_q, \delta(\Tilde{\bm{P}}_q), \{\bm{F}^r_q\}_{r=1}^{R}).
+\end{equation}
+Specifically, we also employ our Progressive Deformable Point Decoder to implement $\mathcal{D}_{ref}$ (same architecture but different parameters with $\mathcal{D}_{meta}$) and leave the details to Sec. \ref{sec:decoder}.
+In this way, our decoder $\mathcal{D}_{ref}$ progressively refines assigned meta-points to desired keypoints.
+
+\subsection{Progressive Deformable Point Decoder} \label{sec:decoder}
+\input{figs/decoder.tex}
+Predicting precise keypoints requires fine-grained and high-resolution features, and thus we propose a progressive deformable point decoder, which makes full use of deformable attention module \cite{DeformDETR} to precisely refine keypoints.
+Our decoder consists of $L$ decoder layers ($L=3$ by default), and the architecture of decoder layer is shown in Fig. \ref{fig:decoder}.
+Given points $\bm{P}^{l-1}\in \mathbb{R}^{K\times 2}$ and their embeddings $\bm{E}^{l-1}\in \mathbb{R}^{K\times D}$, each decoder layer performs self attention \cite{multiheadattention} and deformable attention \cite{DeformDETR} to update points and embeddings according to feature maps $\{\bm{F}^r\}_{r=1}^R$, as: 
+\begin{equation}
+    [\bm{P}^{l};\bm{E}^{l}]=\mathcal{D}(\bm{E}^{l-1},\bm{P}^{l-1},\{\bm{F}^r\}_{r=1}^R).
+\end{equation}
+By stacking multiple such layers, our decoder could update the points in a progressive and precise manner.
+Specifically, each decoder layer first employs a self attention module to render each point aware of other points' positions and contents as in \cite{CapeFormer} (also with identity embeddings and position embeddings).
+Afterwards, each embedding predicts the offsets $\{\Delta \bm{ P}^r\}_{r=1}^R$ and weights $\{\bm{A}^r\}_{r=1}^R$ for paying attention to each feature map.
+By using the points $\bm{P}^{l-1}$ as reference points, the deformable attention module aggregates sampled features according to weights and obtain updated embeddings $\bm{E}^l$.
+Then, the coordinates of points are refined by: 
+\begin{equation}
+    \bm{P}^l=\sigma \left(\sigma^{-1}(\bm{P}^{l-1})+\mathcal{F}_{mlp}(\bm{E}^l) \right),
+\end{equation}
+where $\mathcal{F}_{mlp}$ is a lightweight point head and $\sigma$ indicates Sigmoid function. 
+In this way, input points and their embeddings could be progressively refined according to the nearby fine-grained features. 
+
+\subsection{Training and Inference} \label{sec:loss}
+Our full training objective consists of keypoint regression loss and visibility classification loss.
+For the regression loss, strict supervision on auxiliary decoder layers will trigger immature gradients for fitting keypoints with inadequate capacities.
+And thus we adopt a slacked $L_1$ loss: 
+\begin{equation}
+    \mathcal{L}_{sl_1}(\bm{P}, \bm{P}^*,l)=\sum_k \varepsilon \left( \left|{\bm{P}[k]-\bm{P}^*[k]} \right|_1  -\lambda \cdot (L-l) \right), 
+\end{equation}
+where $\varepsilon$ indicates ReLU function and $\lambda=0.1$ is a slack hyper-parameter.
+And our total regression loss is 
+\begin{equation}
+    \mathcal{L}_{reg}= \sum_{l=1}^{L}{\mathcal{L}_{sl_1}(\delta(\Tilde{\bm{P}}^l_q), \bm{P}^*_q,l)+\mathcal{L}_{sl_1}(\bm{P}^l_q, \bm{P}^*_q,l)},
+\end{equation}
+where the first part supervises the assigned meta-points and the second part supervises the refined meta-points towards to GT keypoints $\bm{P}^*_q$.
+For the visibility classification loss, we employ binary cross-entropy loss:
+\begin{equation}
+    \mathcal{L}_{vis}=BCE(\Tilde{\bm{v}_q}, \bm{1}_{\delta}),
+\end{equation}
+where $\bm{1}_{\delta}\in \mathbb{R}^{M}$ is a vector indicating assigned meta-points with $1$, otherwise $0$.
+Therefore, our full training objective is calculated as $\mathcal{L}_{full}=\mathcal{L}_{reg}+\alpha\cdot \mathcal{L}_{vis}$, where we reuse the balance hyper-parameter $\alpha$ in cost computation Eqn. \ref{eqn:cost}.
+
+In the inference stage, we employ the result of last decoder layer $\bm{P}^L_q$ as the estimated keypoints.
+As for $N$-shot setting, we average the support keypoint features from different shots as previous works \cite{CapeFormer,POMNet}.
+Besides, we average their cost matrices to obtain better assignment $\delta(\cdot)$, \emph{i.e.}, $\mathcal{C}_{\Bar{s}}=\frac{1}{N}\sum_n^N{ \mathcal{C}_{s_{n}}}$.
+We also average their assigned meta-embeddings, \emph{i.e.}, $\delta(\Tilde{\bm{E}}_{\Bar{s}})=\frac{1}{N}\sum_n^N{ \delta(\Tilde{\bm{E}}_{s_{n}}})$.
+In this way, we could obtain enhanced information to facilitate prediction.
+
+
+Experiments
+\subsection{Dataset, Metric, and Implementation Details}
+Overall, we follow the experimental setting of previous work \cite{CapeFormer}.
+Specifically, we conduct experiments on MP-100 dataset \cite{POMNet}, which covers $100$ classes and $8$ super-classes and is the largest benchmark dataset for CAPE.
+MP-100 contains over $18$K images and $20$K annotations, and the keypoint numbers range from $8$ to $68$ across different classes.
+The collected $100$ classes are split into non-overlapping train/val/test sets with the ratio of $70:10:20$.
+There are five random splits to reduce the impact of randomness.
+We use the Probability of Correct Keypoint (PCK) \cite{PCK} as the quantitative metric.
+Apart from the PCK of threshold $0.2$ as in \cite{POMNet,CapeFormer}, we also report the mPCK (of $[0.05,0.1,0.15,0.2]$) for a more comprehensive evaluation.
+
+\input{tabs/SOTA.tex}
+\input{tabs/mPCK.tex}
+
+\subsection{Comparison with Prior Works}
+Following previous works \cite{CapeFormer}, our comparison baselines include ProtoNet \cite{ProtoNet}, MAML \cite{MAML}, Fine-tune \cite{Finetuning}, POMNet \cite{POMNet}, and CapeFormer \cite{CapeFormer}.
+Specifically, ProtoNet, MAML, and Fine-tune are popular few-shot learning methods adapted in \cite{POMNet}.
+POMNet \cite{POMNet} adopts a keypoint matching framework to match support keypoints to the pixels of query image.
+CapeFormer \cite{CapeFormer} enhances above similarity modeling and further refines keypoints via transformer modules.
+We use two versions of our model for comparison, \emph{i.e.}, MetaPoint and MetaPoint+.
+MetaPoint directly employs the predicted meta-points as results, where the support keypoints are only used to determine the identities for evaluation. 
+MetaPoint+ is the full-fledged version of our model and employs the refined meta-points as results.
+
+We summarize the results of PCK@0.2 in 1-shot setting and 5-shot setting in Tab.~\ref{tab:SOTA}.
+Firstly, we could see that our MetaPoint achieves satisfactory performances without any support and refinement, which indicates the mined meta-points could reveal the keypoints inherency and serve as high-quality proposals.
+Our MetaPoint+ achieves the optimal performances against all baselines, demonstrating the effectiveness of our framework on learning and refining meta-points.
+We could also see that our methods have relatively robust performances on various dataset splits and different number of support images.
+
+In addition, the performances of various methods approach to saturation, probably because PCK@0.2 employs a coarse threshold.
+We also report the results of mPCK (with the thresholds in [0.05, 0.1, 0.15, 0.2]) against the most competitive baseline (\emph{i.e.}, CapeFormer) for a more comprehensive evaluation in Tab.~\ref{tab:mPCK}.
+From the perspective of mPCK, we can see that our MetaPoint+ outperforms dramatically against the most competitive baseline, which more clearly demonstrates the effectiveness of our novel framework based on meta-point learning and refining.
+
+\subsection{Cross Super-Category Pose Estimation}
+\input{tabs/cross_super.tex}
+
+\input{figs/viz_SOTA.tex}
+\input{figs/viz_tracking.tex}
+
+In the standard setting of CAPE, although the training classes, validation classes, and test classes have no overlap, some classes may have common characteristics and thus easy to transfer, \emph{e.g.}, the body of various kinds of animals.
+We follow the experiments of cross super-category evaluation in previous works \cite{CapeFormer,POMNet} to investigate the generalization ability on significantly different classes of our method.
+Specifically, we respectively employ one of four super-categories (\emph{i.e.},  human face, human body, vehicle, and furniture) in MP-100 dataset as the test categories, while the other categories are used as the training categories.
+As shown in Tab.~\ref{tab:cross_super}, our method outperforms than all baselines, demonstrating that the our method could mine more class-agnostic information via learning meta-points, and thus are more robust against the distribution shift of categories.
+We also include the evaluation results using mPCK metric in Tab.~\ref{tab:mPCK}.
+The performances vary greatly across super-classes, probably because different super-classes have diverse kinds of keypoints as discussed in \cite{CapeFormer}.
+
+\subsection{Qualitative Analyses}
+
+For a more intuitive understanding of our method, we visualize the predicted meta-points and keypoints in 1-shot setting for novel classes in Fig.~\ref{fig:viz_SOTA}.
+As shown in the second column and the fourth column, our model could predict meaningful meta-points without any support, which have satisfactory performances compared with assigned GT.
+Furthermore, the meta-points correspond to consistent semantic parts in support images and query images.
+Therefore, the predicted meta-points not only reveal the inherency of keypoints but also could serve as favourable proposals for subsequent refinement.
+As shown in the first row, the support keypoints of bird feet are hard to provide clear support information.
+In such case, previous works may be confused by the ambiguous support, while our method could predict precise keypoints based on the inherent and complementary information mined via meta-points.
+Similar cases could be found in other visualizations.
+
+To further explore the properties of learned meta-points, we track one meta-embedding and visualize its meta-point on various samples if the visibilities are greater than $0.5$ in Fig.~\ref{fig:viz_tracking}.
+As shown in the first row, we could find that the meta-point could correspond to consistent semantic parts of various classes, even if the parts have just high-level or potential relation.
+Note that there is no annotation binding the points across classes, which demonstrates that our model could mine and extract the inherent and universal information of keypoints.
+In the second row, the meta-point may correspond to the egoistic left-upper point of objects.
+Similar phenomena could be found in other cases.
+
+\subsection{Ablation Study}
+\input{tabs/ablation.tex}
+\input{tabs/cfg.tex}
+
+In this section, we investigate the performances of component combinations and various configurations of our method.
+Firstly, we gradually enable various components in our model and report the mPCKs in Tab.~\ref{tab:ablation}.
+The row \#1 is a plain version to directly predict and refine meta-points without extra information, which shows the basic performance of learned meta-points.
+In row \#2, we further enable visibility $\Tilde{\bm{v}}$, which avoids the wrong but accidental assignment to non-existent meta-points (\emph{e.g.}, occluded) and thus prompts the performance.
+In row \#3 and row \#4, we enable support features $\bm{F}_s$ and support meta-embeddings $\delta(\Tilde{\bm{E}_s})$ in refinement, which provide critical and complementary information for refining meta-points to desired keypoints.
+Row \#5 indicating the contribution of our slacked regression loss $\mathcal{L}_{sl_1}$, which could slack the supervision on immature predictions.
+In addition, we explore the impact of various configurations in Tab.~\ref{tab:cfg}.
+Specifically, Row \#1 indicates the standard performance of our model.
+Row \#2 solves the assignment $\delta(\cdot)$ based on the sum of cost matrices of query and support images but obtain worse results, probably because only the cost matrix of support image is available in inference.
+Row \#3 and row \#4 explore the impact of feature map number $R$, and our default configuration (\emph{i.e.}, $R=3$) could mine effective features from pyramid feature maps via our point decoder, but too shallow feature map only improves negligibly (\emph{i.e.}, $R=4$) probably because the features are too low-level.
+The last two rows investigate the impact of decoder layer number, and our point decoder could progressively refine keypoints via multip
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

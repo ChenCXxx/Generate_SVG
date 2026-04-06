@@ -1,0 +1,392 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Spiking Neural Networks (SNNs), considered as the third generation of Artificial Neural Networks (ANNs)~\cite{maass1997networks}, have garnered significant attention due to their notable advantages such as low power consumption, biological plausibility, and event-driven characteristics that are compatible with neuromorphic hardware.
+In comparison to ANNs, SNNs exhibit an energy-saving advantage when deployed on neuromorphic hardware~\cite{furber2014spinnaker, merolla2014million,pei2019towards}, and have become popular in the field of neuromorphic computing in recent years~\cite{schuman2017survey}.
+However, the performance of existing SNNs still lags behind that of ANNs, particularly on challenging vision tasks, which limits further application of SNNs.
+
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{plot/comparison.pdf}
+    \caption{Comparison of Top-1 accuracy on ImageNet with respect to energy consumption per image for inference (left) and the number of parameters (right). The input size is 224$\times$224.}
+    \label{fig:comparison}
+\end{figure}
+
+Researchers make great efforts to enhance the performance of SNNs.
+Recently, inspired by the remarkable achievements of vision transformers~\cite{dosovitskiy2021an,liu2021swin} in ANNs, some attempts have been made to introduce transformer-based architecture into SNNs.
+The main challenge in incorporating transformer structures into SNNs lies in designing a self-attention mechanism suitable for SNNs.
+The vanilla self-attention mechanism in ANNs relies on float-point matrix multiplication and softmax operations. However,
+these operations involve float-point multiplication, division, and exponentiation, which do not comply with the spike-driven nature of SNNs.
+Moreover, commonly used components in ANN Transformers, such as layer normalization (LN) and GELU activation, are not directly applicable in SNNs.
+Therefore, the introduction of transformer architectures into SNNs necessitates circumventing these operations and catering to the unique requirements of SNNs.
+Some work has attempted to partially preserve floating-point operations~\cite{wang2023sstformer}, or run an SNN and an ANN Transformer in parallel~\cite{zou2023event}.
+Although these approaches enhance performance, they do not fully address the incompatibility between vanilla self-attention and SNNs.
+There are also works that propose spiking self-attention mechanisms and spiking Vision Transformer architectures, which are entirely based on synaptic operations~\cite{zhou2023spikformer} and fully spike-driven~\cite{zhou2023spikingformer,yao2023spike}.
+These works completely resolve the incompatibility of the self-attention mechanism with SNNs, significantly outperforming existing spiking convolutional neural networks. However, these approaches have certain limitations.
+Specifically, the spiking transformer architectures of these methods exhibit a bottleneck in extracting local features. They employ a shallow convolutional network before the Transformer encoder to extract local features and reduce the size of feature maps. However, the effectiveness of such a shallow network is limited compared to Transformer encoders.
+Replacing this shallow network with a Transformer encoder is not feasible.
+This is because their spiking self-attention mechanisms lack reasonable scaling methods, making them suitable only for small feature maps. Designing proper scaling factors for these mechanisms is challenging as the input currents to neurons, which generate self-attention, do not possess simple mean and variance forms. Thus, there is a pressing need to design a new spiking self-attention mechanism with a reasonable scaling method that can effectively handle large feature maps.
+
+To address these problems, we propose a novel spiking self-attention mechanism, named Dual Spike Self-Attention (DSSA).
+It produces spiking self-attention via Dual Spike Transformation, which is fully spike-driven,  compatible with SNNs, and eliminates the need for direct spike multiplications.
+In addition, we detail the scaling method in DSSA, enabling it to adapt to adapt to feature maps of arbitrary scales.
+Building upon DSSA, we propose SpikingResformer, a novel spiking Vision Transformer architecture.
+This architecture combines the ResNet-based multi-stage design with our proposed spiking self-attention mechanism.
+Experimental results show that our proposed SpikingResformer significantly outperforms the performance of existing spiking Vision Transformers with fewer parameters and less energy consumption.
+The main contributions of this paper can be summarized as follows:
+\begin{itemize}
+\item We propose the Dual Spike Self-Attention (DSSA), a novel spiking self-attention mechanism.
+It produces spiking self-attention via Dual Spike Transformation, which is fully spike-driven and compatible with SNNs.
+\item We detail the scaling factors employed in DSSA, enabling DSSA to handle feature maps of arbitrary scales.
+\item We propose the SpikingResformer architecture, which combines the ResNet-based multi-stage architecture with our proposed DSSA.
+\item Experimental results show that the proposed SpikingResformer significantly outperforms other spiking Vision Transformer counterparts with fewer parameters and lower energy consumption. Notably, our SpikingResformer-L achieves up to 79.40\% top-1 accuracy on ImageNet.
+\end{itemize}
+
+
+
+Related Work
+
+\noindent
+\textbf{Spiking Convolutional Neural Networks.}
+Spiking convolutional neural networks (SCNNs) have been extensively developed due to the remarkable success of surrogate gradient learning~\cite{zenke2021remarkable,neftci2019surrogate} and are widely used in handling challenging vision tasks, including object recognition~\cite{amir2017low,lan2023efficient}, detection~\cite{kim2020spiking,su2023deep}%,cordone2022object}%,wang2020deep%kim2021revisiting,
+, and segmentation~\cite{kirkland2020spikeseg,patel2021spiking}.
+To improve the performance of SCNNs on these challenging tasks, researchers have dedicated great efforts to exploring training methods~\cite{lee2020enabling,deng2022temporal,wei2023temporal,guo2023membrane,meng2023towards,zhu2022training,zhu2023exploring,xu2023constructing} and ANN-to-SNN conversion techniques~\cite{sengupta2019going,hu2021spiking,hao2023reducing,li2023unleashing,li2021free,jiang2023unified,wu2021progressive,hu2023fast,bu2023optimal,bu2022optimized,ding2021optimal,deng2021optimal}.
+Moreover, many deep spiking convolutional architectures~\cite{sengupta2019going,lee2020enabling,zheng2021going,hu2021spiking,fang2021deep} have been proposed to achieve high performance.
+The success of SpikingVGG~\cite{sengupta2019going,lee2020enabling} demonstrates that SCNNs can achieve comparable performance to ANNs in recognition tasks.
+SpikingResNet~\cite{zheng2021going,hu2021spiking} further explores SCNNs with residual structure and achieves deeper SCNN with ResNet-based architecture. Moreover, SEW ResNet~\cite{fang2021deep} meticulously analyzes the identity mapping in directly-trained spiking residual networks and successfully trains a 152-layer SCNN directly.
+These architectures leverage large-scale SNNs with numerous layers and demonstrate superior performance on various tasks.
+
+\noindent
+\textbf{Spiking Vision Transformers.}
+Spikformer~\cite{zhou2023spikformer} is the first directly-trained spiking vision transformer with a pure SNN architecture.
+It introduces a spiking self-attention mechanism that eliminates multiplication by activating Query, Key, and Value with spiking neurons and replacing softmax with spiking neurons.
+In addition, it replaces layer normalization and GELU activation in the Transformer with batch normalization and spiking neurons.
+Based on Spikformer, Spikingformer~\cite{zhou2023spikingformer} achieves a purely spike-driven Vision Transformer by modifying the residual connection paradigm.
+Spike-driven Transformer~\cite{yao2023spike} proposes a spike-driven self-attention mechanism with linear complexity, effectively reducing energy consumption.
+However, all of these efforts employ a shallow convolutional network to pre-extract local information to form a sequence of patches and lack proper scaling methods.
+
+
+
+Preliminary
+
+We describe the dynamics of the Leaky Integrate-and-Fire (LIF) neuron used in this paper by the following discrete-time model:
+\begin{align}
+v_i[t] &= u_i[t] + \frac1\tau (I_i[t]-(u_i[t]-u_{\rm rest})),\label{eq:spiking neuron model a}\\
+s_i[t] &= H(v_i[t] - u_{\rm th}),\label{eq:spiking neuron model b}\\
+u_i[t+1] &= s_i[t] u_{\rm rest}+(1-s_i[t])v_i[t].\label{eq:spiking neuron model c}
+\end{align}
+Eq.~\eqref{eq:spiking neuron model a} describes the charging process.
+Here $u_i[t]$ and $v_i[t]$ denote the membrane potential of $i$-th postsynaptic neuron before and after charging. $\tau$ is the membrane time constant. $I_i[t]$ denotes the input current.
+In general, $I_i[t] = \sum_j w_{i,j}s_j[t]$, where $s_j[t]\in\{0,1\}$ represents the spike output of the $j$-th presynaptic neuron at time-step $t$, and $w_{i,j}$ represents the weight of the corresponding synaptic connection from neuron $j$ to neuron $i$.
+Eq.~\eqref{eq:spiking neuron model b} describes the firing process,
+where $H(\cdot)$ is the Heaviside function, $s_i[t]\in\{0,1\}$ is the spike output of the spiking neuron, $u_{\rm th}$ denotes the firing threshold.
+Eq.~\eqref{eq:spiking neuron model c} describes the resetting process, with
+$u_{\rm rest}$ denoting the resting potential.
+
+For the sake of simplicity and clarity in subsequent sections, we represent the spiking neuron model as follows:
+\begin{equation}
+    {\bf S} = {\rm SN}({\bf I}),
+\end{equation}
+where ${\rm SN}(\cdot)$ denotes the spiking neuron layer, omitting the dynamic processes within the neuron, ${\bf I}\in \mathbb{R}^{T\times n}$ is the input current, where $T$ is the time step and $n$ is the number of neurons, ${\bf S}\in \{0,1\}^{T\times n}$ is the corresponding spike output.
+
+
+
+Dual Spike Self-Attention
+\label{sec:DSSA}
+
+This section first revisits the vanilla self-attention (VSA) mechanism commonly used in ANNs and analyzes why VSA is not suitable for SNNs. Then, we propose dual spike self-attention (DSSA), specifically designed for compatibility. We further discuss the significance of the scaling factor in DSSA and the spike-driven characteristic of DSSA.
+
+\subsection{Vanilla Self-Attention}
+The vanilla self-attention in Transformer~\cite{vaswani2017attention} can be formulated as follows:
+\begin{align}
+&{\bf Q}={\bf X}{\bf W}_Q,\;{\bf K}={\bf X}{\bf W}_K,\;{\bf V}={\bf X}{\bf W}_V,\;\\
+&\mathrm{Attention}({\bf Q}, {\bf K}, {\bf V})
+= \mathrm{Softmax}\left(\frac{{\bf QK}^{\rm T}}{\sqrt{d}}\right){\bf V}
+\label{eq:vanilla attention}
+\end{align}
+Here ${\bf Q}, {\bf K}, {\bf V}\in\mathbb{R}^{n\times d}$ denote Query, Key and Value, respectively. $n$ is the number of patches, $d$ is the embedding dimension.
+We assume that ${\bf Q}, {\bf K}, {\bf V}$ have the same embedding dimension.
+${\bf X}\in\mathbb{R}^{n\times d}$ is the input of self-attention block, ${\bf W}_Q, {\bf W}_K, {\bf W}_V\in\mathbb{R}^{d\times d}$ are the weights of the linear transformations corresponding to ${\bf Q}, {\bf K}, {\bf V}$, respectively.
+The vanilla self-attention commonly used in ANNs is not suitable for SNNs due to the following two types of operations involved:
+1) the float-point matrix multiplication of $\bf Q$ and $\bf K$, as well as between the attention map and $\bf V$;
+2) the softmax function, which contains exponentiation and division operations.
+These operations rely on float-point multiplication, division, and exponentiation operations, which are not compatible with the restrictions of SNNs.
+
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{plot/overview.pdf}
+    \caption{{\bf Left}: Architecture of SpikingResformer and components including Dual Spike Self-Attention (DSSA), Multi-Head DSSA (MHDSSA), and Group-Wise Spiking Feed-Forward Network (GWSFFN). {\bf Right}: Architecture of SEW ResNet-50 and Spikformer.}
+    \label{fig:overview}
+\end{figure*}
+\subsection{Dual Spike Self-Attention}
+To introduce the self-attention mechanism into SNNs and efficiently handle the multi-scale feature maps, we propose a novel spiking self-attention mechanism, named Dual Spike Self-Attention (DSSA).
+DSSA only utilizes Dual Spike Transformation (DST), thereby eliminating the need for the float-point matrix multiplication and softmax function.
+We first define the DST as follows:
+\begin{align}
+{\rm DST}({\bf X}, {\bf Y}; f(\cdot))&={\bf X}f({\bf Y})={\bf XYW},\label{eq:DST}\\
+{\rm DST_T}({\bf X}, {\bf Y}; f(\cdot))&={\bf X}f({\bf Y})^{\rm T}={\bf XW}^{\rm T}{\bf Y}^{\rm T}.
+\label{eq:DSTT}
+\end{align}
+In Eq.~\eqref{eq:DST}, ${\bf X}\in\{0,1\}^{T\times p\times m}$ and ${\bf Y}\in\{0,1\}^{T\times m\times q}$ represent the dual spike inputs. $T$ is the time steps, $p$, $m$, $q$ denote arbitrary dimensions.
+Here $f(\cdot)$ is a generalized linear transformation on ${\bf Y}$, with ${\bf W}\in\mathbb{R}^{q\times q}$ denoting its weight matrix. It represents any operation that can be equated to a linear transformation, including convolution, batch normalization (ignoring bias), etc.
+A detailed discussion on the equivalence of convolution operations to linear transformations can be found in the supplementary.
+Similarly, in Eq.~\eqref{eq:DSTT}, we have ${\bf Y}\in\{0,1\}^{T\times q\times m}$, ${\bf W}\in\mathbb{R}^{m\times m}$.
+Since $\bf X$ and $\bf Y$ are both spike matrices, all matrix multiplications are equivalent to the summation of weights. Consequently, the DST avoids floating-point multiplication, making it compatible with SNNs.
+Further discussion of the compatibility and the spike-driven characteristic of DST can be found in Sec.~\ref{sec:spike-driven}.
+Based on DST, the attention map in DSSA can be formulated as follows:
+\begin{align}
+{\rm AttnMap}({\bf X})&={\rm SN}({\rm DST_T}({\bf X}, {\bf X};f(\cdot))*c_1),\\
+f({\bf X})&={\rm BN}({\rm Conv_p}({\bf X})),
+\end{align}
+where ${\bf X}\in \{0,1\}^{T\times HW\times d}$ is the spike input, with $H$ and $W$ denoting the spatial height and width of the input, $d$ denoting the embedding dimension. $\rm BN(\cdot)$ refers to the batch normalization layer, $\rm Conv_p(\cdot)$ denotes a $p\times p$ convolution with a stride of $p$, and $c_1$ is the scaling factor.
+Since the convolution operation is equivalent to a generalized linear transformation, and batch normalization can be absorbed into the convolution (ignoring bias), ${\rm BN}({\rm Conv_p}(\cdot))$ can be viewed as a generalized linear transformation.
+Here we use the $p\times p$ convolution with a stride of $p$ to reduce the spatial size to handle the multi-scale feature map and reduce the computational overhead.
+In DSSA, there is no need for the softmax function since the spiking neuron layer inherently generates a binary attention map composed of spikes.
+Each spike $s_{ij}$ in this spiking attention map signifies attention between patch $i$ and patch $j$.
+We believe that such a spiking attention map is more interpretable compared to the attention map in ANN activated with softmax. With the spiking attention map, the DSSA can be formulated as follows:
+\begin{equation}
+{\rm DSSA}({\bf X})={\rm SN}({\rm DST}({\rm AttnMap}({\bf X}),{\bf X};f(\cdot))*c_2),
+\label{eq:DSSA}
+\end{equation}
+where $c_2$ is the second scaling factor. Since the form of DSSA is quite different from VSA and existing spiking self-attention mechanisms, we further discuss how DSSA achieves self-attention in the supplementary.
+\subsection{Scaling Factors in DSSA}
+In the vanilla self-attention mechanism~\cite{vaswani2017attention}, the product of matrices $\mathbf{Q}$ and $\mathbf{K}$ in Eq.~\eqref{eq:vanilla attention} is scaled by a factor of $1/\sqrt{d}$ before applying the softmax operation.
+This scaling is necessary because the magnitude of $\mathbf{QK}^\mathsf{T}$ grows with the embedding dimension $d_k$, which can result in gradient vanishing issues after the softmax operation.
+Formally, assume that all the elements in $\bf Q$ and $\bf K$ are independent random variables with a  mean of 0 and a variance of 1, then each element in their product ${\bf QK}^{\rm T}$ has mean 0 and variance $d$.
+By multiplying the product with a factor of $1/{\sqrt{d}}$, the variance of the product is scaled to 1.
+
+While DSSA does not employ the softmax function, the surrogate gradient also suffers gradient vanishes without scaling.
+However, directly using the scaling factor of VSA is not feasible. Due to the spike-based nature of the input in DST and the attention map in DSSA, we cannot assume that they possess a mean of 0 and a variance of 1.
+Therefore, the scaling factor values in DSSA should be different from those used in VSA. In the following theorem, we present the mean and variance of DST.
+\begin{theorem}[Mean and variance of DST]
+Given spike input ${\bf X}\in\{0,1\}^{T\times p\times m}$, ${\bf Y}\in\{0,1\}^{T\times m\times q}$ and linear transformation $f(\cdot)$ with weight matrix ${\bf W}\in \mathbb{R}^{q\times q}$, ${\bf I}\in \mathbb{R}^{T\times p\times q}$ is the output of DST, ${\bf I}={\rm DST}({\bf X},{\bf Y};f(\cdot))$. Assume that all elements in $\bf X$ and $\bf Y$ are independent random variables, $x_{i_x,j_x}[t]$ in $\bf X$ subject to Bernoulli distribution $x_{i_x,j_x}[t]\sim B(f_x)$, and the output of linear transformation $f({\bf Y})$ has mean 0 and variance 1, we have ${\rm E}(I_{i_I,j_I}[t])=0$, ${\rm Var}(I_{i_I,j_I}[t]) = f_x m$.
+Similarly, for ${\bf I}={\rm DST_T}({\bf X},{\bf Y};f(\cdot))$ and ${\bf Y}\in\{0,1\}^{T\times q\times m}$, ${\bf W}\in \mathbb{R}^{m\times m}$, we also have ${\rm E}(I_{i_I,j_I}[t])=0$, ${\rm Var}(I_{i_I,j_I}[t]) = f_x m$.
+\label{theorem:mean and variance}
+\end{theorem}
+The proof of Theorem~\ref{theorem:mean and variance} can be found in the supplementary.
+Accroding to Theorem~\ref{theorem:mean and variance}, we have $c_1=1/\sqrt{f_{X}d}$, $c_2=1/\sqrt{f_{Attn}HW/p^2}$.
+Here $f_{X}$ and $f_{Attn}$ are the average firing rate of $\bf X$ and spiking attention map, respectively.
+
+\subsection{Spike-driven Characteristic of DSSA}
+\label{sec:spike-driven}
+The spike-driven characteristic is important for SNNs, i.e., the computation is sparsely triggered with spikes and requires only synaptic operations.
+Previous work has made a great effort in achieving spike-driven Transformers~\cite{zhou2023spikingformer, yao2023spike}.
+In this subsection, we delve into the spike-driven characteristic of DSSA and prove that DSSA is spike-driven.
+We first give the formal definition of the spike-driven characteristic.
+\begin{definition}
+A spiking neural network is spike-driven if the input currents of all neurons satisfy the following form:
+\begin{equation}
+    I_{i}[t] = \sum_j w_{i,j}s_{j}[t] = \sum_{j,s_{j}[t]\ne 0}w_{i,j},
+\end{equation}
+where $I_{i}[t]$ is the input current of the $i$-th postsynaptic neuron at time step $t$, $s_{j}[t]\in \{0,1\}$ is the spike output of the $j$-th presynaptic neuron, $w_{i,j}$ is the weight of the synaptic connection from neuron $j$ to neuron $i$.
+\label{definition:spike-driven}
+\end{definition}
+This definition reveals the nature of the spike-driven characteristic, i.e., the accumulation of input current is sparsely triggered by spikes emitted from presynaptic neurons.
+It is evident that commonly used linear layers and convolution layers satisfy this definition.
+
+The DSSA has only two spiking neuron layers, including the spiking attention map layer and the output layer. Both of these layers receive input currents derived from DST.
+Thus, we only need to validate that the DST satisfies the form in Definition~\ref{definition:spike-driven}.
+We first validate the $\rm DST_T$ in Eq.~\eqref{eq:DSTT}
+\begin{align}
+{\bf I} &= {\bf X}{\bf W}^{\rm T}{\bf Y}^{\rm T},\\
+I_{i,j}[t] &= \sum_{k=1}^m\sum_{l=1}^m x_{i,k}[t]w_{l,k}y_{j,l}[t]
+= \sum_{\underset{(x_{i,k}[t]\land y_{j,l}[t])\ne0}{k,l}} w_{l,k}.
+\end{align}
+Slightly different from Definition~\ref{definition:spike-driven}, the spike input here is the logical AND of dual spikes. This can be viewed as a synaptic operation requiring dual spikes to trigger, which is the reason it is called dual spike transformation.
+Similar to the $\rm DST_T$, the $\rm DST$ in Eq.~\eqref{eq:DST} can also be formulated as:
+\begin{align}
+{\bf I} &= {\bf X}{\bf Y}{\bf W},\\
+I_{i,j}[t] &= \sum_{k=1}^m\sum_{l=1}^q x_{i,k}[t]y_{k,l}[t]w_{l,j}
+= \sum_{\underset{(x_{i,k}[t]\land y_{k,l}[t])\ne0}{k,l}} w_{l,j}.
+\end{align}
+Thus, DSSA is spike-driven.
+
+\begin{table*}[!t]
+\centering
+\caption{Architectures of SpikingResformer series. The output size corresponds to the input size of 224$\times$224. $D_i$ and $H_i$ are the embedding dimension and number of heads of MHDSSA in stage $i$, respectively. $p_i$ denotes that the MHDSSA in stage $i$ uses $p_i\times p_i$ convolution in DST. $R_i$ and $G_i$ denote the expansion ratio and embedding dimension per group of GWSFFN in stage $i$, respectively.}
+\resizebox{\linewidth}{!}
+{
+
+\begin{tabular}{ccccccc}
+\toprule
+Stage&Output Size&Layer Name&SpikingResformer-Ti&SpikingResformer-S&SpikingResformer-M&SpikingResformer-L\\
+\midrule
+Stem&56$\times$56&Stem&\multicolumn{4}{c}{Conv 7$\times$7, stride 2, Maxpooling 3$\times$3, stride 2}\\
+\midrule
+\multirow{3}{*}{Stage 1}&\multirow{3}{*}{56$\times$56}&\multirow{2}{*}{MHDSSA}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_1=64\\
+    H_1=1,p_1=4\\
+    R_1=4,G_1=64
+\end{bmatrix}\times1$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_1=64\\
+    H_1=1,p_1=4\\
+    R_1=4,G_1=64
+\end{bmatrix}\times1$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_1=64\\
+    H_1=1,p_1=4\\
+    R_1=4,G_1=64
+\end{bmatrix}\times1$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_1=128\\
+    H_1=1,p_1=4\\
+    R_1=4,G_1=64
+\end{bmatrix}\times1$}\\
+&&&&&\\
+&&GWSFFN&&&\\
+
+\midrule
+\multirow{4}{*}{Stage 2}&\multirow{4}{*}{28$\times$28}&Downsample&Conv 3$\times$3, 192, stride 2&Conv 3$\times$3, 256, stride 2&Conv 3$\times$3, 384, stride 2&Conv 3$\times$3, 512, stride 2\\
+\cmidrule{3-7}
+&&\multirow{2}{*}{MHDSSA}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_2=192\\
+    H_2=3,p_2=2\\
+    R_2=4,G_2=64
+\end{bmatrix}\times2$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_2=256\\
+    H_2=4,p_2=2\\
+    R_2=4,G_2=64
+\end{bmatrix}\times2$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_2=384\\
+    H_2=6,p_2=2\\
+    R_2=4,G_2=64
+\end{bmatrix}\times2$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_2=512\\
+    H_2=8,p_2=2\\
+    R_2=4,G_2=64
+\end{bmatrix}\times2$}\\
+&&&&&\\
+&&GWSFFN&&&\\
+
+\midrule
+\multirow{4}{*}{Stage 3}&\multirow{4}{*}{14$\times$14}&Downsample&Conv 3$\times$3, 384, stride 2&Conv 3$\times$3, 512, stride 2&Conv 3$\times$3, 768, stride 2&Conv 3$\times$3, 1024, stride 2\\
+\cmidrule{3-7}
+&&\multirow{2}{*}{MHDSSA}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_3=384\\
+    H_3=6,p_3=1\\
+    R_3=4,G_3=64
+\end{bmatrix}\times3$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_3=512\\
+    H_3=8,p_3=1\\
+    R_3=4,G_3=64
+\end{bmatrix}\times3$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_3=768\\
+    H_3=12,p_3=1\\
+    R_3=4,G_3=64
+\end{bmatrix}\times3$}&
+\multirow{3}{*}{$\begin{bmatrix}
+    D_3=1024\\
+    H_3=16,p_3=1\\
+    R_3=4,G_3=64
+\end{bmatrix}\times3$}\\
+&&&&&\\
+&&GWSFFN&&&\\
+
+\midrule
+Classifier&1$\times$1&Linear&\multicolumn{4}{c}{1000-FC}\\
+
+\bottomrule 
+\end{tabular}
+}
+
+\label{tab:arch}
+\end{table*}
+
+
+SpikingResformer
+In this section, we first introduce the overall architecture of the proposed SpikingResformer and compare it with existing SEW ResNet~\cite{fang2021deep} and Spikformer~\cite{zhou2023spikformer}.
+Then we detail the design of the spiking resformer block.
+
+\subsection{Overall Architecture}
+
+The overall pipeline of SEW ResNet~\cite{fang2021deep}, Spikformer~\cite{zhou2023spikformer}, and the proposed SpikingResformer are shown in Fig.~\ref{fig:overview}.
+As shown in Fig.~\ref{fig:overview}, Spikformer employs a Spiking Patch Splitting (SPS) module to project an image to $d$ dimensional feature with reduced spatial size.
+However, the local information can only be poorly modeled by this shallow spiking convolutional module and it only generates single-scale feature maps.
+On the other hand, SEW ResNet is much deeper than the SPS in Spikformer and have a greater capability in extracting multi-scale feature with the multi-stage architecture, but lacks the global self-attention mechanism which helps extract global information.
+To overcome the limitations of these architectures while exploiting their advantages, we propose SpikingResformer, which combines the ResNet-based architecture and the spiking self-attention mechanism.
+
+The details of the overall architecture of SpikingResformer series are listed in Tab.~\ref{tab:arch}.
+Similar to the ResNet-based SNNs~\cite{fang2021deep,hu2021spiking}, our model starts with a stem architecture consisting of a 7$\times$7 convolution and a 3$\times$3 max pooling to pre-extract localized features and employs a multi-stage backbone to generates multi-scale feature maps.
+In each stage, multiple spiking Resformer blocks are stacked sequentially.
+Each spiking Resformer block consists of two modules, named Multi-Head Dual Spike Self-Attention (MHDSSA) block and Group-Wise Spiking Feed-Forward Network (GWSFFN).
+A downsample layer is applied before each stage (except the first stage) to reduce the size of the feature maps and project them to a higher dimension (2$\times$ downsampling of resolution with 2$\times$ enlargement of dimension).
+Finally, the model ends with a global average pooling layer and a classification layer.
+\subsection{Spiking Resformer Block}
+As illustrated in Fig.~\ref{fig:overview}, the spiking Resformer block consists of a Multi-Head Dual Spike Self-Attention (MHDSSA) module and a Group-Wise Spiking Feed-Forward Network (GWSFFN).
+We first introduce the two modules and then derive the form of the spiking Resformer block.
+
+\noindent
+\textbf{Multi-Head Convolutional Spiking Self-Attention.}
+In Sec.~\ref{sec:DSSA}, we propose the single-head form of DSSA.
+It can be easily extended to the multi-head DSSA (MHDSSA) following a similar approach to the vanilla Transformer~\cite{vaswani2017attention}.
+In MHDSSA, we first split the results of linear transformation in DST into $h$ heads, then perform DSSA on each head and concatenate them together.
+Finally, we use point-wise convolution to project the concatenated features thus fusing the features in different heads.
+The MHDSSA can be formulated as follows:
+\begin{equation}
+{\rm MHDSSA}({\bf X})={\rm BN}({\rm Conv_1}([\mathrm{DSSA}_i({\rm SN}({\bf X}))]_{i=1}^h)),
+\end{equation}
+where $[\dots]$ denotes the concatenate operation, $\rm Conv_1$ denotes the point-wise convolution.
+
+\noindent
+\textbf{Group-Wise Spiking Feed-Forward Network.}
+The spiking feed-forward network (SFFN) proposed in previous spiking vision transformers is composed of two linear layers with batch normalization and spiking neuron activation~\cite{zhou2023spikformer,yao2023spike}.
+Moreover, the expansion ratio is usually set to 4, i.e., the first layer raises the dimension by a factor of 4 while the second layer reduces to the original dimension.
+
+Based on SFFN, we insert a 3$\times$3 convolution layer with the residual connection between two linear layers to enable SFFN to extract local features. Since the dimension of the hidden features between the two linear layers is expanded by a factor of 4 compared to the input, in order to reduce the number of parameters and computational overhead, we use group-wise convolution and set every 64 channels as 1 group.
+We also employ the spike-driven design in~\cite{zhou2023spikingformer,yao2023spike}.
+The group-wise spiking feed-forward network (GWSFFN) can be formulated as follows:
+\begin{align}
+{\rm FFL}_i({\bf X})&={\rm BN}({\rm Conv}_1({\rm SN}({\bf X}))),\;i=1,2,\\
+{\rm GWL}({\bf X})&={\rm BN}({\rm GWConv}({\rm SN}({\bf X})))+{\bf X},\\
+{\rm GWSFFN}({\bf X})&={\rm FFL}_2({\rm GWL}({\rm FFL}_1({\bf X}))).
+\end{align}
+Here ${\rm FFL}_i(\cdot),i=1,2$ denote the feed-forward layers, ${\rm Conv}_1(\cdot)$ is point-wise convolution (1$\times$1 convolution), which equal to the linear transformation. ${\rm GWL(\cdot)}$ denotes group-wise convolution layer, ${\rm GWConv(\cdot)}$ denotes the group-wise convolution.
+
+\noindent
+\textbf{Spiking Resformer Block.}
+With the MHDSSA module and GWSFFN above, the spiking resformer block can be formulated as:
+\begin{align}
+{\bf Y}_i &= {\rm MHDSSA}({\bf X}_i) + {\bf X}_i,\\
+{\bf X}_{i+1} &= {\rm GWSFFN}({\bf Y}_i) + {\bf Y}_i.
+\end{align}
+where ${\bf Y}_i$ denotes the output features of MHDSSA module in the $i$-th spiking resformer block.
+
+\begin{table*}[!ht]
+\centering
+\caption{Evaluation on ImageNet. SOPs denotes the average synaptic operations of an image inference on ImageNet validation data. Energy is the estimation of energy consumption same as~\cite{zhou2023spikformer,yao2023spike}. The default input resolution for training and inference is 224$\times$224. $\dagger$~means the input is enlarged to 288$\times$288 in inference. -~means the data is not provided in the original paper.}
+\resizebox{\linewidth}{!}
+{
+\begin{tabular}{cccccccc}
+\toprule
+\multirow{2}{*}{\bf Method} & \multirow{2}{*}{\bf Type} & \multirow{2}{*}{\bf Architecture} & \multirow{2}{*}{\bf T} & {\bf Param} & {\bf SOPs} & {\bf Energy} & {\bf Top-1 Acc.} \\
+&&&&(M)&(G)&(mJ)&(\%)\\
+\midrule
+
+\multirow{2}{*}{Spiking ResNet~\cite{hu2021spiking}}&\multirow{2}{*}{ANN-to-SNN}
+&ResNet-34&350&21.79&65.28&59.30&71.61\\
+&&ResNet-50&350&25.56&78.29&70.93&72.75\\
+\cmidrule{3-8}
+STBP-tdBN~\cite{zheng2021going}&Direct Training&Spiking ResNet-34&6&21.79&6.50&6.39&63.72\\
+\cmidrule{3-8}
+\multirow{2}{*}{TET~\cite{deng2022temporal}}&\multirow{2}{*}{Direct Training}&Spiking ResNet-34&6&21.79&-&-&64.79\\
+&&SEW ResNet-34&4&21.79&-&-&68.00\\
+\cmidrule{3-8}
+\multirow{4}{*}{SEW ResNet~\cite{fang2021deep}}
+&\multirow{4}{*}{Direct Training}
+&SEW ResNet-34&4&21.79&3.88&4.04&67.04\\
+&&SEW ResNet-50&4&25.56&4.8
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

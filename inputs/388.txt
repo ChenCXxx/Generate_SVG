@@ -1,0 +1,296 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Affordances are the potential ``action possibilities" regions of an object~\cite{gibson, aff_vis_survey}, which play a pivotal role in various applications, including robotic learning~\cite{geng2022end, aff_detect_task_specific_grasp, aff-landscape}, scene understanding~\cite{scene-aff, learn2act_properly, learn_seg_aff}, and human-object interaction~\cite{hou2021affordance, grounded}.
+In particular, affordance is crucial for embodied intelligence, since it facilitates agents' understanding of the associations between objects, actions, and effects in dynamic environments, thus bridging the gap between passive perception and active interaction~\cite{mon2007aff, cruz2016aff}. 
+Learning to recognize object affordances across a variety of scenarios is  challenging, since different objects can vary significantly in appearance, shape, and size, yet have the same functionality.
+For instance, a chef's knife and a pair of office scissors share common affordances of cutting and holding, but their blades and handles look  different.
+
+A large portion of the work~\cite{3d-affordancenet, nguyendetecting, affordancenet, learn2act_properly, aff_with_CNN_umd, bay-aff} has focused on learning a mapping between visual features and affordance labels, utilizing diverse resources as inputs, such as 2D images, RGB-D data, and 3D point clouds.
+This mapping can be established through a labeled dataset with predefined objects and affordances.
+However, large-scale affordance datasets are scarce, and most of them have a small number of object categories, making it difficult to apply the learned mapping to novel objects and scenes.
+To reduce the reliance on costly annotation, some recent studies perform affordance learning from sparse key points~\cite{weakly_supervised_affordance_detection, strap_aff, weakaff2}, videos of humans in action~\cite{grounded, demo2vec, joint_hand_hotspot}, or human-object interaction images~\cite{ag_from_exocentric_imgs, locate}.
+While alleviating the need for dense pixel labeling, these methods still require a large amount of training data. 
+In addition, they often struggle to generalize to unseen objects and cannot identify novel affordances.
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=.95\linewidth]{img/teaser_3.0.pdf}
+   \caption{The pipeline of one-shot open affordance learning. It uses one image per base object for training, and can perform zero-shot inference on novel objects and affordances.}
+   \label{fig:teaser}
+\end{figure}
+To tackle the above limitations, we are interested in learning an affordance model that does not rely on extensive datasets, and can comprehend novel object and affordance classes.
+For example, after a model is trained with the knowledge that scissor blades afford cutting, it should generalize to related objects such as knives and axes, inferring that their blades can cut objects too.
+Moreover, the model should be able to reason about semantically similar vocabularies,  \eg, ``hold" and ``grasp", ``cut" and ``slice", instead of knowing only predefined affordance categories. 
+
+In this paper, we target the extreme case of using merely one example from each base object category and term this research problem as One-shot Open Affordance Learning (\p{}), where the model is trained with very little data, and is expected to recognize novel objects and affordances during inference.
+The illustration of \p{} pipeline is shown in~\cref{fig:teaser}.
+Compared with the typical affordance learning that requires numerous training samples and can only reason within a closed affordance vocabulary, \p{} alleviates the need of large-scale datasets and broadens the scope of inference.
+
+To this end, we note that foundation Vision-Language Models (VLMs) can be a potential solution, which have recently emerged as powerful tools for a wide array of computer vision tasks.
+The open vocabulary nature of these VLMs like CLIP~\cite{clip} that are trained on a large corpus of image-text data enables reasoning of previously unseen objects, scenes, and concepts.
+However, we observe that these models often fail to understand nuanced vocabularies such as affordances or object parts. 
+One hypothesis is that object parts and affordances appear much less frequently in image captions compared with objects.
+Therefore, the following question naturally arises: 
+\textit{Can we teach foundation models to comprehend more subtle, fine-grained aspects of objects, such as affordances, with very few examples?}
+In this way, the generalization capability of foundation models can be inherited with minimum annotation effort.
+
+To achieve this, we first conduct a thorough analysis of several representative foundation models.
+The objective is to delve into their inherent understanding of affordances, and figure out what visual representation is suitable for data-limited affordance learning.
+Based on the analysis, we then build a learning architecture and propose several methods, including text prompt learning, multi-layer feature fusion, and a CLS-token-guided transformer decoder, that can facilitate the alignment between visual representation and affordance text embeddings.
+Lastly, we select a dense prediction task, affordance segmentation, for evaluation and comparison with a variety of state-of-the-art models,
+where we find that our methods can achieve higher performance with less than 1\% of the complete training data.
+
+Overall, our contributions can be summarized as follows:
+(1) We introduce the problem of \p{}, aiming to develop a robust affordance model that can generalize to novel object and affordance categories without the need of massive training data.
+(2) We conduct a comprehensive analysis on existing foundation models to explore their potential for \p{}.
+Following the analysis, we build a learning architecture with vision-language foundation models, and design several methods to improve the alignment between visual features and affordance text labels.
+(3) We implement extensive experiments with two datasets on affordance segmentation to demonstrate the effectiveness of our learning pipeline, and observe significant gains over baselines with strong generalization capability.
+
+
+
+Related Work
+
+\noindent\textbf{Affordance Learning.}
+The term ``affordance'' is popularized by the psychologist James Gibson, who describes it as the properties of an object or the environment that suggest possible actions or interactions.
+Building on this, researchers have developed many approaches to acquire affordance information in various ways.
+In computer vision, initial research \cite{cad120, affordancenet, learn2act_properly, aff_obj_parts} has focused on affordance detection using convolutional neural networks.
+As manual affordance annotations are often costly to acquire, much subsequent research has shifted its focus to weak supervision such as keypoints \cite{weakly_supervised_affordance_detection, weakaff2, strap_aff} or image-level labels \cite{ag_from_exocentric_imgs, grounded}.
+Recent work has explored a novel perspective on how to ground affordances from human-object interaction images \cite{ag_from_exocentric_imgs, locate, 3d_aff_2d_img} or human action videos \cite{2023affvideo, demo2vec, grounded, joint_hand_hotspot}.
+In robotics, affordance learning enables robots to interact effectively and intelligently with complex and dynamic environments \cite{aff_robot_survey, aff_rl_survey}.
+Specifically, some work \cite{aff_detect_task_specific_grasp, aff_semantic_relations, aff_relations_2} utilizes affordance to build relationships between objects, tasks, and manipulations for robotic grasping. 
+Other studies focus on learning affordance from other available resources that can be deployed on real robots, such as human teleoperated play data \cite{borja2022affordance}, image pairs \cite{bharadhwaj2023visual}, and egocentric video datasets \cite{bahl2023affordances}.
+
+In contrast to the works above that often require a large amount of training data, we propose the problem of \p{} that aims to perform affordance learning with one  sample per base object category, and allows zero-shot inference to handle novel objects and affordances.
+
+\noindent\textbf{Foundation Models for Affordance Learning.}
+With the rapid development of foundation models such as Large Language Models (LLMs) and vision-language models, many research efforts have explored their utilization in affordance learning or reasoning.
+Mees \etal~\cite{lang_aff_unstructured} leverage GPT-3~\cite{gpt3} to break down language instructions into subgoals, and learn a visual affordance model to complete real world long-horizon tasks.
+Li \etal~\cite{locate} adopt DINO-ViT features to perform affordance grounding by transferring affordance knowledge from human-object interaction images to egocentric views.
+Huang \etal~\cite{voxposer} propose a novel pipeline that uses LLMs~\cite{gpt4} for affordance reasoning, which interacts with VLMs to produce 3D affordance maps for robotic manipulation.
+Recent studies \cite{lan-rf, lan-grasp, 6dof_part_aff} delve into the integration of affordance and language models for task-oriented grasping, which allows robots to grasp objects in a more appropriate and safe manner.
+
+The closest methods to ours are AffCorrs~\cite{affcorrs} and OpenAD~\cite{ov-aff-3d}. 
+AffCorrs utilizes the visual foundation model DINO to find corresponding affordances in a one-shot manner, but relevant objects are explicitly selected as support images to significantly reduce the difficulty.
+OpenAD takes advantage of CLIP for open-vocabulary affordance detection in point clouds.
+It requires a large number of manual annotations, while our work performs affordance learning with merely one example per base object category.
+
+
+
+Problem Setting
+One-shot Open Affordance Learning (\p{}) aims to learn a model to predict affordance with one example per base object class and can generalize to novel object classes.
+In this work, we focus on the dense prediction task of affordance segmentation.
+Specifically, objects are first divided into $N_b$ base classes and $N_o$ novel classes without intersection. 
+The model receives only $N_b$ samples during training, one for each base object category, which is a pair of image $I \in\mathbb{R}^{H\times W \times 3}$ and pixel-wise affordance annotation $M \in\mathbb{R}^{H\times W \times N}$ ($N$ is the number of affordance categories in the dataset).
+After training, evaluation is performed 
+on the combination of base and novel object categories to measure the generalization ability of the model.
+Also, affordance labels can be replaced with novel vocabularies that share similar semantics, such as ``chop", ``slice", and ``trim" to represent affordance akin to ``cut". 
+
+It is worth noting that \p{} is different from one-shot semantic segmentation (OSSS)~\cite{one-sss} and one-shot affordance detection (OS-AD)~\cite{one-shot_aff_detect}.
+Both OSSS and OS-AD receive one-shot sample during training. 
+However, the sample keeps changing in each iteration, so the model can be exposed to many different images. %
+Additionally, a support image is required at inference to provide prior information.
+In comparison, \p{} performs one-shot training and zero-shot inference, which poses additional challenges.
+The model needs to generalize to previously unseen objects, necessitating the ability to understand and recognize semantic relationships between seen and unseen classes with very limited data.
+
+
+
+Method
+\subsection{Analysis of Foundation Models}
+\label{sec:analysis}
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=1.0\linewidth]{img/analysis-q1.pdf}
+   \caption{\textbf{Analysis of vision-language foundation models} on text-based affordance grounding. The 1st and 3rd rows use affordance texts as input queries, and the 2nd and 4th rows use corresponding object parts as input text queries.
+   Visualizations show that these models have limited ability to recognize fine-grained affordances and object parts.
+   }
+   \label{fig:analysis-q1}
+\end{figure}
+
+\begin{figure*}[ht]
+  \centering
+   \includegraphics[width=0.9\linewidth]{img/framework.pdf}
+   \caption{Proposed learning framework for \p{}. Our designs are highlighted in three color blocks, which are text prompt learning, multi-layer feature fusion, and CLS-guided transformer decoder. [CLS] denotes the CLS token of the vision encoder.}
+   \label{fig:pipeline}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=.9\linewidth]{img/analysis-q2-.pdf}
+   \caption{\textbf{Analysis of visual foundation models} on affordance learning. Top row: visualizations of PCA components. Bottom row: feature similarity maps between the yellow mark on the knife blade and the image of scissors. Qualitative results show that DINOv2 has clearer part-aware representations and better part-level semantic correspondence.}
+   \label{fig:analysis-q2}
+\end{figure}
+
+The field of computer vision has recently witnessed a surge in the prevalence of large foundational models, such as CLIP \cite{clip}, Segment Anything \cite{sam}, DINO \cite{dino, dinov2} \etc.
+These models exhibit strong zero-shot generalization capabilities for several computer vision tasks, making them seem like a great option to tackle the problem of \p{}.
+To this end, we perform analysis on several existing foundation models which we split into three parts: 
+~\ding{182} Do current vision-language foundation models and their variants have the ability to detect affordances via affordance/part-based prompting? ~\ding{183} Can the features of visual foundation models discriminate affordance regions in images?
+and~\ding{184} Can these models generalize affordance recognition to novel objects and perform well in the low-shot setting?
+Driven by question~\ding{182}, 
+we select four representative models, \ie, the vanilla CLIP, a CLIP-based explainability method CLIP Surgery~\cite{clip_surgery}, a state-of-the-art open-vocabulary segmentation method CAT-Seg~\cite{catseg}, and an open-vocabulary detection method GroundingDINO~\cite{groundingdino}.
+For vanilla CLIP, we employ the method proposed in MaskCLIP~\cite{maskclip} that directly extracts dense predictions without fine-tuning.
+We use the text prompt template of ``somewhere to [\textit{affordance}]" to query visual features to find corresponding areas.
+As illustrated in~\cref{fig:analysis-q1}, we note that most models cannot understand affordance well, except the detection model GroundingDINO, but its predictions mainly focus on the whole object rather than parts.
+As for dense prediction models, CAT-Seg often recognizes affordance regions as background, and CLIP gives high activation on both foreground and background.
+In comparison, CLIP Surgery fails to localize the ``holding" area for a knife, but manages to associate the phrase ``sit on" with a chair.
+Furthermore, even when the affordance text is replaced with corresponding object parts, predictions from CLIP and GroundingDINO remain biased toward objects, while CLIP Surgery and CAT-Seg tend to activate the wrong parts.
+This is consistent with recent findings \cite{ov-parts, denser_ovps} that CLIP has limited part recognition ability.
+
+To answer questions \ding{183} and \ding{184}, 
+we consider two essential characteristics of a good affordance model in the low-shot setting: (1) Part-aware representation. The visual representation should exhibit awareness of object parts, given that affordance often denotes small and fine-grained regions, \eg, a bicycle saddle to sit on or a knife handle to hold.
+(2) Part-level semantic correspondence. This property is critical for generalization, since the model requires the understanding of semantic relations to make reasonable predictions on novel objects.
+In addition, good correspondence proves advantages in scenarios with limited data, as the model can be more robust to intra-class recognition, and less susceptible to changes in appearance.
+We then analyze the features from three representative and powerful visual foundation models, \ie, vision-language contrastive learning CLIP, fully-supervised learning DeiT III~\cite{deit3}, and self-supervised learning DINOv2.
+First, we perform the principal component analysis (PCA) on the extracted patch features of each model to investigate the part awareness.
+Visualization of PCA components in the top row of \cref{fig:analysis-q2} shows that all three models have part-aware features to some extent, yet CLIP cannot well distinguish the background, and features of DeiT III are not discriminative enough for different parts.
+Next, we choose a different object that has equivalent affordances, \ie, knife and scissors, to assess the semantic correspondence.
+The bottom row of \cref{fig:analysis-q2} shows the feature similarity maps computed as the cosine similarity between one patch representation on the knife blade and an image of scissors.
+It is obvious that DINOv2 shows finer correspondence between blades of knife and scissors.
+By contrast, CLIP produces messy correspondences in both foreground and background, and feature correspondences of DeiT III are only discriminative at the object level, but not specific to the affordance part region (cut).
+From the above analysis, we conclude that DINOv2 is well suited for affordance learning due to its fine-grained part-aware representation and superior part-level semantic correspondence.
+Quantitative comparisons are shown in \cref{sec:ablation}.
+\subsection{Motivation and method}
+Through a systematic analysis, we identify DINOv2 as a powerful tool for addressing the \p{} problem.
+However, there are still fundamental issues that hinder performance in this challenging setting.
+The first is that DINOv2 is a vision-only model, and lacks the ability to identify novel affordances.
+One potential solution involves integrating a text encoder like CLIP, but it is recognized that the input text is sensitive to prompts.
+This is particularly problematic in the case of affordances, which combine both an object and a verb, making manual prompt design a complex task.
+The second issue is that while features of DINOv2 are part-oriented, the level of granularity varies across layers.
+Determining the appropriate granularity level is crucial when handling affordances associated with diverse objects.
+The third issue arises due to the absence of alignment between the DINOv2 vision encoder and CLIP text encoder, as they are trained separately and independently of each other.
+Building upon these observations, we establish a vision-language framework based on DINOv2 and CLIP, and propose three modules to resolve each of the three fundamental bottlenecks mentioned above.
+
+In this section, we first describe the overview of our proposed learning framework that builds on the powerful foundation models.
+Then, we elaborate on the three proposed designs that help in the challenging \p{} problem.
+Finally, we discuss the framework's capability to identify novel objects and affordances at inference.
+\noindent \textbf{Overview.} The proposed learning framework is presented in \cref{fig:pipeline}, which consists of a vision encoder, a text encoder, and a transformer decoder.
+First, the pretrained vision encoder DINOv2 is used to extract dense patch embeddings $\hat{F}_v \in\mathbb{R}^{L\times C_v}$, where $L$ is the number of tokens or patches.
+Then, affordance labels are processed by the CLIP text encoder to obtain text embeddings $F_t \in\mathbb{R}^{N\times C}$.
+To cope with inconsistent dimensions between visual and text embeddings, an embedder $e_v : \mathbb{R}^{C_v} \rightarrow \mathbb{R}^{C} $ with a single MLP layer is employed.
+In the end, the lightweight transformer decoder takes both visual and text embeddings as input, and outputs the affordance prediction.
+
+\noindent \textbf{Text Prompt Learning.}
+Manually designing prompts for affordances can be a complicated work, especially considering that CLIP has difficulty in recognizing affordance (see~\cref{fig:analysis-q1}). 
+Thus, we adopt the Context Optimization (CoOp)~\cite{coop} method to introduce automatic text prompt learning.
+Instead of finetuning the CLIP text encoder, the inclusion of learnable prompts is an effective strategy that can alleviate the problem of overfitting and retain the inherent text recognition ability of CLIP.
+Specifically, $p$ randomly initialized learnable context vectors $\{v_1, v_2, ..., v_p\}$ are inserted in front of the text CLS token, and they are shared for all affordance classes. 
+
+\noindent \textbf{Multi-Layer Feature Fusion.}
+Different layers of DINOv2 features often exhibit different levels of granularity \cite{deepvit}.
+Since affordance may correspond to multiple parts of an object, a diverse set of granularities can be beneficial.
+For this purpose, we aggregate the features of the last $j$ layers.
+Each layer of features is first processed by a linear projection, and then all features are linearly combined with a weighted summation:
+\begin{equation}
+\hat{F}_v =  \sum_{i=1}^{j}\alpha_{i} \cdot  \phi(F_{n-i+1}), \quad
+\alpha_1 + \alpha_2 + ... + \alpha_j = 1,
+\end{equation}
+where $F_n$ denotes the last layer, $\alpha$ is a learnable parameter that controls the fusion ratio of each layer, and $\phi$ indicates the linear transformation.
+This straightforward fusion scheme enables adaptive selection among different granularity levels, allowing the model to handle affordance recognition across diverse scenarios.
+
+\noindent \textbf{CLS-Guided Transformer Decoder.}
+To deal with the lack of alignment between visual and text features, we propose a lightweight transformer decoder that applies a masked cross-attention mechanism to promote the mutual communication between two branches.
+Since the [CLS] token of a foundation model is used in the computation of objective function, it often carries rich prior information of the whole image, such as salient objects or regions. 
+Consequently, we utilize the [CLS] token to produce a guidance mask that constrains the cross-attention within a foreground region.
+
+The decoder receives three inputs, \ie, text embeddings $F_t$, visual features $F_v$, and the [CLS] token $L_{cls}$.
+Firstly, linear transformations are performed to yield query, key, and value:
+\begin{equation}
+Q=\phi_{q}(F_t), ~K=\phi_{k}(F_v), ~V=\phi_{v}(F_v).
+\end{equation}
+Here we use text embeddings as query, and visual features as key and value, allowing the model to focus on the update of text embeddings by retrieving relevant visual information that corresponds to the affordance text.
+Next, the CLS-guided mask is calculated between the [CLS] token and key via matrix multiplication:
+\begin{equation}
+M_{cls} = \text{sigmoid}(\frac{\phi_c(L_{cls})K^T}{\sqrt{d_k}}),
+\end{equation}
+where $d_k$ is a scaling factor that equals the dimension of the keys.
+The masked cross-attention is then computed as:
+\begin{equation}
+\hat{F}_t = \text{softmax}(QK^T/\sqrt{d_k})\cdot {M}_{cls}V + F_t.
+\end{equation}
+After that, the updated text embeddings $F_t^{'}$ are obtained by sending $\hat{F}_t$ through a feed-forward network (FFN) with a residual connection.
+The decoder comprises $t$ layers of transformers, and the ultimate prediction is generated by performing matrix product between the output of the last transform layer and original visual features $F_v$, thereby ensuring the maximum retention of part-aware representations from DINOv2.
+Lastly, binary cross entropy is employed as loss function to optimize parameters of linear layers, embedder, and decoder.
+
+\noindent \textbf{Inference on novel objects and affordances.} 
+During the training process, the decoder learns to establish an alignment between visual features and affordance text embeddings.
+When encountering a novel object at inference, the aligned affordance text embeddings can locate corresponding object regions, leveraging the part-level semantic correspondence property inherent in DINOv2.
+Similarly, as the model processes novel affordance text inputs, the generated text embeddings can also retrieve the aligned visual features, which are based on the semantic similarities to the base affordances seen in the training.
+
+
+
+Experiments
+\label{sec:exp}
+\input{exp_tables}
+
+\subsection{Datasets}
+We choose two typical datasets, AGD20K~\cite{ag_from_exocentric_imgs} and UMD part affordance~\cite{aff_with_CNN_umd}, both of which include a large number of object categories that help in the evaluation of novel objects.
+AGD20K is a large-scale affordance grounding dataset with 36 affordances and 50 objects, containing 23,816 images from exocentric and egocentric views.
+It aims to learn affordance from human-object interaction images, and perform affordance localization on egocentric images.
+As it is a dataset for weakly-supervised learning, images in the training set only have image-level labels.
+Therefore we manually annotate 50 randomly selected egocentric images from each object category for training.
+AGD20K also has two train-test splits for seen and unseen settings, and we follow their splits to evaluate the performance.
+Note that AGD20K uses sparse annotation, where ground truth consists of keypoints within affordance areas, and then a gaussian kernel is applied over each point to produce dense annotation.
+
+UMD dataset consists of 28,843 RGB-D images with 7 affordances and 17 object categories, and images of each object are captured on a revolving turntable.
+It has two train-test splits termed category split and novel split.
+We use the category split to evaluate base object categories and novel split to evaluate performance on novel object classes.
+Due to its small number of object categories, we take one example from each base object instance to form the training set.
+Specific affordance categories and object class splits can be found in the supplementary material.
+
+\subsection{Implementation details}
+Experiments are implemented on two GeForce RTX 3090 GPUs.
+All visual foundation models use the same base-sized vision transformer (ViT-base).
+We train the model using SGD optimizer with learning rate 0.01 for 20k iterations.
+For experiments on AGD20K, images are first resized to 256 × 256 and randomly cropped to 224 × 224 with horizontal ﬂipping.
+Experiments for UMD dataset are conducted on the opensource toolbox MMSegmentation~\cite{mmseg} with the default training setting.
+The hyperparameters $p$, $j$, and $t$ are set to 8, 3, and 2, respectively.
+
+Following previous work, we adopt the commonly used Kullback-Leibler Divergence (KLD), Similarity (SIM), and Normalized Scanpath Saliency (NSS) metrics to evaluate the results on AGD20K.
+For UMD dataset, we use the metric of mean intersection-over-union (mIoU), and also incorporate the harmonic mIoU as a balanced measure that accounts for both seen and unseen settings.
+
+\begin{figure*}[t]
+  \centering
+   \includegraphics[width=.95\linewidth]{img/com_agd.pdf}
+   \caption{Qualitative comparison with LOCATE and ZegCLIP on AGD20K dataset. When multiple affordance predictions overlap, the one with higher value is displayed. Our predictions distinguish different object parts, while other methods often make overlapping predictions.}
+   \label{fig:agd_com}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=1.0\linewidth]{img/com_umd.pdf}
+   \caption{Qualitative comparison with SegFormer and ZegCLIP on UMD affordance dataset in \p{} setting. Images have been enlarged and cropped for better visualization.}
+   \label{fig:umd_com}
+\end{figure}
+
+\subsection{Comparison to state-of-the-art methods}
+AGD20K dataset is benchmarked with weakly supervised affordance grounding (WSAG) approaches, which use image-level object and affordance labels to do affordance segmentation.
+Note that results from WSAG methods are not directly comparable to our setting, as training labels are different.
+Despite using only image-level labels, the training data required are more than 460 times of ours.
+The results in \cref{tab:com_agd} demonstrate that our results exceed all WSAG counterparts in an easy and realistic setting.
+We also benchmark open-vocabulary segmentation methods of MaskCLIP, SAN, and ZegCLIP for further comparison.
+We find that these CLIP-based methods have a large performance gap with ours, and are also inferior to the state-of-the-art WSAG method LOCATE.
+
+The comprehensive comparison on UMD dataset is displayed in \cref{tab:com_umd}, where we benchmark the results with several representative semantic segmentation methods (PSPNet, DeepLabV3+, SegFormer) and open-vocabulary semantic segmentation methods.
+For fair comparison, the classical segmentation methods are trained with the full training set, while foundation-model-based methods like ZegCLIP and SAN are evaluated in the \p{} setting.
+It is clear that our proposed model is quite effective, which can be comparable to fully-supervised methods with only 0.36\% of their training data.
+To explore how fully-supervised methods are affected by the limited data, we further train these models in the \p{} setting.
+Results in \cref{tab:com_umd} show that the performance of these models degrades by around 10\% in both seen and unseen settings when given only one-shot example.
+Additionally, under the same \p{} setting, we observe a more apparent gain over other CLIP-based open-vocabulary segmentation methods, showing that CLIP is not suitable for data-limited affordance learning.
+The poor performance of MaskCLIP from both tables also verifies that CLIP has very limited understanding on affordance.
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=0.95\linewidth]{img/novel_umd.pdf}
+   \caption{Qualitative examples of novel affordance prediction on UMD dataset. The 1st and 2nd rows display results on base objects, and the 3rd and 4th rows show results for novel objects.}
+   \label{fig:novel_aff}
+\end{figure}
+
+\subsection{Qualitative results}
+Qualitative comparisons on AGD20K dataset are shown in \cref{fig:agd_com}.
+We note that WSAG methods l
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

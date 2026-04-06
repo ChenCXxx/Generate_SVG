@@ -1,0 +1,278 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Large-scale contrastive vision-language models (VLMs) like CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling}, pretrained on large-scale image-text pairs via contrastive learning, encode general knowledge about the alignment of visual concepts and textual sequences. VLMs with dual-encoder separately encode images and texts into vectors in joint embedding space, enabling the transfer for downstream image classification by treating image vectors as ``image features" and text vectors corresponding to classes as ``classification weights", respectively. The class-specific weights can encoded from handcraft \textit{prompts}~\cite{radford2021learning, jia2021scaling, furst2021cloob, li2021supervision, liu2021pre}, such as ``a photo of a $[\textit{class}]$'', where the $[\textit{class}]$ token is filled with real class names. Thanks to exploring open-set visual concepts with high-capacity text encoder, VLMs with handcraft prompts show impressive potential in zero-shot transfer to image classification tasks.     
+Recently, CoOp~\cite{zhou2021coop} and CoCoOp~\cite{zhou2022conditional} utilize prompt tuning~\cite{lester2021power, liu2021gpt, liu2021pre} to learn a continuous text prompt with only a few shots of images and improve zero-shot VLMs' performance. 
+However, the text prompt tuning can only change the ``classification weights" but keeps the ``image features" unchanged. It is a sub-optimal solution for adaption, making it hard to classify images with different classes but close image features. 
+Therefore, some works~\cite{xing2022class, bahng2022visual, jia2022visual} introduce visual prompts to VLMs for simultaneously adjusting the ``image features" and ``classification weights". The visual prompts of VPT~\cite{jia2022visual} and DPT~\cite{xing2022class} are specific to ViT architecture~\cite{vit}, and they adapt to downstream tasks by tuning additional image patch token embeddings. %To work for both model families of CNNs and Transformers, 
+Considering the generality to different families of visual backbones, the recent work~\cite{bahng2022visual} proposes to learn image perturbation to perform data-space adaption. Although it explores a new visual prompting paradigm, the performance improvement is limited, especially in the same few-shot setting as the above-mentioned methods. Furthermore, these visual prompts~\cite{xing2022class, bahng2022visual, jia2022visual} seem to affect VLMs' generalization ability, whose base-to-new generalization performance is lower than zero-shot VLMs and approaches with text-only prompting~\cite{zhou2021coop, zhou2022conditional} (see {Figure~\ref{fig:intro}). 
+
+Therefore, we propose to explore visual prompting for VLMs' adaption, which can (1) work for different backbone families such as CNNs and Transformers, (2) effectively adapt to downstream classification tasks with few shots of images, and (3) preserve the VLMs' generalization ability. 
+To achieve these goals, we follow~\cite{bahng2022visual} to perform data-space adaption (\ie, adapting on image pixels) and then analyze how VLMs understand different images, especially the classification accuracy gaps between images with the same class. We are surprised to observe that the images with class name text have very high confidence to classify to the class, even only lower than the simplest cases, as shown in Figure~\ref{fig:intro}. The empirical study~\cite{goh2021multimodal} about multimodal neurons of CLIP validates our observation. For a class, both images with the class name text and generic natural images of that class can activate the same neurons important for classifying that class. 
+
+The observation motivates our key insight: we can use synthetic images with class name text as the visual prompts for VLMs! 
+However, it is not trivial to effectively utilize synthetic images because simply treating the synthetic images as extra image data cannot achieve consistent performance improvement across different datasets and with different image shots. %, as shown in \textcolor{red}{Figure~\ref{fig:intro}\textcolor{red}{d}}. 
+In this paper, we propose to use synthetic images with class name text (\ie, the class-wise visual prompts) to modify images in the training set so that class-wise synthetic parts can help VLMs perceive class-relevant content in the original images for classification. In the training phase, given a training image and its ground-truth class, we can easily transform it with its class-wise visual prompt, such as randomly replacing one of the original image's pixel blocks with the synthetic one, as shown in Figure~\ref{fig:intro}. However, in the testing stage, since the test image's class is unknown, it remains unclear which class-wise visual prompt should be used to benefit the classification prediction of the test image, which is a chicken-and-egg problem. Therefore, we reformulate the downstream classification objective as the visual prompt selection: select the synthetic images of the correct class for the original image as its visual prompts. Specifically, for a training image, we transform it into multiple images with different class-wise visual prompts and maximize the similarity of the image with the ground-truth visual prompt to the text features of that ground-truth class while minimizing the similarities of other images.
+
+Furthermore, to develop the visual prompt selection to be effective and efficient, we propose a min-max contrastive learning objective and introduce hard negative mining~\cite{facenet,defense}. The min-max contrastive learning first groups an original image and its transformed image with the class-wise visual prompt as a group. %Then, it requires that the minimal similarity to the text features in one ground-truth pair is higher than the maximal similarity in negative pairs to preserve the ability to classify the original image. 
+Then, it maximizes the minimal similarity to the text features in one ground-truth group while minimizing the maximal similarity in negative groups to preserve the ability to classify the original image. 
+
+Despite the simplicity, our novel insights of using synthetic images with class name text as visual prompts and visual prompt selection learning strategy are particularly effective. 
+Without requiring any tuning of visual prompts, our method significantly outperforms state-
+of-the-art methods~\cite{zhou2022conditional} on base-to-new generalization, especially compared to previous visual prompting approaches~\cite{xing2022class, bahng2022visual, jia2022visual}, as shown in Figure~\ref{fig:intro}. Notice that our visual prompts have no parameters to learn, but we still have text prompts for tuning following existing works~\cite{zhou2021coop,xing2022class,zhou2022conditional}. To verify whether our method can benefit from visual prompt tuning, we extend a tuning version for visual prompts, further boosting the performance on few-shot classification. 
+We name our proposed method LoGoPrompt, since we incorporate synthetic text onto images in a manner akin to the application of logos onto visuals. 
+We evaluate and compare LoGoPrompt with state-of-the-art methods on 16 datasets that cover diverse image classification tasks. 
+In summary, we make the following contributions:
+\begin{itemize}
+\setlength{\itemsep}{0pt}
+\setlength{\parsep}{0pt}
+\setlength{\parskip}{0pt}
+        \item We are the first to propose using synthetic images with the text class name as visual prompts for VLMs. Our visual prompts
+        can work for different backbone families, \eg, CNNs and Transformers.
+        \item We reformulate the classification objective to visual prompt selection to address the chicken-and-egg challenge of adding class-wise visual prompts and achieve the selection via min-max contrastive learning.
+	\item Despite the simplicity, experiments on 16 datasets demonstrate our novel insight and learning strategy particularly effectively, consistently outperforming state-of-the-art methods in base-to-new generalization, few-shot learning, and domain generalization. %, and long-tail recognition tasks.
+\end{itemize}
+
+
+
+Related Work
+
+\noindent\textbf{Vision-Language Pre-training Models}, pre-trained on image-text corpora for modeling vision and language, have shown great potential for transferable to downstream vision and language tasks. The pre-training approaches mainly contain the BERT-like masked-language and masked-region modeling methods~\cite{lu2019vilbert, su2019vl, tan2019lxmert, chen2020uniter}, contrastive learning for learning a joint embedding space of vision and language~\cite{radford2021learning, jia2021scaling, li2021align, zhai2022lit}, and vision-language multimodal autoregressive techniques~\cite{cho2021unifying, ramesh2021zero}. In this paper, we focus on the contrastive vision-language models (VLMs) that adopt a dual encoder to encode images and texts into the joint embedding space and use contrastive learning to align the visual and textual representations. The VLMs, particularly CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling}, leverage hundreds of millions and even billions of image-text pairs to learn transferable visual representation from textual supervision and shows impressive zero-shot performance for various image classification tasks. 
+CLIPPO~\cite{Tschannen_2023_CVPR} also treats render images as text to achieve similar results compared with CLIP without a text-specific tower or embedding. 
+In this work, we devise our LoGoPrompt based on the CLIP.
+\noindent\textbf{Data-efficient Fine-tuning for VLMs} learns to adapt the VLMs to downstream tasks with a few shots of samples. Following~\cite{zhou2021coop, zhou2022conditional}, we focus on the image classification task. Linear Probe~\cite{radford2021learning} straightforwardly fixes the visual backbone and learns a classifier for classification. CLIP-Adapter~\cite{gao2021clip} and Tip-Adapter~\cite{zhang2021tip} introduce additional feature adapters to improve the few-shot classification of CLIP. Unlike the feature adapters, prompt tuning methods~\cite{zhou2021coop, zhou2022conditional, zhu2022prompt} learn input prompts to keep a closer objective form to the pre-training task and can achieve better generalization ability. CoOp~\cite{zhou2021coop} proposes a context optimization method to learn task-specific text prompts. CoCoOp~\cite{zhou2022conditional} extends the static text prompts of CoOp by learning image-conditional dynamic prompts to improve the base-to-new generalization. ProGrad~\cite{zhu2022prompt} addresses the issue of forgetting general knowledge by regularizing the tuning step not to conflict with the zero-shot CLIP's prediction. 
+ProDA~\cite{Lu_2022_CVPR} prompt distribution learning to handle the varying visual representation.
+In this work, we focus on prompt-based tuning and propose to take synthetic images with class name text as visual prompts to improve both base-to-new generalization and few-shot classification.
+
+\noindent\textbf{Visual Prompt Tuning.} Inspired by the success of prompt tuning in the NLP community~\cite{brown2020language, li2021prefix, liu2021p}, recent works~\cite{jia2022visual, yao2021cpt, bahng2022visual, wen2022visual, sohn2022visual} explore visual prompt tuning for vision and vision-language models. CPT~\cite{yao2021cpt} learns color-based prompts to adapt the BERT-like VLMs to the visual grounding task. VPT~\cite{jia2022visual} and VPT for generative transfer~\cite{sohn2022visual} learn visual tokens for Transformer-based vision models for better transfer to visual recognition and image synthesis tasks, respectively. Unlike adapting to computer vision tasks, VPT for text classification~\cite{wen2022visual} deploys the VLMs in text classification via visual prompt tuning. 
+The recently published DPT~\cite{xing2022class} and the unpublished VP~\cite{bahng2022visual} are the most relevant works to ours, and both of them adapt the contrastive VLMs to downstream image classification. DPT extends VPT by dynamically generating visual prompts via the cross-attention between text prompts features and visual image patch token embeddings. But, its visual prompts are specific to Transformer-based visual backbones. In contrast, VP learns the visual prompts in pixel space for generalizable to different backbones. However, it cannot obtain satisfied few-shot performance, demonstrating that simply learning pixel-space perturbations for images cannot achieve data-efficient tuning for VLMs. 
+Unlike previous methods, our class-wise visual prompts are synthetic images with the class name text, which naturally work for different backbone families and have no trainable parameters, and can improve state-of-the-art prompt tuning for VLMs. 
+
+
+Method
+
+Figure~\ref{fig:framwork} shows an overview of our proposed LoGoPrompt. We first briefly review the CLIP~\cite{radford2021learning} and CoOp~\cite{zhou2021coop} in Section~\ref{subsec:p}. Next, we introduce LoGoPrompt, including the visual prompt generation, min-max contrastive learning, and extension to tunable visual prompts, in Section~\ref{subsec:STprompt}. Like CoOp, our LoGoPrompt is applicable to other CLIP-like contrastive VLMs.
+
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=1\linewidth]{./fig/methodv2.pdf}
+\end{center}
+\caption{\textbf{Overview of LoGoPrompt}, 
+which (a) generates class-wise visual prompts as synthetic images with text class names and (b) reformulates the classification objective to visual prompt selection to address the chicken-and-egg challenge by (c) the proposed min-max contrastive learning. 
+}
+\label{fig:framwork}
+\end{figure*}
+\subsection{Preliminary}
+\label{subsec:p}
+\noindent\textbf{Contrastive Language-Image Pre-training (CLIP)}~\cite{radford2021learning} has a pair of image and text encoders, where the image encoder $f(\cdot)$ can be either a CNN (e.g., ResNet~\cite{he2016deep}) or a Vision Transformer (e.g., ViT~\cite{vit}), and the text encoder $g(\cdot)$ is a Transformer~\cite{vaswani2017attention}. During training, CLIP adopts the dual encoder to separately encode images and text into vectors in joint embedding space and utilizes contrastive loss to maximize the cosine similarities of the real image-text vector pairs while minimizing the cosine similarities of incorrect pairs. After being pre-trained on highly-diversified hundreds of millions of image-text pairs, CLIP is available for computing the text-image similarity and can be generalized to downstream image recognition without fine-tuning. 
+
+Let $\boldsymbol{x}$ be an input image and $\{[class]_c\}_{c=1}^C$ be the $C$ categories for classification, where $[class]_c$ represents the class name of the $c$-th class. With a handcraft prompt like ``a photo of a $[class]_c$.", the prediction probabilities are:
+\begin{equation}
+	p(\hat{y}=c|\boldsymbol{x}) = \frac{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{l}_c))/\tau)}{\sum_{i=1}^{C}{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{l}_i))/\tau)}}
+\end{equation} 
+where $\boldsymbol{l}_c$ is the sequence embeddings of the handcraft prompt for $c$-th class, $\tau$ is a learned temperature coefficient, $\cos(\cdot,\cdot)$ represents the cosine similarity, and $f(\cdot)$ and $g(\cdot)$ are the image encoder and text encoder, respectively. 
+
+\label{subsec:coop}
+\noindent\textbf{Context Optimization (CoOp)}~\cite{zhou2021coop} addresses time-consuming and unstable issues of prompt engineering by replacing the fixed handcraft prompt with the tunable prompt that can be learned from data. The tunable prompt is composed of $M$ learnable continues context vectors $\boldsymbol{u}=[\boldsymbol{u}_1, \boldsymbol{u}_2, ..., \boldsymbol{u}_M]$ that has same dimension as the word embedding and the word embedding of class names. For $c$-th class, the prompt $\boldsymbol{p}_c$ is $[\boldsymbol{u}_1, \boldsymbol{u}_2, ..., \boldsymbol{u}_M, \boldsymbol{e}_c]$, where $\boldsymbol{e}_c$ is the word embedding of the $c\text{-th}$ class's class name $[class]_c$. CoOp optimizes the context vectors $\boldsymbol{u}$ by minimizing the cross-entropy loss between the ground truth and prediction probability as follows,
+ \begin{equation}
+ 	\begin{aligned}
+ 	p(\hat{y}=c|\boldsymbol{x}) &= \frac{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{p}_c))/\tau)}{\sum_{i=1}^{C}{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{p}_i))/\tau)}}, \\
+ 	\mathcal{L}_{\text{ce}} &= -\log{p(\hat{y}=y|\boldsymbol{x})}\\
+ 	\end{aligned}
+ \end{equation} 
+where $y$-th class is the ground-truth class of the image $\boldsymbol{x}$. Note that only the context vectors $\boldsymbol{u}$ are updated during the tuning, while CLIP's image encoder $f(\cdot)$ and the text encoder $g(\cdot)$ are frozen. We also follow the same training protocol as CoOp.
+\subsection{Synthetic Text Images Can Be Good Visual Prompts for VLMs}
+\label{subsec:STprompt}
+We now present the proposed LoGoPrompt. As illustrated in Figure~\ref{fig:framwork}, our LoGoPrompt first generates visual prompts as synthetic images with class name texts (Section~\ref{subsubsec:csp}). Then, it reformulates the learning objective of image classification to the visual prompt selection by utilizing min-max contrastive learning (Section~\ref{subsubsec:cpl}). Moreover, LoGoPrompt can easily extend the frozen visual prompts to be tunable to boost the performance further (Section~\ref{subsubsec:gcspl}). 
+\subsubsection{Visual Prompt Generation}\label{subsubsec:csp}
+Motivated by the observation that images with class name text easily activate the same classification neurons as general natural images of the same class (presented in the Introduction~\ref{sec:intro}), we propose to use synthetic images with class name text as visual prompts. As the class name text is independent and different for different classes, the visual prompts are naturally class-wise. The class-wise visual prompts are expected to help VLMs perceive class-relevant content in general natural images for better classification. 
+
+\noindent\textbf{Class-wise Visual Prompts} are defined as class-specific text images, \ie, the synthetic pixel blocks of the text classes rendered on the empty background, where the colors of the text classes and the background are randomly generated. 
+Figure~\ref{fig:framwork}\textcolor{red}{a} shows class-wise visual prompts of two different categories of dog: ``Saluki" and ``Otterhound".
+Formally, for the $c$-th class, we denote its visual prompt as $V_{c}\in\mathbb{R}^{h \times w \times 3}$, where the $h$ and $w$ are the height and width of the pixel block, respectively. The class-wise visual prompts $\{V_c\}_{c=1}^C$ have the same size of $h \times w$ across different classes. 
+
+\noindent\textbf{Class-conditional Images.} Given an input image $\boldsymbol{x}$, we use the class-wise visual prompt $V_{c}$ to transform it into a class-conditional image $\boldsymbol{x}_c$ of the $c$-th class. There are different ways to perform the transform, and we simply randomly replace a $h \times w$ pixel block of the image $\boldsymbol{x}$ with the $c$-th class's visual prompt $V_{c}$ for simplicity. 
+The class-conditional image $\boldsymbol{x}_c$ can be treated as an augmented image of the original image $\boldsymbol{x}$ on the specific class $c$. For example, as shown in Figure~\ref{fig:framwork}\textcolor{red}{c}, the visual prompt of ``dog” enhances the original image with the class ``dog".    
+\subsubsection{Min-Max Contrastive Learning for Visual Prompt Selection}
+\label{subsubsec:cpl}
+
+\noindent\textbf{Problem Formulation: Visual Prompt Selection.} Although class-conditional images enhance the original images by applying class-wise visual prompts, it remains unclear how a class-wise visual prompt should be selected to enhance the image in the test phase. As the test image's class is unknown, it becomes a chicken-and-egg problem: should the class of the test image be predicted first to obtain the class-wise visual prompt or should the test image be augmented with the class-wise visual prompt for better prediction? 
+To overcome the challenge, we reformulate the classification objective as the visual prompt selection: learn to select candidate class-wise visual prompts for the image during the training phase so that the same selection strategy can be applied in the test phase. 
+
+Specifically, we construct the real and negative class-conditional images for a training image by applying ground truth and other class-wise visual prompts, respectively. Then, we utilize contrastive loss to maximize the prediction probability for the real image while minimizing that of the negative image. More importantly, to ensure that original images can be classified, we construct the groups of class-conditional and original images and improve the traditional contrastive loss to min-max one for applicable to groups of images.   
+\noindent\textbf{Sample Construction for Synthetic and Original Image-Class Pairs} constructs real and negative image-class pairs for class-conditional and original images. Given the input image $\boldsymbol{x}$ and its ground-truth class $y$, we construct a group of real image-class pairs and $K$ groups of negative image-class pairs. Each group has two image-class pairs, one for the original image and one for the class-conditional image. Our construction rules are as follows:
+\begin{itemize}
+\setlength{\itemsep}{0pt}
+\setlength{\parsep}{0pt}
+\setlength{\parskip}{0pt}
+    \item  Group of real image-class pairs is $[(\boldsymbol{x}, y)^{+}, (\boldsymbol{x}_y, y)^{+}]$. The reason is that the ground-truth label $y$ is the correct class for both the original image $\boldsymbol{x}$ and the class-conditional image $\boldsymbol{x}_y$ of the class $y$. For example, the pairs of (image, ground-truth class ``dog") and (image with visual prompt ``dog", ground-truth class ``dog") are correct, as shown in Figure~\ref{fig:framwork}\textcolor{red}{c}. 
+    \item The $K$ groups of negative image-text pairs are $\{[(\boldsymbol{x}, c_k)^{-}, (\boldsymbol{x}_{c_k}, c_k)^{-}]\}_{k=1}^K$, where class $c_k \neq y$. The class $c_k$ is incorrect class for original image $\boldsymbol{x}$ and all class-conditional images $\{\boldsymbol{x}_c\}_{c=1}^C$, including the class-conditional image $\boldsymbol{x}_{c_k}$ of class $c_k$. Since class $y$ is the correct class for image $\boldsymbol{x}$, the visual prompt $V_{c_k}$ of class $c_k$ cannot activate visual concepts relevant to class $c_k$ from the image $\boldsymbol{x}$ of class $y$, resulting in $(\boldsymbol{x}_{c_k}, c_k)^{-}$ is a negative pair. The class-wise visual prompts are expected to help VLMs to perceive class-relevant visual concepts in the image and should not change the original inherent visual semantics of the image. For example, an image of ``a dog" should not be recognized as ``a cat" by adding ``cat" visual prompt. 
+\end{itemize}
+
+\noindent\textbf{Min-Max Contrastive Loss} maximizes the similarity of real pairs $[(\boldsymbol{x}, y)^{+}, (\boldsymbol{x}_y, y)^{+}]$ while minimizing that of negative pairs $\{[(\boldsymbol{x}, c_k)^{-}, (\boldsymbol{x}_{c_k}, c_k)^{-}]\}_{k=1}^K$ to optimize the context vectors $\boldsymbol{u}$ of text prompts $\{\boldsymbol{p}_i\}_{i=1}^C$ (see CoOp in Section~\ref{subsec:coop}). Our visual prompts are synthetic images with class name text, which have no parameters to learn. Therefore, we only need to optimize continuous context vectors $\boldsymbol{u}$ following CoOp. 
+Formally, we extend the InfoNCE loss~\cite{oord2018representation} on the groups of real and negative pairs as follows,
+\begin{equation}
+	\begin{aligned}
+			&p(\hat{y}=c|\boldsymbol{x}) = \frac{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{p}_c))/\tau)}{\sum_{i=1}^{C}{\exp(\cos(f(\boldsymbol{x}), g(\boldsymbol{p}_i))/\tau)}}, \\
+			&\mathcal{L}_{\text{N}} = -\log{\frac{\min(p(y|\boldsymbol{x}), p(y|\boldsymbol{x}_y))}{\sum_{k=1}^K\max(p(c_k|\boldsymbol{x}), p(c_k|\boldsymbol{x}_{c_k}))}} \\
+	\end{aligned}
+\end{equation}
+where the $\min(\cdot,\cdot)$ and $\max(\cdot,\cdot)$ operations obtain the minimum and maximum matching probabilities for the real and negative groups, respectively. Note that the min-max contrastive loss maximizes the minimal probability within the real group while minimizing the maximal probability within negative groups to preserve the ability to classify the original image.   
+
+During tuning, we adopt the hard negative mining to select the $K$ classes $\{c_k\}_{k=1}^K$ with the top-$K$ prediction probabilities $p(\hat{y}=c_k|\boldsymbol{x})$ for the original image $\boldsymbol{x}$ other than the ground-truth class $y$. During inference, we also first obtain the top-$K$ prediction classes for the original image, and then select the class with the highest prediction probability for the original or the corresponding class-conditional image as the predicted class, \ie, $\hat{y}=\text{argmax}_{{c_k}_{k=1}^K}\max(p(c_k|\boldsymbol{x}), p(c_k|\boldsymbol{x}_{c_k}))$.
+
+\subsubsection{Extension to Tunable Prompts} \label{subsubsec:gcspl}
+\noindent\textbf{Visual Prompt:} We use the synthetic pixel blocks of the text classes to initialize the visual prompts before tuning. Next, we optimize both the visual prompts $\{V_c\}_{c=1}^C$ and textual context vectors $\boldsymbol{u}$ during the tuning via the proposed contrastive prompt learning in Section~\ref{subsubsec:cpl}.
+
+\noindent\textbf{Text Prompt:} Following~\cite{zhou2021coop}, we adopt a class-specific text prompt and optimized it in a two-stage strategy. In the first stage, inspired by the Meta-Net of CoCoOp~\cite{zhou2022conditional}, we use a lightweight MLP to directly generate class-specific text prompts from handcraft prompts' text vectors extracted by CLIP's text encoder. In the second stage, we fine-tune the learned prompt from stage one directly on seen classes.
+
+\begin{table*}[t]
+    \setlength{\belowcaptionskip}{7pt}
+    \tabstyle{5.5pt}
+        \caption{\textbf{Accuracy comparison for base-to-new generalization setting}. The prompts are learned from the base classes (16 shots) for prompt-based tuning methods). Following CoCoOp, ViT-B/16 of CLIP is used as the vision backbone. H: Harmonic mean~\cite{xian2017zero}. 
+        The latter three methods employ visual prompts.
+        The superior performance of LoGoPrompt on both base and new classes shows its strong generalizability. 
+        }
+    \label{tab:results_generalization}
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{\textbf{Average over 11 datasets}.}
+    \begin{tabular}{l cc|c}
+    
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 69.34 & 74.22 & 71.70 \\
+    CoOp & 82.69 & 63.22 & 71.66 \\
+    CoCoOp & 80.47 & 71.69 & 75.83 \\
+    VPT & 80.81 & 70.36 & 74.68 \\
+    DPT & 84.18 & 66.47 & 74.28 \\
+    \rowcolor{tabhighlight}
+    Ours & \textbf{84.47} & \textbf{74.24} & \textbf{79.03} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{ImageNet.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 72.43 & 68.14 & 70.22 \\
+    CoOp & 76.47 & 67.88 & 71.92\\
+    CoCoOp & 75.98 & 70.43 & 73.10 \\
+    VPT & 70.93 & 65.90 & 68.32 \\
+    DPT & \textbf{76.95} & 68.14 & 72.28 \\
+    \rowcolor{tabhighlight}
+    Ours & 76.74 & \textbf{70.83} & \textbf{73.66} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{Caltech101.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 96.84 & \textbf{94.00} & 95.40 \\
+    CoOp & 98.00 & 89.81 & 93.73 \\
+    CoCoOp & 97.96 & 93.81 & 95.84 \\
+    VPT & 97.86 & 93.76 & 95.77 \\
+    DPT & \textbf{98.49} & 92.36 & 95.33 \\
+    \rowcolor{tabhighlight}
+    Ours & 98.19 & 93.78 & \textbf{95.93} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{OxfordPets.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 91.17 & 97.26 & 94.12 \\
+    CoOp & 93.67 & 95.29 & 94.47 \\
+     CoCoOp & 95.20 & \textbf{97.69} & \textbf{96.43} \\
+     VPT & 94.81 & 96.00 & 95.40 \\
+    DPT & 95.07 & 95.69 & 95.38 \\
+    \rowcolor{tabhighlight}
+    Ours & \textbf{96.07} & 96.31 & 96.18 \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{StanfordCars.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 63.37 & \textbf{74.89} & 68.65 \\
+    CoOp & 78.12 & 60.40 & 68.13 \\
+    CoCoOp & 70.49 & 73.59 & 72.01 \\
+    VPT & 72.46 & 73.38 & 72.92 \\
+    DPT & \textbf{82.07} & 60.72 & 69.80 \\
+    \rowcolor{tabhighlight}
+    Ours & 78.36 & 72.39 & \textbf{75.26} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{Flowers102.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 72.08 & \textbf{77.80} & 74.83 \\
+    CoOp & 97.60 & 59.67 & 74.06 \\
+    CoCoOp & 94.87 & 71.75 & 81.71 \\
+    VPT & 95.39 & 73.87 & 83.26 \\
+    DPT & 98.13 & 64.14 & 77.58 \\
+    \rowcolor{tabhighlight}
+    Ours & \textbf{99.05} & 76.52 & \textbf{86.34} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+    \begin{subtable}[t]{.23\textwidth}
+    \tabcolsep=0.22em
+    \centering
+    \caption{Food101.}
+    \begin{tabular}{l cc|c}
+    \toprule
+    & Base & New & H \\
+    \midrule
+    CLIP & 90.10 & 91.22 & 90.66 \\
+    CoOp & 88.33 & 82.26 & 85.19 \\
+    CoCoOp & 90.70 & 91.29 & 90.99 \\
+    VPT & 89.88 & 87.76 & 88.81 \\
+    DPT & 88.41 & 85.71 & 87.04 \\
+    \rowcolor{tabhighlight}
+    Ours & \textbf{90.82} & \textbf{91.41} & \textbf{91.11} \\
+    \bottomrule
+    \end{tabular}
+    \end{subtable}
+    ~
+  
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

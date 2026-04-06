@@ -1,0 +1,252 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Despite the recent success of 3D shape understanding~\cite{yu2022point, ma2022rethinking, wu2022point, zhang2022pointclip,zhu2023pointclip, huang2023clip2point, hegde2023clip}, the limited scale of existing 3D shape datasets hinders the learning of more robust and generalizable 3D representations. 
+Due to the significant human labor and expertise required in collecting and annotating 3D shape data, building large-scale 3D shape datasets is a prohibitive endeavor~\cite{chang2015shapenet, mo2019partnet, deitke2023objaverse}.
+
+To mitigate the challenge of the limited data scale, recent research in 3D shape representation learning shows a promising direction of multi-modal learning~\cite{liu2023openshape, xue2023ulip}. By establishing connections among data of 3D shapes, 2D images, and text, it becomes possible to pre-train 3D shape representations by \emph{distilling learned knowledge from image and language modalities}. 
+There exists a comprehensive body of literature of massive datasets~\cite{schuhmann2022laionb}, high-quality models pre-trained via self-supervised learning for 2D image~\cite{chen2020simple, he2020momentum, caron2021emerging} and language~\cite{devlin2019bert, brown2020language, touvron2023llama} modalities,
+and furthermore, cross-modal vision-language models~\cite{radford2021learning, cherti2023reproducible}. For instance, ULIP~\cite{xue2023ulip} creates triplets of 3D point clouds, 2D images, and text by rendering images from 3D shapes and generating text descriptions from their metadata.
+Then, ULIP adopts contrastive learning to align the 3D shape features with both the image features and text features extracted by CLIP~\cite{radford2021learning}. 
+
+While the image and language modalities are pre-aligned by CLIP pre-training and share the same feature space, we observe that directly aligning 3D features with image features leads to \emph{considerably worse representation quality} as compared with aligning 3D features with text features, as shown in Figure~\ref{fig:intro-teaser}-left. This phenomenon suggests that existing methods (\eg, ULIP~\cite{xue2023ulip} and OpenShape~\cite{liu2023openshape}) are not optimally leveraging the 2D image modality in 3D representation pre-training.
+
+There are two reasons for this \emph{counter-intuitive} observation: 1) The 2D images in the generated triplets follow a data distribution \emph{different from natural images}, on which CLIP is pre-trained. The images are rendered or projected from 3D to 2D, usually lacking a realistic background and texture. Since the image domain is shifted, the image features are no longer well-aligned with the text features, as exemplified in Figure~\ref{fig:intro-teaser}-middle. 2) Intuitively,
+the \emph{image} features represent more \emph{visual} attributes including
+the shape, texture, or color, while the \emph{text} features have a focus on \emph{semantics} such as the function of the object. As shown in Figure~\ref{fig:intro-teaser}-right, if the 3D features are specifically aligned with one single modality of images or text, they pay attention to different aspects of the 3D shape.
+Therefore, enforcing the 3D shape to simultaneously align with two modalities that convey subtly distinct information could be challenging. Such an approach may not fully leverage the potential of multi-modal learning signals.
+
+Aiming at addressing these two issues hindering multi-modal pre-training for 3D shape understanding, we propose \textbf{T}ri\textbf{A}dapter \textbf{M}ulti-\textbf{M}odal Learning (\textbf{TAMM}), a two-stage pre-training approach based on three synergistic adapters.
+In the first stage, to mitigate the domain gap between the 2D images rendered from 3D shapes and the natural images on which CLIP is pre-trained, we adapt the visual representations of CLIP based on the synthetic image-text pairs. More specifically, we fine-tune a lightweight CLIP Image Adapter on top of CLIP visual encoder through contrastive learning and re-align the adapted image features with the text features in the new domain. This CLIP Image Adapter allows us to establish more accurate relations between 3D shapes, 2D images, and language in an updated feature space, and avoids learning 3D representations from mismatched image features and text features.
+
+In the following second stage, to prevent the vision-semantic feature disparity from impairing our 3D representation pre-training, we choose to embrace this disparity and decouple the 3D representations into two sub-spaces.
+To comprehensively encode a 3D shape, the 3D encoder needs to capture both the visual and semantic aspects of its representation, which are centric to the corresponding image and text features, respectively. Therefore, we decouple the 3D feature space for the two focuses on visual and semantic representations.
+In particular, we attach two independent feature adapters to the 3D backbone and transform the 3D features into two sub-spaces. One sub-space focuses more on the visual representations, and is aligned with the 2D image feature space; the other sub-space focuses more on the semantic representations, and is aligned with the language feature space. This approach of decoupled feature spaces
+makes the learned 3D representations more comprehensive and expressive.
+
+To summarize, our main contribution includes:
+\begin{itemize}[leftmargin=*, noitemsep, nolistsep]
+\item We identify the under-utilization of the 2D image modality in existing multi-modal methods. The image domain gap and feature disparity in image-text pairs hinder representation learning in 3D shape understanding.
+\item We propose a novel multi-modal learning framework with two learning stages and three unified adapter modules. Our proposed TAMM better exploits both image and language modalities and improves 3D shape representations.
+\item Our TAMM consistently enhances 3D representations for a variety of 3D encoder architectures (\eg, Point-BERT~\cite{yu2022point}, SparseConv~\cite{choy20194d}), pre-training datasets (\eg, ShapeNet~\cite{chang2015shapenet}, an ensembled dataset~\cite{liu2023openshape}), and downstream tasks (\eg, zero-shot and linear probing shape classification on Objaverse-LVIS~\cite{deitke2023objaverse}, ModelNet40~\cite{wu20153d}, and ScanObjectNN~\cite{uy2019revisiting}).
+\end{itemize}
+
+
+
+Related Work
+\label{sec:relatted}
+\noindent\textbf{3D Shape Understanding.}
+There are two mainstreams for 3D shape representation learning: 1) Projecting 3D shapes into voxel or grid-based formats~\cite{shi2020pv} and then using 2D/3D convolutions~\cite{choy20194d} for feature extraction. 2) Directly modeling 3D point clouds with point-centric architectures~\cite{qi2017pointnet, qi2017pointnet++, zhang2021self, qian2022pointnext, wu2022point, ma2022rethinking, pang2022masked, zhang2022point}.
+In this work, to ensure a fair and comprehensive comparison with previous methods~\cite{xue2023ulip, liu2023openshape} on the pre-training scheme,
+we follow their selection and utilize two representative 3D encoders from these two mainstreams: SparseConv~\cite{choy20194d} and Point-BERT~\cite{yu2022point}. SparseConv is designed for efficiently processing sparse voxels using specialized convolutions that focus computations on non-zero data points. Point-BERT~\cite{wu2022point} utilizes a Transformer-based architecture~\cite{vaswani2017attention} and can be self-supervised by masked modeling~\cite{devlin2019bert}.
+
+\noindent\textbf{Multi-Modal Representation Learning.}
+Contrastive Language-Image Pre-training (CLIP)~\cite{radford2021learning} has enabled various downstream applications including object detection~\cite{zareian2021open, zhong2022regionclip, zhou2022detecting} and language grounding~\cite{li2022grounded}.   
+Recently, CLIP has been extended to 3D-based tasks, such as zero-shot text-to-3D generation~\cite{hong2022avatarclip, tevet2022motionclip, mohammad2022clip, jain2022zero, michel2022text2mesh, xu2023dream3d} and scene-level 3D segmentation~\cite{ha2022semantic, peng2023openscene, yang2023regionplc, rozenberszki2022language}. Meanwhile, developing general and robust representations for 3D shape understanding with the foundation of CLIP~\cite{zhang2022pointclip, huang2023clip2point, zhu2023pointclip, xue2023ulip, liu2023openshape, zhou2023uni3d} becomes a major focus. Among these methods, ULIP~\cite{xue2023ulip}, as a pioneering work, utilizes contrastive learning to distill CLIP features into 3D representations. OpenShape~\cite{liu2023openshape} follows this learning paradigm with a focus on building a larger pre-training dataset with enriched and filtered text data. Unlike OpenShape~\cite{liu2023openshape}, we focus on improving the multi-modal learning paradigm by more effectively leveraging both the image and text modalities via a two-stage pre-training approach based on three synergistic adapters.
+
+\begin{figure*}
+  \centering
+  \includegraphics[width= 1 \linewidth]{sec/pics/model.pdf}
+  \caption{\textbf{Overview of TAMM.} \textbf{Left:} In Stage~1, TAMM fine-tunes a lightweight CLIP Image Adapter (CIA) through contrastive learning and re-aligns the image features with the text features to alleviate the domain shift originated from rendered images. Contrastive learning maximizes inner products between features from corresponding text-image pairs, and reduces similarities of mismatched pairs. \textbf{Middle:} In Stage~2, TAMM introduces Image Alignment Adapter (IAA) and Text Alignment Adapter (TAA) to decouple 3D representations into two sub-spaces: one focusing more on visual attributes and the other for semantic understanding, ensuring a more comprehensive and effective multi-modal pre-training strategy.
+  \textbf{Right:} TAMM adaptively utilizes decoupled 3D features for various downstream tasks including linear probing classification (top) and zero-shot classification (bottom), achieving more robust classification results. 
+  }
+  \label{sec:method-model-arch}
+\end{figure*}
+
+
+
+Method
+\label{sec:method}
+Figure~\ref{sec:method-model-arch} shows our proposed two-stage approach, \textbf{T}ri\textbf{A}dapter \textbf{M}ulti-\textbf{M}odal Learning (\textbf{TAMM}), for pre-training robust and generalizable 3D representations by leveraging 2D images and text. 
+We first revisit the triplet data generation and problem formulation in multi-modal 3D representation learning.
+Section~\ref{sec:method-clip-tuning} delves into our fine-tuning of the original CLIP model for better fitting 3D understanding tasks. Section~\ref{sec:method-multi-modal} details our strategy to enhance alignment across the 3D, 2D, and text feature spaces.
+
+\noindent\textbf{Problem Formulation.}
+\label{sec:method-openshape}
+Given $n$ triplets $\{(P_i, I_i, T_i)\}_{i=1}^n$, where $P_i$ is a 3D point cloud, $I_i$ represents the corresponding image produced by projecting the 3D point cloud $P_i$ into 2D from an arbitrary perspective, and $T_i$ denotes the associated text generated using advanced vision-language models such as BLIP~\cite{li2022blip}, the objective is to learn high-quality 3D representations from the triplets. 
+The basic framework to achieve this objective is proposed by ULIP~\cite{xue2023ulip} (and followed by OpenShape~\cite{liu2023openshape}) with the help of CLIP~\cite{radford2021learning, cherti2023reproducible}.
+
+Formally, the 3D feature $f_i^P = E_P(P_i)$ is produced by a learnable 3D encoder $E_P$, and the corresponding image feature $f_i^I = E_I(I_i)$ and text feature $f_i^T = E_T(T_i)$ are generated by frozen CLIP encoders $E_I,E_T$. Then the 3D encoder $E_P$ is optimized by aligning the 3D feature space $f^P$ simultaneously to the pre-aligned CLIP image space $f^I$ and text space $f^T$ through contrastive learning. The corresponding contrastive loss $L_\text{contrast}(f^{M_1}, f^{M_2})$ between two modalities $M_1,M_2$ (3D-2D or 3D-text) is formulated as:
+\begin{equation}
+\label{equation-contrastive_loss}
+\scriptsize
+ - \frac{1}{2n} \sum\limits_{i=1}^{n} \left( \log\frac{\exp(f_i^{M_1} \cdot f_i^{M_2}/ \tau)}{\sum\limits_{j=1}^{n} \exp(f_i^{M_1} \cdot f_j^{M_2} / \tau)} +  \log\frac{\exp(f_i^{M_2} \cdot f_i^{M_1}/ \tau)}{\sum\limits_{j=1}^{n}\exp(f_i^{M_2} \cdot f_j^{M_1} / \tau)} \right),
+\end{equation}
+where $\tau$ denotes the temperature hyperparameter.
+
+\subsection{Image-Text Re-Alignment}
+\label{sec:method-clip-tuning}
+Unlike ULIP~\cite{xue2023ulip} or OpenShape~\cite{liu2023openshape}, in which the 3D feature space is aligned with the image-text feature spaces \emph{directly produced by CLIP}, we introduce an image feature space tuning strategy, aiming to \emph{foster better alignment} across 3D, 2D, and language modalities (Figure~\ref{sec:method-model-arch}-left).
+We argue that the image feature space produced directly by the CLIP visual encoder does not perfectly align with the text feature space and is thus sub-optimal. The reason is that the 2D images in the triplets, which originate from 3D point cloud projections, lack backgrounds and are visually different from natural images on which CLIP is pre-trained.
+
+Therefore, when using such 2D images from a shifted data domain to perform multi-modal pre-training, it becomes necessary to further fine-tune CLIP and re-align its image and language feature spaces.
+For the first time, we re-design domain adapters~\cite{houlsby2019parameter} for multi-modal contrastive 3D representation learning, and propose a \textbf{C}LIP \textbf{I}mage \textbf{A}dapter (\textbf{CIA}), to adapt the image feature space for the rendered 2D images in our data triplets. We append a lightweight, learnable multi-layer perceptron (MLP) to CLIP image encoder, with a residual connection which seamlessly integrates the new knowledge acquired from fine-tuning with the existing knowledge from the pre-trained CLIP backbone. To avoid heavy computation and over-fitting, we only fine-tune the additional parameters in CIA, instead of the whole CLIP backbone. Formally, given the image feature $f_i^I$ and text feature $f_i^T$ extracted from the triplet $(P_i, T_i, I_i)$,
+we use a learnable, two-layer CIA $A_C(\cdot)$ to adapt the image feature, formulated as: 
+\begin{equation}
+A_C(f_i^I) = \sigma(f_i^IW_1) \cdot W_2,
+\end{equation}
+where $W_1$ and $W_2$ are the parameters associated with the linear transformation layers, and $\sigma$ is the non-linear activation function. The refined image feature $\widetilde f_i^I$ can be computed with a residual connection: 
+\begin{equation}
+\label{equation-1}
+\widetilde f_i^I = \alpha A_C(f_i^I) + (1 - \alpha) f_i^I,
+\end{equation}
+where $\alpha$ is a hyperparameter.
+Finally, CIA $A_C(\cdot)$
+is optimized by minimizing the contrastive loss function (Equation~\ref{equation-contrastive_loss}), instantiated as:
+\begin{equation}
+\mathcal{L}_\text{realign} = L_\text{contrast}(\widetilde f^I, f^T ).
+\end{equation}
+
+\subsection{Decoupled Tri-Modal Pre-Training}
+\label{sec:method-multi-modal}
+Although the image and language feature spaces have been aligned by CLIP and our CLIP Image Adapter, they still encode \emph{subtly different information}. For instance, the color of a 3D shape may be inferred from the image feature, but it cannot possibly be included in the text feature if the text description does not contain color information. Similarly, the image feature may not include semantic information such as the function or name of an object. In such cases, enforcing the 3D feature to align with both the image and text features \emph{simultaneously} is challenging.
+
+In order to overcome the obstacle introduced by aligning the 3D shape feature space with two distinct modalities, we propose a novel decoupled tri-modal pre-training framework, which aligns two decoupled 3D shape feature spaces with the refined image feature space and the text feature space, respectively (Figure~\ref{sec:method-model-arch}-middle). We encourage the 3D encoder to cover both the \emph{visual} representation and the \emph{semantic} information inherent to the 3D shape, avoiding the dilemma of aligning with disparate image and text features at the same time.
+Formally, given the triplets $\{(P_i, I_i, T_i)\}_{i=1}^n$, we first generate the image feature $\widetilde f_i^I$ using the frozen, adapted 2D image encoder (Equation \ref{equation-1}) and the text feature $f_i^T$ using the original CLIP text encoder. 
+We introduce a pair of lightweight Dual Adapters: \textbf{I}mage \textbf{A}lignment \textbf{A}dapter (\textbf{IAA}) $A_V(\cdot)$ and \textbf{T}ext \textbf{A}lignment \textbf{A}dapter (\textbf{TAA}) $A_S(\cdot)$. They split the 3D feature $f_i^P$ originated from the 3D encoder $E_P$ into a \textbf{v}ision-focusing feature $f_i^{VP}$ and a \textbf{s}emantic-focusing feature $f_i^{SP}$, respectively.
+Dual Adapters $A_V(\cdot)$ and $A_S(\cdot)$ share the same architecture as the CLIP Image Adapter in Section~\ref{sec:method-clip-tuning} and can be formulated as:
+\begin{equation}
+\begin{split}
+f_i^{VP} = A_V(f_i^P) = \sigma(f_i^PW_1^V) \cdot W_2^V,\\
+f_i^{SP} = A_S(f_i^P) = \sigma(f_i^PW_1^S) \cdot W_2^S,
+\end{split}
+\end{equation}
+where $W_1^V$, $W_2^V$, $W_1^S$, and $W_2^S$ are the parameters associated with the linear layers, and $\sigma$ represents the activation function. 
+By decoupling 3D features into these sub-spaces, the 3D encoder $E_P$ interprets the 3D shape with a more comprehensive visual and semantic understanding, improving the expressivity of the learned representations. 
+
+Finally, instead of enforcing the 3D shape feature space to directly mimic the pre-aligned image-text feature space, we use the decoupled 3D features $f^{VP}, f^{SP}$ and align them with the adapted image feature space $\widetilde f^I$ and the text feature space $f^T$, respectively.  
+Moreover, since one single image can only capture the 3D shape from one perspective, we align the 3D feature with the adapted features of \emph{multi-view images}, to fully exploit the image modality and achieve a better alignment between 3D and 2D.
+The overall loss function is defined as:
+\begin{equation}
+\footnotesize
+\mathcal{L}_\text{trimodal} = L_\text{contrast}(f^{SP}, f^T) + \frac{1}{m}\sum_{k}^{m} L_\text{contrast}(f^{VP}, \widetilde{f}^{I, k}),
+\end{equation}
+where $m$ represents the number of rendered images and $\widetilde{f}^{I, k}$ is the adapted image feature from the $k$-th view.
+
+\noindent\textbf{Application in Downstream Tasks.} The learned 3D feature sub-spaces, $f^{VP}$ and $f^{SP}$ can be adaptively applied to a variety of downstream tasks (Figure~\ref{sec:method-model-arch}-right).
+Specifically, in zero-shot 3D classification, we leverage both the 3D vision-focusing feature $f^{VP}$ and the 3D semantic-focusing feature $f^{SP}$. We calculate the similarity between these features and category embeddings generated by the CLIP text encoder, respectively. After summing up the per-category similarity scores, the category with the highest similarity is chosen as the predicted class, yielding more robust and enhanced classification results compared with using a single sub-space alone. 
+In the linear probing classification task, we concatenate the 3D vision-focusing feature $f^{VP}$ and 3D semantic-focusing feature $f^{SP}$ as input to the learnable linear classification layer, providing a more comprehensive and robust representation for 3D understanding.
+
+
+
+Experiments
+\label{sec:experiment}
+
+\begin{table*}[!t]
+\centering
+\resizebox{0.95 \textwidth}{!}{
+\begin{tabular}{cc|c|ccc|ccc|ccc}
+\toprule
+\multirow{2}{*}{\makecell[c]{Pre-Training \\ Dataset}} &\multirow{2}{*}{Model}&\multirow{2}{*}{\makecell[c]{Pre-Training \\ Method}}&\multicolumn{3}{c|}{Objaverse-LVIS~\cite{deitke2023objaverse}} &\multicolumn{3}{c|}{ModelNet40~\cite{wu20153d}} & \multicolumn{3}{c}{ScanObjectNN~\cite{uy2019revisiting}} \\
+&&&Top-1&Top-3&Top-5&Top-1&Top-3&Top-5&Top-1&Top-3&Top-5 \\
+\midrule
+- &PointCLIP~\cite{zhang2022pointclip} & - &1.9&4.1&5.8&19.3&28.6&34.8& 10.5 & 20.8& 30.6 \\ 
+- & PointCLIP v2~\cite{zhu2023pointclip}&- &4.7&9.5&12.9&63.6&77.9&85.0& 42.2& 63.3& 74.5 \\
+\midrule
+\multirow{7}{*}{ShapeNet}  & ViT-B/32~\cite{dosovitskiy2020image} & CLIP2Point~\cite{huang2023clip2point} & 2.7 & 5.8 & 7.9 & 49.5& 71.3 & 81.2 &25.5 & 44.6 & 59.4\\
+& Transformer~\cite{vaswani2017attention} & ReCon~\cite{qi2023contrast} & 1.1 & 2.7& 3.7& 61.2& 73.9& 78.1& 42.3& 62.5& 75.6\\
+\cmidrule(lr){2-12}
+
+& \multirow{2}{*}{SparseConv~\cite{choy20194d}} & OpenShape~\cite{liu2023openshape} & 11.6 & 21.8 & 27.1 & 72.9 & 87.2 & 93.0 & 52.7 & 72.7 & 83.6\\
+& & TAMM (Ours) & 13.6 & 24.2 & 29.3 & 74.6 & 88.2 & 94.0 & 57.9 & 75.3 & 83.1\\
+\cmidrule(lr){2-12}
+
+& \multirow{3}{*}{Point-BERT~\cite{yu2022point}} & ULIP~\cite{xue2023ulip} & 6.2 & 13.6 & 17.9 & 60.4 & 79.0 & 84.4 &51.5 &71.1 & 80.2\\
+& & OpenShape~\cite{liu2023openshape} & 10.8 & 20.2 & 25.0 & 70.3 & 86.9 & 91.3 & 51.3 & 69.4 & 78.4\\
+& & TAMM (Ours) & 13.7 & 24.2 & 29.2 & 73.1 & 88.5 & 91.9 & 54.8 & 74.5 & 83.3\\
+
+\midrule
+\multirow{5}{*}{\makecell[c]{Ensembled \\ (no LVIS)}}  & \multirow{2}{*}{SparseConv~\cite{choy20194d}} &OpenShape~\cite{liu2023openshape} & 37.0 & 58.4 & 66.9 & 82.6 & 95.0 & 97.5 & 54.9 & 76.8 & 87.0 \\
+& & TAMM (Ours) &39.8 &62.0&70.4&85.7&\textbf{96.8}&\textbf{98.3} & 57.5 & 81.3 & 90.0
+\\ 
+\cmidrule(lr){2-12}
+& \multirow{3}{*}{Point-BERT~\cite{yu2022point}} & ULIP~\cite{xue2023ulip} & 21.4 & 38.1 & 46.0 & 71.4 & 84.4 & 89.2 & 46.0 & 66.1 & 76.4\\ 
+& & OpenShape~\cite{liu2023openshape} & 39.1 & 60.8 & 68.9 & 85.3 & 96.2 & 97.4 & 47.2 & 72.4 & 84.7  \\
+& & TAMM (Ours) &42.0 & 63.6& 71.7& \textbf{86.3}& 96.6&98.1 & 56.7 & 78.3 & 86.1 \\
+
+\midrule
+
+ \multirow{5}{*}{Ensembled} &\multirow{2}{*}{SparseConv~\cite{choy20194d}} &OpenShape~\cite{liu2023openshape} & 43.4 & 64.8 & 72.4 & 83.4 & 95.6 & 97.8 & 56.7 & 78.9 & 88.6 \\
+& & TAMM (Ours) & 43.8 & 66.2 & 74.1& 85.4& 96.4& 98.1& \textbf{58.5}& \textbf{81.3}&\textbf{89.5} \\ 
+\cmidrule(lr){2-12}
+ & \multirow{3}{*}{Point-BERT~\cite{yu2022point}}  & ULIP~\cite{xue2023ulip} & 26.8 & 44.8 & 52.6 & 75.1 & 88.1 & 93.2 & 51.6 & 72.5 & 82.3\\ 
+& & OpenShape~\cite{liu2023openshape} & 46.8 & 69.1 & 77.0 & 84.4 & 96.5 & 98.0 & 52.2 & 79.7 & 88.7 \\
+& & TAMM (Ours) & \textbf{50.7} & \textbf{73.2} & \textbf{80.6} & 85.0 & 96.6 & 98.1 & 55.7 & 80.7 & 88.9 \\
+\bottomrule
+\end{tabular}}
+\caption{\textbf{Zero-shot 3D classification results.}  TAMM sets new state of the art in zero-shot classification accuracy across Objaverse-LVIS, ModelNet-40, and ScanObjectNN benchmarks, outperforming existing methods in diverse settings of pre-training datasets and 3D model architectures. The performance gain is more significant on the most challenging long-tailed Objaverse-LVIS dataset.
+}
+\label{sec:experiment-zsd_1}
+\end{table*}
+\label{sec:experiment-datasets}
+\noindent \textbf{Pre-Training Datasets.}
+Following the prior state-of-the-art method, OpenShape~\cite{liu2023openshape},   our TAMM is pre-trained on the triplets generated from four datasets: ShapeNetCore~\cite{chang2015shapenet}, 3D-FUTURE~\cite{fu20213d}, ABO~\cite{collins2022abo}, and Objaverse~\cite{deitke2023objaverse}. 
+Our training sets are defined as follows: 
+``ShapeNet'' is a triplet set derived exclusively from the ShapeNetCore dataset, containing $52,470$ 3D shapes with corresponding images and text;
+``Ensembled (no LVIS)'' is a set of $829,460$ triplets from the above datasets excluding Objaverse-LVIS; 
+``Ensembled'' denotes the triplet set comprising data from all four datasets, containing $875,665$ 3D shapes and their associated images and text.
+
+\noindent \textbf{Evaluation Datasets.}
+Our TAMM is evaluated on the following datasets:  Objaverse-LVIS~\cite{deitke2023objaverse}, ModelNet40~\cite{wu20153d}, ScanObjectNN~\cite{uy2019revisiting}, and ScanNet~\cite{dai2017scannet}. Objaverse-LVIS encompasses a broad range of categories, featuring $46,832$ high-quality shapes distributed across $1,156$ LVIS~\cite{gupta2019lvis} categories. ModelNet40 is a synthetic indoor 3D dataset comprising $40$ categories. We use the test split of $2,468$ shapes in our experiments. ScanObjectNN consists of scanned objects from $15$ common categories. It has three main variants: OBJ-BG, OBJ-ONLY, and PB-T50-RS. ScanNet, characterized by its real-world scans, includes 1,513 indoor scenes containing 36,213 objects. We conduct experiments on four tasks including zero-shot 3D classification, linear probing 3D classification, few-shot linear probing 3D classification, and real-world recognition, to demonstrate the advantages of our TAMM. Other implementation details regarding pre-training and evaluation are introduced in the supplementary material.
+
+\subsection{Zero-Shot 3D Classification}
+\label{sec:experiment:zero-shot-subsection}
+Zero-shot ability is a key metric for reflecting the quality of learned 3D representations, which requires the representations to be \emph{directly applicable to datasets where the model has never been explicitly supervised}. Without any further tuning, the 3D representations are compared with text embeddings of categories to predict the classes of 3D shapes.
+To make a fair comparison and keep consistency with prior work, we adopt the same settings as OpenShape~\cite{liu2023openshape} on three benchmarks: Objaverse-LVIS~\cite{deitke2023objaverse}, ModelNet40~\cite{wu20153d}, and OBJ-ONLY (ScanObjectNN)~\cite{uy2019revisiting}.
+
+The results are summarized in Table~\ref{sec:experiment-zsd_1}. First, we observe that TAMM, benefited from multi-modal pre-training, outperforms PointCLIP~\cite{zhang2022pointclip} and PointCLIP v2~\cite{zhu2023pointclip} by a large margin. 
+Furthermore, it is evident that our pre-trained models consistently outperform those pre-trained by ULIP and OpenShape, \emph{irrespective of} whether they are pre-trained on smaller datasets like ShapeNet or more expansive ones such as the Ensembled dataset. 
+For instance, Point-BERT~\cite{yu2022point} pre-trained by our TAMM on the Ensembled (no LVIS) dataset surpasses ULIP and OpenShape by margins of $+20.6\%$ and $+2.9\%$ in Top-1 accuracy on the long-tailed Objaverse-LVIS benchmark, which validates the effectiveness of our multi-modal pre-training scheme.
+
+{
+\setlength\tabcolsep{3pt}
+\begin{table}[t]
+\centering
+
+\resizebox{0.48\textwidth}{!}{%
+\begin{tabular}{cc|c|c|ccc}
+\toprule
+Pre-Training & \multirow{2}{*}{Method}& O-LVIS & M-40& \multicolumn{3}{c}{ScanObjectNN~\cite{uy2019revisiting}} \\
+Dataset && \cite{deitke2023objaverse} & \cite{wu20153d} & \scriptsize OBJ-BG & \scriptsize OBJ-ONLY & \scriptsize PB-T50-RS \\
+\midrule
+
+\multirow{4}{*}{ShapeNet} & ULIP~\cite{xue2023ulip} & 34.6 & 90.6& 75.4 & 75.4 & 64.8 \\
+& OpenShape~\cite{liu2023openshape} &29.3 & 88.5 & 77.8 & 78.5 & 64.1 \\
+& TAMM (Ours) & 39.1& 91.0& 80.6 & 81.1 & 68.5 \\
+& Rel. Improv. & +9.8 & +2.5 & +2.8 & +2.6 & +4.4 \\
+\midrule
+\multirow{3}{*}{Ensembled}& OpenShape~\cite{liu2023openshape} & 48.3 & 91.3 & 85.9 & 85.4 & 78.0 \\
+
+& TAMM (Ours) & \textbf{59.5}& \textbf{93.5}& \textbf{88.5} &\textbf{88.0} & \textbf{80.3} \\
+& Rel. Improv. & +11.2 & +2.2 & +2.6 & +2.6 & +1.7 \\
+\bottomrule
+
+\end{tabular}}
+
+\caption{\textbf{Linear probing 3D classification results.} TAMM outperforms previous methods by a large margin, \eg, $+11.2\%$ accuracy gain on the challenging Objaverse-LVIS dataset.}
+\label{sec:experiment-linear_probing_scanobjectnn}
+\end{table}
+}
+
+\subsection{Linear Probing 3D Classification}
+\label{sec:experiment:linear-probing-subsection}
+To further evaluate the 3D representation quality of our pre-trained models, we design and conduct linear probing classification experiments. Here, we first freeze our pre-trained Point-BERT model along with the Image Alignment Adapter (IAA) and Text Alignment Adapter (TAA), and then append a single learnable linear layer to the model. Given a batch of point clouds, as illustrated in Figure~\ref{sec:method-model-arch}, we generate features from both IAA and TAA and concatenate them, and learn the appended linear classification layer on the concatenated features.
+We evaluate the accuracy of the linear classifier on three benchmarks: Objaverse-LVIS~\cite{deitke2023objaverse}, ModelNet40~\cite{wu20153d}, and ScanObjectNN~\cite{uy2019revisiting}.
+Objaverse-LVIS is a challenging long-tailed dataset with $1,156$ categories, which has not been evaluated by prior methods~\cite{xue2023ulip, liu2023openshape}. To ensure evaluation with statistically meaningful number of samples per class, we exclude categories with fewer than $10$ instances, leaving us $1,046$ categories. Samples in each class are divided into training and testing sets at an $8:2$ ratio. For ModelNet40 and ScanObjectNN, we use the standard splits, following~\cite{wu2022point, qi2023contrast}.
+
+The results are shown in Table~\ref{sec:experiment-linear_probing_scanobjectnn}.
+TAMM consistently outperforms all previous methods by a large margin. For example, pre-trained on the Ensembled dataset, TAMM improves over OpenShape by $+11.2\%$ and $+2.2\%$ overall accuracy on Objaverse-LVIS and ModelNet40, respectively. 
+This demonstrates that TAMM effectively exploits knowledge from CLIP and learns generalizable 3D representations that are \emph{directly applicable to novel linear classification tasks}.
+Notably, TAMM even surpasses the Point-BERT model pre-trained without multi-modality but allowed to be \emph{fully fine-tuned} on OBJ-BG ($87.4\%$)~\cite{yu2022point} by $+1.1\%$ accuracy.
+These strong results indicate that TAMM has learned excellent transferable 3D representations, showing a great potential in real-world applications. 
+
+\subsection{Few-Shot Linear Probing 3D Classification}
+Following the previous evaluation, we perform few-shot classification experiments on ModelNet40~\cite{wu20153d} to assess TAMM in low-data scenarios. Similar to the linear probing experiments described in Section~\ref{sec:experiment:linear-probing-subsection}, we extend our model with an additional linear classification layer and only train this linear layer instead of fin
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

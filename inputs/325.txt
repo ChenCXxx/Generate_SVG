@@ -1,0 +1,253 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Holistic 3D scene understanding is vital in autonomous driving.
+The capability to perceive the environment, identify and categorize objects, and contextualize their positions in the 3D space of the scene is fundamental for developing a safe and reliable autonomous driving system.
+
+\input{figures/figure1}
+
+Recent advancements in camera-based Bird's Eye View (BEV) methods have shown great potential in enhancing 3D scene understanding. By integrating multi-view observations into a unified BEV space, these methods have achieved remarkable success in tasks such as 3D object detection~\cite{wang2022detr3d,li2022bevformer,liu2022petrv2,li2022bevdepth}, BEV semantic segmentation~\cite{philion2020lift,hu2021fiery,zhou2022cross}, and vector map construction~\cite{liu2022vectormapnet,liao2022maptr}.
+However, existing perception tasks have certain limitations as they primarily focus on specific aspects of the scene. Object detection is primarily concerned with identifying foreground objects, BEV semantic segmentation only predicts the semantic map on the BEV plane, and vector map construction emphasizes the static road structure of the scene.
+To address these limitations, there is a need for a more comprehensive and integrated paradigm for 3D scene understanding.
+In this paper, we propose \emph{camera-based panoptic segmentation}, which aims to encompass all the elements within the scene in a unified representation for the 3D output space. As shown in Figure~\ref{fig:camera_panoptic}, unlike LiDAR-based panoptic segmentation (a) that relies on LiDAR point clouds, our camera-based panoptic segmentation leverages multi-view images as input and outputs a dense panoptic occupancy prediction throughout the entire scene. In contrast to recent camera-based detection and segmentation methods (b), it seamlessly integrates object-level and voxel-level perception results into a unified panoptic occupancy representation.
+
+However, directly utilizing Bird's Eye View (BEV) features for camera-based panoptic segmentation leads to poor performance due to the omission of finer geometry details, such as shape and height information, which are crucial for decoding fine-grained 3D structures. This limitation motivates us to explore a more effective 3D feature representation.
+Occupancy representation has gained popularity as it effectively describes various elements in the scene, including open-set objects (e.g., debris), irregular-shaped objects (e.g., articulated trailers, vehicles with protruding structures), and special road structures (e.g., construction zones). 
+Therefore, a burst of recent methods~\cite{cao2022monoscene,huang2023tri, miao2023occdepth, cao2022monoscene,wang2023openoccupancy,li2023voxformer} have focused on dense semantic occupancy prediction.
+However, simply lifting 2D to 3D occupancy representation has been considered inefficient in terms of memory cost. This limitation has driven methods like TPVFormer~\cite{huang2023tri} to split the 3D representation into three 2D planes. Although these methods attempt to mitigate the memory issue, they still struggle to capture the complete 3D information and may experience reduced performance.
+Moreover, these existing works primarily focus on the semantic understanding of the scene and do not address instance-level discrimination.
+
+In this work, we propose a novel method called \emph{\methodname{}}, which seamlessly integrates object detection and semantic segmentation in a joint-learning framework, facilitating a more comprehensive comprehension of the 3D environment. Both detection and segmentation performance can benefit from this joint-learning framework.
+Our approach employs voxel queries to learn a unified occupancy representation.
+This occupancy is learned in a coarse-to-fine scheme, solving the problem of memory cost and significantly enhancing efficiency.
+We then take a step further to explore the sparse nature of 3D space and propose an occupancy sparsify module. This module progressively prunes occupancy to a spatially sparse representation during the coarse-to-fine upsampling, greatly boosting memory efficiency.
+Our contributions are summarized as follows:
+\begin{itemize}
+    \item We introduce \emph{camera-based 3D panoptic segmentation} as a new paradigm for holistic 3D scene understanding, which utilizes multi-view images to create a unified occupancy representation for the 3D scene. This allows us to jointly model object detection and semantic segmentation, leading to a more cohesive and holistic understanding of the scene.
+    \item Our proposed framework, \methodname{}, adopts a \emph{coarse-to-fine scheme} to learn the unified occupancy representation from multi-frame and multi-view images. We demonstrate that using 3D voxel queries with a coarse-to-fine learning scheme is effective and efficient.
+    This scheme could be further made spatially sparse to boost memory efficiency by an occupancy sparsify module.
+    \item Experiments on the nuScenes dataset show that our approach achieves state-of-the-art performance on camera-based semantic segmentation and panoptic segmentation.
+    Furthermore, our approach can extend to dense occupancy prediction and has shown promising performance on the Occ3D benchmark.
+\end{itemize}
+
+
+
+
+
+Related Work
+\label{sec:related}
+
+\noindent{\textbf{Camera-based 3D Perception.}}
+Camera-based 3D perception has received extensive attention in the autonomous driving community due to its cost-effectiveness and rich visual attributes.
+Previous methods perform 3D object detection and map segmentation tasks independently. Recent BEV-based methods unify these tasks on the problem of feature view transformation from image space to BEV space.
+One line of works follows the lifting paradigm proposed in LSS~\cite{philion2020lift}; they explicitly predict a depth map and lift multi-view image features onto the BEV plane~\cite{huang2021bevdet,li2022bevdepth,li2022bevstereo,park2022time}.
+Another line of works inherits the spirit of querying from 3D to 2D in DETR3D~\cite{wang2022detr3d}; they employ learnable queries to extract information from image features by cross-attention mechanism~\cite{li2022bevformer,lu2022learning,jiang2022polarformer,wang2023frustumformer}.
+While these methods efficiently compress information onto the BEV plane, they may sacrifice some of the integral scene structure inherent in 3D space. To address this limitation, voxel representation is better suited for obtaining a holistic understanding of 3D space, making it ideal for tasks such as 3D semantic segmentation and panoptic segmentation.
+
+\noindent{\textbf{3D Occupancy Prediction.}}
+Occupancy prediction can be traced back to Occupancy Grid Mapping (OGM)~\cite{thrun2002probabilistic}, a classic task in mobile robot navigation that aims to generate probabilistic maps from sequential noisy range measurements. Recently, there has been considerable attention given to camera-based 3D occupancy prediction, which aims to reconstruct the 3D scene structure from images. Existing tasks in this area can be categorized into two lines based on the type of supervision: sparse prediction and dense prediction.
+Sparse prediction methods obtain supervision from LiDAR points and are evaluated on LiDAR benchmarks. TPVFormer~\cite{huang2023tri} proposes a tri-perspective view method for predicting 3D occupancy.
+Dense prediction methods are closely related to Semantic Scene Completion (SSC)~\cite{armeni2017joint,song2017semantic,dai2017scannet,liao2022kitti}. 
+MonoScene~\cite{cao2022monoscene} first uses U-Net to infer dense 3D occupancy with semantic labels from a single monocular RGB image. VoxFormer~\cite{li2023voxformer} utilizes depth estimation to select voxel queries in a two-stage framework. Subsequently, a series of studies have focused on the task of dense occupancy prediction and have introduced new benchmarks. OpenOccupancy~\cite{wang2023openoccupancy} provides a carefully designed occupancy benchmark, while Occ3D~\cite{tian2023occ3d} proposes an occupancy prediction benchmark using the Waymo and nuScenes datasets. Openocc~\cite{tong2023scene} further provides occupancy flow annotation on the nuScenes dataset.
+
+\noindent{\textbf{LiDAR Panoptic Segmentation.}}
+LiDAR panoptic segmentation~\cite{milioto2020lidar} offers a comprehensive understanding of the environment by unifying semantic segmentation and object detection. However, traditional object detection methods often lose height information, making it challenging to learn fine-grained feature representations for accurate 3D segmentation. Recent LiDAR panoptic methods~\cite{zhou2021panoptic,razani2021gp,hong2021lidar} have been developed based on well-designed semantic segmentation networks~\cite{zhang2020polarnet,cheng20212} to address this limitation.
+Instead of predicting sparse semantic segmentation on LiDAR points, camera-based panoptic segmentation aims to output dense voxel segmentation of the scene.
+
+\noindent{\textbf{3D Scene Reconstruction and Representation.}}
+3D scene reconstruction and representation aim to infer the holistic geometry structure and semantics of a scene. This challenging problem has received continuous attention in both the traditional computer vision era and the recent deep learning era~\cite{han2019image}. Solutions can be categorized into \emph{explicit reconstruction} and \emph{implicit representation} approaches.
+Explicit reconstruction leverage the geometry cues from different viewpoints in multi-views~\cite{schonberger2016structure,schonberger2016pixelwise}. 
+While explicit reconstruction methods excel at reconstructing static scenes, they are struggled to capture dynamic scenes or scenes with complex interactions between objects. Furthermore, they are computationally expensive, requiring large amounts of time to generate detailed and accurate 3D models.
+In contrast, implicit representation methods are more computation efficient and have the potential to model scenes at arbitrary resolutions. They learn a continuous function~\cite{mescheder2019occupancy,park2019deepsdf,mildenhall2021nerf,sitzmann2019deepvoxels} that can represent complex 3D scenes with high fidelity, including hidden or occluded regions that are difficult to capture using explicit reconstruction methods.
+
+
+
+Methodology
+\subsection{Problem Setup}
+\begin{figure*}
+  \centering
+    \includegraphics[width=1.0\linewidth]{./fig/pipeline.pdf}
+  \caption{\textbf{The overall framework of \methodname{}.} We employ an image backbone network to extract multi-scale features for multi-view images at multi-frames. Then we apply voxel queries to learn the voxel features via \emph{View Encoder}. The \emph{Temporal Encoder} aligns the previous voxel features into the current frame and fuses the features together. \emph{Voxel Upsample} restores the high-resolution voxel representation for fine-grained semantic classification. \emph{Task Head} predicts object detection and semantic segmentation by two separate heads. \emph{Refine Module} further refines the thing class prediction with the help of 3D object detection and assigns the instance ID to the thing-occupied grids. Finally, we can obtain 3D panoptic segmentation for the current frame.}
+  \label{fig:pipeline}
+\end{figure*}
+
+\noindent{\textbf{Camera-based 3D panoptic segmentation.}}
+Camera-based 3D panoptic segmentation aims to predict a dense panoptic voxel volume surrounding the ego-vehicle using multi-view images as input.
+Specifically, we take current multi-view images denoted as $\mathbf{I}_t=\{\mathbf{I}_t^{1}, \mathbf{I}_t^{2},...,\mathbf{I}_t^{n}\}$ and previous frames $\mathbf{I}_{t-1},...,\mathbf{I}_{t-k}$ as input. $n$ denotes the camera view index, while $k$ denotes the number of history frames.
+The model outputs the current frame semantic voxel volume $\mathbf{Y}_t \in \{w_0, w_1,...,w_C\}^{ H \times W \times Z}$ and its corresponding instance ID $\mathbf{N}_t \in \{v_0, v_1, v_2,...,v_P\}^{ H \times W \times Z}$.
+Here $C$ denotes the total number of semantic classes in the scene, while $w_0$ represents the empty voxel grid. $P$ are the total number of instances in the current frame $t$; for each grid belonging to the foreground classes (\emph{thing}), it would assign a specific instance ID $v_j$. $v_0$ is assigned to all voxel grids belonging to the \emph{stuff} and empty.
+$H, W, Z$ denotes the length, width, and height of the voxel volume.
+
+\noindent{\textbf{Camera-based 3D semantic occupancy prediction.}
+Camera-based 3D semantic occupancy prediction can be considered a sub-problem of camera-based 3D panoptic segmentation. The former focus only on predicting the semantic voxel volume $\mathbf{Y}_t \in \{w_0, w_1,...,w_C\}^{ H \times W \times Z}$.
+However, the emphasis is particularly placed on accurately distinguishing the empty class ($w_0$) from the other classes to determine whether a voxel grid is empty or occupied. 
+
+\subsection{Overall Architecture}
+In this section, we introduce the overall architecture of \methodname{}. As shown in Figure~\ref{fig:pipeline}, our method takes multi-frame multi-view images as input and first extracts multi-scale features using an image backbone. 
+These features are then processed by the \emph{Occupancy Encoder}, which consists of the \emph{View Encoder} and \emph{Temporal Encoder}, to generate a coarse unified occupancy representation. The \emph{View Encoder} utilizes voxel queries to learn voxel features, preserving the actual 3D structure of the scene by explicitly encoding height information. The \emph{Temporal Encoder} aligns and fuses previous voxel features with the current frame, capturing temporal information and enhancing the representation.
+Next, the \emph{Occupancy Decoder} employs a coarse-to-fine scheme to recover fine-grained occupancy representation. The \emph{Coarse-to-fine Upsampling} module restores the high-resolution voxel representation, enabling precise semantic classification. The \emph{Task Head} predicts object detection and semantic segmentation using separate heads.
+To refine the prediction of \emph{thing} classes, the \emph{Refine Module} leverages 3D object detection results and assigns instance IDs to the thing-occupied grids.
+By combining these modules, our method produces 3D panoptic segmentation for the current scene. In the following sections, we provide detailed descriptions of each module.
+
+\subsection{Voxel Queries}
+We define a group of 3D-grid-shape learnable parameters $\mathbf{Q} \in \mathbb{R}^{H\times W\times Z \times D}$ as voxel queries.
+$H$ and $W$ are the spatial shape of the BEV plane, while $Z$ represents the height dimension.
+A single voxel query $\mathbf{q} \in \mathbb{R}^{D}$ located at $(i, j, k)$ position of $\mathbf{Q}$ is responsible for the corresponding 3D voxel grid cell region. Each grid cell in the voxel corresponds to a real-world size of $(s_h,s_w, s_z)$ meters.
+To incorporate positional information in the voxel queries, we add learnable 3D positional embeddings to $\mathbf{Q}$.
+
+\subsection{Occupancy Encoder}
+Given voxel queries $\mathbf{Q}$ and extracted image feats $\mathbf{F}$ as input, the occupancy encoder outputs the fused voxel features $\mathbf{Q}_f \in \mathbb{R}^{H\times W\times Z \times D}$. $H$,$W$ and $Z$ represent the shape of the output voxel features, and $D$ is the embedding dimension.
+
+\noindent{\textbf{View Encoder.}}
+View Encoder transforms the perspective view features into 3D voxel features. 
+However, applying vanilla cross-attention for this view transformation can be computationally expensive when dealing with voxel representation.
+To address this issue, we draw inspiration from the querying paradigm in recent BEV-based methods~\cite{li2022bevformer,jiang2022polarformer,wang2023frustumformer} and adopt efficient deformable attention~\cite{zhu2020deformable} for voxel cross-attention and voxel self-attention. 
+The core difference lies in the choice of \emph{reference points} to generalize the BEV queries to voxel queries.
+
+The voxel cross-attention is designed to facilitate the interaction between multi-scale image features and voxel queries. Specifically, for a voxel query $\mathbf{q}$ located at $(i, j, k)$, the process of voxel cross-attention (VCA) can be formulated as follows:
+\begin{equation}
+    \text{VCA}(\mathbf{q},\mathbf{F}) = \frac{1}{|v|}\sum_{n\in v}\sum_{m=1}^{M_1} \text{DA} (\mathbf{q}, \mathbf{\pi_n}(\mathbf{Ref}_{i,j,k}^{m}),\mathbf{F}_n)
+\end{equation}
+where $n$ indexes the camera view, $m$ indexes the reference points, and $M_1$ is the total number of sampling points for each voxel query. $v$ is the set of image views for which the projected 2D point of the voxel query can fall on.
+$\mathbf{F}_{n}$ is the image features of the $n$-th camera view. 
+$\mathbf{\pi_n}(\mathbf{Ref}_{i,j,k}^{m})$ denotes the $m$-th projected reference point in $n$-th camera view, projected by projection matrix $\mathbf{\pi_n}$ from the voxel grid located at $(i, j, k)$. $\text{DA}$ represents deformable attention.
+The real position of a reference point located at voxel grid $(i, j, k)$ in the ego-vehicle frame is $(x_i^m,y_j^m,z_k^m)$. 
+The projection between $m$-th projected reference point $\mathbf{Ref}_{i,j,k}^{m}$ and its corresponding 2D reference point $(u_{ijk}^{n,m},v_{ijk}^{n,m})$ on the $n$-th view can be formulate as:
+\begin{equation}
+    \mathbf{Ref}_{i,j,k}^{m} = (x_i^m,y_j^m,z_k^m)
+\end{equation}
+\begin{equation}
+    d_{ijk}^{n,m} \cdot [u_{ijk}^{n,m},v_{ijk}^{n,m},1] = \mathbf{P_n} \cdot [x_i^m,y_j^m,z_k^m,1]^T
+\end{equation}
+where $\mathbf{P}_n \in \mathbb{R}^{3\times 4}$ is the projection matrix of the $n$-th camera. $(u_{ijk}^{n,m},v_{ijk}^{n,m})$ denotes the $m$-th 2D reference point on $n$-th image view. $d_{ijk}^{n,m}$ is the depth in the camera frame.
+
+Voxel self-attention (VSA) facilitates the interaction between voxel queries. For a voxel query $\mathbf{q}$ located at $(i, j, k)$, it only interacts with the voxel queries at the reference points nearby. The process of voxel self-attention can be formulated as follows:
+\begin{equation}
+    \text{VSA}(\mathbf{q},\mathbf{Q})= \sum_{m=1}^{M_2}\text{DA}(\mathbf{q},\mathbf{Ref}_{i,j,k}^{m},\mathbf{Q})
+\end{equation}
+where $m$ indexes the reference points, and $M_2$ is the total number of reference points for each voxel query. $\text{DA}$ represents deformable attention.
+Contrary to the reference points on the image plane in voxel cross-attention, $\mathbf{Ref}_{i,j,k}^{m}$ in voxel self-attention is defined on the BEV plane.
+\begin{equation}
+    \mathbf{Ref}_{i,j,k}^{m} = (x_i^m,y_j^m,z_k)
+\end{equation}
+where $(x_i^m,y_j^m,z_k)$ denotes the $m$-th reference point for query $\mathbf{q}$. These sampling points share the same height $z_k$, but with different learnable offsets for $(x_i^m,y_j^m)$. This encourages the voxel queries to interact in the BEV plane, which contains more semantic information.
+
+\noindent{\textbf{Temporal Encoder.}}
+Temporal information is crucial in camera-based perception systems to understand the surrounding environment.
+Recent breakthroughs in camera-based perception systems, such as BEV-based detectors~\cite{park2022time,li2022bevformer,liu2022petrv2}, have shown that incorporating temporal information can significantly improve the performance. 
+We designed a temporal encoder adapted to the 3D voxel queries to further enhance the voxel representation. 
+
+Temporal encoder incorporates the history voxel queries information ($\mathbf{Q}_{t-k},...,\mathbf{Q}_{t-1}$) to the current voxel queries $\mathbf{Q}_{t}$.
+As shown in Figure~\ref{fig:pipeline}, the temporal encoder consists of two specific operations: \emph{temporal align} and \emph{temporal fuse}.
+Different from previous temporal alignment methods~\cite{li2022bevformer,park2022time}, which align history features on the BEV plane, our approach employs voxel alignment in 3D space.
+This allows us to correct for the inaccuracies caused by the assumptions made in previous BEV-based methods. They assumed that road height remains unchanged throughout the scene, which is not always valid in real-world driving scenarios, particularly when encountering uphill and downhill terrain.
+Voxel alignment is crucial for fine-grained voxel representations to perceive the environment accurately. 
+Specifically, the process of voxel alignment is formulated as follows:
+\begin{equation}
+    \mathbf{G}_{t-k} = \mathbf{T}_{t\rightarrow t-k}\cdot \mathbf{G}_t
+\end{equation}
+\begin{equation}
+    \mathbf{Q}_{t-k \rightarrow t} = \text{GridSample}(\mathbf{Q}_{t-k}, \mathbf{G}_{t-k})
+\end{equation}
+where $\mathbf{G}_t \in \mathbb{R}^{H\times W\times Z}$ is the voxel grid at current frame $t$, $\mathbf{G}_{t-k} \in \mathbb{R}^{H\times W\times Z}$ represents the current frame grid at frame $t-k$. $\mathbf{T}_{t\rightarrow t-k}$ is the transformation matrix for transforming the points at frame $t$ to previous frame $t-k$. 
+Then the queries at frame $t-k$ are aligned to current frame $t$ by interpolation sampling, denoted as $\mathbf{Q}_{t-k \rightarrow t}$.
+After the alignment, the previous aligned voxel queries $[\mathbf{Q}_{t-k \rightarrow t},..., \mathbf{Q}_{t-1 \rightarrow t}]$ are concated with the current voxel queries $\mathbf{Q}_t$. We employ a block of residual 3D convolution to fuse the queries and output fused voxel queries $\mathbf{Q}_f$.
+\subsection{Occupancy Decoder}
+Given the coarse voxel feature $\mathbf{Q}_f$, it should be converted to a fine-grained feature to meet the need for panoptic occupancy prediction.
+
+\noindent{\textbf{Coarse-to-fine Upsampling.}}
+This module upsamples the fused voxel query $\mathbf{Q}_{f} \in \mathbb{R}^{H\times W\times Z\times D}$ to the high resolution occupancy features $\mathbf{O}  \in \mathbb{R}^{H'\times W'\times Z'\times D'}$ by 3D deconvolutions.
+Such a coarse-to-fine manner not only avoids directly applying expensive 3D convolutions to high-resolution occupancy features, but also leads to no performance loss. We have a quantitative discussion in the experiment section.
+
+\noindent{\textbf{Occupancy Sparsify.}}
+Although the coarse-to-fine manner guarantees the high efficiency of our method, there is a considerable computational waste on the spatially dense feature $\mathbf{Q}_f$ and $\mathbf{O}$.
+This is because our physical world is essentially sparse in spatial dimensions, which means a large portion of space is not occupied.
+Dense operations (i.e., dense convolution) violate such essential sparsity.
+Inspired by the success of sparse architecture in LiDAR-based perception~\cite{yan2018second, liu2022spatial, fan2023super}, we optionally turn to the Sparse Convolution~\cite{sparseconv} for occupancy sparsify.
+In particular, we first learn an occupancy mask for $\mathbf{Q}_f$ to indicate if positions on $\mathbf{Q}_f$ are occupied.
+Then we prune $\mathbf{Q}_f$ to a sparse feature $\mathbf{Q}_{sparse} \in \mathbb{R}^{N\times D}$ by discarding those empty positions according to the learned occupancy mask, where $N \ll HWZ$ and $N$ is determined by a predefined keeping ratio $R_{keep}$.
+After the pruning, all the following dense convolutions are replaced by corresponding sparse convolutions.
+Since sparse deconvolution will dilate the sparse features to empty positions and reduce the sparsity, we conduct similar pruning operations after each upsampling to maintain the spatial sparsity. 
+Finally, we obtain a high-resolution and sparse occupancy feature $\mathbf{O}_{sparse}  \in \mathbb{R}^{N' \times D'}$, where $N' \ll H'W'Z'$.
+Figure~\ref{fig:pruning} illustrates the occupancy sparsify process.
+\begin{figure}[h]
+  \centering
+    \includegraphics[width=1.0\linewidth]{fig/occ_pruning.pdf}
+    \caption{\textbf{Illustration of occupancy sparsify.}
+    It serves as an optional technique to boost efficiency. We use BEV representation for simple illustration, while it is actually a 3D process.
+    The light yellow region will be pruned according to occupancy masks.}
+  \label{fig:pruning}
+\end{figure}
+
+\subsection{Multi-task Training}
+Based on the unified occupancy representation, our model has a strong capacity to handle different tasks.
+Specifically, our model is trained end-to-end for joint detection and segmentation, achieving the purpose of panoptic perception.
+
+\noindent{\textbf{Voxel Selection.}}
+Considering the detection task cares more about foreground classes (\emph{thing}), whereas the segmentation task must take into account all classes (\emph{stuff} and \emph{thing}). Because of the conflicting learning objectives, distinct features are required. Hence, we learn a binary voxel mask $\mathbf{M}$ to pick out the foreground voxel features for the detection part.
+The 2D BEV features are obtained by average pooling on the height dimension: $\mathbf{B} = Pool_{avg}(\mathbf{M}\cdot \mathbf{O})$.
+
+\noindent{\textbf{Detection Head.}} 
+Following ~\cite{li2022bevformer}, we adopt a query-based deformable-DETR head as the detection head.
+The detection head is applied on the 2D BEV features $\mathbf{B}$.
+
+\noindent{\textbf{Segmentation Head.}}
+We employ a lightweight multilayer perceptron (MLP) head for semantic segmentation, based on occupancy feature $\mathbf{O}$ or the sparse counterpart $\mathbf{O}_{sparse}$.
+This allows us to query the voxel grid status at arbitrary positions.
+
+\noindent{\textbf{Losses.}}
+The total loss $\mathcal{L}$ has two parts:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{Det} + \mathcal{L}_{Seg}
+\end{equation}
+The voxel segmentation head is supervised by $\mathcal{L}_{Seg}$, a dense loss consisting of focal loss~\cite{lin2017focal} (all voxels) and Lovasz loss~\cite{berman2018lovasz} (voxels containing LiDAR points) for voxel prediction.
+For Voxel Selection, we predict a binary voxel mask to select the foreground classes (\emph{thing}) voxel features for the object detection head, and the voxel mask is supervised by focal loss~\cite{lin2017focal}. The total loss $\mathcal{L}_{Seg}$ is formulated as:
+\begin{equation}
+    \mathcal{L}_{Seg} = \lambda_1 \mathcal{L}_{focal} + \lambda_2 \mathcal{L}_{lovasz} + \lambda_3 \mathcal{L}_{thing}
+\end{equation}
+The detection head is supervised by $\mathcal{L}_{Det}$, a sparse loss consisting of focal loss~\cite{lin2017focal} for classification and L1 loss for bounding box regression:
+\begin{equation}
+    \mathcal{L}_{Det} = \lambda_4 \mathcal{L}_{cls} + \lambda_5 \mathcal{L}_{reg}
+\end{equation}
+
+\noindent{\textbf{Refine Module.}} 
+In this module, we refine the predicted foreground (\emph{thing}) voxels using the detection results.
+We start by sorting all box predictions based on their confidence scores.
+Then, we select a set of high-confidence bounding boxes denoted as $G = \{b_i|s_i>\tau\}$, where $b_i$ represents a 3D bounding box, $s_i$ is the confidence score, and $\tau$ is a threshold (default: $\tau=0.8$).
+For the voxels within each bounding box $b_i$, we assign the class prediction $c_i$ to all of them. This improves segmentation consistency and slightly enhances the mean Intersection over Union (mIoU) by 0.1-0.2 points.
+To perform panoptic voxel segmentation, we assign instance IDs sequentially based on confidence scores. If the current instance overlaps with previous instances beyond a certain threshold, we ignore it to avoid duplication.
+Finally, we assign instance ID 0 to all voxels corresponding to the \emph{stuff} class.
+
+
+
+
+Experiment
+
+\subsection{Datasets}
+
+\noindent \textbf{nuScenes dataset}~\cite{caesar2020nuscenes} contains 1000 scenes in total, split into 700 in the training set, 150 in the validation set, and 150 in the test set. Each sequence is captured at 20Hz frequency with 20 seconds duration.
+Each sample contains RGB images from 6 cameras with 360$^{\circ}$ horizontal FOV and point cloud data from 32 beam LiDAR sensor.
+For the task of object detection, the key samples are annotated at 2Hz with ground truth labels for 10 foreground object classes (\emph{thing}). For the task of semantic segmentation and panoptic segmentation, every point in the key samples is annotated using 6 more background classes (\emph{stuff}) in addition to the 10 foreground classes (\emph{thing}).
+
+\input{./table/nuscenes_val} 
+
+\noindent \textbf{Occ3D-nuScenes}~\cite{tian2023occ3d} contains 700 training scenes and 150 validation scenes. The occupancy scope is defined as $-40m$ to $40m$ for X and Y-axis, and $-1m$ to $5.4m$ for the Z-axis in the ego coordinate. The voxel size is $0.4m \times 0.4m \times 0.4m$ for the occupancy label. The semantic labels contain 17 categories (including `others'). Besides, it also provides visibility masks for LiDAR and camera modality.
+
+\input{./table/nuscenes_occ_val}
+
+\noindent \textbf{Evaluation metrics.} 
+nuScenes dataset uses mean Average Precision (mAP) and nuScenes Detection Score (NDS) metrics for the detection task, mean Intersection over Union (mIoU), and Panoptic Quality (PQ) metrics~\cite{kirillov2019panoptic} for the semantic and panoptic segmentation.
+PQ$^{\dagger}$ is a modified panoptic quality~\cite{porzi2019seamless}, which maintains the PQ metric for \emph{thing} classes, but modifies the metric for \emph{stuff} classes.
+The Occ3D-nuScenes benchmark calculates the mean Intersection over Union (mIoU) for 17 semantic categories within the camera's visible region.
+
+\subsection{Experimental Settings}
+\noindent{\textbf{Implementation Details.}}
+On the nuScenes dataset~\cite{caesar2020nuscenes}, we set the point cloud range for the $x$ and $y$ axes to $[-51.2m, 51.2m]$, and $[-5m, 3m]$ for the $z$ axis. The voxel grid size used for loss supervision is $(0.256m, 0.256m, 0.125m)$.
+The initial resolution of the voxel queries is 50x50x16 for $H, W, Z$. We use an embedding dimension $D$ of 256, and learnable 3D position encoding is added to the voxel queries.
+The upsampled voxel features have dimensions of 200x200x32 for $H', W', Z'$, and a feature dimension $D'$ of 64.
+The backbone used in our approach includes ResNet50~\cite{he2016deep}, ResNet101-DCN~\cite{dai2017deformable}, and InternImage~\cit
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

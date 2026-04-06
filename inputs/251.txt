@@ -1,0 +1,155 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Recent large-scale vision-language models (VLMs), such as CLIP~\cite{radford2021learningCLIP} and ALIGN~\cite{jia2021scalingALIGN} have shown their promising representation capability for a series of downstream  vision tasks~\cite{zhang2023visionVLMsurvey}, such as classification~\cite{lu2022promptProDA,zhang2023promptCaFo,loedeman2022promptPGN,gao2021clipadapter,zhang2022tipTip-Adapter},
+generation~\cite{seale2023continualgeneration,kumari2023ablatingDiffusiongeneration,kumari2022multiCustomDiffusion,rombach2022highStableDiffusion}, and recognition~\cite{wang2023clipCLIP-FSAR,wasim2023vitaVita-CLIP}. Different from previous pre-training models with ImageNet~\cite{he2016deepResNet,liu2021swin,dosovitskiy2020imageViT}, based on large-scale parameters, VLMs can learn more prosperous, fine-grained, and consistent semantics from billions of text-image pairs with contrastive learning. This enables the VLMs with two advantages: 1) performing superior zero-shot generalization capability~\cite{zhou2022learningCoOp} with simple hand-craft prompts like "a photo of a 
+ [class]", and 2) possessing impressive transferability for downstream tasks~\cite{tevet2022motionclip,wang2021actionclip,rao2022denseclip,sung2022vlVL-Adapter,zhang2022tipTip-Adapter} by finetuning the VLMs in a low-data regime. Notably, traditional fine-tuning methods typically involve tuning all parameters of the model to adapt to downstream tasks. However, this approach may not be well-suited for fine-tuning large VLMs in resource-constrained scenarios, and result in overfitting due to the limited number of available samples.
+To mitigate this, efficient transfer learning (ETL) is proposed to transfer the task-relevant knowledge from VLMs to downstream tasks by tuning a few parameters. 
+
+There are two popular ETL approaches for VLMs, including prompt tuning~\cite{zhou2022learningCoOp,zhou2022conditionalCoCoOp,lu2022promptProDA,chuang2023debiasingDebiasprompt,shu2022testTPT,huang2022unsupervisedUPL,loedeman2022promptPGN,chenplotPLOT}, and adapter-style tuning~\cite{gao2021clipadapter,pantazis2022svlSVL-Adapter,sung2022vlVL-Adapter,zhu2023notAPE,zhang2022tipTip-Adapter,zhang2023promptCaFo}.
+In particular, prompt tuning aims to adjust the textual classifier adaptively toward downstream tasks by adding learnable prompts on the input side, which outperforms zero-shot CLIP by a large margin with few-shot samples, such as CoOp~\cite{zhou2022learningCoOp}, and CoCoOp~\cite{zhou2022conditionalCoCoOp}. Despite that, there is one limitation in the prompt tuning of VLMs~\cite{zhang2023visionVLMsurvey,yu2022taskTaskRes}: it needs to pass the data through the textual encoder every iteration during training, yielding a higher demand for resources. 
+In contrast, by using the textual encoder once only, adapter-style works tend to refine the textual classifier or visual features with simple but efficient feature modulation for a specific task on the output side. 
+For instance, CLIP-Adapter~\cite{gao2021clipadapter} exploits one simple bottleneck layer to adjust the textual and visual embeddings of VLMs, which exceeds the zero-shot CLIP by 3.02\%  on ImageNet with the one-shot setting. TaskRes~\cite{yu2022taskTaskRes} utilizes learnable task-specific parameters as prior-independent residuals to adjust the textual embeddings. Another popular line~\cite{zhang2022tipTip-Adapter,zhang2023promptCaFo,zhu2023notAPE} seeks to augment the prior knowledge for downstream tasks with the cooperation of CLIP and other pre-trained large vision or language models, such as DINO~\cite{caron2021emergingDINO}, and GPT~\cite{brown2020languageGPT-3}.  
+
+However, there are two limitations in most adapter-style works on ETL: 1) only modeling task-specific knowledge from a single modality perspective, such as CLIP-adapter~\cite{gao2021clipadapter}, TaskRes~\cite{yu2022taskTaskRes} and Tip-Adapter~\cite{zhang2022tipTip-Adapter}, where the adaptation is achieved based on the independent visual or textual feature.  2) overlooking the explicit exploitation of the structure knowledge (\ieno, the relation between different semantics/classes) in downstream tasks. A small number of samples in a low-data regime are hard to guide the model to sufficiently excavate the structure knowledge in downstream tasks, leading to the bias for partial attributes in the data, such as color and shape, and causing the sub-optimal transferability and generalization capability~\cite{lai2021graphlearning,monka2022surveyGraphSurvey,chen2019knowledgeobjective-level-graph,lu2023prediction}. It is vital to model the multi-modality structure knowledge of downstream tasks for the tuning of VLMs in the low-data regime. 
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.99\linewidth]{figs/compare_v5.png}
+    \caption{The comparison between (a) Zero-shot CLIP~\cite{radford2021learningCLIP}, (b) CLIP-Adapter~\cite{gao2021clipadapter} (c) TaskRes~\cite{yu2022taskTaskRes}, and (d) our proposed GraphAdapter. We can observe that previous works model task-specific knowledge with a single modality and lacks the exploitation of structure knowledge. In contrast, our GraphAdapter aims to exploit the fused vision and language structure knowledge in data (\ieno, the inter-class relationships in dual modalities) for textual feature adapter with graph learning.}
+    \label{fig:framework}
+\end{figure}
+
+To mitigate the above limitations, we propose a brand-new adapter-style tuning strategy, dubbed GraphAdapter, which aims to model task-specific knowledge for downstream tasks with the fused textual and visual structure knowledge. We achieve this by solving two crucial challenges: 1) how to model the structure knowledge (\ieno, the inter-class relationship) for downstream tasks, and 2) how to learn the task-specific knowledge by introducing two-modality (\ieno, visual and textual) structure knowledge. Recently, graph learning~\cite{monka2022surveyGraphSurvey,chen2020knowledgeKGTN,li2021few} has shown the prevailing performance on modeling data knowledge structure. However, the potential of graphs in improving the efficient transfer learning of VLMs has not yet been fully explored. Inspired by this, for the first challenge, we aim to exploit graph learning to model the structure knowledge for downstream tasks when tuning VLMs. Consequently, we propose the dual knowledge graph, which is composed of a textual sub-graph and a visual sub-graph. Particularly, to establish the relationship between different semantics/classes in textual space, we regard the textual feature of a specific class as one node of the textual graph and measure inter-class relationships by measuring their corresponding distance of features as edges of the graph. Similarly, the visual knowledge graph aims to model the relationship between different semantics/classes from the visual perspective, where the nodes are constructed with mean features of the training samples from the same class. In this way, our dual knowledge graph contains two-modality structure knowledge from downstream tasks, which enables the feature adapter with sufficient and reliable perception for downstream tasks. 
+
+For the second challenge, one intuitive  strategy is to introduce the textual/visual structure knowledge for the textual/visual feature adapter, separately. However, this strategy still models the task-specific knowledge with a single modality for each textual/visual adapter (\egno, the textual adapter is only aware of textual structure knowledge). To mitigate this limitation, we introduce the dual knowledge graph for textual/visual adapters, and let each adapter be aware of the structure knowledge in the same modality and cross-modality. (\textit{Notably, we only exploit the textual adapter in our paper, since the limited gain with the combination of textual and visual adapters. Please see Table~\ref{tab:ablation_variants}.}). 
+To exploit the dual knowledge graph effectively, we introduce graph learning to the textual adapter, where each feature of the prompt warps the textual and visual structure knowledge through the graph convolution network (GCN), and then fuse two warped knowledge to modulate the original feature for classification in a residual way. Based on the above strategies, we propose an effective adapter-style tuning strategy, \ieno, GraphAdapter, which achieves superior performance in tuning the vision-language models under a low-data regime.
+ 
+The contributions of this paper are summarized as follows: 
+\begin{itemize}[leftmargin=*]
+   \item  We pinpoint that the dual-modality structure knowledge (\ieno, the inter-class relationship in textual and visual space) is vital for the efficient transfer learning (ETL) of VLMs in the low-data regime. 
+
+    \item  Based on the above analysis, we propose a brand-new adapter-style tuning strategy, \ieno, GraphAdapter, for the ETL of VLMs, which models the dual-modality structure knowledge from the textual and visual space with our proposed dual knowledge graph and enables the feature adapter to leverage the fused visual and language knowledge for better learning of task-specific knowledge from downstream tasks, yielding an effective tuning of VLMs. 
+    \item We evaluate our Graphadapter on 11 popular benchmarks on few-shot classification. The experiments demonstrated that our Graphadapter significantly outperforms previous prompt-based or adapter-style works, even on the challenging fine-grained image classification task, such as FGVCAircraft~\cite{maji2013fineFGVCAircraft}.
+\end{itemize}
+
+
+
+Related Work
+\noindent\textbf{Vision-Language Pre-training
+ (VLP)} aims to learn the universal textual and visual representation simultaneously with amounts of text-image pairs. A series of works have revealed that pre-trained vision-language representations can help lots of downstream tasks to improve their performances, such as few-shot classification~\cite{zhou2022learningCoOp,gao2021clipadapter,yu2022taskTaskRes}, cross-modality generation~\cite{nichol2021glide,ramesh2022hierarchical,patashnik2021styleclip}, and visual recognition~\cite{wang2021actionclip}. The methods of VLP can be roughly divided into three types: 1) dual-encoder architecture, which aligns the textual and visual representation with text-image matching or text-image contrastive learning. One typical work is CLIP~\cite{radford2021learningCLIP}, where the promising visual representation is learned by matching the visual concepts with the corresponding textual representation with contrastive learning. 2) The second type~\cite{tan2019lxmert,lu2019vilbert,su2019vl,li2019visualbert,zhang2021vinvl,wang2021simvlm} is fusion-encoder architecture, where the textual and visual representation are fused with cross-modal attention. In general, two independent feature extractors are exploited to extract the modal-specific representations, respectively, and the cross-modal transformer is used for learning the text-image shared representation. 3) The third type is a combination of dual-branches and fusion-branch architectures. For instance, VLMo~\cite{bao2022vlmo} proposes the multiway transformer, which consists of the visual-specific branch, text-specific branch, and text-visual branch. Recently, amounts of studies are devoted to exploring how to tune the large vision-language model to downstream tasks with few parameters and data, \ieno, efficient transfer learning. This will be clarified in the next section. 
+
+\noindent\textbf{Efficient Transfer Learning (ETL)}
+  is proposed to transfer the task-specific knowledge to downstream tasks by tuning the partial parameters~\cite{houlsby2019parameterETLNLP,lu2022promptProDA,zhou2022learningCoOp,gao2021clipadapter,Lian_2022_SSF}. There are two prominent directions for the ETL, \ieno, prompt tuning~\cite{zhou2022learningCoOp,zhou2022conditionalCoCoOp,lu2022promptProDA} and adapter-style tuning~\cite{gao2021clipadapter,yu2022taskTaskRes,zhang2023promptCaFo,zhang2022tipTip-Adapter}. Prompt engineering stems from natural language process, (NLP), which aims to formalize various NLP tasks with different prompt templates~\cite{liu2023preSurveyPromptNLP}. Based on this development, prompt engineering is introduced to the visual-language task. For instance, Zero-shot CLIP~\cite{radford2021learningCLIP} introduces the simple manual prompt template, like ``a photo of a [class]", and outperforms the linear probe  by 1.9\% on ImageNet~\cite{deng2009imagenet}. As the pioneering work, CoOp~\cite{zhou2022learningCoOp} for the first time introduces the learnable prompt to transfer the task-specific knowledge to few-shot tasks. Following this, amounts of work~\cite{zhou2022conditionalCoCoOp,zhang2022promptingPTP,zhang2023promptCaFo,lu2022promptProDA,khattak2022maple,rao2022denseclip,shu2022testTPT,chuang2023debiasingDebiasprompt,huang2022unsupervisedUPL,loedeman2022promptPGN,wasim2023vitaVita-CLIP,chenplotPLOT} improve the prompt tuning from multiple perspectives, such as generalization~\cite{zhou2022conditionalCoCoOp}, knowledge prototype~\cite{zhang2022promptingPTP}, augmentation~\cite{zhang2023promptCaFo}, and diversity~\cite{lu2022promptProDA}.  In contrast, adapter-style works tune the VLMs to downstream tasks by adjusting the textual and visual features. 
+Early work CLIP-Adapter~\cite{gao2021clipadapter} only exploits one bottleneck layer to improve the performance of few-shot classification. TaskRes~\cite{yu2022taskTaskRes} introduces the task-independent adapter to decouple the prior knowledge of the pre-trained models and task-specific knowledge. There are also some works~\cite{zhang2022tipTip-Adapter,zhang2023promptCaFo} that seek extra prior knowledge from other pre-trained large models, such as DINO~\cite{caron2021emergingDINO}, which also yield great performance on adapter-style works.
+In principle, the above adapter-style methods achieve efficient transfer learning for VLMs from two perspectives: 1) increasing instance-wise or task-wise adaptability based on downstream tasks~\cite{gao2021clipadapter,yu2022taskTaskRes}. 2) taking into account the relation between training and test samples.~\cite{zhang2022tipTip-Adapter}. However, the above works only model task-specific knowledge with a single modality, and lacks the utilization of structure knowledge in downstream tasks, leading to the sub-optimal solution. 
+In this paper, we aim to excavate the structure knowledge of data with graphs and further improve the performance of adapter-style tuning. 
+
+\noindent\textbf{Graph learning}~\cite{xiong2018onegraphfinal,wu2022hierarchicalgraphfinal,bordes2013translatinggraphfinal,kipf2016semiGCN,lai2021graphlearning}
+ performs excellent capability in formalizing the topological structure of data with the nodes and edges, which has been broadly applied in various fields, such as biology~\cite{li2021graphBiology}, and social networks~\cite{rezvanian2016stochasticsocialnetwork}. With the emergence of GCN~\cite{kipf2016semiGCN}, some works take a step forward to introduce structure graphs into transfer learning~\cite{chen2019knowledgeobjective-level-graph,chen2019learningsemantic-level,chen2020knowledgeKGTN,lai2021graphlearning,du2021hypergraph}. The core challenge for graph learning is how to construct the nodes and edges. Previous works usually construct the nodes from three perspectives, including objects~\cite{chen2019knowledgeobjective-level-graph}, semantic features~\cite{chen2019learningsemantic-level}, or model parameters~\cite{chen2020knowledgeKGTN}. There are also some works that utilize the hypergraph to achieve better learning of structure knowledge~\cite{du2021hypergraph,xu2022dmhhypergraph}. In contrast, in this paper, we are the first work to introduce graph learning into the efficient transfer learning (ETL) of vision-language tasks. 
+
+
+Approach
+\subsection{Preliminaries}
+\noindent\textbf{Contrastive Language-Image Pre-training} (CLIP) is designed to learn continuous visual representation based on 0.4 million text-image pairs. Different from the pretraining with ImageNet, where the labels are discrete and cannot delicately describe the attributes of images and the relation between different classes, CLIP learns the visual representation with the supervision of textual embedding by contrastive loss. There are two feature extractors in CLIP, \ieno, the textual encoder $E_t$ and visual encoder $E_v$, which are used to warp the prompts and image into the textual embedding $z_t$ and visual embedding $z_v$. In the test process, $K$ prompts like "a photo of a [class]" are inputted to the textual feature extractor to obtain the textual embeddings $\{z_t^k\}_{k=1}^K$ as the labels of $K$ classes. The class of each image is achieved  with: 
+\begin{equation}
+    P(y=c|z_v) = \frac{exp(sim(z_v, z_t^c)/\tau)
+    }{\sum_{k=1}^Kexp(sim(z_v, z_t^k)/\tau)},
+    \label{eq:clip_loss}
+\end{equation}
+where $c$, $sim$, and $\tau$ denote the class, cosine similarity, and learned temperature of CLIP, respectively. 
+Despite CLIP has performed excellently on zero-shot image classification, the efficient transfer learning of CLIP is still required to adapt the pre-trained CLIP to downstream tasks.  
+\begin{figure}
+    \centering
+    \includegraphics[width=0.99\textwidth]{figs/graphadapter_v9.pdf}
+    \caption{The pipeline of GraphAdapter, which is composed of the dual knowledge graph and CLIP-based image classification pipeline. Here, the dual knowledge graph contains the delicately designed sub-graphs for textual and visual knowledge, respectively, where the textual knowledge sub-graph is established with the textual feature from the prompts of the downstream task, and the visual knowledge sub-graph is constructed with the visual features of training samples from the downstream task. In the optimization process, the feature of each prompt used for classification will seek the fused visual and textual structure knowledge from the dual knowledge graph to adjust themselves for better classification. $K$ and $d$ are the number of classes and the dimension of textual/visual features.}
+    \label{fig:graphadapter}
+\end{figure}
+\subsection{Our Approach: GraphAdapter}
+To introduce the dual-modality structure knowledge of the downstream tasks to the feature adapter,
+we introduce dual knowledge graph $\mathcal{G}=\{\mathcal{G}_t, \mathcal{G}_v\}$, which is composed of the textual knowledge sub-graph $\mathcal{G}_t$ and visual knowledge sub-graph $\mathcal{G}_v$ to obtain and store the textual structure knowledge of prompts and visual structure knowledge of training samples, respectively. Then the feature of the sample/prompt can warp the structure knowledge of downstream tasks in the two modalities to refine themselves, thereby leveraging the dual structure knowledge for better modeling for downstream tasks. The whole framework of our GraphAdapter is depicted in Fig.~\ref{fig:graphadapter}, which is composed of two parts, including the construction of a dual knowledge graph and the adapter-style CLIP-based classification. Particularly, the dual knowledge graph is established only once for the whole training process, and the textual encoder is also only run once to obtain the textual embedding $z_t$ of each prompt. 
+In the optimization process, given one textual feature $z_t$, the relation between it and the nodes of the dual knowledge graph will be computed as the condition to warp the knowledge from the dual knowledge graph to adjust the textual embedding in the residual form. We will clarify our GraphAdapter as follows:
+
+\noindent\textbf{Textual knowledge sub-graph.}
+To excavate the structure knowledge (\ieno, the relation between different semantics) of the downstream tasks in textual space, we construct the textual knowledge sub-graph $\mathcal{G}_t=\{\mathcal{C}_t,\mathcal{E}_t\}$, where the nodes $\mathcal{C}_t$ aims to capture the semantics of different classes and the edges $\{\mathcal{E}_t\}$ is used to measure the relation of different nodes. Notably, the classifier of CLIP is based on the textual features of the prompts from different classes, where the textual feature of a within-class prompt can represent the semantics of one class. Therefore, given one downstream task with $K$ classes, the nodes set $\mathcal{C}_t=\{c^i_t\}_{i=1}^K \in \mathbb{R}^{K\times d}$) are obtained with the mean feature of the prompts from the different class, where $c^i_t$ and $d$ denotes the textual feature of the $i^{th}$ class and the dimension of the textual feature. And the edges $\mathcal{E}_t$ between different nodes are computed with the cosine similarity between different nodes since the classification is achieved by computing the cosine similarity between the features in CLIP.
+\begin{equation}
+    \mathcal{E}_t = \{e_t^{i,j}\}, e_t^{i,j} = \frac{c_t^i{c_t^j}^T}{|c_t^i| \cdot |c_t^j|}, i, j \in [1, K],
+\end{equation}
+where $\{e_t^{i,j}\}$ denotes the edge between $i^{th}$ and $j^{th}$ nodes.
+
+\noindent\textbf{Visual knowledge sub-graph.}
+Different from the textual knowledge sub-graph, where the structure knowledge is only from the textual concept of a downstream task, the visual knowledge sub-graph can measure more fine-grained relations of different semantics in visual space, since the diverse visual feature of different samples. As shown in Fig.~\ref{fig:graphadapter}, to construct the visual knowledge sub-graph $\mathcal{G}_v = \{\mathcal{C}_v,\mathcal{E}_v\}$, we pass the augmented image group from the same class into visual encoder to obtain their visual features, and then compute the mean features of them as the nodes $\mathcal{C}_v=\{c^i_v\}_{i=1}^K \in \mathbb{R}^{K\times d}$ of for visual knowledge graph. 
+The edges $\mathcal{E}_v=\{e_v^{i,j}|i,j\in [1, K] \}$ are computed with the cosine similarity between different nodes in the visual knowledge sub-graph. 
+
+\noindent\textbf{Adapting with the dual knowledge graph.}
+After constructing the dual knowledge graph $\mathcal{G}=\{\mathcal{G}_t, \mathcal{G}_v\}$, we can achieve the feature adapter by introducing the dual-modality structure knowledge adaptively from the text and image sub-graphs. Notably, previous works on adapter-style tuning only model the task-specific knowledge with a single modality, which lacks the exploitation of cross-modality knowledge. In contrast, our GraphAdapter utilizes both inner-modality and cross-modality structure knowledge for feature adapters. Concretely, given the textual feature $z_t$ from the textual encoder of CLIP, we aim to warp the $z_t$ into the textual and visual knowledge sub-graphs to extract the textual modality and cross-modality structure knowledge, respectively.  
+One simple strategy is to regard the textual/visual features $z_t$ and $z_v$ as the query, and then warp the knowledge from the graph nodes $\mathcal{C}_t$ and $\mathcal{C}_v$ based on similarity. However, this ignores that the structure knowledge is also required to be optimized to suit the downstream tasks. To achieve this, in the adapting process, we regard the textual feature $z_t$ as one node and then warp it to the visual and textual sub-graphs, where the textual features obtain dual-modality structure knowledge by interacting with two sub-graphs in the same graph space with the graph convolutional networks (GCN). 
+
+Specifically, in the optimization process, we expand the textual knowledge sub-graph and visual knowledge sub-graph by concatenating the nodes $\mathcal{C}_t$/$\mathcal{C}_v$ of the textual/visual knowledge sub-graph with the textual features $z_t$, and then compute their edges (\ieno, the correlation between different nodes) as:
+    \begin{equation}
+    \begin{split}
+   \mathcal{C}_{tt} = [z_t, \mathcal{C}_t]&, \quad \mathcal{C}_{vt}= [z_t, \mathcal{C}_v], \\ 
+    \mathcal{E}_{tt} = \begin{bmatrix}
+      1 & \mathrm{sim}(z_t, \mathcal{C}_t) \\
+      \mathrm{sim}(\mathcal{C}_t, z_t) & \mathcal{E}_t
+    \end{bmatrix}&, \quad \mathcal{E}_{vt} = \begin{bmatrix}
+      1 & \mathrm{sim}(z_t, \mathcal{C}_v) \\
+      \mathrm{sim}(\mathcal{C}_v, z_t) & \mathcal{E}_v
+    \end{bmatrix}.
+    \end{split}  
+    \end{equation}
+In this way, we can warp the textual feature to the dual knowledge graph space, which provides the basis for interaction and knowledge transfer between the textual feature and the dual knowledge graph. Then, the Graph Convolution Network (GCN) $g_{tt}$ and $g_{vt}$ are utilized to excavate the knowledge for adapting the texture feature from  each node  in textual and visual knowledge sub-graphs:
+\begin{equation}
+    \mathcal{C}^{*}_{tt} = g_{tt}(\mathcal{C}_{tt}, \hat{\mathcal{E}}_{tt}) = \sigma(\hat{\mathcal{E}}_{tt}\mathcal{C}_{tt}W_{tt}), \quad \mathcal{C}^{*}_{vt} = g_{vt}(\mathcal{C}_{tt},\hat{\mathcal{E}}_{vt}) = \sigma(\hat{\mathcal{E}}_{vt}\mathcal{C}_{vt}W_{vt}),
+    \label{eq:gcn}
+\end{equation}
+where $\hat{\mathcal{E}}_{tt}=D_{tt}\mathcal{E}_{tt}D_{tt}$ and $\hat{\mathcal{E}}_{vt}=D_{vt}\mathcal{E}_{vt}D_{vt}$ are the adjacent matrix for graph learning. $\sigma$ is an activation function. And the $D_{tt}$ and $D_{vt}$ are the matrices used for Laplace normalization~\cite{kipf2016semiGCN} for the edges as:
+\begin{equation}
+   D_{tt}=\mathrm{diag}(\sum_{p=1}^{K}(\mathcal{E}_{tt}+I)_p),  \quad D_{vt}=\mathrm{diag}(\sum_{p=1}^{K}(\mathcal{E}_{vt}+I)_p).
+   \label{eq:laplace}
+\end{equation}
+The meaning of Eq.~\ref{eq:gcn} is seeking the prior knowledge from other nodes in one graph to refine itself based on the correlation (\ieno, the adjacent matrix). And thus, we can obtain the adapted/refined textual feature as $z_{tt}=\mathcal{C}^{*}_{tt}[0,:]$ and $z_{vt}=\mathcal{C}^{*}_{vt}[0,:]$. To fuse the inner-modality and cross-modality structure knowledge, we introduce one hyper-parameter $\beta$ to fuse these two features as $z'_t=\beta * z_{tt} + (1- \beta)*z_{vt}$. Then the feature adapter is achieved in a residual form, where the hyper-parameter $\alpha$ is used to adjust the weights of prior knowledge from the dual knowledge graph and original feature:  $z_t^{*} = \alpha z_t + (1-\alpha) z'_t$. 
+
+In the whole training process, only the parameters of GCN $g_{tt}$ and $g_{vt}$ are trainable under the constraint of the cross entropy function between the label of samples and the predicted label as Eq.~\ref{eq:clip_loss}.
+
+
+
+
+
+
+Experiments
+\subsection{Datasets and Implementation Details} 
+\noindent\textbf{Datasets.}
+Following previous adapter-style studies~\cite{gao2021clipadapter,yu2022taskTaskRes,zhang2022tipTip-Adapter}, we validate our GraphAdapter on 11 few-shot classification tasks, including ImageNet~\cite{deng2009imagenet}, StandfordCars~\cite{krause20133dStandfordCars}, UCF101~\cite{soomro2012ucf101}, Caltech101~\cite{fei2004learningCaltech101}, Flowers102~\cite{nilsback2008automatedFlowers102}, SUN397~\cite{xiao2010sunSUN397}, DTD~\cite{cimpoi2014describingDTD}, EuroSAT~\cite{helber2019eurosatEuroSAT}, FGVCAircraft~\cite{maji2013fineFGVCAircraft}, OxfordPets~\cite{parkhi2012catsOxfordPets}, and Food101~\cite{bossard2014foodFood101}. Among them, OxfordPets, Food101, StanfordCars, Flowers102, and FGVCAircraft belong to fine-grained classification tasks,  EuroSAT is for remote sensing classification, and DTD is the dataset of texture classification. To investigate the generalization capability of our GraphAdapter, we follow the CoOp~\cite{zhou2022learningCoOp} and conduct experiments on ImageNetV2~\cite{recht2019imagenetv2}, ImageNet-Sketch~\cite{wang2019learningImageNet-sketch}, ImageNet-A~\cite{hendrycks2021naturalImageNet-A} and ImageNet-R~\cite{hendrycks2021manyImageNet-R}. 
+
+\begin{figure}
+    \centering
+\includegraphics[width=1.0\linewidth]{figs/Performance_v1.png}
+    \caption{The performance comparison of our GraphAdapter with the state-of-the-art methods on few-shot learning, including 1-/2-/4-/8-/16-shots on 11 benchmark datasets. We provide all numerical results of this figure in the Supplementary.}
+    \label{fig:performance_few-shot}
+    \label{fig:graphadapter}
+\end{figure}
+\begin{table}[]
+\centering
+\caption{The performance comparison in terms of generalization capability on four CLIP visual backbones. The ETL methods are optimized with the ImageNet dataset on 16-shot setting and tested on cross-domain datasets, including ImageNet-V2, -Sketch, -A, and -R.}
+\resizebox{0.9\textwidth}{!}{\begin{tabular}{lcccccccc}
+\hline
+\multirow{2}{*}{Method}            &  \multirow{2}{*}{Backbone} & Source &  & \multicolumn{5}{c}{Target}          \\  \cline{3-3} \cline{5-9}
+ &  & ImageNet & & -V2 & -Sketch & -A & -R & Average 
+\\ \hline
+Zero-shot CLIP~\cite{radford2021learningCLIP}    & \multirow{6}{*}{ResNet-50}  &  58.18  &      &   51.34          &   33.32              &   21.65         &   56.00         &  40.58       \\
+Linear Probe CLIP~\cite{radford2021learningCLIP} &                             &   55.87 &     &      45.97       &  19.07                &   12.74        &  28.16          &    28.16     \\
+CoOp~\cite{zhou2022learningCoOp}              &                           &      62.95  &    &    55.11        & 32.74                 &     22.12      &   54.96         & 41.23           \\
+TaskRes~\cite{yu2022taskTaskRes}           &                             &     64.75 &   &    56.47           & 35.83                 &     22.80         &      60.70      &    43.95      \\
+Ours              &                        &   $\textbf{65.70}$  &     &   56.40          &   34.50              &        21.88    &    58.94       &  42.93    \\   
+\rowcolor[gray]{0.9} Ours$_g$  &                          &   64.94    &     &   $\textbf{56.58}$         &   $\textbf{35.89}$              &        $\textbf{23.07}$ 
+&    $\textbf{60.86}$        &  $\textbf{44.10}$ 
+\\ \hline
+Zero-shot CLIP~\cite{radford2021learningCLIP}    & \multirow{6}{*}{ResNet-101} &              61.62  &    &  54.81            &     38.71     &          28.05     &64.38       & 46.49        \\
+Linear Probe CLIP~\cite{radford2021learningCLIP} &                             &    59.75  &    &    50.05        &   26.80       
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

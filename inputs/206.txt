@@ -1,0 +1,224 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Untitled
+
+% ArXiv ID: 2407.05082
+
+
+
+
+\twocolumn[
+\icmltitle{DMTG: One-Shot Differentiable Multi-Task Grouping}
+
+
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Yuan Gao}{cs-whu,ei-whu}
+\icmlauthor{Shuguo Jiang}{cs-whu}
+\icmlauthor{Moran Li}{tencent}
+\icmlauthor{Jin-Gang Yu}{scut}
+\icmlauthor{Gui-Song Xia}{cs-whu}
+\end{icmlauthorlist}
+
+\icmlaffiliation{ei-whu}{School of EI, Wuhan University}
+\icmlaffiliation{cs-whu}{School of CS, Wuhan University}
+\icmlaffiliation{tencent}{Tencent Youtu Lab}
+\icmlaffiliation{scut}{School of Automation Science and Engineering, South China University of Technology}
+
+\icmlcorrespondingauthor{Gui-Song Xia}{guisong.xia@whu.edu.cn}
+
+\icmlkeywords{Machine Learning, ICML}
+
+\vskip 0.3in
+]
+
+
+
+\printAffiliationsAndNotice{}  % leave blank if no need to mention equal contribution
+
+\begin{abstract}
+We aim to address Multi-Task Learning (MTL) with a large number of tasks by Multi-Task Grouping (MTG). Given $N$ tasks, we propose to \emph{simultaneously identify the best task groups from $2^N$ candidates and train the model weights simultaneously in one-shot}, with \emph{the high-order task-affinity fully exploited}. This is distinct from the pioneering methods which sequentially identify the groups and train the model weights, where the group identification often relies on heuristics. %, \eg, either train numerous group candidates from scratch to discover the best categorization, or less precisely leverage pairwise tasks to approximate the high-order affinity. 
+As a result, our method not only improves the training efficiency, but also mitigates the objective bias introduced by the sequential procedures that potentially lead to a suboptimal solution. Specifically, \emph{we formulate MTG as a fully differentiable pruning problem on an adaptive network architecture determined by an underlying \texttt{Categorical} distribution}. To categorize $N$ tasks into $K$ groups (represented by $K$ encoder branches), we initially set up $KN$ task heads, where each branch connects to all $N$ task heads to exploit the high-order task-affinity. Then, we gradually prune the $KN$ heads down to $N$ by learning a relaxed differentiable \texttt{Categorical} distribution, ensuring that each task is exclusively and uniquely categorized into only one branch. Extensive experiments on CelebA and Taskonomy datasets with detailed ablations show the promising performance and efficiency of our method. The codes are available at https://github.com/ethanygao/DMTG.
+\end{abstract}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\columnwidth]{image/pruning.pdf}
+    \vspace{-8mm}
+    \caption{We formulate the Multi-Task Grouping (MTG) problem as network pruning. This figure illustrates the categorization of 4 tasks into 3 groups, where each branch represents a task group. As shown in the Upper Subfigure, at initialization, each group connects to all the task heads, ensuring full exploration of high-order task-affinity. Throughout MTG training, we simultaneously prune the task heads and train the weights of the group-specific branches. Our training process ensures that MTG converges to a categorization where each task exclusively and uniquely belongs to only one group, as illustrated in the Lower Subfigure.}
+    \label{img:pruning}
+    \vspace{-4mm}
+\end{figure}
+
+\vspace{-5mm}
+\section{Introduction} \label{sec:intro}
+\vspace{-1mm}
+
+Many real-world applications are essentially complex systems that involve the collaboration of a large number of tasks. For example, in autonomous driving \cite{caesarnuscenes2020,huplanning2023}, the system needs to simultaneously perform lane detection \cite{tangreview2021}, depth estimation \cite{godarddigging2019}, vehicle detection and instance segmentation \cite{maskrcnn,maskformer2021}, pedestrians localization \cite{bertonimonoloco2019}, etc. In order to tackle these real-world challenges, it is crucial to simultaneously learn a large number of diverse tasks within a Multi-Task Learning (MTL) framework \cite{ubernet2017,lwr2019,blitznet2017,mtl2016,mtl3d2016,lirobust2021,wanggradient2021,liutowards2020,yugradient2020}, which reduces the inference time and facilitates an improved performance by leveraging the affinity among different tasks.
+
+
+It is thus critical to harness the affinity among those diverse tasks. Compared to learning them independently, simply combining them and feeding them into a fully shared network oftentimes deteriorates the performance of several or even most tasks. Such phenomenon is attributed to the presence of the inherent \emph{negative transfer}, where the intuition is that the gradients from different tasks may interfere with each other when flowing into a shared encoder.
+
+Pioneering works alleviate the negative transfer by designing novel Multi-Task Architectures (MTA) \cite{mtl1997,convexmtl2008,mtl2011,mtaoverview2017,mtaoverreview2021} or applying the Multi-Task Optimization (MTO) methods \cite{sener2018,lin2019,liuconflict2021,suteuregularizing2019,yangdeep2016}, where state-of-the-art MTA assigns independent network parameters to different tasks, while MTO directly manipulates the gradients from different tasks before applying them to update the shared parameters. However, both MTA and MTO methods pose challenges when scaling to a large number of tasks, \ie, the scalability is impeded in MTA for both training and evaluation due to the extra parameters, while the training of MTO cannot maintain scalability because it has to retain the backward graphs for each task. Recent researches also suggest that it is difficult to address the negative transfer solely by gradient manipulation in MTO \cite{xin2022,kurin2022}.
+
+We instead propose to learn a large number of tasks by Multi-Task Grouping (MTG) \cite{hoa2020}. In MTG, input tasks are categorized into groups by their affinity, where a group of tasks, instead of a single task, is modeled by a unique encoder. When the group categorization is given, MTG for $K$ groups of $N$ tasks drastically reduces the training complexity from $O(N)$ (for MTA/MTO) to $O(K)$. 
+
+The primary challenge of MTG is to identify the group categorization, which involves investigating the exponential $2^N$ group candidates at maximum, given merely $N$ tasks. In order to migrate this issue, Standley et al. \yrcite{hoa2020} and Fifty et al. \yrcite{tag2021} propose to average the pairwise affinities to approximate the high-order affinities\footnote{For example, the performance of Task $A$ in Group $\{A, B, C\}$ is approximated by averaging that of $A$ in $\{A, B\}$ and $\{A, C\}$}. Despite a reduced complexity from $2^N$ to $N^2$, the less precise assumption of linear tasks affinity in \cite{hoa2020,tag2021} degrades the final performance. On the other hand, Song et al. \cite{mtg2022} advocate to train a meta-learner that directly predicts the final performance given a group categorization. However, the training of the meta-learner \emph{per se} is extremely difficult and involves collecting numerous well-trained group samples. Moreover, existing methods perform group identification and grouped task learning in separated sequential procedures. As a result, the former potentially introduces objective bias \emph{w.r.t.} the latter, especially when the groups are categorized based on heuristics. This also leads to potential performance degradation.
+
+In view of those limitations, we propose to \emph{formulate MTG as a pruning problem of an adaptive network architecture}, as shown in Figure \ref{img:pruning}, which enables to 1) \emph{identify the best groups and train the grouped model weights simultaneously in one-shot}, as well as 2) \emph{fully exploiting the high-order task affinities}. In our unified one-shot learning, we formulate the group identification as the model architecture learning/pruning, and the grouped task learning is established as the model weights training under a certain architecture. In this way, both procedures mutually facilitate each other to a better convergence. We jointly train both procedures simply by the task losses, where the high-order task affinities are directly exploited. Our approach excels in both efficiency and accuracy, which is distinct from pioneering two-shot methods that first approximately identify the grouping results, then train the grouped model from scratch subsequently.
+
+Specifically, we formulate the categorization of $N$ tasks into $K$ groups as learning of a \texttt{Categorical} distribution, where the \texttt{Categorical} distribution is used to determine an adaptive network architecture. We then optimize the unified group identification and grouped task learning leveraging a pruning algorithm that is fully differentiable. To this end, our method starts with $K$ branches, each equipped with $N$ heads.
+It indicates that at the beginning, all the tasks are predictable by every group, ensuring full exploitation of the high-order task-affinity. After that, we optimize the model weights as well as the \texttt{Categorical} distribution such that the $KN$ heads are gradually pruned down to $N$, facilitating that each task is exclusively and uniquely predicted by only one branch. Our \texttt{Categorical} distribution is continuously relaxed and then optimized by Gumbel softmax \cite{maddison2016concrete}. Our pruning procedure \emph{per se} is efficient, as we only expand the light-weighted \emph{task heads} (\eg, only the last network layers), instead of the heavy \emph{encoders}, and the $K$ encoder branches (each for a group) in our method represent the minimal requirement of MTG.
+
+Our method has been extensively validated on CelebA \cite{faceattribute2015} and Taskonomy \cite{taskonomy2018} with detailed ablations. Our method exhibits two unique features:
+\begin{itemize}
+\vspace{-2mm}
+\item \textbf{Accuracy} with high-order task affinities exploited, which is ensured by 1) the grouping formulation of learning a continuous relaxed and differentiable \texttt{Categorical} distribution, and 2) the elimination of the objective bias by the one-shot training of unified group identification and grouped task learning.
+\item \textbf{Efficiency} with $O(K)$ training complexity given $K$ groups, which comes from 1) our pruning formulation instead of sampling group candidates to train from scratch, and 2) the one-shot training that unifies group identification and grouped task learning.
+\end{itemize}
+
+\section{Related work}
+\label{sec: related work}
+
+\subsection{Multi-Task Grouping}
+Multi-Task Grouping (MTG) aims to put collaborative tasks from a task pool into the same group, where a group of tasks can be learned efficiently by a shared network \cite{mtl2011,learningtg2012,jointgroups2021}.
+Grouping tasks enables efficient learning of a vast array of tasks while also maintaining high interpretability.
+However, the primary challenge in MTG is that finding an optimal grouping solution in $2^N-1$ grouping candidates can be difficult. Existing grouping methods \cite{hoa2020,tag2021,mtg2022} have attempted to model an evaluation function to determine high-order task relationships based on low-order observations. Nonetheless, these methods perform group identification and grouped task learning separately, and potentially considering only low-order task affinity.
+In contrast, our grouping approach integrates group identification and grouped task learning within a one-shot training process, significantly improving running efficiency in large-scale task scenarios while thoroughly considering higher-order task relationships.
+
+
+\subsection{Multi-Task Architecture} 
+
+Multi-Task Architecture (MTA) \cite{mtl1997,convexmtl2008,mtl2011,mtaoverview2017,mtaoverreview2021} is a prevailing technology line in the Multi-Task Learning domain. 
+It can be categorized as hard-parameter sharing \cite{ubernet2017,lwr2019,blitznet2017,mtl2016,mtl3d2016} and soft-parameter sharing \cite{nddr2019,gao2020mtl,gao2024aux,crosslingual2015,mrn2017,crossstitch2016}. The former shares a common feature extraction module among tasks, while the latter assigns a special feature extraction branch for each task, exchanging features through extra fusion modules. 
+Although great success has been witnessed in designing novel MTL network architectures, they are less appropriate in addressing an extreme large number of tasks. Specifically, it is difficult to avoid the negative transfer due to a full-shared encoder module in hard-parameter sharing methods \cite{vandenhende2019,learntobranch2020,bruggemann2020,adashare2020}, while soft-parameter sharing methods \cite{ruderlatent2019,zhangjoint2018,padnet2018,zhangpattern2019} better address the negative transfer but introduce efficiency issues.
+
+\subsection{Multi-Task Optimization} 
+Multi-Task Optimization (MTO) develops in parallel with Multi-Task Architecture, which aims to adjust task loss to balance the learning process of different tasks \cite{uncertainty2018,gradnorm12018,gradnorm22019,weightingtask12022,weightingtask22020,rearranging2018}. Advanced MTO methods directly manipulate gradients from different tasks to mitigate the training conflicts \cite{lirobust2021,wanggradient2021,liutowards2020,yugradient2020}, \eg, projecting task gradients when their angle is greater than $90^{\circ}$. In practice, revising gradients necessitates additional memory to store the gradient graph for each task, which can be potentially infeasible when dealing with an extremely large number of tasks. Most recently, Kurin et al. \yrcite{kurin2022} and Xin et al. \yrcite{xin2022} reveal that the existing MTO methods may be sensitive to hyperparameters when dealing with different combinations of tasks. Our method aims to learn the categorization of tasks and is orthogonal to MTO methods.
+
+\subsection{Network Pruning} 
+
+Network pruning \cite{caiproxylessnas2018,chenreinforced2018,elskenneural2019,ghiasifpn2019,hemilenas2020,lipartial2019} aims to detect and remove the redundancy of the networks without significant performance degradation. This pruning process can be implemented by Bayesian optimization \cite{makingbergstra2013}, evolutionary algorithms \cite{regularizedreal2019,xiegenetic2017}, network transformation \cite{gordonmorphnet2018}, reinforcement learning \cite{irlasguo2019,mnasnettan2019,learningzoph2018}, and gradient descent \cite{akimotoadaptive2019,liuauto2019,wufbnet2019,zhangcustomizable2019}. 
+We use differentiated pruning operations, which effectively enable integrating group identification with grouped task learning jointly in one-shot training.
+We are the first to implement network pruning into MTG to unify group identification and grouped task learning in an end-to-end architecture.
+
+\vspace{-1mm}
+\section{Method}
+\label{sec:Method}
+
+\begin{figure*}[t]
+\vspace{-1mm}
+    \centering
+    \includegraphics[width=\textwidth]{image/framework.pdf}
+    \vspace{-8mm}
+    \caption{The overview of our method. We formulate the Multi-Task Grouping (MTG) problem as network pruning, where our method consists of a grouped task learning module and a group identification module. In order to categorize $N$ tasks into $K$ groups, our network is constructed with $K$ group-specific branches, optionally with shared lower layers. At initialization, we connect each branch to all the task heads (enabling them to predict all tasks), so that the high-order task-affinity can be exploited. We then formulate the grouped task learning as the model weights training for each group-specific branch, and the group identification as the network head pruning. The final grouped task losses are generated by the element-wise product of both modules, which in turn ensures both modules to be trained simultaneously in one-shot with the high-order task-affinity fully exploited. This figure illustrates categorizing 3 tasks into 2 groups.}
+    \label{img:framework}
+    \vspace{-2.5mm}
+\end{figure*}
+
+
+
+
+Given $N$ tasks, we aim to efficiently chase the best categorization from the $2^N$ possibilities, with the high-order task affinities directly exploited. To this end, we \emph{formulate MTG into a network pruning framework}, where we model the group identification as the architecture learning/pruning, and the grouped task learning as the model weights optimization under a certain architecture. As a result, the group identification and the grouped task learning are unified and can be jointly optimized in one-shot during the network pruning. Regarding the optimization, we design the group categorization as the learning of a \texttt{Categorical} distribution, which is then continuously relaxed into a differentiable \texttt{Concrete} distribution and subsequently optimized using the Gumbel softmax \cite{maddison2016concrete}.
+
+
+In summary, our method is able to 1) exploit the high-order task affinities directly. 2) It avoids the potential objective bias when group identification and grouped task learning act as separated sequential procedures.
+3) Given $K$ groups, our pruning algorithm preserves the efficiency of $O(K)$ training complexity for the encoder. 4) Our \texttt{Categorical} distribution formulation guarantees each task to be categorized into one group \emph{exclusively and uniquely}. Thus, our learned groups and model weights are readily to use without retraining or validation (validation is needed when a certain task is categorized into multiple groups \cite{hoa2020,tag2021,mtg2022}, as discussed in Appendix \ref{appdix:categorization}).%  which directly produces a well-trained and grouped network that is readily for inference, without the need for retraining from scratch. % 4) Our proposed evaluation metric better captures the overall improvement across \emph{all tasks} through normalization.
+
+\vspace{-1mm}
+\subsection{Problem Formulation}
+Formally, we consider categorizing a set of $N$ tasks $\mathcal{T} = \{\mathcal{T}_{1}, ..., \mathcal{T}_{N}\}$ into equal or less than $K$ groups $\mathcal{G} = \{\mathcal{G}_{1}, ..., \mathcal{G}_{K}\}$, such that each group contains 0 to $N$ tasks $\mathcal{G}_k = \{..., \mathcal{T}_{i}, ... \}$, and each task is exclusively and uniquely belongs to one group. Therefore, we have:
+\vspace{-1mm}
+\begin{align}
+    &\mathcal{T} = \cup _{k=1}^{K} \mathcal{G}_{k}, \notag \\
+    s.t. \quad &\forall k, \quad |\mathcal{G}_k| \in \{0, ..., N\}, \nonumber \\ 
+    &\forall (i, j), \quad \mathcal{G}_{i}\cap \mathcal{G}_{j}=\emptyset,
+    \label{eq:grouping}   
+\end{align}
+where $|\cdot|$ is the cardinality. We optimize our problem exclusively to attain the highest average performance across these $N$ tasks, without relying on heuristic criteria. We also note that $K$ is the maximal-allowed number of groups, and we do not impose a strict requirement to yield precisely $K$ groups, \eg, some groups may contain 0 task.
+
+\textbf{Objective Bias in Two-Stage MTG Methods.} The objective bias in pioneering \cite{hoa2020,tag2021,mtg2022} appears in two aspects: 1) \emph{the group categorization is determined by heuristics but the retraining is based on the optimization of task losses}, and 2) \emph{the difference in the inputs to the group identification and the grouped-model weights retraining stages lead to different objectives}. In other words, the groups are identified heuristically when all the $N$ tasks can synergy/regularize each other, but the retraining phase only sees a subset (group) of tasks thus exhibiting different gradients from the former.
+
+As shown in Figure \ref{img:framework}, the group identification and the grouped task (weights) learning in our method complement each other and are trained jointly in one-shot. On one hand, during the training of the task groups, the group identification module selects collaborative tasks to back-propagate gradients to the corresponding branch of the grouped task learning module. On the other hand, each branch of the grouped task learning module is responsible for one group, which in turn facilitates group identification.
+
+
+\vspace{-1.5mm}
+\subsection{Grouped Task Learning Module} 
+
+We start with $K$ branches in the grouped task learning module, where each branch represents the encoder of each task group. We connect each branch to $N$ task heads to predict all the $N$ tasks, facilitating the exploration of high-order task affinity. Our method possesses an efficient training complexity of $O(K)$ for the network encoder. 
+
+Our method also enables to further reduce the training complexity, by implementing optional group-wise shared layers before splitting into the group-specific branches. This is illustrated in the dashed gray box in Fig. \ref{img:framework}.
+
+\vspace{-1.5mm}
+\subsection{Group Identification Module}
+\vspace{-0.5mm}
+
+We model the categorization of $N$ tasks exclusively and uniquely into $K$ groups as the learning of an unknown \texttt{Categorical} distribution, where the \texttt{Categorical} distribution is used to determine an adaptive network architecture. As such, the underlying \texttt{Categorical} distribution can be optimized jointly with the model weights in one-shot, which we formulate as a pruning problem.
+
+\noindent \textbf{\texttt{Categorical} Distribution Modeling.} Formally, let a random variable $z_{ik}$ indicate the assignment of task $i$ to group $k$, which is sampled from some discrete distribution. In order to assign $N$ tasks to $K$ groups, we have a set of random variables $Z = \{z_{ik} \} \in \mathbb{R}^{N \times K}$. 
+
+Recall Eq. \eqref{eq:grouping} that each task is exclusively and uniquely categorized into one group, therefore, we have:
+\begin{equation}
+    \sum_k z_{ik} = 1, \qquad \text{and} \qquad z_{ik} \in \{0, 1\}, \quad \forall k,
+    \label{eq:k_row}   
+\end{equation}
+which indicate that each row of $Z$ follows a \texttt{Categorical} distribution. Let the \texttt{Categorical} random variable $z_{ik}$ be parameterized by $s_{ik}$, we have:
+\begin{equation}
+    z_{ik} \sim \texttt{Categorical}(s_{ik}),
+    \label{eq:cate}   
+\end{equation}
+where $s_{ik}$ is the probability of assigning task $i$ to group $k$.
+
+\noindent \textbf{Network Architecture Formulation.} We establish an adaptive network architecture by the \texttt{Categorical} distribution, and formulate a pruning problem so that the Group Identification Module and the Grouped Task Learning Module can be optimized jointly in one-shot.
+
+To this end, we formulate the sampled random variable $z_{ik}$ as a loss indicator or a task selector, which determines whether to back-propagate the loss of task $i$ to the $k$-th group. Specifically, let $L = \{L_{ik} \} \in \mathbb{R}^{N \times K}$ be the loss matrix of $KN$ task heads, the final loss can be obtained by:
+\begin{equation}
+    L^{\text{task}}(\theta, S) = L(\theta) \odot Z(S),
+    \label{eq:loss}
+\end{equation}
+where $\odot$ is the element-wise product, $\theta$ is the model weights, and $S = \{ s_{ik} \} \in \mathbb{R}^{N \times K}$ is the set of parameters of the \texttt{Categorical} distributions.
+
+As shown in Eq. \ref{eq:loss}, we formulate MTG as a pruning problem where $Z(S)$ is learned to prune the $KN$ losses $L(\theta)$. We note that the cost of training a $N \times K$ matrix $S$ and sampling $Z$ from $S$ is negligible \emph{w.r.t.} the learning of $K$ group encoders, retaining the training complexity of our pruning formulation as $O(K)$ for the heavy encoder\footnote{Our training efficiency can be impeded in uncommon cases when the network heads are heavy, we discuss this in Appendix \ref{appeix:time}.}.
+
+\vspace{-1mm}
+\subsection{The Joint Optimization}
+\vspace{-1mm}
+
+Equation \eqref{eq:cate} involves a discrete sampling from $s_{ik}$ to $z_{ik}$, which results in a gradient blockage in Eq. \eqref{eq:loss} when back-propagating gradients from $Z$ to $S$. In this section, we continuously relax the discrete \texttt{Categorical} distribution, so that both the parameters for group identification $S$ and the weights for grouped task learning $\theta$ can be jointly optimized in one-shot by back-propagating the gradients from the task loss $L^{\text{task}}(\theta, S)$, through $Z(S)$ and $L(\theta)$, respectively.
+
+\noindent \textbf{Continuous Relaxation.} By using the reparameterization trick from the \texttt{Concrete} distribution \cite{maddison2016concrete}, we are able to continuously sample $s_{ik}$ to produce $\tilde{z}_{ik}$ that approximate $z_{ik}$ of the \texttt{Categorical} distribution. This facilitates the gradient flow from $L^{\text{task}}(\theta, S)$ to $s_{ik}$ through $\tilde{z}_{ik}$. The reparameterized \texttt{Categorical} distribution is modeled by the differentiable Gumbel softmax:
+\begin{equation}
+    \tilde{z}_{ik} = \frac{\exp((s_{ik}+g_{ik})/\tau)}{\sum _{m=1}^{K}\exp((s_{im}+g_{im})/\tau)}
+    \label{eq:gumbel}
+\end{equation}
+where $g_{ik}$ is sampled from a \texttt{Gumbel} distribution, \ie, $g_{ik}=-\log(-\log(\texttt{Uniform}(0, 1)))$ \cite{maddison2016concrete}. $\tau$ is a small or annealing temperature, producing a discrete $\tilde{z}_{ik}$ after convergence as a good approximation of $z_{ik}$. Given $\widetilde{Z} = \{ \tilde{z}_{ik} \} \in \mathbb{R}^{N \times K}$, the loss in Eq. \eqref{eq:loss} becomes:
+\begin{equation}
+    L^{\text{relaxed task}}(\theta, S) = L(\theta) \odot \widetilde{Z}(S),
+    \label{eq:relaxed_loss}
+\end{equation}
+
+\noindent \textbf{Initialization.} We note that the parameter of the \texttt{Categorical} distribution, $s_{ik}$, can be initialized according to the prior knowledge of the task affinity. In our problem, we simply initialize each $s_{ik}$ to $1/K$, which implies that each task has an equal probability of being categorized into any group. In other words, we do not assume any task affinities and learn them in a fully data-driven manner. Based on that, we optimize our model by pruning the initial $KN$ task heads to $N$, where each task is exclusively and uniquely categorized into one group after convergence.
+
+\section{Experiments}
+\label{sec:Experiments}
+In this section, we extensively validate our method on both \textbf{Taskonomy} \cite{taskonomy2018} and \textbf{CelebA} \cite{faceattribute2015} datasets for various candidate groups. We detail the experimental setup in the following.
+
+\subsection{Experimental Setup} \label{sec:setup}
+
+\noindent \textbf{Datasets.} We perform experiments on the Taskonomy dataset \cite{taskonomy2018} following \cite{hoa2020,tag2021,mtg2022}, and the CelebA dataset \cite{faceattribute2015} following \cite{tag2021}. We use the official tiny train, validation, and test split of Taskonomy. The images from Taskonomy and CelebA are bilinearly downsampled to $256\times 256$ and $64\times64$, respectively. Those datasets are introduced in detail in Appendix \ref{appdix:dataset}.
+
+\noindent \textbf{Benchmark Experiments.} We follow the experiment setups in \cite{hoa2020,tag2021,mtg2022} to conduct $5$ tasks on Taskonomy, \ie, \textit{semantic segmentation}, \textit{depth estimation}, \textit{surface normal}, \textit{keypoint detection}, and \textit{edge detection}, denoted as \textbf{Taskonomy-5}. We also conduct $9$ tasks on CelebA dataset following \cite{tag2021}, \ie, \textit{5\_o\_Clock\_Shadow}, \textit{Black\_Hair}, \textit{Blond\_Hair}, \textit{Brown\_Hair}, \textit{Goatee}, \textit{Mustache}, \textit{No\_Beard}, \textit{Rosy\_Cheeks}, and \textit{Wearing\_Hat}, referred to as \textbf{CelebA-9}. We perform the full 40 tasks of the CelebA dataset, \ie, \textbf{CelebA-40}, in Appendix \ref{appdix:scalability}, showcasing our scalability to numerous tasks.
+
+\noindent \textbf{Network Backbone.} We use the same network backbone as \cite{hoa2020,tag2021}, \ie, a variant of Xception network \cite{xception2017} with 12 blocks, for the Taskonomy experiments. For CelebA, we use a variant of ResNet \cite{resnet2016} following \cite{tag2021}.
+
+\noindent \textbf{Optimization.} We use Adam optimizer for all of our experiments, where the initial learning rates are $0.0008$ and $0.0001$ for the CelebA and Taskonomy experiments, respectively. We use \emph{plateau} learning rate decay which reduces by $0.5$ when the validation loss no longer improves. We train all the experiments for $100$ epochs, where our networks are initialized by the pre-trained naive MTL weights on the corresponding experiments. We copy the networks and the group-specific parameters for $K$ times to ensure that the same task is initialized identically across different groups. We initialize the Gumbel Softmax temperature $\tau$ of Eq. \eqref{eq:gumbel} as $2.5$ and $4$ for the CelebA and Taskonomy experiments, respectively. We follow \cite{tag2021} to use the cross-entropy loss for the CelebA experiments, and follow \cite{hoa2020,tag2021} to use the cross-entropy loss for semantic segmentation and $\ell_{1}$ loss for other tasks of the Taskonomy experiments.
+
+\noindent \textbf{Evaluation Metrics.} Pioneering research in MTG commonly relied on the \emph{total loss} as the evaluation metric \cite{hoa2020,tag2021,mtg2022}, which straightforwardly sums up the losses of all tasks. However, the magnitudes of losses from different tasks significantly vary due to 1) different loss types, such as cross-entropy losses for classification and $\ell_{1}$ losses for regression, and 2) diverse labels, such as image-level classification labels and pixel-level semantic segmentation labels. Consequently, simply calculating the \emph{total loss} may lead to an overestimation of tasks with higher loss magnitudes while overshadowing those with lower loss magnitudes. This phenomenon contradicts the goal of MTG, \ie, boosting \emph{all the input tasks rather than a subset of them} \cite{hoa2020}.
+
+To comprehensively assess improvements of an MTG method across all tasks, we follow \cite{maninis2019attentive,vandenhende2020mti,mtaoverreview2021} to eliminate the influence of loss magnitudes, which is termed \textbf{normalized gain}. Specifically, we initially calculate the normalized loss improvement (expressed as a percentage) \emph{w.r.t.} the naive MTL architecture (\i
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

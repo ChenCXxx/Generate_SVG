@@ -1,0 +1,275 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+The goal of image captioning is to automatically generate descriptions for  given images. Models \citep{anderson2018bottom,lu2017knowing,rennie2017self,zhang2021rstnet,huang2021unifying} trained on human-annotated image-text pairs have achieved impressive results on typical image captioning benchmarks.
+However, due to the small size and limited visual concepts of human-annotated datasets, these models generalize poorly to images in the wild \citep{agrawal2019nocaps,tran2016rich,wu2018decoupled}.
+In this paper, to reduce the reliance on human-annotated paired data and improve the generalization in real-world captioning scenarios, we propose a new zero-shot captioning framework that requires text-only data for training.
+
+Pre-training on web-scale noisy paired data has been demonstrated to be effective in learning robust multi-modal representations \citep{radford2021learning,jia2021scaling,li2021align,alayrac2022flamingo,yu2022coca,wang2022v,zhu2020actbert}.
+\citet{changpinyo2021conceptual} and \citet{wang2021simvlm} use web-scale image-text pairs to train a captioning model and achieve great improvements on MSCOCO \citep{chen2015microsoft} and NoCaps \citep{agrawal2019nocaps} through the pretraining-finetuning paradigm.
+However, these models show inferior zero-shot captioning performance on MSCOCO, indicating that these methods still rely on human-annotated paired data for fine-tuning.
+Besides, training with the captioning objective on web-scale data is not efficient, e.g., \citet{wang2021simvlm} train their model on ALIGN \citep{jia2021scaling} and C4 \citep{raffel2020exploring} about 1M steps using 512 TPU v3 chips \citep{jouppi2017datacenter}.
+
+Instead of directly training a captioning model in an end-to-end manner on web-scale image-text pairs, another line of work \citep{tewel2022zerocap,su2022language} achieves zero-shot captioning by combining existing pre-trained models. Specifically, they use a pre-trained multi-modal model CLIP \citep{radford2021learning} to guide a pre-trained language model (PLM), i.e., GPT-2 \citep{radford2019language}, to generate sentences that match the given image. However, the inference speed of these methods is slow because each word generation involves a CLIP text encoder forward. Besides, language models pre-trained on various documents from webpages do not match well with captioning tasks that aim to describe visual concepts and their relationships in a given image, resulting in inferior performance on image captioning benchmarks. 
+
+In this paper, we propose a new framework, named DeCap, for zero-shot captioning. We aim to decode sensible visual descriptions from the CLIP multi-modal embedding space. We do not use paired image-text data during the decoder pre-training but only leverage the text data. This is more flexible and efficient when the alignment between images and texts became noisier.
+Our DeCap framework is described below:
+During \textbf{pre-training}, the text decoder is trained from scratch. The goal is to invert the CLIP text encoder, i.e., a sentence is first encoded into an embedding by the CLIP text encoder and later reconstructed by our text decoder.
+The decoder takes the text embedding obtained from the CLIP text encoder as the prefix embedding.
+During \textbf{zero-shot inference}, the difficulty lies in how to obtain a prefix embedding that can match the input image and be well decoded by the decoder. 
+The modality gap phenomenon \citep{liang2022mind} is  observed in multi-modal contrastive models which prevents us from directly taking the visual embedding as the prefix embedding.
+\citet{ramesh2022hierarchical} use paired data to learn a model to map the text embedding to a corresponding image embedding. Instead of learning a model, we propose a training-free mechanism to project the image embedding into the CLIP text embedding space. Combining the text decoder with the projection mechanism, we generate high-quality descriptions for given images.
+Our main contributions are summarized as follows:
+(1) We propose a new framework for zero-shot captioning. Our DeCap framework contains a pre-trained contrastive model (i.e., CLIP) and a lightweight visual-aware language decoder taking the CLIP embedding as input.
+Though our decoder is trained only on the text corpus, it can associate both the visual embedding and the text embedding,
+thanks to the encoded multi-modal correlation in the CLIP embedding space.
+
+(2) We propose a training-free projection mechanism to reduce the \textit{modality gap} in CLIP multi-modal embedding space. We incorporate a simple support memory containing embeddings of the text corpus in the pre-training stage. 
+We project a visual embedding into the CLIP text embedding space via the support memory.
+Experiments show that our proposed mechanism effectively reduces the modality gap and significantly improves performance.
+
+(3) Extensive experiments demonstrate DeCap can flexibly apply to various captioning scenarios. DeCap outperforms other zero-shot captioning methods by a large margin on image captioning benchmarks MSCOCO and NoCaps. DeCap trained on text-only data outperforms other unpaired captioning methods on MSCOCO and Flickr30k.
+We apply DeCap to video captioning and achieve state-of-the-art zero-shot results on MSR-VTT and ActivityNet-Captions.
+
+
+
+Related work
+
+\textbf{CLIP in Captioning.}
+Vision-language models \citep{radford2021learning,jia2021scaling,yang2022unified} trained with a contrastive loss show impressive ability in many discriminative tasks. However, due to the absence of a text decoder during pre-training, these models can not be directly applied to generative tasks, e.g., captioning.
+Prior work \citep{mokady2021clipcap,barraco2022unreasonable,shen2022how} has applied CLIP to the image captioning task as a visual encoder. However, they ignore the CLIP text encoder and overlook the aligned multi-modal latent space provided by CLIP.
+In this work, we train a text decoder with text-only data to invert the CLIP text encoder. By leveraging CLIP multi-modal latent space, we apply CLIP to captioning tasks without additional pairwise training.
+
+\textbf{Zero-shot Captioning.} 
+Zero-shot captioning aims to generate image/video captions without human-annotated data.
+\citet{changpinyo2021conceptual,wang2021simvlm,alayrac2022flamingo} train vision-language models on noisy paired image-text data collected from the Web and evaluate on downstream benchmarks without fine-tuning.
+Another line of work achieves zero-shot captioning by combining existing web-scale pre-trained models. 
+ZeroCap \citep{tewel2022zerocap} combines a multi-modal model (e.g., CLIP) with a PLM (e.g., GPT-2). In each generation step, they use CLIP to guide GPT-2 toward a desired visual direction via the proposed CLIP loss. 
+Socratic Models \citep{zeng2022socratic} use a pre-trained VLM \citep{gu2021open} to generate prompt templates for GPT-3 \citep{brown2020language} and then use CILP to retrieve the closest description to the image from the generated candidates.
+In this work, we employ CLIP for zero-shot captioning. Different from the above work using PLMs, we use text-only data to train a decoder from scratch.
+
+\textbf{Text Reconstruction.}
+Prior work 
+\citep{feng2019unsupervised,laina2019towards,liu2021aligning,liu2021auto} employ a text reconstruction task to train a decoder for unpaired/unsupervised captioning tasks. Lacking a well-aligned multi-modal latent space, most of these methods require complex pseudo-training or adversarial training to align the decoder and visual input. \citet{liu2021auto} construct a knowledge graph to correlate the representations of the visual and textual domains. However, this method needs a well-defined knowledge graph and a multi-label classification task to train the knowledge graph, which is difficult to apply to captioning tasks other than medical report generation.
+Benefiting from CLIP, on the one hand, our decoder can be directly associated with visual input by utilizing the aligned cross-modal embedding space of CLIP. On the other hand, our decoder can be trained on various text data and applied to various captioning tasks.
+\begin{figure}[t]
+\begin{center}
+\includegraphics[scale=0.4]{iclr2023/pics/framework_v9.pdf}
+\end{center}
+\caption{An overview of our framework. Our method is based on a pre-trained contrastive model CLIP containing a text encoder and a visual encoder. We first learn a text decoder to generate sentences conditioned on the CLIP text embedding. At inference, a training-free mechanism is used to project the image embedding into the text embedding space with the help of a support memory. The projected embedding is further decoded by the text decoder. }
+\label{framework}
+\end{figure}
+
+
+
+Method
+Our framework is shown in Figure \ref{framework}. 
+We learn a text decoder to convert the CLIP text encoder (Sec. \ref{sec 3.1:decoder}). This text decoder allows us to generate sentences based on the CLIP text embedding.
+At inference, we propose a training-free mechanism to project the image embedding into the text embedding space to reduce the modality gap between the text embedding space and  image embedding space (Sec. \ref{PD}). 
+We introduce more inference strategies for comparison (Sec. \ref{other methods for comparison}).
+
+\subsection{Text-only Decoder Pre-training} \label{sec 3.1:decoder}
+Previous approaches \citep{tewel2022zerocap,su2022language,zeng2022socratic} employ PLMs to generate diverse sentences for zero-shot captioning. However, PLMs trained on various documents from the webpages do not match well with captioning tasks that aim to describe visual concepts and relationships in the given image. 
+
+Instead of employing a PLM, we train a text decoder from scratch to invert the CLIP text encoder. Following recent work \citep{mokady2021clipcap,wang2021simvlm}, we train our decoder using the prefix language modeling. Specifically, given a sentence $t = \{word_1,word_2,...,word_{|t|}\}$, the prefix language model $P_\theta$ learns to reconstruct $t$ conditioned on the text embedding extracted by a fixed CLIP text encoder. We regard the text embedding as a prefix to the caption. Our objective can be described as:
+\begin{equation}
+    \label{eq1}
+    \mathcal{L}_{Recons}(\theta) = -\frac{1}{| t |} \sum_{i=1}^{|t|}\log P_\theta(word_i|word_{<i},E_{text}(t)),
+\end{equation}
+where $E_{text}(\cdot)$ means mapping a sentence to a $\ell_2$-normalized embedding space via the CLIP text encoder.
+This decoder trained with text-only data in a self-supervised manner brings two benefits.
+On the one hand, 
+we can control the style of the generated sentences by adjusting the source of text-only data.
+To generate task-specific descriptive captions, we train our decoder on text data from human-annotated image descriptions and web-collected image captions.
+On the other hand, this text decoder takes CLIP text embedding as the prefix embedding. The CLIP text embedding is optimized to be correlated with the CLIP image embedding, making it possible to associate the text decoder with visual input without any pairwise training.
+
+\subsection{Inference strategies} \label{inference}
+In Sec. \ref{sec 3.1:decoder}, we obtain a decoder that can generate descriptions conditioned on the CLIP text embedding. At inference, the question is how to use the decoder to generate descriptions given the CLIP image embedding.
+Due to the modality gap between CLIP image embedding space and text embedding space, it is impractical to directly take the CLIP image embedding as the prefix embedding.
+\citet{ramesh2022hierarchical} learn a prior model to map the text embedding to a corresponding image embedding. However, this process requires paired data for training. We propose a training-free mechanism to project the image embedding into text embedding space.
+
+\subsubsection{Projection-based Decoding (PD)} \label{PD}
+Assuming that the language model $P_\theta$ is trained on a given text set $T = \{t_1,t_2,...,t_N\}$, where $N$ denotes the size of $T$. To represent the CLIP text embedding space, we maintain a support memory $M = \{\mathbf{m_1}, \mathbf{m_2}, ... , \mathbf{m_N}\}$, where $\mathbf{m_i} = E_{text}(t_i)$.
+At inference, we aim to generate a caption for a given image $I$.
+With the help of the support memory $M$, we can project the image embedding into the text embedding space. Specifically, given the image embedding $\mathbf{v} = E_{image}(I)$, 
+we obtain its representation in text embedding space by performing a weighted combination of all the embeddings in support memory.
+To obtain the weights of these text embeddings, the cosine similarity between $\mathbf{v}$ and $\mathbf{m}$ is calculated, scaled by a temperature parameter $\tau$, and normalized by a softmax function.
+The combined project vector $\mathbf{v}_{proj}$ is calculated as:
+
+\begin{equation}
+\label{eq2}
+\mathbf{v}_{proj} = \sum_{i=1}^N w_i* \mathbf{m}_i = \sum_{i=1}^N
+\frac{\exp((\mathbf{m}_i^{\top} \mathbf{v}) / \tau)}{\sum_{k=1}^{N}\exp((\mathbf{m}_k^{\top} \mathbf{v})/ \tau)}* \mathbf{m}_i,
+\end{equation}
+
+where $w_i$ is the weight of $i$-th text embedding in support memory. $\mathbf{v}_{proj}$ is a combination of CLIP text embeddings that can be used as the prefix embedding. We denote $P_\theta(\mathbf{x})$ as the  auto-regressive process of generating a sentence conditioned on the prefix embedding $\mathbf{x}$. The final output can be generated by $P_\theta(\frac{\mathbf{v}_{proj}}{|| \mathbf{v}_{proj}||_2} )$.
+
+This projection-based method does not require additional training. It performs well across many datasets and is flexible.
+The projected vector $\mathbf{v}_{proj}$ can absorb the information from text embeddings in the support memory, thereby generating diverse and accurate descriptions.
+On the other hand, the text data used for training and stored in support memory can be different. We can select appropriate text data to construct a new support memory according to the target domain. The image embedding will then be projected into the new text embedding space, enabling DeCap to generalize quickly to new domains without retraining.
+
+\subsubsection{Discussion} \label{other methods for comparison}
+
+In order to investigate the impact of our decoder and projection-based mechanism, we have included the following inference strategies for comparative analysis.
+
+\textbf{1) CLIPRe.}
+We first consider a simple retrieval-based approach that does not require a decoder. This approach is mentioned in \citet{su2022language}. Given the image $I$ and  text set $T = \{t_1,t_2,...,t_n\}$, CLIPRe retrieves the most relevant texts from $T$ based on the image-text similarity measured by CLIP. This process can be formulated as: 
+${\arg\max}_{\ t\in T} \ sim(E_{image}(I),E_{text}(t))$,
+where $sim$ denotes the cosine similarity. In all experiments, we use CLIPRe as our baseline, since it can well reflect the zero-shot performance of the original CLIP without the decoder.
+
+\textbf{2) Visual Decoding (VD).}
+Considering that text embeddings and image embeddings are correlated, a simple approach is to directly use image embedding as the prefix embedding. We refer to this method as Visual Decoding. This process can be formulated as $P_\theta(E_{image}(I))$. However, across the experiments, this method does not achieve satisfying results in most scenarios, indicating that there is a modality gap between CLIP image embeddings and text embeddings.
+
+\textbf{3) Nearest-neighbor Decoding (NND).}
+Another simple method is to use the nearest text embedding as the prefix embedding. Specifically, we first calculate the similarity between the image embedding $E_{image}(I)$ and the text embeddings in $M$. Then, the nearest text embedding is directly used as the prefix embedding. We refer to this method as Nearest-neighbor Decoding. This process can be formulated as $P_\theta({\arg\max}_{\mathbf{m}\in M} \ sim(E_{image}(I),\mathbf{m}))$. 
+Ideally, NND and CLIPRe should attain similar performance since the decoder learns to recover the origin text conditioned on the text embedding. Interestingly, across our experiments, NND achieves better performance than CLIPRe in most scenarios, suggesting that our decode may generate more descriptive sentences. Moreover, we find that the performance could be further improved by reconstructing a new text corpus using the decoder.
+
+
+
+
+EXPERIMENTS
+
+We conduct extensive experiments on captioning tasks including zero-shot image captioning, unpaired image captioning, and video captioning. We demonstrate that DeCap can efficiently achieve impressive results in diverse settings. In Sec. \ref{sec 4.1}, we focus on zero-shot image captioning without any human annotation.
+In Sec. \ref{sec 4.2}, we focus on unpaired image captioning where the images and the sentences are treated independently.
+In Sec. \ref{sec 4.3:video captioning}, we further apply DeCap to video captioning tasks.
+In Sec. \ref{section 4.4: ablation}, we conduct detailed ablation studies for DeCap.
+
+\textbf{Implementation Details. }
+We employ a frozen pre-trained Vit-B/32 CLIP model. We adopt a 4-layer Transformer \citep{subramanian2018learning} with 4 attention heads as our language model. The size of the hidden state is 768. By default, we use all the text data in the training set to train the language model from scratch with a naive cross-entropy loss. 
+All the text embeddings from the training corpus are stored in the support memory unless specified otherwise. At inference, the temperature $\tau$ in Eq. \ref{eq2} is set to 1/150 in video captioning experiments, and 1/100 in image captioning experiments. We report the results over four standard captioning evaluation metrics: BLEU@N \citep{papineni2002bleu}, METEOR \citep{banerjee2005meteor}, CIDEr \citep{vedantam2015cider}, and SPICE \citep{anderson2016spice}. Additionally, we use CLIP-S$^{Ref}$ \citep{hessel-etal-2021-clipscore} and CLIP-S to measure the text-text similarity and text-image similarity, respectively. The beam search or constrained beam search \citep{anderson2017guided} is \textbf{not} used in all our results.
+\subsection{Zero-shot image captioning } \label{sec 4.1}
+In this section, we conduct zero-shot image captioning using webly-collected corpora.
+Traditional image captioning methods rely on paired human-annotated data for training, which is difficult to obtain and limited in scale and diversity. 
+We consider three webly-collected corpora for DeCap training: (1) \textbf{CC3M} \citep{sharma2018conceptual} contains three million image-description pairs collected from the web. We only use the text descriptions (CC3M-text) for training. We use one million descriptions randomly sampled from the 3M descriptions to construct the support memory.
+(2) \textbf{SS1M} is a webly-collected corpus specifically designed for MSCOCO caption. \citet{feng2019unsupervised} use the name of the eighty object classes in MSCOCO as keywords to crawl the descriptions from Shutterstock\footnote{ \url{https://www.shutterstock.com}}, resulting in 2,322,628 distinct image descriptions in total. We reuse this corpus and further remove sentences with more than fifteen words, obtaining 978,662 sentences. 
+(3) \textbf{Book Corpus} \citep{zhu2015aligning} is a large collection of free novel books. Book Corpus is often used for unsupervised pre-training of language models \citep{devlin2018bert} and we also use it to train our language decoder, but for captioning tasks. The original Book Corpus data is large and many sentences are not visual-related, which makes our decoder training inefficient. In practice, we find that the norm of CLIP text embedding can coarsely filter out some sentences that are not related to visual concepts. A sentence with a large norm is usually not visual-related. To improve training efficiency, we only keep sentences with lengths less than 15 and norms less than 10 and obtain 6,217,799 sentences for training. We use one million sentences randomly sampled from the training data to construct the support memory. In addition, we use ``Attention! There is/are'' as a prompt for the model trained on Book Corpus. We find that DeCap trained on Book Corpus benefits from prompt engineering, whereas DeCap trained on CC3M does not.
+The following zero-shot captioning methods are compared in this study.
+\citet{changpinyo2021conceptual} train a captioning model on webly-collected paired data and directly transfer it to downstream datasets without fine-tuning.
+\textbf{ZeroCap} \citep{tewel2022zerocap} is a training-free zero-shot captioning method leveraging CLIP and GPT-2. DeCap also utilizes CLIP but trains a decoder from scratch on a webly-collected corpus.
+Our \textbf{DeCap} uses projection-based decoding (PD) by default. We compare it with another two inference strategies introduced in Sec.~\ref{inference}. We denote visual decoding as
+\textbf{DeCap-VD} and nearest-neighbor decoding as \textbf{DeCap-NND}.
+All these methods target zero-shot image captioning and do not use human-annotated data.
+
+\textbf{Results.} Table \ref{tab1: CC3M} shows the zero-shot results on MSCOCO and NoCaps. DeCap attains a new state-of-the-art on all metrics. On NoCaps, models pre-trained on webly-collected data achieve better out-of-domain results. This is because the webly-collected data contain diverse visual concepts.
+On MSCOCO, DeCap pre-trained on CC3M-text outperforms ZeroCap by 27.5\% in CIDEr. DeCap pre-trained on SS1M outperforms ZeroCap by 36\% in CIDEr. DeCap trained on SS1M achieves better performance than trained on CC3M (CIDEr: 50.6\% vs. 42.1\%), indicating that the task-specific webly-collected corpus can further improve the performance of downstream datasets. 
+Besides, DeCap trained on Book Corpus still achieves better performance than ZeroCap. Notably, both DeCap-BookCorpus and ZeroCap have not seen caption-related data.
+
+\begin{table*}[t!]
+\begin{center}
+
+\resizebox{0.9\textwidth}{!}{%
+\small
+\begin{tabular}{ c|c|cccc |cccc}
+
+\toprule
+\multirow{2}{*}{Methods}& \multirow{2}{*}{Pre-training stage} & \multicolumn{4}{c}{MSCOCO}&\multicolumn{4}{c}{NoCaps val (CIDEr)} \\
+
+ & &B@4&M&C&S&\multicolumn{1}{c}{In}& \multicolumn{1}{c}{Near} & \multicolumn{1}{c}{Out} & \multicolumn{1}{c}{Overall} \\ 
+\bottomrule
+
+\toprule
+\citet{changpinyo2021conceptual}&CC3M &-&-&-&-&29.2&27.5&37.3&29.7\\
+\citet{changpinyo2021conceptual}&CC12M&-&-&-&-&20.7&24.1&41.6&27.1\\
+ZeroCap & CLIP+GPT-2 & 2.6 & 11.5& 14.6 & 5.5 &-&-&-&- \\
+CLIPRe  & CLIP+CC3M-text  &4.6&13.3&25.6&9.2&23.3&26.8&36.5&28.2 \\
+\midrule
+{DeCap-VD}& CLIP+CC3M-text&1.2&10.4&8.1&5.8&8.4&8.0&10.2&8.5\\
+{DeCap-NND}& CLIP+CC3M-text&5.3&13.7&27.1&9.1&24.2&27.1&37.6&28.8\\
+DeCap& CLIP+CC3M-text&8.8&16.0&42.1&10.9&34.8&37.7&\textbf{49.9}&39.7\\
+DeCap& CLIP+SS1M&\textbf{8.9}&\textbf{17.5}&\textbf{50.6}&\textbf{13.1}&\textbf{41.9}&\textbf{41.7}&46.2&\textbf{42.7}\\
+{DeCap}& CLIP+Book Corpus&6.6&12.9&31.9&8.7&26.8&31.8&44.3&33.6\\
+
+\end{tabular}
+}
+\end{center}
+\caption[caption]{Zero-shot captioning results on MSCOCO Karpathy-test split and NoCaps validation set. 
+
+(In: in-domain; Near: near-domain; Out: out-of-domain; B@4: BLEU@4; M: METEOR; C: CIDEr; S: SPICE).} 
+\label{tab1: CC3M}
+\vskip -0.1in
+\end{table*}
+
+
+
+\subsection{Unpaired image captioning} \label{sec 4.2}
+
+To explore the potential of DeCap in more captioning scenarios, we consider the unpaired image captioning setting, where the human-annotated image-sentence pairs are treated as unpaired images and sentences. 
+In Sec. \ref{sec 4.2.1}, we investigate in-domain captioning where training data and test data come from the same dataset, but the training data are unpaired. In Sec. \ref{sec 4.2.2}, we consider the cross-domain situation where training data and test data come from different distributions.
+
+\subsubsection{In-domain captioning} \label{sec 4.2.1}
+We compare DeCap with supervised methods and other unpaired image captioning methods.
+(1) Supervised methods: \textbf{BUTD} \citep{anderson2018bottom} is a classic method that uses Faster R-CNN \citep{ren2015faster} to extract visual features. \textbf{CLIPCap} \citep{mokady2021clipcap}, \textbf{CLIP-VL} \citep{shen2021much} and \citet{barraco2022unreasonable} are recent approaches employing CLIP as the visual encoder.
+(2) Unpaired methods: \citet{laina2019towards} and \citet{feng2019unsupervised} treat the images and captions from the MSCOCO training set as unpaired data. 
+UVC-VI \citep{liu2021aligning} uses image-Chinese pairs \citep{wu2019large} for training. 
+(3) (CLIP+GPT2)-based methods: \textbf{ZeroCap} \citep{tewel2022zerocap}, \textbf{Magic} \citep{su2022language}  and \textbf{ESPER-Style} \citep{yu2022multimodal} finetune the GPT-2 on captions from the training set.
+(4) \textbf{ESPER-Free} \citep{yu2022multimodal} uses reinforcement learning to align multimodal inputs to language model generations.
+(5) \textbf{CLIPRe} is a retrieval-based baseline.
+(6) Our \textbf{DeCap}, \textbf{DeCap-VD} and \textbf{DeCap-NND}. Our decoder is trained on captions from the training set, and text embeddings of all the training captions are maintained in the support memory.
+
+\textbf{Results.}
+Table \ref{tab1: in-domain captioning} shows the results on MSCOCO and Flickr30K.
+Overall, DeCap outperforms recent unpaired approaches by a large margin. Especially on Flickr30K, DeCap is competitive with the supervised learning method BUTD.
+Two conclusions can be drawn: (1) \textbf{CLIP provides aligned multi-modal representations for captioning tasks.} 
+Compared to the unpaired methods that use a visual concept detector to construct a multi-modal embedding space, the CLIP-based methods could achieve competitive results using only text data.
+(2) \textbf{Our decoder and the projection mechanism are crucial for high performance.} Compared to CLIPRe, DeCap-NND further decodes the nearest-neighbor text embeddings resulting in higher performance, indicating that our decoder can generate more descriptive sentences. DeCap-VD achieves inferior performance, demonstrating that there is a large modality gap between CLIP image embedding and text embedding, demonstrating the necessity of our projection mechanism.
+
+\begin{table*}[t!]
+\begin{center}
+\resizebox{0.9\textwidth}{!}{
+\small
+\begin{tabular}{ l | c c c | c c c c  c c c c}
+\toprule
+\multirow{2}{*}{Method}& \multicolumn{3}{c}{Data}  & \multicolumn{4}{c}{MSCOCO}&\multicolumn{4}{c}{Flickr30K}\\
+
+ &P.&I.&T.& B@4 & M & C & S & B@4 & M & C & S \\
+\midrule
+\multicolumn{12}{c}{ \textit{Supervised Methods}} \\
+
+\midrule
+BUTD &\checkmark & &&36.2&27.0&113.5&20.3&27.3&21.7&56.6&16.0\\
+CLIPCap &\checkmark & & & 33.5 & 27.5& 113.1 & 21.1 & - & - & - & -\\
+{\citet{barraco2022unreasonable}} &\checkmark & & & 36.0 & 27.8&114.9 &20.8& - & - & - & -\\
+{CLIP-VL} &\checkmark & & &37.5 & 28.1 & 123.1 & 21.9 & - & - & - & -\\
+\midrule
+\multicolumn{12}{c}{\textit{Train on unpaired data. Zero-shot inference on image-text pairs}} \\
+\midrule
+{UVC-VI} &${\dagger}$ & & & 22.0 & 21.4 & 72.3&-  & - & - & - & - \\
+\citet{feng2019unsupervised} & &\checkmark &\checkmark & 18.6 & 17.9 & 54.9&11.1  & - & - & - & - \\
+\citet{laina2019towards} & &\checkmark &\checkmark & 19.3 & 20.2 & 61.8&12.9  & - & - & - & - \\
+ESPER-Style&&\checkmark &\checkmark & 21.9&21.9&78.2&-  & - & - & - & - \\
+ESPER-Free&&\checkmark & & 6.3&13.3&29.1 &-  & - & - & - & -\\
+ZeroCap$^{*}$ & & &\checkmark &7.0 & 15.4& 34.5 &9.2 &5.4&11.8&16.8&6.2\\
+Magic & & & \checkmark& 12.9 & 17.4 & 49.3 & 11.3&  6.4 &13.1&20.4&7.1 \\
+CLIPRe  & & &\checkmark & 12.4 & 20.4&53.4&14.8 & 9.8 & 18.2 &31.7&12.0 \\
+\midrule
+DeCap-VD & & & \checkmark& 5.0 & 15.5 & 25.7 & 9.8&5.8&15.0&13.0&8.2 \\
+DeCap-NND& & & \checkmark& 15.3 & 21.2 & 62.9 & 15.8&12.9&17.2&35.2&10.9 \\
+DeCap & & & \checkmark& \textbf{24.7} &\textbf{25.0}&\textbf{91.2} &\textbf{18.7} & \textbf{21.2} & \textbf{21.8}&\textbf{56.7}&\textbf{15.2}\\
+\end{tabular}
+
+}
+\end{center}
+\caption[caption]{In-domain captioning results on MSCOCO and Flickr30K. ``$^{*}$'' denotes results from \citet{su2022language}. ``P.'', ``I.'' and ``T.'' denote paired data, unpaired image data and unpaired text data, respectively. 
+${\dagger}$: UVC-VI is a special approach that requires image-Chinese paired data for training, and we regard it as an unpaired method here because it does not use image-English pairs. }
+\label{tab1: in-domain captioning}
+\vskip -0.1in
+\end{table*}
+
+
+\subsubsection{Cross-domain captioning} \label{sec 4.2.2}
+
+We evaluate the following methods on MSCOCO and Flickr30K in the cross-domain setting where the training data and testing data are from different datasets.
+(1) \citet{zhao2020cross} generate pseudo image-text pairs for the target domain using a retrieval model trained on the source domain.
+(2) \textbf{Magic} \citep{su2022language} finetunes GPT-2 on text data from the source domain.
+(3) \textbf{CLIPRe-S} uses text data from the source domain as galleries.
+(4) \textbf{DeCap} trains the decoder on text data from the source domain.
+(5) \textbf{DeCap-TT} trains the decoder on text data from the source domain and uses captions from the target domain to construct the support memory.
+\textbf{Results.} Table \ref{tab2:cross-domain captioning} shows the results. 
+Unlike the traditional cross-domain method \citep{zhao2020cross} which relies on paired source domain data and requires training on the target domain, recent CLIP-based text-only methods require text-only data from the source domain for training.
+DeCap significantly outperforms other text-only methods, e.g., Magic \citep{su2022language} and CLIPRe-S, on the cross-domain evaluation. Moreover, if the text data from the target domain is accessible, DeCap-TT significantly improves the captioning performance (e.g., CIDEr is improved from 44.4\% to 63.1\%) without any additional training. It simply employs text embedding from the target domain as the support memory. These results demonstrate the strong capabilities of DeCap in cross-domain generalization and the effectiveness of our 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,300 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Referring Image Segmentation (RIS) aims to segment a target object in an image {via a user-specified} input text description. RIS has various applications, such as text-based image editing~\cite{kawar2023imagic, hertz2022prompt, avrahami2022blended} and human-computer
+interaction~\cite{zhu2020vision, wang2019reinforced}.
+Despite remarkable progress, most existing RIS works~\cite{ding2021vision, yang2022lavt, liu2023multi, liu2023gres, lai2023lisa, chng2023mask} rely heavily on 
+pixel-level ground-truth masks to learn visual-linguistic alignment.
+Recently, there {has been} a surge in interest in developing weakly-supervised RIS (WRIS) methods via weak supervisions, \eg, bounding-boxes~\cite{feng2022learning}, 
+and text descriptions~\cite{xu2022groupvit, kim2023shatter, liu2023referring, chen2022prototypical}, to alleviate burden of data annotations. 
+In this {work}, we focus on obtaining supervision from text descriptions only.
+
+The relatively weak {constraint} of utilizing text alone as supervision make{s} visual-linguistic alignment particularly challenging. There are some attempts~\cite{liu2023referring, kim2023shatter, lee2023weakly, shaharabany2022looking} to explore various alignment workflows. 
+\yu{For example, TRIS~\cite{liu2023referring} classifies referring texts {that describe the target object as positive texts while other texts as negative ones,} to model a text-to-image response map {for locating} potential target objects.} 
+SAG~\cite{kim2023shatter} introduces a bottom-up and top-down attention framework to discover individual entities and {then combine these} entities as the target of the referring expression. 
+However, these methods encode the entire referring text as a single language embedding{. They can} easily overlook some critical cues related to the target object in the text description, leading to \yu{localization} ambiguity and even errors.
+For example, in Fig. \ref{fig:motivation}(e), TRIS \cite{liu2023referring} erroneously activates all three players due to its use of cross-modality interactions between the image and the complete language embedding only.
+
+We observe that humans typically localize target objects through a step-by-step comprehension process. Cognitive neuroscience studies~\cite{simon1971human, plass2010cognitive}  also support this observation, indicating that humans tend to simplify a complex problem by breaking it down into manageable sub-problems and reasoning {them} progressively. 
+For example, in Fig.~\ref{fig:motivation}(b-d), human perception would first begin with \textit{``a player''} and identify all three players (b). The focus is then refined by the additional detail \textit{``blue and gray uniform''}, which helps exclude the white player on the left (c). Finally, the action \textit{``catches a ball''} helps further exclude the person on the right, leaving the correct target person in the middle (d).
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.92\linewidth]{Images/teaser_0420_by_yuhao.pdf}
+    \caption{
+    Given an image and a language description as inputs (a), RIS aims to predict the target object (d). Unlike existing methods (\eg, TRIS~\cite{liu2023referring} (e) -- a WRIS method) that directly utilize the complete language description for target localization, we observe that humans would naturally break down the sentence into several key cues (\eg, Q1 -- Q3) and progressively converge onto the target object (from (b) to (d). This behavior inspires us to develop {the} Progressive Comprehension Network (PCNet), which merges text cues pertinent to the target object step-by-step (from (f) to (h)), significantly enhancing visual localization. $\oplus$ denotes the text combination operation.
+    }
+    \label{fig:motivation}
+\end{figure*}
+
+Inspired by the human comprehension process, we propose {in this paper a novel Progressive Comprehension Network (PCNet) for WRIS}. 
+We first employ a Large Language Model (LLM)~\cite{ye2023comprehensive} to dissect the input text description into multiple short phrases. These decomposed phrases {are considered as target-related cues and fed into a novel Conditional Referring Module (CRM), which helps \yu{update the global} referring embedding and enhance target localization {in a multi-stage manner}}.
+{We also} propose a novel Region-aware Shrinking (RaS) loss to facilitate visual localization across different stages at the \yu{region} level.
+\yu{ReS first separates the target-related response map (indicating  {the} foreground region) from the target-irrelevant response map (indicating {the background region}), and then constrains the background response map to progressively attenuate, thus enhancing the localization accuracy of the foreground region.}
+Finally, we {notice} that salient objects in an image can sometimes trigger incorrect response map activation for text descriptions {that aim} for other target objects. {Hence}, we introduce an Instance-aware Disambiguation (IaD) loss {to reduce the overlapping of the response maps by rectifying
+the alignment score of different referring texts to the same object.}
+
+In summary, our main contributions are as follows :
+\begin{itemize} [leftmargin=*]
+\item We propose the Progressive Comprehension Network (PCNet) for the WRIS task. 
+Inspired by the human comprehension processes, this model achieves visual localization by progressively incorporating target-related textual cues for visual-linguistic alignment.
+\item Our method has three main technical novelties. 
+First, we {propose} a Conditional Referring Module (CRM) to model the response maps through multiple {stage}s for localization. 
+Second, we propose a Region-aware Shrinking (RaS) loss to constrain the response maps across different stages for better cross-modal alignment. 
+Third, to rectify overlapping localizations, we {propose} an Instance-aware Disambiguation (IaD) loss for different referring texts paired with the same image.
+\item We conduct extensive experiments on three popular benchmarks, demonstrating that {our method outperforms existing methods} by a remarkable margin.
+\end{itemize}
+
+
+Related work
+\noindent \textbf{Referring Image Segmentation (RIS)} aims to segment the target object from the input image according to the input natural language expression. 
+Hu \etal \cite{hu2016segmentation} proposes the first CNN-based RIS method. There are many follow-up works.
+Early methods~\cite{yu2018mattnet, liu2019learning, luo2020multi} focus on object-level cross-modal alignment between the visual region and the corresponding referring expression. 
+Later, many works explore the use of attention mechanisms \cite{huang2020referring,ding2021vision, yang2022lavt, kim2022restr} or transformer architectures \cite{yang2022lavt,liu2023local} to model long-range dependencies, which can facilitate pixel-level cross-model alignment. 
+For example, CMPC \cite{huang2020referring} employs a two-stage progressive comprehension model to first perceive all relevant instances through entity wording and then use relational wording to highlight the referent. 
+In contrast, our approach leverages LLMs to decompose text descriptions into short phrases related to the target object, focusing on sentence-level (rather than word-level) comprehension, which aligns more closely with human cognition. 
+{
+Focusing on the visual grounding, DGA~\cite{yang2019dynamic} also adopts multi-stage refinement.
+It aims to model visual reasoning on top of the relationships among the objects in the image. Differently, our work addresses the weakly RIS task and aims to alleviate the localization ambiguity by progressively integrating fine-grained attribute cues.}
+\noindent \textbf{Weakly-supervised RIS (WRIS)} has recently begun to attract some attention, as it can substantially reduce the burden of data labeling especially on the segmentation field ~\cite{lin2023clip, yang2023cross, zhu2024weaksam}. 
+Feng \etal \cite{feng2022learning} proposes the first WRIS method, which uses bounding boxes {for} annotations. 
+Several subsequent works \cite{kim2023shatter,lee2023weakly,liu2023referring} attempt to use weaker supervision signal, \ie, text descriptions. 
+SAG~\cite{kim2023shatter} proposes to first divide image features into individual entities via bottom-up attention and then employ top-down attention to learn relations for combining entities. 
+Lee \etal \cite{lee2023weakly} generate Grad-CAM for each word of the description and then consider the relations using an intra-chunk and inter-chunk consistency. 
+Instead of merging individual responses, TRIS \cite{liu2023referring} directly learns the text-to-image response map by contrasting target-related positive and target-unrelated negative texts. 
+{PPT~\cite{dai2024curriculum} enables effective integration with frozen CLIP and SAM by a lightweight point generator to identify the referent and context noise.}
+Despite their success, these methods {encode the full text} as a single embedding for cross-modality alignment, which overlooks {target-related nuances}
+in the textual descriptions.
+In contrast, our method {proposes to combine} progressive text comprehension and object-centric visual localization to obtain better fine-grained cross-modal alignment.
+
+\noindent \textbf{Large Language Models (LLMs)} are revolutionizing various visual domains, {benefited by} their user-friendly interfaces and strong zero-shot prompting capabilities \cite{brown2020language, touvron2023llama, achiam2023gpt}. 
+Building on this trend, recent works  \cite{pratt2023does, li2024zero, yang2023improved, xia2023gsva, salewski2024context} {explore} the integration of LLMs into vision tasks (\eg, language-guided segmentation \cite{yang2023improved,xia2023gsva}, relation \cite{li2024zero}, and image classification \cite{pratt2023does}) through parameter-efficient fine-tuning or knowledge extraction. 
+For example, LISA~\cite{yang2023improved} and GSVA~\cite{xia2023gsva} utilize  LLaVA~\cite{liu2024visual}, a large vision-language model (LVLM), as a feature encoder to extract visual-linguistic cross-modality features and introduce a small set of trainable parameters to prompt SAM \cite{kirillov2023segment} for reasoning segmentation. 
+RECODE~\cite{li2024zero} and CuPL \cite{pratt2023does} leverage the knowledge in LLMs to generate informative descriptions as prompts for different categories classification.
+Unlike these works, we capitalize on the prompt capability of LLMs to help decompose a single referring description into multiple target object-related phrases, which are then used in our progressive comprehension process {for RIS}.
+
+
+{Our Method
+\begin{figure*}[htb]
+    \centering
+    \includegraphics[width=1.0\linewidth]{Images/pipeline-RIS-520.pdf}
+    \caption
+    {The pipeline of PCNet.
+     Given a pair of image-text as input,
+     PCNet enhances the visual-linguistic alignment
+     by progressively comprehending the target-related textual nuances in the text description. It starts with {using a LLM to decompose} the input description into several target-related {short phrases as target-related textual cues}. The proposed Conditional Referring Module (CRM) then processes these cues to update the linguistic embeddings across multiple stages. 
+     Two novel loss functions, Region-aware Shrinking (RaS) and Instance-aware Disambiguation (IaD), are also proposed to supervise the progressive comprehension process. 
+    }
+    \label{fig:pipeline}
+\end{figure*}
+{
+{In this work, we observe that when identifying an object based on a description, humans tend to first pinpoint multiple relevant objects and then} narrow their focus to the target through step-by-step reasoning
+\cite{simon1971human, plass2010cognitive}. 
+Inspired by this, we propose a Progressive Comprehension Network (PCNet) for WRIS, which enhances cross-modality alignment by progressively integrating target-related text cues at multiple stages. 
+Fig. \ref{fig:pipeline} shows the overall framework of our PCNet.}
+
+Given an image $\mathbf{I}$ and a referring expression $\mathbf{T}$ as input, we first feed $\mathbf{T}$ into a Large Language Model (LLM) to break it down into {\textit{K}} short phrases $\mathcal{T}_{sub}=\{t_0 \text{, } t_1\text{, } \cdots \text{, } t_{K-1}\}$, referred to as target-related text cues. 
+We then feed image $\mathbf{I}$ and referring expression $\mathbf{T}$ and the set of short phrases $\mathcal{T}_{sub}$  into  image encoder and text encoder to obtain visual feature $\mathbf{V}_0 \in \mathbb{R}^{H \times W \times C_v}$ and language feature $\mathbf{Q}_0 \in \mathbb{R}^{1 \times C_t}$, and $\mathcal{Q}_{sub}=\{\mathbf{q}_0 \text{, } \mathbf{q}_1\text{, } \cdots \text{, } \mathbf{q}_{K-1}\}$, with $\mathbf{q}_k \in \mathbb{R}^{1 \times C_t}$, where $H=H_I/s$ and $W=W_I/s$.
+$C_{v}$ and $C_{l}$ denote the numbers of channels of visual and text features. $s$ is the ratio of down-sampling. 
+We then use projector layers to transform the visual feature  $\mathbf{V}_0$ and textual features $\mathbf{Q}_0$ and $\mathcal{Q}_{sub}$ to a unified  dimension $C$, \ie, $\mathbf{V}_0 \in \mathbb{R}^{ H \times W  \times C}$,  $\mathbf{Q}_0$ and $\mathbf{q}_i  \text{ are in } \mathbb{R}^{1 \times C}$. 
+
+We design PCNet with multiple consecutive Conditional Referring Modules (CRMs) to progressively locate the target object across $N$ stages\footnote{Note that all counts start at 0.}.
+Specifically, {at stage $n$}, the $n$-th CRM updates the referring embedding {$\mathbf{Q}_{n}$} into {$\mathbf{Q}_{n+1}$} conditioned on the short phrase {$q_{n}$} from the proposed Referring Modulation block. Both {$\mathbf{Q}_{n+1}$} and visual embedding {$\mathbf{V}_{n}$} are fed into Response Map Generation to  generate the text-to-image response map {$\mathbf{R}_{n}$} {and updated visual embedding $\mathbf{V}_{n+1}$}. 
+Finally, the response map {$\mathbf{R}_{N-1}$} generated by the {$n$-th} CRM is used as the final localization result.
+To optimize the resulting response map for accurate visual localization, we {employ} the pre-trained proposal generator to obtain localization-matched mask proposals. We also propose Region-aware Shrinking (RaS) loss to constrain the visual localization in a coarse-to-fine manner, and Instance-aware Disambiguation (IaD) loss to suppress instance localization ambiguity.
+In the following subsections, we first discuss how we decompose the input referring expression into target-related cues in \secref{subsec:llm}. 
+We then introduce the CRM in \secref{subsec:crm}.
+Finally, we present our Region-aware Shrinking loss in \secref{subsec:ras},
+and Instance-aware Disambiguation loss in \secref{subsec:md}.
+
+\subsection{{Generation of Target-related Cues}}
+\label{subsec:llm}
+Existing works typically encode the entire input referring text description, and can easily overlook some critical cues (\eg, attributes and relations) in the description (particularly for a long/complex description), leading to target localization problems. 
+To address this problem, we propose dividing the input description into short phrases to process it individually. 
+To do this, we leverage the strong in-context capability of the LLM \cite{achiam2023gpt} to decompose the text description.
+We design a prompt, with four parts, to instruct the LLM to do this: 
+(1) general instruction $\mathbf{P}_{G}$;
+(2) output constraints  $\mathbf{P}_{C}$;
+(3) in-context task examples $\mathbf{P}_{E}$; and 
+(4) input question  $\mathbf{P}_{Q}$.
+$\mathbf{P}_G$ describes the overall instruction, \eg ``decomposing the referring text into target object-related short phrases''. $\mathbf{P}_C$ elaborates the output setting, \eg, sentence length of each short phrase. In $\mathbf{P}_E$, we specifically curate several in-context pairs as guidance for the LLM to generate analogous outputs. Finally, $\mathbf{P}_Q$ encapsulates the input text description and the instruction words for the LLM to execute the operation. 
+The process of generating target-related cues is formulated as:
+\begin{equation}
+    \mathcal{T}_{sub}=\{t_0 \text{, } t_1\text{, } \cdots \text{, } t_{K-1}\} = 
+    \text{LLM } (\mathbf{P}_{G} \text{, } \mathbf{P}_{C} \text{, } \mathbf{P}_{E} \text{, } \mathbf{P}_{Q}) \text{,}
+\label{eq:llm}
+\end{equation}
+where {$K$} represents the total number of phrases, which varies depending on the input description. 
+Typically, longer descriptions more likely yield more phrases. To maintain consistency in our training dataset, we standardize it to five phrases (\ie, $K=5$). {If fewer than five phrases are produced, we simply duplicate some of the short phrases to obtain five short phrases.}
+In this way, phrases generated by LLM are related to the target object and align closely with our objective.
+
+\subsection{Conditional Referring Module {(CRM)}}
+\label{subsec:crm}
+Given the decomposed phrases {(\ie, target-related cues)}, we {propose a CRM} to enhance the discriminative {ability} on the target object region conditioned on these phrases, thereby improving localization accuracy. 
+As shown in \figref{fig:pipeline}, the CRM operates across {$N$ consecutive} stages. At each stage, it first utilizes a different target-related cue to modulate the global referring embedding via a referring modulation block and then produces the image-to-text response map through a response map generation block.
+
+\noindent \textbf{Referring Modulation Block.}
+}, to form $\mathbf{q}^{\prime}_{n} \in \mathbb{R}^{(L+1) \times C}$. 
+We then fuse the visual features $\mathbf{V}_n$ with $\mathbf{q}^{\prime}_{n}$ through a vision-to-text cross-attention, {to obtain} 
+{vision-attended} cue features $\hat{\mathbf{q}}_n \in \mathbb{R}^{(L+1) \times C}$, as:
+\begin{equation}
+    \begin{aligned}
+\boldsymbol{A}_{v\rightarrow t} =\text{SoftMax}\left((\mathbf{q}^{\prime}_{n} W_1^{q^{\prime}}) \otimes (\mathbf{V}_{n} W_2^V)^{\top} / \sqrt{C}\right)\text{;} \ \ 
+&\hat{\mathbf{q}}_{n} = \text{MLP}(\boldsymbol{A}_{v\rightarrow t} \otimes (\mathbf{V}_{n} W_{3}^{V})) + \mathbf{q}^{\prime}_{n} \text{,}   
+    \end{aligned}
+    \label{eq:crm1}
+\end{equation}
+where $\boldsymbol{A}_{v\rightarrow t} \in \mathbb{R}^{(L+1) \times H \times W}$ denotes the vision-to-text inter-modality attention weight.
+$W^{V}_*$ and $W^{q^{\prime}}_*$ are learnable projection layers. % for $\mathbf{V}_k$ and $\mathbf{q}_k$. 
+$\otimes$ denotes matrix multiplication. 
+Using the {vision-attended} cue features $\hat{\mathbf{q}}_n$, we then enrich the global textual features $\mathbf{Q}_n$ into {cue-enhanced textual features} $\mathbf{Q}_{n+1} \in \mathbb{R}^{1 \times C}$ through another text-to-text cross-attention, as: 
+\begin{equation}
+\boldsymbol{A}_{t \rightarrow t} =\text{SoftMax}\left((\mathbf{Q}_{n}W_1^Q) \otimes (\hat{\mathbf{q}}_{n} W_2^{\hat{q}})^{\top} / \sqrt{C}\right)\text{;} \ \ 
+\mathbf{Q}_{n+1} = \text{MLP}(\boldsymbol{A}_{t\rightarrow t} \otimes (\hat{\mathbf{q}}_{n} W_3^{\hat{q}})) + \mathbf{Q}_{n}\text{,} 
+\label{eq:crm2}
+\end{equation}
+where $\boldsymbol{A}_{t \rightarrow t} \in \mathbb{R}^{1 \times (L+1)}$  represents the text-to-text intra-modality attention weight.  
+$W^{Q}_*$ and $W^{\hat{q}}_*$ are learnable projection layers.
+In this way, we can enhance the attention of $\mathbf{Q}_n$ on the target object by conditioning its own target-related cue features and the global visual features.
+
+\noindent \textbf{Response Map Generation.}
+To {compute the response map}, we first update the visual features $\mathbf{V}_n$ to $\hat{\mathbf{V}}_{n}$ by integrating {them} with the updated referring text embedding $\mathbf{Q}_{n+1}$ using a text-to-visual cross-attention, thereby reducing the cross-modality discrepancy. Note that $\hat{\mathbf{V}}_n$ is then used in the next stage (\ie, $\mathbf{V}_{n+1}=\hat{\mathbf{V}}_{n}$).
+The response map $\mathbf{R}_{n} \in \mathbb{R}^{H \times W}$ at the $n$-th stage is {computed as}:
+\begin{equation} \label{eq:response}
+    \mathbf{R}_{n}= \text{Norm}(\text{ReLU}(\hat{\mathbf{V}}_{n} \otimes  \mathbf{Q}^{\top}_{n+1})) \text{,}
+\end{equation}
+where $\text{Norm}$ normalizes the output in the range of $[0\text{,} 1]$. 
+To achieve global visual-linguistic alignment, we adopt classification {loss}  $\mathcal{L}_\texttt{Cls}$ in \cite{liu2023referring} to optimize the {generation of the response map} at each stage.
+{
+It formulates the target localization problem as a classification process to differentiate between positive and negative text expressions. While the referring text expressions for an image are used as positive expressions, the ones from other images can be used as negative for this image.
+}
+\subsection{Region-aware Shrinking ({RaS}) Loss}
+\label{subsec:ras}
+Despite {modulating the referring attention with the target-related cues stage-by-stage}, image-text classification often activates irrelevant background objects due to its reliance on global and coarse response map constraints. 
+Ideally, as {the number of target-related cues {used} increases} across each stage, the response map should become more compact and accurate. 
+However, directly constraining the latter stage to have a more compact spatial activation than the former stage can lead to a trivial solution  (\ie, {without target activation}). 
+To address this problem, we propose a novel region-aware shrinking (RaS) loss, {which} segments the response map into foreground (target) and background (non-target) regions. Through contrastive enhancement between these regions, our method {gradually reduces the} background interference while refining the foreground activation in the response map. 
+Specifically, at stage $n$, we first employ a pretrained proposal generator to obtain a set of mask proposals, $\mathcal{M} = \{m_1\text{, } m_2\text{, } \cdots \text{, } m_P\}$, where each proposal $m_p$ is in $ \mathbb{R}^{H \times W}$ and $P$ is the {total} number of segment proposals.
+We then compute a alignment score between the response map $\mathbf{R}_n$ and each proposal $m_p$ in $\mathcal{M}$ as:
+\begin{equation}
+\label{alignment_score}
+    \mathcal{S}_{n}= \{{s}_{n\text{,}1} \text{, } {s}_{n\text{,}2} \text{, } \cdots \text{, } {s}_{n\text{,}P} \} \text{ with } {s}_{n\text{,}p}=\max(\mathbf{R}_{n} \odot m_{p}),
+\end{equation}
+where $\odot$ denotes the hadamard product.
+{The proposal with the highest score (denoted as  $m_{f}$) is then} treated as the target foreground region, while the combination of other proposals (denoted as  $m_{b}$) is regarded as non-target background regions. 
+With the separated regions, we define a localization ambiguity $S^{amb}_n$, {which} measures the uncertainty of the target object localization in the current stage $n$, as:
+\begin{equation}
+    S^{amb}_n=1 - \left(\text{IoU}(\mathbf{R}_n \text{, } m_f)- \text{IoU}(\mathbf{R}_n \text{, } m_b)\right) \text{,}
+\label{eq:smb}
+\end{equation}
+where $S^{amb}_n$ is in the range of $[0\text{, }1]$, and \text{IoU} denotes the intersection over union. When the localization result (\ie, the response map) matches the only target object proposal instance exactly, ambiguity is 0. Conversely, if it matches the more background proposals, ambiguity approaches 1. 
+Assuming that each target in the image corresponds to an instance, by integrating more cues, the model will produce a more compact response map and {gradually reduce the} ambiguity. 
+Consequently, based on the visual localization results from two {consecutive} stages, we can formulate the region-aware shrinking objective for a total of $N$ stages as:
+\begin{equation}
+    \mathcal{L}_{\texttt{RaS}}=\frac{1}{N-1} \sum_{n=0}^{N-2}  \max \left(0 \text{, } (S^{amb}_{n+1} - S^{amb}_{n})\right).
+\end{equation}
+By introducing region-wise ambiguity, $\mathcal{L}_{\texttt{RaS}}$ can direct non-target regions to converge towards attenuation while maintaining and improving the quality of the response map in the target region. This enables the efficient integration of target-related textual cues for progressively finer cross-modal alignment. Additionally, the mask proposals can also provide a shape prior to the target region, which helps to further enhance the accuracy of the target object localization.
+\subsection{Instance-aware Disambiguation (IaD) Loss}
+\label{subsec:md}
+{Although the RaS loss can help improve the} localization accuracy by reducing region-wise ambiguity {within one} single response map, it takes less consideration of the relation between different {instance-wise} response maps. 
+{Particularly, we note that}, given different {referring descriptions that refer to different objects of an} image, there {are usually some overlaps among the corresponding response maps}. {For example,} in \figref{fig:pipeline}, the player in the middle is {simultaneously activated by two referring expressions} {(\ie, {the response maps $\mathbf{R}_{*\text{,}a}$ and $\mathbf{R}_{*\text{,}d}$ have overlapping activated regions})}, resulting in inaccurate localization.
+{To address this problem, we propose an Instance-aware Disambiguation (IaD) loss {to help enforce that different regions of the response maps within a stage are activated if the referring descriptions of an image refer to different objects.}}
+Specifically, given a pair of image $\mathbf{I}_{a}$ and input text description $\mathbf{T}_{a}$,
+we first sample extra $N_d$ text descriptions, $\mathcal{T}_{d}=\{t_1 \text{, } t_2\text{, } \cdots \text{, } t_{N_d}\}$, where the referred target {object} of each text description $t_{d}$ is {in} the image $\mathbf{I}_a$ but is {different from the target object referred to by} $\mathbf{T}_a$. 
+{We then} obtain the image-to-text response {maps} $\mathbf{R}_{a}$ and $\mathcal{R}_{d}=\{\mathbf{R}_{1} \text{, } \mathbf{R}_{2} \text{,} \cdots \text{, } \mathbf{R}_{N_d}\}$ for $\mathbf{T}_{a}$ and $\mathcal{T}_{d}$ through \reqref{eq:response}.
+Here, we omit the stage index $n$ for {clarity}.
+Then, based on the \reqref{alignment_score}, we obtain the alignment scores ${\mathcal{S}}_a$ and 
+$\{{\mathcal{S}}_d\}_{d=1}^{N_d}$ for $\mathbf{T}_a$ and $\mathcal{T}_d$.
+In ${\mathcal{S}}$, the larger the value, the higher the alignment between the {corresponding proposal (specified by the index)} and the current text. 
+{To disambiguate overlapping activated} regions, we constrain that the maximum index of the alignment score between ${\mathcal{S}}_a$ and each of ${\mathcal{S}}_d$ must be different from each other (\ie, different {texts} must activate different {objects}).
+Here, we follow \cite{van2017neural} to compute the index vector, $y \in \mathbb{R}^{1 \times P}$, as:
+\begin{equation}
+{y}= \texttt{one-hot}(\texttt{argmax}({\mathcal{S}})) + {\mathcal{S}} - \texttt{sg}({\mathcal{S}}) \text{,}
+\end{equation}
+where $\texttt{sg}(\cdot)$ represents the stop gradient operation.  Finally, we denote the index vectors for ${\mathcal{S}}_a$ and  $\{{\mathcal{S}}_d\}_{d=1}^{N_d}$ as $y_a$ and  $\{y_d\}_{d=1}^{N_d}$, 
+and {we} formulate the IaD loss as:
+\begin{equation}
+    \mathcal{L}_{\texttt{IaD}}=\frac{1}{N_{d}}\sum_{d=1}^{N_{d}}\left( 1 - ||y_a - y_{d}||^{2} \right) .
+\end{equation}
+By enforcing the constraint at each stage, the response maps activated by different referring descriptions in an image for different instances are separated, and the comprehension of the discriminative cues is further enhanced.
+
+
+
+
+
+Experiments
+\label{sec:exp}
+
+
+\newcommand{\grayfont}{\color{black!55}}
+\newcommand{\LG}[1]{\cellcolor{lightgray!40}#1}
+\newcommand{\TG}[1]{\textcolor{gray}{#1}}
+
+\begin{table*}[t] 
+\caption{
+Quantitative comparison using mIoU and PointM metrics. {``(U)" and ``(G)" indicate} the UMD and Google partitions.
+\textbf{``Segmentor''} denotes utilizing the pre-trained segmentation models (SAM~\cite{kirillov2023segment} by default) for segmentation mask generation.
+$\dagger$ denotes that the method is fully-supervised. 
+``-'' means unavailable values.
+{\TG{Oracle} represents the evaluation of the best proposal mask based on ground-truth.}
+{Best and second-best performances are marked in} \textbf{bold} and \underline{underlined}.  
+}
+\centering
+\small    
+\renewcommand\arraystretch{1.2}
+\setlength{\tabcolsep}{3pt}
+\resizebox{0.93\textwidth}{!}
+{
+    \begin{tabular}{c | l | c | c | ccc |  ccc | ccc}
+      \toprule %[1pt]
+      \multirow{2}{*}{\textbf{Metric}}
+      & \multirow{2}*[0.0ex]{\textbf{{Method}}} 
+      & \multirow{2}*[0.0ex]{\textbf{Backbone}} 
+      & \multirow{2}*[0.0ex]{\textbf{Segmentor}} 
+      & \multicolumn{3}{c|}{\textbf{RefCOCO}} 
+      & \multicolumn{3}{c|}{\textbf{RefCOCO+}} 
+      & \multicolumn{3}{c}{\textbf{RefCOCOg}} \\
+      & & &
+      & \text{Val} & TestA & TestB 
+      & Val & TestA & TestB 
+      & Val (G) & Val (U)  &Test (U) \\
+      
+      \midrule
+              \multirow{7}{*}{\textbf{PointM}${\uparrow}$}
+      & GroupViT~\cite{xu2022groupvit}    & GroupViT & \ding{56}
+      &25.0 &26.3 &24.4 &25.9 &26.0 &26.1 &30.0 &30.9 &31.0   
+      \\
+      & CLIP-ES~\cite{lin2023clip} & ViT-Base & \ding{56}
+      & 41.3 & 50.6 & 30.3
+      & 46.6 & 56.2  & 33.2
+      & 49.1 & 46.2  & 45.8
+      \\
+      & WWbL~\cite{shaharabany2022looking} & VGG16 &\ding{56}
+      &31.3 &31.2 &30.8 &34.5 &33.3 &36.1 &29.3 &32.1 &31.4
+      \\
+      & SAG~\cite{kim2023shatter}   & ViT-Base &\ding{56}
+      & 56.2 & 63.3 & \underline{51.0} 
+      & 45.5 & 52.4 & 36.5 
+      & 37.3 & -- & -- 
+      \\
+      & TRIS~\cite{liu2023referring}  & ResNet-50 &\ding{56}
+      &51.9 &60.8 &43.0 
+      &40.8 &40.9 &41.1 
+      &52.5 &51.9 &53.3 
+      \\
+      & \LG{PCNet$_{{F}}$} & \LG{ResNet-50}  &\LG{\ding{56}}
+      & \LG{\underline{59.6}} & \LG{\underline{66.6}} & \LG{48.2} 
+      & \LG{\underline{{54.7}}} & \LG{\underline{{65.0}}} & \LG{\underline{44.1}} 
+      & \LG{\underline{57.9}} & \LG{\underline{57.0}}  & \LG{\underline{57.2}} 
+      \\
+      & \LG{PCNet$_{{S}}$} & \LG{ResNet-50} & \LG{\ding{56}}
+      & \LG{\textbf{60.0}} & \LG{\textbf{69.3}} & \LG{\textbf{52.5}} 
+      & \LG{\textbf{58.7}}  & \LG{\textbf{65.5}} & \LG{\textbf{45.3}}
+      & \LG{\textbf{5
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

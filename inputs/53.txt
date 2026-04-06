@@ -1,0 +1,170 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Neural nets have dominated computer vision, from object recognition~\cite{heDeepResidualLearning2016}~to fine-grained classification~\cite{Liu2023ProgressiveSM,9656684}, segmentation~\cite{chenRethinkingAtrousConvolution2017,Wang2023HuntingSD}, and detection~\cite{zhangDINODETRImproved2023}. However, the success is only sound for single-shot learning, \ie, training once to perform well with fully annotated datasets without considering the later learning process. \textit{Continual learning} aims to mimic human learning by gradually obtaining knowledge in a sequential fashion~\cite{Fagot2006EvidenceFL,Grutzendler2002LongtermDS}. Particularly, continual learning shines in dense prediction tasks, such as semantic segmentation~\cite{cermelliModelingBackgroundIncremental2020,douillardPLOPLearningForgetting2021,cermelliCoMFormerContinualLearning2023}, since the annotations are laborious to obtain, and sometimes the learned samples are inaccessible, such as the nature of stream data in autonomous driving~\cite{neuholdMapillaryVistasDataset2017}~or patient privacy in medical imaging~\cite{ozdemirExtendingPretrainedSegmentation2019}.
+
+\begin{figure}
+  \begin{subfigure}[t]{\columnwidth}
+    \includegraphics[width=\linewidth]{fig/objectness_generalization_jpg.pdf}
+    \caption[obj-general]{Mask proposal transferred to unseen classes.}
+    \label{fig:obj-general}
+  \end{subfigure}
+  \begin{subfigure}[t]{\columnwidth}
+    \includegraphics[width=\linewidth]{fig/objectness_forget_jpg.pdf}
+    \caption[obj-forget]{Mask proposals after finetuning on new classes.}
+    \label{fig:obj-forget}
+  \end{subfigure}
+  \caption[obj-props]{\textbf{Hidden properties inside query-based segmenters.} Objectness in query-based methods helps generalize mask proposals on unseen classes similar to learned classes (top). Additionally, because of the transfer ability of objectness, query-based methods are resistant to catastrophic forgetting of mask proposals (bottom).}
+  \squeezeup
+  \squeezeup
+  \label{fig:obj-props}
+\end{figure}
+
+However, machines tend to forget the early tasks if we train them to learn the new ones, also termed as \textit{catastrophic forgetting}~\cite{frenchCatastrophicForgettingConnectionist1999}, which is the critical obstacle toward continual learning. Moreover, dense prediction tasks tackled as per-pixel classification or regression by analyzing patterns around each pixel are inherently difficult, which makes the continual learning of these tasks even more challenging. Could we mitigate forgetting in continual segmentation in a more feasible way? The answer lies in a new paradigm: \textit{mask classification}, streamlining continual segmentation as learning without forgetting of class-agnostic binary masks and class recognition, via query-based segmenters~\cite{chengPerPixelClassificationNot2021,wangMaXDeepLabEndtoEndPanoptic2021,chengMaskedAttentionMaskTransformer2022,yuKmeansMaskTransformer2022}. Different from conventional per-pixel-based segmenters~\cite{chenRethinkingAtrousConvolution2017,strudelSegmenterTransformerSemantic2021,xieSegFormerSimpleEfficient2021}, from our observation, query-based segmenters have strong objectness (the ability to find objects in images) built-in, which is beneficial to continual segmentation for two reasons. Firstly, as the background is not silenced when learning to propose masks, the objectness can be transferred to unseen classes. As illustrated in \cref{fig:obj-general}, compared to DeepLabv3~\cite{chenRethinkingAtrousConvolution2017}, a per-pixel segmentation baseline, query-based Mask2Former~\cite{chengMaskedAttentionMaskTransformer2022}~proposes substantially better masks on unseen classes if the model has learned similar classes before, \eg, learning vehicles, such as planes, boats, buses, and cars, facilitates the later learning of trains. Secondly, we observe that the objectness alleviates the forgetting of old class mask proposals (see \cref{fig:obj-forget}), as the model can still propose comparable masks on old classes, even finetuning on new classes.
+
+Based on these findings, we propose \textbf{Co}ntinual Learning with \textbf{Mas}k-\textbf{T}hen-\textbf{Re}cognize \textbf{TR}ansformer decoder, termed as \textbf{CoMasTRe}, for continual segmentation. CoMasTRe disentangles the segmentation task to objectness learning and class recognition by learning to propose class-agnostic masks at the first stage and leaving recognition to the second stage. In continual settings, since CoMasTRe inherits the objectness of query-based methods, the learning of new mask proposals is considerably eased. This design also simplifies continual segmentation to forgetting-resistant continual objectness learning and a continual classification task. Specifically, CoMasTRe mitigates forgetting in two folds: (i) a simple but effective objectness distillation to reinforce old class objectness during long learning processes, and (ii) a multi-label class distillation strategy with task-specific classifiers to alleviate old class forgetting. For evaluation, we conduct extensive experiments on PASCAL VOC 2012 and ADE20K, showcasing that CoMasTRe reaches a new state-of-the-art on both datasets. In particular, we boost incremented class performance compared with previous best methods on VOC. Additionally, CoMasTRe significantly outperforms prior arts in all classes on ADE20K.
+
+To sum up, the contributions of this paper are as follows:
+
+\begin{itemize}[leftmargin=*,labelindent=13pt]
+  \item To leverage the properties of objectness, we propose \textbf{Co}ntinual learning with \textbf{Mas}k-\textbf{T}hen-\textbf{Re}cognize \textbf{TR}ansformer decoder, termed as CoMasTRe, to simply continual segmentation by decoupling the task into objectness learning and class recognition.
+  \item To tackle the forgetting issue, we strengthen the objectness using a simple but effective distillation strategy in the first stage and preserve class knowledge in the second stage with task-specific classifiers and multi-label class distillation tailored to segmentation.
+  \item Through extensive benchmarking on two datasets, our method outperforms prior query-based methods by up to $2.1\%$ on ADE20K and surpasses per-pixel methods on new classes by up to $32.16\%$ on PASCAL VOC.
+\end{itemize}
+
+
+Related Work
+\label{sec:related-work}
+
+\textbf{Query-based Image Segmentation.}
+Query-based segmenters~\cite{chengPerPixelClassificationNot2021,chengMaskedAttentionMaskTransformer2022,yuKmeansMaskTransformer2022,jainOneFormerOneTransformer2023}~have unified image segmentation via \textit{mask classification} and solve semantic, instance, and panoptic segmentation using the same framework.
+However, the \textit{mask classification} paradigm was originated from query-based detectors, such as DETR~\cite{carionEndtoEndObjectDetection2020a} and its variants~\cite{zhuDeformableDETRDeformable2021,liDNDETRAccelerateDETR2022,zhangDINODETRImproved2023},
+where we train the model to predict proposals and class labels with learnable queries. MaskFormer~\cite{chengPerPixelClassificationNot2021}~was the first to introduce \textit{mask classification} in semantic segmentation, which was dominated by per-pixel classification paradigm via convolutional nets~\cite{chenRethinkingAtrousConvolution2017,xiaoUnifiedPerceptualParsing2018,wangAxialDeepLabStandAloneAxialAttention2020}~or Transformers~\cite{strudelSegmenterTransformerSemantic2021,xieSegFormerSimpleEfficient2021}.
+Following MaskFormer,
+Mask2Former~\cite{chengMaskedAttentionMaskTransformer2022}~introduced multiple improvements, such as masked attention for mask refinement and using multi-scale features for better small object performance. To speed up the convergence, $k$MaX-DeepLab~\cite{yuKmeansMaskTransformer2022} generated queries from clustered image features. Recently, OneFormer~\cite{jainOneFormerOneTransformer2023} provided a generalist solution by joint training of all segmentation tasks. However, all of these segmenters learn to predict to mask and class simultaneously and are not suitable for decoupled continual segmentation.
+
+\noindent\textbf{Continual Segmentation.}
+Learning new knowledge by fintuning the model is a native way, but resulting \textit{catastrophic forgetting} of old knowledge~\cite{frenchCatastrophicForgettingConnectionist1999, mccloskeyCatastrophicInterferenceConnectionist1989, robinsCatastrophicForgettingRehearsal1995}. Continual learning aims to alleviate the forgetting issue by balancing the learning of new knowledge (\textit{plasticity}) and the preserving of the old one (\textit{stability}).
+While the research focus of continual learning is on classification~\cite{kirkpatrickOvercomingCatastrophicForgetting2017,liLearningForgetting2018,riemerLearningLearnForgetting2019,buzzegaDarkExperienceGeneral2020,douillardPODNetPooledOutputs2020,chaCo2LContrastiveContinual2021,wangLearningPromptContinual2022,smithCODAPromptCOntinualDecomposed2023,Zhang_2023_ICCV}, continual segmentation started to thrive recently~\cite{cermelliModelingBackgroundIncremental2020,douillardPLOPLearningForgetting2021,michieliContinualSemanticSegmentation2021,chaSSULSemanticSegmentation2021,phanClassSimilarityWeighted2022,zhangRepresentationCompensationNetworks2022,zhangMiningUnseenClasses2022,cermelliCoMFormerContinualLearning2023,shangIncrementerTransformerClassIncremental2023,xiaoEndpointsWeightFusion2023,zhuContinualSemanticSegmentation2023,zhangCoinSegContrastInter2023}.
+As pointed out in MiB~\cite{cermelliModelingBackgroundIncremental2020}, the background shift in continual segmentation aggravates the forgetting issue. Cermelli \etal~\cite{cermelliModelingBackgroundIncremental2020}~proposed unbiased distillation and classification to mitigate the background shift. PLOP~\cite{douillardPLOPLearningForgetting2021}~circumvented the background shift issue by feature distillation and pseudo-labeling. Based on PLOP, REMINDER~\cite{phanClassSimilarityWeighted2022} introduced class-weighted knowledge distillation to discriminate the new and old classes. With the same motivation, Incrementer~\cite{shangIncrementerTransformerClassIncremental2023}~designed a class deconfusion strategy and achieved competitive performance via a Transformer-based segmenter. Recently, RL-Replay~\cite{zhuContinualSemanticSegmentation2023}~set a strong replay-based baseline via reinforcement learning. Some works~\cite{cermelliIncrementalLearningSemantic2022,hsiehClassincrementalContinualLearning2023}~started to focus on more realistic scenarios by integrating weak supervision~\cite{Zhao2024SFCSF,Zhang2023CredibleDL}~with continual learning. The methods above follow the \textit{per-pixel} paradigm. Alhough CoMFormer~\cite{cermelliCoMFormerContinualLearning2023} was the first to present \textit{mask classification} in continual segmentation, it applied a standard framework with distillation and pseudo-labeling and failed to leverage the benefit of objectness. In contrast, CoMasTRe exploits objectness and decouples continual segmentation into forgetting-resistant objectness learning and class recognition.
+
+\noindent\textbf{Continual Dynamic Networks.}
+In addition to distillation methods appearing in continual segmentation, dynamic networks with parameter expansion~\cite{yanDynamicallyExpandableRepresentation2021,wangFOSTERFeatureBoosting2022,zhouModel603Exemplars2023,douillardDyToxTransformersContinual2022,wangLearningPromptContinual2022,wangDualPromptComplementaryPrompting2022,smithCODAPromptCOntinualDecomposed2023,smithCODAPromptCOntinualDecomposed2023,razdaibiedinaProgressivePromptsContinual2023}~also play a key role in continual learning. DER~\cite{yanDynamicallyExpandableRepresentation2021}~is an early work on the dynamic structure by duplicating the backbone for each task to mitigate the forgetting issue. However, DER suffers from the explosion of parameters after a long learning process. FOSTER~\cite{wangFOSTERFeatureBoosting2022} relieved the problem through a model compression stage. MEMO~\cite{zhouModel603Exemplars2023} went further by decoupling the network and only expanding specialized layers. Recently, more works~\cite{douillardDyToxTransformersContinual2022,wangLearningPromptContinual2022,wangDualPromptComplementaryPrompting2022,smithCODAPromptCOntinualDecomposed2023,smithCODAPromptCOntinualDecomposed2023,razdaibiedinaProgressivePromptsContinual2023}~started to leverage the dynamic nature of Transformers. DyTox~\cite{douillardDyToxTransformersContinual2022} proposed a dynamic token expansion mechanism by learning a task-specialized prompt at each step. The concurrent work, L2P~\cite{wangLearningPromptContinual2022}, started a new fashion of continual learning: learning to prompt pretrained models and extracting task-specialized features. Thanks to our Transformer-based decoder, we adopt task queries and task-specific classifiers in our class decoder to further alleviate forgetting.
+
+
+
+Method
+\label{sec:method}
+
+\subsection{Problem Definition}
+\label{subsec:prob-def}
+
+Image segmentation has been unified as a \textit{mask classification} problem, \ie, to propose class-agnostic masks and predict the corresponding class labels simultaneously. Formally, we define the dataset $\mathcal{D}$ containing pairs of image and target, and each sample pair contains an image $x \in \mathbb{R}^{C \times H \times W}$ and its target $y$, where $C$, $H$ and $W$ denote channel number, height and width of the image, respectively. Each target $y$ is composed by $M$ ground truth (GT) binary masks and class labels, denoted $y = \{(m_i^\mathrm{gt}, c_i^\mathrm{gt}) \mid m_i^\mathrm{gt} \in \{0, 1\}^{H \times W}, c_i^\mathrm{gt} \in \mathcal{C}\}_{i=1}^{M}$, where $\mathcal{C}$ is the class label space. Unlike per-pixel classification methods, background class is excluded from annotation. %The training objective is to train a model that takes images and predicts the masks and the labels.
+
+In terms of continual segmentation, the model sequentially learns to predict the masks of new classes but not to forget old ones. Formally, we divide the learning process to $T$ tasks, and at each step $t = 1, 2, \dots, T$ we train the model to predict a unique set of classes $\mathcal{C}^t$, where $\bigcap_{t=i}^{T} \mathcal{C}^{t} = \varnothing$ and $\bigcup_{t=i}^{T} \mathcal{C}^{t} = \mathcal{C}$. Only the part of the annotations containing new classes $\mathcal{C}^t$ are provided at step $t$, while the model should be able to predict all learned classes $\mathcal{C}^{1:t}$.
+ 
+\subsection{CoMasTRe Architecture}
+\label{subsec:comastre-arch}
+\begin{figure}
+    \includegraphics[width=\columnwidth]{fig/objectness-rev.pdf}
+    \caption[obj]{\textbf{CoMasTRe Architecture.} $\bigotimes$ denotes the dot product between positional embeddings $\mathcal{E}_\mathrm{pos}$ and pixel embeddings $\mathcal{E}^4_\mathrm{pixel}$.
+    CoMasTRe uses a two-stage image segmenter including three components: (a) a backbone and a pixel decoder producing pixel embedding, (b) a mask decoder $f$ with learnable positional queries $\mathcal{Q}_\mathrm{pos}$ for objectness learning, and (c) a class decoder $g$ with a set of task queries $\mathcal{Q}_\mathrm{task}$ for class recognition.
+    }
+    \label{fig:obj}
+\end{figure}
+
+Thanks to the properties of objectness (see \cref{fig:obj-props}) and widely studied continual classification, we argue that solving the continual segmentation problem with \textit{mask classification} is inherently advantageous. Therefore, we propose CoMasTRe, which adopts Mask2Former~\cite{chengMaskedAttentionMaskTransformer2022}~meta-architecture, keeping the backbone and the pixel decoder while adding two newly designed Transformer decoders to help disentangle objectness learning (stage 1) and class recognition (stage 2), as shown in \cref{fig:obj}. The overall training process of our CoMasTRe can be summarized as:
+\begin{enumerate}
+    \item When an image comes to CoMasTRe, the backbone, and the pixel decoder first encode and then decode the image to pixel embeddings. We take out the pixel embeddings from all the layers of the pixel decoder for the following process as $\{\mathcal{E}_\mathrm{pixel}^l\}^4_{l=1}$, where $l$ denotes different layers and there are 4 layers in total  (\cref{fig:obj} (a)). 
+
+    \item Next, we randomly initialize learnable positional queries $\mathcal{Q}_\mathrm{pos}$ and input them to the objectness learning stage (stage 1), to extract positional embeddings $\mathcal{E}_\mathrm{pos}$ through the mask decoder $f$ for predicting class-agnostic mask proposals $\mathcal{M}$ and objectness scores $\mathcal{S}$. The training involves bipartite matching with ground truth (\cref{fig:obj} (b)).
+    
+    \item After that, matched positional embeddings $\mathcal{E}_\mathrm{pos}^\mathrm{m}$ from stage 1 with pixel embeddings are input to class decoder $g$ for recognition (stage 2). To reduce task interference during continual learning, task queries $\mathcal{Q}_\mathrm{task}$ and task-specific classifiers $\phi_1, \dots, \phi_t$ are learned to specialize the class knowledge of each task. (\cref{fig:obj} (c)). %Inspired by prior dynamic networks~\cite{yanDynamicallyExpandableRepresentation2021,douillardDyToxTransformersContinual2022}, a task query is learned at each step to specialize the class decoding process on new classes.   
+
+    \item Finally, we obtain segmentation results by combining the mask proposals and objectness scores from stage 1 with the class prediction from stage 2.
+\end{enumerate}
+
+The details of the two stages will be illustrated in \cref{para:stage-1} and \cref{para:stage-2}.
+
+\subsubsection{Stage 1: Objectness Learning}
+\label{para:stage-1}
+As illustrated in \cref{fig:obj} (b), our objectness learning mainly relies on a mask decoder. The mask decoder $f$ is composed of $L$ blocks of Transformer layers~\cite{vaswaniAttentionAllYou2017}, taking $N$ learnable positional queries $\mathcal{Q}_\mathrm{pos} = \{q_1, \dots, q_N\} \in \mathbb{R}^{N \times d}$ and intermediate pixel embeddings $\{\mathcal{E}^l_\mathrm{pixel}\}_{l=1}^3$ as input. Then, it outputs the positional embeddings $\mathcal{E}_\mathrm{pos} = \{e_1, \dots, e_N\} \in \mathbb{R}^{N \times d}$ for mask proposals, objectness scores, and stage 2 recognition. The mask proposals $\mathcal{M} = \{m_1, \dots, m_N\} \in [0, 1]^{N \times H \times W}$ is computed as $\mathcal{M} = \mathrm{sigmoid}(\mathrm{Upsample}(\mathrm{MLP}(\mathcal{E}_\mathrm{pos}) \cdot \mathcal{E}_\mathrm{pixel}^4))$, where the $\mathrm{MLP}(\cdot)$ acts as a non-linear transformation function and $\mathrm{Upsample}(\cdot)$ interpolates the logits to image size. Note here each positional embedding produces a mask proposal. At the same time, $\mathcal{E}_\mathrm{pos}$ is input to our objectness head, in which a binary classifier is designed to output the objectness score $\mathcal{S} = \{s_1, \dots, s_N\} \in [0, 1]^N$ to indicate whether the mask proposals containing objects or not. During training, we first perform bipartite matching considering the cost between $N$ mask proposals $\{m_i\}_{i=1}^N$ and $M$ ground truth masks $\{m_j^\mathrm{gt}\}_{j=1}^M$. Here, we assume $N\gg M$ and pad the ground truth with ``no object'' $\varnothing$ to ensure a one-to-one matching between predictions and ground truth. %Now, the ground truth contains $N$ element with $\{\varnothing\}^{N-M}$ padded to the end. 
+After solving the matching via the Hungarian algorithm~\cite{kuhnHungarianMethod}, we get the optimal permutation of $N$ elements, denoted as $\sigma$. Then, we optimize this stage using ground truth masks:
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}_\mathrm{obj} = \sum_{j=1}^N \big[&-\mathds{1}_{m_j^\mathrm{gt} \neq \varnothing}{\log{s_{\sigma_j}}} - \mathds{1}_{m_j^\mathrm{gt} = \varnothing}{\log{(1-s_{\sigma_j})}} \\
+    &+\mathds{1}_{m_j^\mathrm{gt} \neq \varnothing}\mathcal{L}_\mathrm{mask}(m_{\sigma_j}, m_j^\mathrm{gt})\big],
+\end{aligned}
+\end{equation}
+where $\mathcal{L}_\mathrm{mask}$ is the sum of binary cross-entropy loss and Dice loss~\cite{sudreGeneralisedDiceOverlap2017}.
+Based on the matching results, $M$ matched positional embeddings $\mathcal{E}^\mathrm{m}_\mathrm{pos} =
+\{e_j \mid e_j \in \mathcal{E}_\mathrm{pos}, m_j^\mathrm{gt} \neq \varnothing\}$ are traced back and fed forward to stage 2 class decoder. Here, we supervise the objectness scores by encouraging the matched ones and suppressing the unmatched ones, otherwise, the model tends to produce high objectness scores for all the proposals. The remaining unmatched embeddings $\mathcal{E}^\mathrm{u}_\mathrm{pos} = \mathcal{E}_\mathrm{pos} \setminus \mathcal{E}^\mathrm{m}_\mathrm{pos}$ are reserved for distillation to alleviate forgetting (see \cref{subsec:comastre-distill}).
+
+\subsubsection{Stage 2: Class Recognition}
+\label{para:stage-2}
+
+Our stage 2 aims to recognize the object inside the mask proposals. Thus, we use matched positional embeddings along with pixel embeddings as input for class recognition. Besides, inspired by DyTox~\cite{douillardDyToxTransformersContinual2022}, we integrate task queries with matched positional embeddings as input to task-specific classifiers in the class decoding process, which facilitates continual learning by reducing task interference, resulting in more specialized classifiers.
+
+Since continual segmentation contains $T$ tasks, to illustrate our class recognition stage, we assume the current learning step is $t$. 
+We denote task queries $\mathcal{Q}_\mathrm{task} = \{\theta_1, \dots, \theta_t\}$. As shown in \cref{fig:obj} (c), for each positional embedding $e \in \mathcal{E}_\mathrm{pos}^\mathrm{m}$ and each task query $\theta \in \mathcal{Q}_\mathrm{task}$, we take $(e, \theta)$ as a pair and feed it with pixel embedding to the class decoder $g$ (a Transformer block shared across tasks), obtaining the localized task embedding $k$. For each positional embedding, we obtain its task embeddings $\mathcal{E}_\mathrm{task} = \{k_1, \dots, k_t\}$. Then, $t$ task-specific classifiers $\Phi^t = \{\phi_1, \dots, \phi_t\}$ are applied to $\mathcal{E}_\mathrm{task}$, where each classifier $\phi_j \in \Phi^t$ is specialized to predict the classes in this task $\mathcal{C}^j$, \ie, $\phi_j: \mathbb{R}^d \mapsto {\mathcal{C}^j}$. In this way, we obtain the class probability of each proposal as $p = \mathrm{sigmoid}([\phi_1(k_{1}), \dots, \phi_t(k_{t})])$, as each positional embedding corresponds to a mask proposal.
+By feeding all the positional embeddings, we get the class probability of all proposals $\mathcal{P} = \{p_i\}_{i=1}^{M}$. We supervise this stage with classification loss using ground truth class labels:
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}_\mathrm{cls} = - \frac{1}{M}\sum_{i=1}^M \sum_{c \in \mathcal{C}^{t}}\big[&\mathds{1}_{c = c_i^\mathrm{gt}}(1 - p_{i,c})^\gamma \log{p_{i,c}} \\
+    + &\mathds{1}_{c \neq c_i^\mathrm{gt}}p_{i,c}^\gamma \log{(1 - p_{i,c})}\big],
+\end{aligned}
+\end{equation}
+where $p_{i,c}$ is the predicted probability of class $c$ for the $i$-th proposal, $\gamma$ is a hyperparameter. Here, we use focal loss~\cite{linFocalLossDense2017}~instead of cross-entropy loss for better calibration~\cite{mukhotiCalibratingDeepNeural2020}, which smooths the distillation process during continual learning. The overall segmentation loss is the sum of objectness loss and classification loss, \ie, $\mathcal{L}_\mathrm{seg} = \mathcal{L}_\mathrm{obj} + \mathcal{L}_\mathrm{cls}$. We jointly train two stages by minimizing $\mathcal{L}_\mathrm{seg}$. During inference, we set an objectness threshold $\alpha$ at stage 1 to filter low confident prediction and feed high objectness embedding to stage 2 for mask recognition.
+\subsection{Learning without Forgetting with CoMasTRe}
+\label{subsec:comastre-distill}
+
+Learning new classes by naively finetuning the model will cause catastrophic forgetting. To alleviate this issue, our CoMasTRe separately considers the distillation of both stages. In this way, predictions on base classes can also be preserved when learning new classes.
+\subsubsection{Objectness Distillation}
+\label{sec:obj-distill}
+As shown in \cref{fig:obj-dist} (a), we first train the model with bipartite matching and get matched positional embeddings and unmatched ones. However, the objectness scores of unmatched ones quickly diminish as the ground truth does not contain masks from old classes, resulting in incorrect objectness scores on old classes. Thus, we introduce objectness score distillation with $\mathcal{L}_\mathrm{os-kd}$ to preserve objectness scores learned in previous steps. Moreover, in spite of the robust nature of objectness, could we further improve the objectness during continual learning? To answer this question, we propose another two distillation losses $\mathcal{L}_\mathrm{mask-kd}$ and $\mathcal{L}_\mathrm{pe-kd}$ for mask proposals and position embeddings, respectively (see \cref{fig:obj-dist} (b)). Following previous methods~\cite{liLearningForgetting2018,cermelliModelingBackgroundIncremental2020}, we distill the outputs from the last step model to mitigate the objectness forgetting on old classes.
+
+Formally, we denote unmatched mask proposals as $\mathcal{M}^\mathrm{u} = \{m^\mathrm{u}_1, \dots, m^\mathrm{u}_{N-M}\}$ and objectness scores as $\mathcal{S}^\mathrm{u} = \{s^\mathrm{u}_1, \dots, s^\mathrm{u}_{N-M}\}$, which are the corresponding outputs from unmatched positional embeddings $\mathcal{E}_\mathrm{pos}^\mathrm{u} = \{e^\mathrm{u}_i, \dots, e^\mathrm{u}_{N-M}\}$. Additionally, the distillation process requires the corresponding outputs from the last step model, including mask proposals $\tilde{\mathcal{M}}^\mathrm{u} = \{\tilde{m}^\mathrm{u}_1, \dots, \tilde{m}^\mathrm{u}_{N-M}\}$, objectness scores $\tilde{\mathcal{S}}^\mathrm{u} = \{\tilde{s}^\mathrm{u}_1, \dots, \tilde{s}^\mathrm{u}_{N-M}\}$, and positional embeddings $\tilde{\mathcal{E}}_\mathrm{pos}^\mathrm{u} = \{\tilde{e}^\mathrm{u}_1, \dots, \tilde{e}^\mathrm{u}_{N-M}\}$. We freeze the parameters of the last step model during distillation.
+
+\noindent\textbf{Distill objectness scores.}
+We use vanilla knowledge distillation loss~\cite{hintonDistillingKnowledgeNeural2015} to mitigate the diminishing of objectness scores by minimizing Kullback-Leibler (KL) divergence between the current unmatched objectness score $\mathcal{S}^\mathrm{u}$ and the last step ones $\tilde{\mathcal{S}}^\mathrm{u}$,
+\begin{equation}
+    \mathcal{L}_\mathrm{os-kd} = -\frac{1}{|\mathcal{S}^\mathrm{u}|} \sum_{i=1}^{|\mathcal{S}^\mathrm{u}|} \left[\tilde{s}_{i}^\mathrm{u}\log{\frac{s_{i}^\mathrm{u}}{\tilde{s}_{i}^\mathrm{u}}}
+    + (1-\tilde{s}_{i}^\mathrm{u})\log{\frac{1-s_{i}^\mathrm{u}}{1-\tilde{s}_{i}^\mathrm{u}}}\right].
+\end{equation}
+
+As objectness scores play a key role during inference,  this distillation is designed to maintain the objectness scores of previously learned mask proposals.
+
+\noindent\textbf{Distill mask proposals.}
+To preserve the knowledge of the mask proposals but also focus on proposals with high objectness scores, we reweight mask distillation with objectness scores. By distilling masks with low objectness scores, we relax the case when objectness scores fail to indicate the objectness, as we observe some mask proposals generalize to unseen classes, but their objectness scores are low. The mask distillation loss is defined as
+\begin{equation}
+    \mathcal{L}_\mathrm{mask-kd} = \sum_{i=1}^{|\mathcal{M}^\mathrm{u}|} \frac{\omega_i}{\sum_{i=1}^{|\mathcal{M}^\mathrm{u}|}\omega_i}\mathcal{L}_\mathrm{mask}(m_i^\mathrm{u}, \tilde{m}_i^\mathrm{u}),
+\end{equation}
+where $\omega_i = (\tilde{s}_{i}^\mathrm{u})^{\beta}$, and $\beta$ is a reweight strength hyperparameter.
+
+\noindent\textbf{Distill positional embeddings.}
+Similar to mask distillation, we reweight position distillation when enforcing the unmatched positional embeddings $\mathcal{E}_\mathrm{pos}^\mathrm{u}$ to be similar to the last step ones $\tilde{\mathcal{E}}_\mathrm{pos}^\mathrm{u}$. Here, we encourage high cosine similarity between the current step ones and the last step ones, which assists in preserving positional information for later multi-label class distillation,
+\begin{equation}
+    \mathcal{L}_\mathrm{pe-kd} = \sum_{i=1}^{|\mathcal{E}_\mathrm{pos}^\mathrm{u}|} \frac{\omega_i}{\sum_{i=1}^{|\mathcal{E}_\mathrm{pos}^\mathrm{u}|}\omega_i} \left(1 - \cos(e_i^{\mathrm{u}}, \tilde{e}_i^\mathrm{u})\right),
+\end{equation}
+where $\cos(\cdot)$ means cosine similarity.
+
+Finally, we distill the objectness by minimizing $\mathcal{L}_\mathrm{obj-kd} = \mathcal{L}_\mathrm{os-kd} + \mathcal{L}_\mathrm{mask-kd} + \mathcal{L}_\mathrm{pe-kd}$.
+
+\begin{figure}
+    \includegraphics[width=\columnwidth]{fig/objectness_distillation.pdf}
+    \caption[obj-dist]{\textbf{Learning without forgetting with CoMasTRe.} To tackle catastrophic forgetting, CoMasTRe separated the distillation process into two stages, including objectness distillation and class distillation. We perform bipartite matching first, as in (a). Then, we distill the knowledge of objectness for remaining embeddings, as in (b). Finally, we select positional embeddings for the class distillation if they match with ground truth or have high objectness scores at the last step. The class knowledge is distilled from both matched and unmatched positional embeddings with a class decoder and task-specific classifiers, as in (c).}
+    \label{fig:obj-dist}
+\end{figure}
+
+\subsubsection{Class Distillation}
+\label{sec:class-distill}
+
+As the segmentation is decoupled to a recognition task at the second stage, the continual learning of the second stage is essentially continual multi-label classification.
+We discuss class distillation in two scenarios: (i) distilling the class prediction from the last step high-objectness embeddings unmatched with GT, and (ii) distilling the class knowledge from matched embeddings (see in \cref{fig:obj-dist} (c)). During class distillation, we freeze
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

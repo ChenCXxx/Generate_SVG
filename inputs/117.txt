@@ -1,0 +1,311 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Leveraging Vision-Centric Multi-Modal Expertise \\
+
+% ArXiv ID: 2310.15670
+
+
+
+
+
+\maketitle
+
+
+\begin{abstract}
+
+Current research is primarily dedicated to advancing the accuracy of camera-only 3D object detectors (apprentice) through the knowledge transferred from LiDAR- or multi-modal-based counterparts (expert).
+However, the presence of the domain gap between LiDAR and camera features, coupled with the inherent incompatibility in temporal fusion, significantly hinders the effectiveness of distillation-based enhancements for apprentices.
+Motivated by the success of uni-modal distillation, an apprentice-friendly expert model would predominantly rely on camera features, while still achieving comparable performance to multi-modal models.
+To this end, we introduce \textbf{VCD}, a framework to improve the camera-only apprentice model, including an apprentice-friendly multi-modal expert and temporal-fusion-friendly distillation supervision.
+The multi-modal expert \textbf{VCD-E} adopts an identical structure as that of the camera-only apprentice in order to alleviate the feature disparity, and leverages LiDAR input as a depth prior to reconstruct the 3D scene, achieving the performance on par with other heterogeneous multi-modal experts.
+Additionally, a fine-grained trajectory-based distillation module is introduced with the purpose of individually rectifying the motion misalignment for each object in the scene.
+With those improvements, our camera-only apprentice \textbf{VCD-A} sets new state-of-the-art on nuScenes with a score of 63.1\% NDS.
+The code will be released at \url{https://github.com/OpenDriveLab/Birds-eye-view-Perception}.
+\end{abstract}
+
+
+\section{Introduction}
+
+The camera-only 3D perception has garnered increasing attention in autonomous driving perception tasks~\cite{li2022delving, hu2023planning, Tong_2023_ICCV, wang2023openlanev2}.
+Although camera-only models possess the advantages of low deployment cost and ease of widespread application, they still fall behind state-of-the-art models that leverage LiDAR sensors regarding perception accuracy.
+Researchers have recently employed distillation methods to transfer knowledge from a powerful expert model into a camera-only apprentice model, with the expectation of leveraging the expertise of these stronger expert models to enhance the capability of the camera-only models. 
+Existing 3D perception distillation methods often adopt expert models with the best performance, such as LiDAR-based models~\cite{yin2021centerpoint} or multi-modal fusion models~\cite{bai2022transfusion,yang2022deepinteraction, li2022uvtr}. 
+However, the presence of the domain gap between LiDAR and camera features hampers knowledge transfer during distillation, resulting in limited improvements in practical applications.
+An alternative expert model is the large-scale camera-only model~\cite{li2022bevlgkd, Zeng_2023_CVPR}.
+Despite eliminating the domain gap between the camera-only expert model and the apprentice model, the expert model falls short in terms of effectiveness due to the inherent lack of precise geometry information. 
+Likewise, it fails to yield a satisfactory improvement to the apprentice model.
+Hence, a desirable expert should meet two essential requirements: attaining state-of-the-art performance and minimizing the domain gap. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+Furthermore, current distillation methods fall short in compatibility with long-term temporal fusion, which is an essential component in cutting-edge camera-only 3D detectors~\cite{han2023recurrent, park2022solofusion}.
+Long-term temporal modeling has shown considerable potential in enhancing the accuracy of depth estimation and detection performance, but it introduces the issue of motion misalignment. 
+Previous methods for BEV distillation have followed two distinct approaches, either distilling the entire BEV space without sufficient attention to the foreground objects~\cite{romero2014fitnets} or exclusively distilling the foreground object regions~\cite{chen2022bevdistill, huang2022tigbev}, thereby overlooking the motion misalignment issue resulting from the long-term temporal fusion.
+As shown in Fig.~\ref{multi-modal-fusion} (b), this misalignment occurs when past scenes are transformed into the current scene coordinates based solely on ego-motion, assuming all objects are stationary. 
+While in reality, dynamic objects will cause the misalignment, thus interfering with the temporal fusion features.
+This is more challenging in the case of long-term temporal fusion. 
+Existing methods, such as StreamPETR~\cite{wang2023streampetr}, introduce LayerNorm~\cite{ba2016layernorm} for dynamic object modeling, but the effects of incorporating velocity and time variables in the model are relatively minor.
+
+
+
+
+\begin{figure}
+  \begin{subfigure}[t]{0.5\textwidth}
+    \includegraphics[width=\textwidth]{figs/fig1-1.pdf}
+    \caption{Comparison of various multimodal fusion methods.}
+    \label{fig-a}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.475\textwidth}
+    \includegraphics[width=\textwidth]{figs/fig1-2.pdf}
+    \caption{The misalignment of moving objects.}
+    \label{fig-b}
+  \end{subfigure}
+  \caption{(a) The existing pipelines require camera and LiDAR backbones, while our pipeline eliminates the need for LiDAR. Using point cloud depth, we directly transform image features into BEV space to create a vision-centric expert.
+  (b) The warping of an object in the historical frame into the current timestamp results in a false position in the current frame due to assuming the object is stationary. The green rectangle represents true positives, while the pink rectangle indicates false positives. $x_i$ denotes the various positions of the object in the historical timestamp.} 
+  \label{multi-modal-fusion}
+\end{figure}
+
+To address the aforementioned challenges, we first propose a vision-centric expert, termed as \textbf{VCD-E}, which incorporates LiDAR information to enhance the accuracy of depth input. 
+In this context, the term ``vision-centric'' refers to the utilization of prominent features derived from camera input, distinguishing it from approaches that heavily rely on LiDAR-based features.
+This model is distinct from conventional multi-modality fusion techniques by eliminating LiDAR backbone.
+By solely integrating LiDAR depth and long-term temporal fusion under bird’s-eye-view (BEV), our model achieves comparable performance to state-of-the-art multi-modal fusion methods~\cite{liang2022bevfusion} by only encoding image modality. 
+As illustrated in Fig.~\ref{multi-modal-fusion} (a), different from previous fusion methods that adopt two modality-specific backbones, we only leverage a single branch to generate semantic features based on image input, and point clouds only provide depth information. 
+Compared to previous fusion methods, our approach eliminates the need for intricate training strategies or specialized fusion module designs while reaching a comparable performance to current fusion methods~\cite{liang2022bevfusion,li2022uvtr}. 
+More importantly, the vision-centric multi-modal model has the exact same architecture as the camera-only apprentice model, and the generated BEV spatial representation is solely from image features. 
+The domain gap is significantly alleviated through the distillation of knowledge from the proposed multi-modal expert model to the camera-only apprentice model.
+Due to the advantageous characteristic of domain consistency, our apprentice model acquires substantial benefits from the expert, surpassing previous distillation methods~\cite{chen2022bevdistill,shu2021cwd}.
+
+
+To mitigate the incompatibility arising from the motion misalignment of dynamic objects, we further propose a trajectory-based distillation module. 
+In this paper, our primary focus revolves around foreground objects, while simultaneously incorporating a meticulous consideration of their historical trajectories.
+Specifically, by warping dynamic targets from history to the current frame, we derive the motion trajectory associated with each individual object.
+Then we use the trajectory of each object to query BEV features of the apprentice and expert models respectively. 
+By leveraging the trajectory features of the expert model to optimize the corresponding features of the apprentice model, the latter can acquire the ability to mitigate the interference arising from motion misalignment.
+In addition, to enhance the depth perception ability, we diffuse the depth of the foreground part into the 3D space, modeling occupancy to obtain grid-based supervision to assist in depth prediction for objects.
+
+
+
+
+
+In summary, we propose the multi-modality expert and camera-only apprentice models, termed
+as \textbf{VCD-E} and \textbf{VCD-A}, respectively. 
+Our contributions are summarized as follows:
+
+ $\bullet$ We construct a vision-centric multi-modal expert that solely encodes the image modality, eliminating the need for a LiDAR backbone.
+ For the first time, we demonstrate that the expert can deliver performance on par with other state-of-the-art multi-modal methods while being significantly simpler.
+    
+ $\bullet$ Due to its homogeneous characteristics and superior performance, the vision-centric expert has been proven effective in distilling knowledge to vision-based models. 
+ The effects are significant across a range of model sizes, from compact to more extensive architectures.
+ 
+$\bullet$ We propose trajectory-based distillation and occupancy reconstruction modules, which supervise both static and dynamic objects to alleviate misalignment during long-term temporal fusion. Combined with the constructed expert model, we enhance the performance of the vision-based models and achieve state-of-the-art on the nuScenes val and test leaderboard.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Related Work}
+\label{gen_inst}
+
+In this section, we review previous studies in the areas of 3D object detection, multi-modality fusion, knowledge distillation, focusing on the techniques and methods most relevant to our research.
+
+\paragraph{3D Object Detection.}
+
+3D object detection has recently gained significant popularity in the context of autonomous driving and robotics.
+Detection methods generally fall into two categories: vision-based 3D object detection ~\cite{zhou2021monocular, Zhou2022monocular, chen2022persformer, li2023voxelformer, wang2021fcos3d, li2022bevformer, wang2022detr3d, yang2022bevformer, huang2022bevdet4d, Xiong_2023_CVPR} and LiDAR-based 3D detection~\cite{lang2019pointpillar, yin2021centerpoint, shi2021pvrcnn++}. 
+Vision-based approaches~\cite{li2022bevstereo, wang2022sts, feng2022aedet, li2022bevdepth} exploit image information and frequently involve deep learning techniques to estimate depth. 
+In contrast, LiDAR-based methods capitalize on precise geometric information from LiDAR sensors to achieve superior object detection accuracy. 
+Our proposed vision-centric expert shares the same modality as vision-based detectors, while exhibiting superior performance compared to LiDAR-based detectors.
+
+Long-term modeling has been employed to improve the performance of 3D object detection models~\cite{han2023recurrent, park2022solofusion}. 
+SOLOFusion~\cite{park2022solofusion} utilizes long-term temporal modeling to achieve excellent performance. 
+VideoBEV~\cite{han2023recurrent} maintains comparable performance with SOLOFusion while being more efficient, using long-term recurrent temporal modeling. 
+However, previous research~\cite{li2022bevstereo, wang2023streampetr} has highlighted that long-term temporal fusion can lead to inadequate detection of dynamic objects. 
+Although StreamPETR~\cite{wang2023streampetr} 
+proposes the propagation transformer~\cite{vaswani2017attention, cmz2023cf, cmz2023diffrate, cmz2023smmix} to conduct object-centric temporal modeling, the improvement of dynamic object modeling remains relatively modest. 
+Our proposed trajectory-based distillation module alleviates this limitation, enabling accurate detection of both static and dynamic objects by camera-based 3D object detection models that utilize long-term modeling.
+
+\paragraph{Multi-modality Fusion.}
+Multi-modality fusion techniques~\cite{vora2020pointpainting, bai2022transfusion, li2022uvtr, gao2023sparse} have been extensively investigated to enhance 3D object detection performance by integrating complementary information from different sensor modalities, such as cameras and LiDAR sensors. These methods~\cite{liang2022bevfusion, yang2022deepinteraction} typically require complex training strategies and the development of specialized fusion modules to effectively merge the distinct sources of information. In contrast, we propose a streamlined architecture that utilizes an image backbone for feature extraction, obviating the need for a LiDAR backbone. This efficient approach augments vision-based models by incorporating LiDAR information, maintaining homogeneity with vision-based models while preserving exceptional performance.
+
+\paragraph{Knowledge Distillation.}
+
+Knowledge distillation~\cite{romero2014fitnets, shu2021cwd} is a technique facilitating the transfer of knowledge from a larger, more complex model (expert) to a smaller, more efficient model (apprentice). This approach has been successfully applied in various domains, including image classification~\cite{deng2009imagenet}, natural language processing~\cite{vaswani2017attention}, and policy learning~\cite{wu2022trajectoryguided, jia2023thinktwice, jia2023driveadapter, chen2023end}. 
+Therefore, recent distillation methods~\cite{guo2021liga, huang2022tigbev, li2022bevlgkd, huang2023geometricaware, klingner2023X3KD} build upon 3D object detection aims to transfer the accurate geometry knowledge from LiDAR to camera. MonoDistill~\cite{chong2022monodistill} projects the LiDAR points into the image plane to serve as the expert to transfer knowledge. BEVSimDet~\cite{zhao2023bevsimdet} simulates fusion-based methods to alleviate the domain gap between the two different modalities. BEVDistill~\cite{chen2022bevdistill} projects the LiDAR points and images into the BEV space to align the LiDAR feature and image feature. 
+Due to the non-homogenous nature between the LiDAR and camera, transferring knowledge from LiDAR to images is challenging. Instead, our work constructs a vision-centric expert, which possesses a homogeneous modality with vision-based models. The vision-centric expert can leverage knowledge distillation to transfer the geometric perception capabilities to various vision-based models, hence enhancing performance accordingly.
+
+
+
+
+\section{Method}
+\label{headings}
+
+
+In this section, we present our approach in detail. The overall architecture is presented in Sec.~\ref{overall_txt}. Our method involves two main components: (1) the vision-centric expert in Sec.~\ref{expert_txt}, and (2) the trajectory-based distillation and occupancy reconstruction modules as elaborated in Sec.~\ref{distillation_txt}.  The pipeline of our method is depicted in Fig.~\ref{pipelines}. 
+
+\subsection{Overall Architecture}
+\label{overall_txt}
+
+
+In this paper, we construct a pair of harmonious expert and apprentice models. The expert and apprentice models adopt the consistent model architecture. The only difference is that the expert additionally leverages the accurate depth map generated from the point cloud, while the apprentice model predicts the depth map from the image. Although our expert model only uses an image backbone to encode high-level scene information, it is on par with state-of-the-art multi-model fusion methods that use several modality-specific backbones and complex interaction strategies. More importantly, we eliminate the domain gap between the multi-model expert and the camera-only apprentice model, which is deemed as one of the most challenging topics in the 
+cross-modality distillation literature.
+
+
+
+
+As illustrated in Fig.~\ref{pipelines}, we construct a distillation framework between the expert network and the apprentice network. The vision-centric expert fuses feature $\boldsymbol{I}^E$ extracted from the image backbone and the temporal depth map $\boldsymbol{D}$ projected from LiDAR points to create a unified BEV representation $\boldsymbol{F}^E$ used for 3D object detection. Therefore, although we adopt a cross-modality approach for 3D object detection, the resulting representation remains homogeneous with image modality features. 
+
+After obtaining the pretrained vision-centric expert and corresponding apprentice network, we freeze the expert network and leverage its intermediate features as auxiliary supervision for the apprentice network.
+Since current advanced vision-based detectors employ long-term temporal modeling to attain state-of-the-art performance, we utilize a standard long-term temporal vision-based detector based on BEVDepth as the apprentice model in our context.
+The expert model also utilizes long-term temporal modeling to ensure consistency and achieve higher performance.
+
+
+\subsection{The Generation of Expert Model}
+\label{expert_txt}
+We construct a vision-centric expert by integrating LiDAR information as accurate depth input into a vision-based model. Nevertheless, given the sparsity of LiDAR depth data, we rely on the predicted depth values obtained from images for pixels lacking LiDAR depth information. We also utilize future frames to further improve the performance of the expert model in the offline 3D detection setting. The vision-based detector serves as the primary model, and LiDAR information complements it by providing precise depth information. This approach eliminates the need for complex training strategies or custom-designed fusion modules, streamlining the fusion process. 
+
+
+
+
+For the expert model, we project the last sweep LiDAR frame with the current LiDAR frame onto images to obtain corresponding depth maps $\boldsymbol{D}$. 
+Since the depth maps $\boldsymbol{D}$ generated from point clouds can not cover every pixel of the images, we also predict depth distribution for each pixel based on the image features. Then we will project the image features onto the BEV space to obtain BEV features $\boldsymbol{F}^E$ based on their depth. 
+Furthermore, we transform the BEV features $\boldsymbol{F}^E_{T-N}$ from previous timestamps to the current BEV features $\boldsymbol{F}^E_{T}$, modeling the long-term relationship. $N$ denotes the time interval between the current frame and the history frame. 
+The unified BEV features $\boldsymbol{F}^E$ are then combined to produce 3D object detection predictions $\boldsymbol{P}$. The model is trained using a multi-task loss function that considers both 3D detection loss $\mathcal{L}_{Det}$ and depth estimation loss $\mathcal{L}_{Depth}$.
+
+
+
+\begin{figure}
+  \centering
+  \includegraphics[width=.99\linewidth]{figs/pipeline.pdf}
+  \caption{\textbf{Algorithm Overview.}
+  Expert utilizes LiDAR data to enhance depth estimation accuracy before view transformation in BEV pipeline. 
+  Apprentice represents a standard long-term vision-based detection model. 
+  The occupancy is built using the depth information from the expert model, which serves as the supervision for the apprentice model. Motion trajectory is constructed by warping the time series GT query into the current timestamp. 
+  Projecting the motion trajectory of each object into BEV space can rectify the misalignment of object motion. 
+  With the knowledge transferred from the expert, the apprentice can deliver higher performance than before.}
+  \label{pipelines}
+\end{figure}
+
+
+\subsection{The Procedure of Distillation}
+\label{distillation_txt}
+In this section, we elucidate the methodology adopted to overcome the constraints inherent in long-term modeling for multi-camera 3D object detection. This is achieved through the incorporation of two innovative modules within the distillation process: the trajectory-based distillation module and the occupancy reconstruction module.
+
+
+
+\paragraph{Trajectory-based Distillation.}
+The trajectory-based distillation module aims to improve the detection of dynamic objects by focusing on the inconsistent portion of the objects' motion. 
+For $i$-th historical frame  at timestamp $t_i$ that contains $K$ objects, extract the $j$-th ground truth object position $\boldsymbol{P}_i^j = (x_i^j, y_i^j, z_i^j, 1)^T$ in the ego coordinate system. Determine the actual ego motion matrix $\boldsymbol{M}_i$ between the current frame $t_0$ and each historical frame $t_i$. Apply the ego-motion transformation matrix $\boldsymbol{M}_i$ to the ground truth object positions $\boldsymbol{P}_i^j$ to obtain the transformed positions $\boldsymbol{P}_i^{j'}$ in the current frame's coordinate system:
+\begin{equation}
+  \boldsymbol{P}_i^{j'} = \boldsymbol{M}_i \times \boldsymbol{P}_i^j. %\quad i = 1, 2, \dots, N
+\end{equation}
+We amalgamate the transformed ground truth object positions, $\boldsymbol{P}_i^{j'}$, from all historical frames to construct the motion trajectories. The trajectory of $j$-th object can thus be represented as a sequence of object positions within the current frame  as $(\boldsymbol{P}_1^{j'}, \boldsymbol{P}_2^{j'}, \dots, \boldsymbol{P}_N^{j'})$,
+where $N$ is the number of points on each motion trajectory.
+Let $\boldsymbol{F}^E_{ij}$, $\boldsymbol{F}^A_{ij}$ represent the sampled features on identical point $\boldsymbol{P}_i^{j'}$ from the   expert BEV feature $\boldsymbol{F}^E$ and apprentice BEV feature $\boldsymbol{F}^A$, respectively. They are sampled via bilinear interpretation and then are normalized as :
+\begin{equation}
+    \boldsymbol{F}_{ij}^E = \text{norm}(\boldsymbol{F}^E(P_i^{j'})),\quad \boldsymbol{F}_{ij}^A = \text{norm}(\boldsymbol{F}^A(P_i^{j'})). %\quad j = 1, 2, \dots, M
+\end{equation}
+Finally, the trajectory-based distillation loss $\mathcal{L}_{TD}$  is computed between the normalized key sampled features:
+\begin{equation}
+   \mathcal{L}_{TD} =  \frac{1}{K\times N}\sum_{j=1}^K\sum_{i=1}^N L_2(\boldsymbol{{F}}_{ij}^A, {\boldsymbol{{F}}}_{ij}^E).
+\end{equation}
+Ultimately, by using the motion trajectory as queries, we conduct trajectory-based distillation on these representative positions. This approach enables the expert to rectify the motion misalignment in the apprentice.
+
+
+
+\paragraph{Occupancy Reconstruction.}
+The expert model demonstrates outstanding performance in 3D object detection, resulting in a more precise 3D geometric representation of the objects.
+We utilize depth estimation modules to predict the depth, denoted as $\boldsymbol{D}(u,v)$, for each image pixel $(u, v)$. Subsequently, the depth map $\boldsymbol{D}$ is back-projected into a 3D point cloud, each image pixel $(u,v)$ is transformed into a 3D coordinate (x, y, z). Then the scores from different pixels in the multi-camera within the same occupancy region, are accumulated to make decisions about the presence of an object in that region. In this way, we can generate the occupancy $\boldsymbol{O}_e$ and $\boldsymbol{O}_a$ for expert and apprentice model, respectively.
+
+
+
+The occupancy reconstruction module improves the model's capability to discern the 3D geometric properties of objects. The grid-based supervisory signals effectively direct the model to enhance its prediction accuracy for object depths. Different voxels within the occupancy structure aggregate the fused depth distribution from various perspective views, thereby enhancing robustness against depth errors.
+Drawing inspiration from CenterPoint~\cite{zhou2019center}, we simply extend the Gaussian distribution applied to each target into the 3D space for more focused 3D object modeling:
+\begin{equation}
+    \boldsymbol{G}_{xyz} = \text{exp}\bigg [-\frac{(x-\tilde{p}_x)^2 + (y-\tilde{p}_y)^2 + (z-\tilde{p}_z)^2}{2\sigma_p^2} \bigg ], 
+\end{equation}
+where $(\tilde{p}_x, \tilde{p}_y, \tilde{p}_z)$ represents the center of the 3D object, while $\sigma_p$ denotes the standard deviation of each object's size. The model utilizes the expert model's occupancy $O_{e}$ as supplementary supervision by adopting a straightforward $\mathcal{L}_1$ regularization loss for the occupancy status $O_{a}$ of the apprentice model, which optimizes depth prediction capabilities for both static and dynamic objects. The occupancy reconstruction loss can be formulated as
+\begin{equation}
+\mathcal{L}_{OR} = \mathcal{L}_1(\boldsymbol{G}_{xyz} \cdot \boldsymbol{O}_e, \boldsymbol{G}_{xyz}\cdot \boldsymbol{O}_a ).
+\end{equation}
+
+\paragraph{Training Loss.} During the distillation  phase, the joint training loss $\mathcal{L}_{Total}$ is formulated as 
+\begin{equation}
+\mathcal{L}_{Total} = \mathcal{L}_{A}  + \lambda_1 \cdot \mathcal{L}_{TD} + \lambda_2 \cdot \mathcal{L}_{OR}, 
+\end{equation}
+where $\mathcal{L}_{A}$ is the perceptual loss of the apprentice model. Besides, $\lambda_1$ and $\lambda_2$ represent hyperparameters employed to effectively balance the scales of the respective loss functions. The utilization of trajectory-based distillation loss $\mathcal{L}_{TD}$ and occupancy reconstruction loss  
+$\mathcal{L}_{OR}$ collectively facilitates the transfer of semantic and geometry knowledge from the expert model to the apprentice model.
+
+
+
+\begin{table}[tb]
+  \caption{\textbf{Comparison among the camera-only methods on the nuScenes \textit{val} set.} $^*$ denotes the long-term baseline implemented by us based on BEVDet4D-Depth~\cite{huang2022bevdet4d}. $^\dagger$ depicts that the size of BEV feature is 256$\times$256. VCD-A surpasses previous SOTA by 2 points in NDS and achieves SOTA under the same setting.}
+  \label{camera-val}
+  \centering
+  \resizebox{\linewidth}{22.5mm}{
+  \begin{tabular}{{l|c|c|c|c|c|ccccc}}
+    \toprule
+    Methods  & Backbone  & Image Size & Frames & mAP$\uparrow$ & NDS$\uparrow$ & mATE$\downarrow$ & mASE$\downarrow$ & mAOE$\downarrow$ & mAVE$\downarrow$ & mAAE$\downarrow$ \\
+    \midrule
+    BEVDet~\cite{huang2021bevdet} & ResNet-50 & 256 $\times$ 704 & 1 & 0.298 & 0.379 & 0.725 & 0.279 & 0.589 & 0.860 & 0.245   \\
+    PETR~\cite{liu2022petr} & ResNet-50 & 384 $\times$ 1056 & 1 & 0.313 & 0.381 & 0.768 & 0.278 & 0.564 & 0.923 & 0.225   \\
+    BEVDet4D~\cite{huang2022bevdet4d} & ResNet-50 & 256 $\times$ 704 & 2 & 0.322 & 0.457 & 0.703 & 0.278 & 0.495 & 0.354 & 0.206 \\
+    BEVDepth~\cite{li2022bevdepth} & ResNet-50 & 256 $\times$ 704 & 2 & 0.351 & 0.475 & 0.639 & 0.267 & 0.479 & 0.428 & 0.198 \\
+    BEVStereo~\cite{li2022bevstereo} & ResNet-50 & 256 $\times$ 704 & 2 & 0.372 & 0.500 & 0.598 & 0.270 & 0.438 & 0.367 & 0.190 \\
+    STS~\cite{wang2022sts} & ResNet-50 & 256 $\times$ 704 & 2 & 0.377 & 0.489 & 0.601 & 0.275 & 0.450 & 0.446 & 0.212  \\
+    VideoBEV~\cite{han2023videobev} & ResNet-50    & 256 $\times$ 704 & 8 & 0.422 & 0.535 & 0.564 & 0.276 & 0.440 & 0.286 & 0.198 \\
+    SOLOFusion~\cite{park2022solofusion} & ResNet-50 & 256 $\times$ 704 & 16+1 & 0.427 & 0.534 & 0.567 & 0.274 & 0.411 & \textbf{0.252} & \textbf{0.188} \\
+    StreamPETR~\cite{wang2023streampetr} & ResNet-50 & 256 $\times$ 704 & 8 & 0.432 & 0.540 & 0.581 & 0.272 & 0.413 &  0.295 & 0.195 \\
+    \midrule
+    Baseline$^*$& ResNet-50 & 256 $\times$ 704 & 8+1 & 0.401 & 0.515 & 0.595 & 0.279 & 0.489 & 0.291 & 0.198  \\
+    \gray{VCD-A} & \gray ResNet-50 & \gray 256 $\times$ 704 & \gray 8+1 & \gray0.426 & \gray0.540 & \gray0.547 & \gray0.271 & \gray0.433 & \gray0.268 & \gray0.207 \\
+    Baseline$^{*\dagger}$ & ResNet-50 & 256 $\times$ 704 & 8+1 & 0.418 & 0.542 & 0.522 & 0.267 & 0.428 & 0.262 & \textbf{0.188}  \\
+    \gray VCD-A$^\dagger$ & \gray ResNet-50 & \gray 256 $\times$ 704 & \gray8+1 & \gray\textbf{0.446} & \gray\textbf{0.566} & \gray\textbf{0.497} & \gray\textbf{0.260} & \gray\textbf{0.350} & \gray0.257 & \gray0.203 \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
+\begin{table}[tb]
+  \caption{\textbf{Comparison among the camera-only methods on the nuScenes \textit{test} set.} Methods marked with $^*$ denote long-term baseline implemented by us, based on BEVDet4D-Depth~\cite{huang2022bevdet4d}. $\dagger$ depicts test time augmentation adopted during the inference phase. VCD-A achieves SOTA under critical metrics and surpasses its baseline by 2 points in NDS.}
+  \label{camera-test}
+  \centering
+  \resizebox{\linewidth}{24.5mm}{
+  \begin{tabular}{{l|c|c|c|c|ccccc}}
+    \toprule
+    Methods  & Backbone  & Image Size & mAP$\uparrow$ & NDS$\uparrow$ & mATE$\downarrow$ & mASE$\downarrow$ & mAOE$\downarrow$ & mAVE$\downarrow$ & mAAE$\downarrow$ \\
+    \midrule
+    FCOS3D$\dagger$~\cite{wang2021fcos3d} & R101-DCN & 900 $\times$ 1600  & 0.358 & 0.428 & 0.690 & 0.249 & 0.452 & 1.434 & 0.124   \\
+    DETR3D$\dagger$~\cite{wang2022detr3d} & V2-99 & 900 $\times$ 1600 & 0.412 & 0.479 & 0.641 & 0.255 & 0.394 & 0.845 & 0.133   \\
+    UVTR~\cite{li2022uvtr} & V2-99 & 900 $\times$ 1600 & 0.472 & 0.551 & 0.577 & 0.253 & 0.391 & 0.508 & 0.123 \\
+    BEVDet4D$\dagger$~\cite{huang2022bevdet4d} & Swin-B~\cite{liu2021swin} & 900 $\times$ 1600 & 0.451 & 0.569 & 0.511 & \textbf{0.241} & 0.386 & 0.301 & 0.121 \\
+    BEVFormer~\cite{li2022bevformer} & V2-99 & 900 $\times$ 1600 & 0.481 & 0.569 & 0.582 & 0.256 & 0.375 & 0.378 & 0.126 \\
+    PolarFormer~\cite{jiang2022polarformer} & V2-99 & 900 $\times$ 1600 & 0.493 & 0.572 & 0.556 & 0.256 & 0.364 & 0.439 & 0.127  \\
+    BEVDistill~\cite{chen2022bevdistill} & ConvNeXt-B & 900 $\times$ 1600 & 0.496 & 0.594 & 0.475 & 0.249 & 0.378 & 0.313 & 0.125  \\
+    PETRv2~\cite{liu2022petrv2}& RevCol~\cite{cai2022reversible} & 640 $\times$ 1600 & 0.512 & 0.592 & 0.547 & 0.242 & 0.360 & 0.367 & 0.126  \\
+    BEVDepth~\cite{li2022bevdepth} & ConvNeXt-B & 640 $\times$ 1600 & 0.520 & 0.609 & 0.445 & 0.243 & 0.352 & 0.347 & 0.127 \\
+    AeDet$\dagger$~\cite{feng2022aedet} & ConvNeXt-B & 640 $\times$ 1600 & 0.531 & 0.620 & 0.439 & 0.247 & 0.344 & 0.292 & 0.130 \\
+    SOLOFusion~\cite{park2022solofusion} & ConvNeXt-B & 640 $\times$ 1600 & 0.540 & 0.619 & 0.453 & 0.257 & 0.376 & 0.276 & 0.148 \\
+    StreamPETR~\cite{wang2023streampetr} & ConvNeXt-B & 640 $\times$ 1600 & \t
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

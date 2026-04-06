@@ -1,0 +1,226 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+With an increasing number of videos appearing online, video understanding has become a prominent research topic in computer vision. Temporal action localization (TAL), which aims to temporally locate and recognize human actions with a set of categories in a video clip,  is a challenging yet fundamental task in this area, owing to its various applications such as sports highlighting, human action analysis and security monitoring~\cite{app1,app2,app3,app4,app5}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[height=0.46\linewidth, width=1.0\linewidth]{figures/fig1.pdf}
+\caption{The motivation of our method. We show the action instance of \textbf{clothes drying} and depict the possible importance of each frame to recognizing the action category and locating action boundaries. Each frame's importance is different. }
+\label{fig:intro}
+\end{figure}
+
+\par We have recently witnessed significant progress in TAL, where most methods can be mainly divided into two parts: 1) Two-stage approaches~\cite{PGCN2019ICCV, contextloc} tackle this task accompanied by the generation of class-agnostic action proposals and then perform classification and proposal boundaries refinement in proposal-level; 2) One-stage approaches~\cite{vsgn,xu2020gtad, ssd} simultaneously recognize and localize action instances in a single-shot manner. Typical methods~\cite{zhang2022actionformer,afsd} of this type predict categories as well as locate corresponding temporal boundaries in frame-level, achieving stronger TAL results currently.~In training, they classify every frame as one action category or background and regress the boundaries of frames inside ground-truth action segments. However, these works treat each frame within action segments equally in training, leading to sub-optimal performance.
+\label{sec:intro}
+\par  When humans intend to locate action instances, the discrepant information of each frame is referred to.  For the instance of action:~\textbf{clothes drying}, as depicted in Fig~\ref{fig:intro},  frames in the purple box promote recognizing \textbf{clothes drying} most as they describe the intrinsic sub-action: \textit{hang clothes on the hanger}. Analogously, frames in red and gray boxes depict \textit{take out clothes from laundry basket} and \textit{lift laundry basket}, which are more informative to locate precise start and end time respectively.
+In a word, each frame's contribution is quite different,  due to intrinsic patterns of actions, as well as existing transitional or blurred frames.
+\par \textit{Can we discover informative frames for classifying and localizing respectively?} To this end, we first introduce a concept --- \textbf{Action Sensitivity}, to measure the frame's importance. It is disentangled into two parts: \textbf{action sensitivity to classification} sub-task and \textbf{action sensitivity to localization} sub-task. For one sub-task, the higher action sensitivity each frame has, the more important it will be for this sub-task. With this concept, intuitively, more attention should be paid to action sensitive frames in training.
+\par Therefore in this paper, we propose a lightweight Action Sensitivity Evaluator (ASE) for each sub-task to better exploit frame-level information. Essentially, for a specific sub-task, ASE learns the action sensitivity of each frame from two perspectives: class-level and instance-level. The class-level perspective is to model the coarse action sensitivity distribution of each action category and is achieved by incorporating gaussian weights. The instance-level perspective is complementary to class-level modeling and is supervised in a prediction-aware manner. Then the training weights of each frame are dynamically adjusted depending on their action sensitivity, making it more reasonable and effective for model training.
+\par With the proposed ASE, we build our novel \underline{A}ction \underline{S}ensitivity \underline{L}earning framework dubbed \textbf{ASL} to tackle temporal action localization task (TAL) effectively.  Moreover, to furthermore enhance the features and improve the discrimination between actions and backgrounds, we design a novel Action Sensitive Contrastive Loss (ASCL) based on ASE. It is implemented by elaborately generating various types of action-related and action-irrelevant features and performing contrasting between them, which brings multiple merits for TAL.
+\par By conducting extensive experiments on 6 datasets and detailed ablation studies, we demonstrate ASL is able to classify and localize action instances better. In a nutshell, our main contributions can be summarized as follows:
+\begin{itemize}
+\item[$\bullet$] We propose a novel framework with an Action Sensitivity Evaluator component to boost training,  by discovering action sensitive frames to specific sub-tasks, which is modeled from class level and instance level.
+\item[$\bullet$] We design an Action Sensitive Contrastive Loss to do feature enhancement and to increase the discrimination between actions and backgrounds.
+\item[$\bullet$] We verify ASL on various action localization datasets of multiple types: i) densely-labeled (i.e., MultiThumos~\cite{multithumos} and Charades~\cite{charades}). ii) egocentric (Ego4d-Moment Queries v1.0~\cite{grauman2022ego4d} and Epic-Kitchens 100~\cite{Damen2018EPICKITCHENS}). iii) nearly single-labeled (Thumos14~\cite{thumos} and ActivityNet1.3~\cite{caba2015activitynet}), and achieve superior results.
+\end{itemize}
+
+
+
+Related Works
+\par \textbf{Temporal Action Localization.} Temporal action localization is a long-standing research topic. Contemporary approaches mostly fall into two categories, i.e. two-stage and one-stage paradigms. Previous two-stage methods usually focused on action proposal generation~\cite{lin2019bmn,BSN2018arXiv,su2021bsn++, rtdnet,wang2022rcl}. Others have integrated action proposal, calibrated backbone, classification and boundary regression or refinement modules into one single model~\cite{shou2016temporalmscnn,rc3d,shou2017cdc,SSN2017ICCV}.  Recent efforts have investigated the proposal relations~\cite{PGCN2019ICCV, contextloc, relation},   utilized graph modeling~\cite{xu2020gtad,PGCN2019ICCV}, or designed fine-grained temporal representation~\cite{tcanet,sridhar2021class}. One-stage approaches usually perform frame-level or segment-level classification and directly localization or merging segments~\cite{shou2017cdc, bottomup, ssd}. \cite{vsgn,gtan} process the video with the assistance of pre-defined anchors or learned proposals, while others utilize existing information and are totally anchor-free ~\cite{afsd,zhang2022actionformer,segtad}. Currently, some works introduce pretrain-finetune to TAL task~\cite{boundarysensitivepretrain,xumengmenglow} or attempt to train the model in an efficient end-to-end manner~\cite{tadtr,cheng2022tallformer,etad}. Others focused on densely-labeled setting~\cite{mlad,dai2021pdan,dai2022mstct,kahatapitiya2021coarsefine,tanpointtad,dai2021ctrn}. With the success of DETR~\cite{detr} in object detection, query-based methods have also been proposed~\cite{shi2022react,rtdnet,tanpointtad, tadtr}. Our method falls into the one-stage TAL paradigm and performs frame-level classification and localization.  Notably, \cite{tgm,gtan} incorporate Gaussian kernels to improve receptive fields and optimize the temporal scale of action proposals, \cite{kahatapitiya2021coarsefine} use fixed gaussian-like weights to fuse the coarse and fine stage. We also utilize gaussian weights as one part of ASE, but it differs in that: 
+i) Our gaussian-like weights in ASE serve as modeling class-level action sensitivity and to boost effective training, while~\cite{kahatapitiya2021coarsefine,tgm,gtan} use it only to better encode the videos. 
+ii) Our learned gaussian weights describe frames' contributions to each sub-task and can be easily visualized, whereas the semantic meaning of gaussian weights in~\cite{kahatapitiya2021coarsefine,tgm,gtan} is unclear.
+iii) Our gaussian-like weights are totally learnable, category-aware and disentangled to different sub-tasks.
+\par \textbf{One-stage Object Detection.} Analogous to TAL task, the object detection task shares a few similarities. As a counterpart in object detection, the one-stage paradigm has surged recently. Some works remain anchor-based~\cite{lin2017focal}, while others are anchor-free, utilizing a feature pyramid network~\cite{fpn,tian2019fcos} and improved label-assign strategies~\cite{atss,zhu2020autoassign,zhu2019feature,ohem}. Moreover, some works define key points in different ways (e.g. corner~\cite{law2018cornernet}, center~\cite{duan2019centernet,tian2019fcos} or learned points~\cite{yang2019reppoints}). These methods bring some inspiration to design a better TAL framework. Some methods~\cite{feng2021tood,li2020generalizedfocal1,li2021generalizedfocal2} aim to tackle the misalignment between classification and localization. But i) we mainly focus on the discrepant information of frames. ii) Misalignment of two sub-tasks (i.e., classification and localization) is only the second issue and we alleviate it by a novel contrastive loss which differs from these works.
+
+\begin{figure*}[htbp]
+\centering
+\includegraphics[height=0.324\linewidth, width=1.0\linewidth]{figures/fig2_v3.pdf}
+\caption{\textbf{The overview of ASL}. Given a video clip, we first leverage a pre-trained 3D-CNN to extract the video feature and then utilize a Transformer Encoder to encode feature. We then use ground-truth location sampling to sample all ground-truth segments and feed these into Action Sensitivity Evaluator. In this module, we model sub-task-specific action sensitivity of each frame from class level and instance-level. The former is learned by incorporating learnable gaussian-like weights and the latter is learned with an instance-level evaluator. Then each frame's weight in training is adjusted based on action sensitivity. Moreover, we propose an Action Sensitive Contrastive Loss to better enhance the feature and alleviate misalignment problems.}
+\label{fig:main}
+\end{figure*}
+
+\par \textbf{Contrastive Learning.} Contrastive learning \cite{contra1,contra2,contra3} is an unsupervised learning objective that aims to bring similar examples closer together in feature space while pushing dissimilar examples apart. NCE~\cite{nce} and Info-NCE~\cite{infonce} are two typical methods that mine data features by distinguishing between data and noise or negative samples. Info-NCE-based contrastive learning has been used in methods of different tasks, such as~\cite{wang2022align,reler,Wang_2021_CVPR} in cross-modality retrieval and~\cite{moco,videomoco} in unsupervised learning.  In TAL, ~\cite{afsd} leverages ranking loss to boost discrimination between foreground and background while ~\cite{shi2022react} contrasts different actions with a global representation of action segments. But we design a new contrastive loss both across different types of actions and between actions and backgrounds. Moreover, compared to~\cite{shou2018autoloc} which also contrasts between actions and backgrounds, our proposed contrastive loss contrasts more between i)same and different action classes, ii)sensitive frames of localization and classification to mitigate the misalignment of sub-tasks. Details will be discussed in~\ref{sec:ascl}.
+
+
+
+Method
+\textbf{Problem Formulation.}      
+The task of temporal action localization (TAL) is to predict a set of action instances $\{(t_m^s,t_m^e,c_m)\}_{m=1}^M$, given a video clip, where $M$ is the number of predicted action instances, $t_m^s$,$t_m^e$,$c_m$ are the start, end timestamp and action category of the $m$-th predicted action instance. ASL is built on an anchor-free representation that classifies each frame as one action category or background, as well as regresses the distances from this frame to the start time and end time. 
+
+\textbf{Overview.} 
+The overall architecture of ASL is shown in Fig~\ref{fig:main}. 
+ASL is composed of four parts: video feature extractor, feature encoder, action sensitivity evaluator, and two sub-task heads. 
+Concretely, given a video clip, we first extract the video feature using a pre-trained 3D-CNN model. Then we exert a feature encoder involving a pyramid network to better represent the temporal features at multiple levels. We propose an action sensitivity evaluator module to access the action sensitivity of frames to a specific sub-task. The pyramid features combined with frames' action sensitivity are further processed by sub-task heads to generate predictions. We now describe the details of ASL.
+
+\subsection{Feature Encoder}
+\par With the success of~\cite{zhang2022actionformer,afsd}, ASL utilizes a Transformer encoder and feature pyramid network to encode feature sequences into a multiscale representation. To enhance features, in Transformer encoder we design a new attention mechanism that operates temporal attention and channel attention parallelly and then fuses these two outputs.
+\par For normal temporal attention that is performed in the temporal dimension, input features generate query, key and value tensors $(Q_t,K_t,V_t) \in \mathbb{R}^{T \times D}$, where $T$ is the number of frames, $D$ is the embedding dimension, then the output is calculated: 
+\begin{equation} \small
+    f_\text{ta}^{'} = \text{softmax}(\frac{Q_tK_t^T}{\sqrt{D}}) V_t
+\end{equation}
+\par For channel attention that is conducted in the channel dimension, input features generate query, key and value tensors $(Q_d,K_d,V_d) \in \mathbb{R}^{D \times T}$, where $D$ is the number of channels. Then the output is calculated:
+\begin{equation} \small
+    f_\text{ca}^{'} = \text{softmax}(\frac{Q_d K_d^T}{\sqrt{T}}) V_d
+\end{equation}
+\par Above two outputs are then added with a coefficient $\theta$: $f^{'} = (1-\theta)f_\text{ta}^{'} + \theta f_\text{ca}^{'T}$. Then it is processed by layer normalization and feedforward network to obtain the encoded video representation $f \in \mathbb{R}^{T\times D}$.
+
+\subsection{Action Sensitivity Evaluator}
+\par As discussed in~\ref{sec:intro}, not all frames inside ground-truth segments contribute equally to the sub-task (i.e., localization or classification). Thus we designed an Action Sensitivity Evaluator (ASE) module, the core idea of which is to determine the sub-task-specific action sensitivity of each frame and help the model pay more attention to those valuable frames. Besides, this module is lightweight, leading to efficient and effective training.
+\par \textbf{Decoupling to two levels.} Digging into action instances, a key observation is that actions of a particular category often share a similar pattern, but they appear slightly different in diverse scenarios or under different behavior agents. For example,  action instances of category:\textbf{wash vegetables} inherently contain sub-actions: \textit{turn the tap on, take vegetables, wash, turn the tap off},  where frames depicting \textit{washing} are more sensitive to classification,  frames depicting \textit{turning the tap on} and \textit{turning the tap off} are more sensitive to localization. But the respective duration or proportion of these sub-actions are dependent on the scenes and context of each action instance, thus making sensitive frames a little different. This motivates us that the action sensitivity of every frame should be decoupled into class-level and instance-level modeling and then recombined from these two parts. 
+
+\textbf{Disentangling to two sub-tasks.} Here sub-tasks mean classification and localization. Intuitively action sensitivity for classification needs to be modeled as sensitive frames for classification is not easily determined. Actually, action sensitivity modeling for localization is also necessary. Though the boundaries of action segments are defined already, sensitive frames are not necessarily at the start or the end of an action since i) action boundaries are often unclear, ii) each frame of sub-actions around boundaries also has different semantics. Therefore, action sensitivity modeling should be disentangled for two sub-tasks respectively (i.e., classification and localization). 
+
+\par Formally, for a given ground-truth $\mathcal{G}\!=\!\{\bar t^s, \bar t^e, \bar c\}$, each indicating the start time, end time and category of one action, we denote $N_f$ as the number of frames within this action, $N_c$ as the number of all pre-defined action categories. Our goal is to model the class-level action sensitivity $p$ (disentangled into $p^{cls},p^{loc}$ to classification and localization respectively), instance-level action sensitivity $q$ (disentagled to $q^{cls}, q^{loc}$).  Then we delve into details of action sensitivity learning.
+
+\textbf{Class-level Modeling.}  
+  \ Class-level sensitivity poses a fundamental prior for action sensitivity learning. 
+  Two key observations are that: i) video frames are often consecutive. ii) there often exist keyframes that have a peek value of sensitivity among all frames. 
+  In this case, we incorporate gaussian-like weights with learnable parameters $\mu,\sigma \in \mathbb{R}^{N_c}$ to model class-level action sensitivity $p$.
+\par For classification sub-task, we model corresponding action sensitivity  $p_{i}^{cls}$ for the $i$-th frame:
+\begin{equation} \small
+      p^{cls}_i = \exp\{-\frac{(d(i)-\mu_{c})^2}{2\sigma_{c}^2}\}
+\end{equation}
+where $d(i)$ is the distance from the current $i$-th frame to the central frame of the ground-truth segment which is normalized by $N_f$. In this case, $d(i)\! \in \![-0.5, 0.5]$, when $i\!=\!1$ (i.e., start frame), $d(i)\!=\! -0.5$, when $i\!=\!N_f$ (i.e., end frame), $d(i)\!=\!0.5$.
+Learnable parameters $\mu_{c},\sigma_{c}$ denote mean and variance of each category $c$'s action sensitivity distribution.
+\par For localization sub-task, different frames are sensitive to locating start time and end time. Therefore action sensitivity $p^{loc}$ is the combination of two parts.
+We explicitly allocate one gaussian-like weights $p^{sot}$ to model the start time locating sensitivity and another $p^{eot}$ to model the end time locating sensitivity. $ p^{loc} $ is calculated: 
+\begin{equation} \small
+      p^{loc}_i = \underbrace{\exp\{-\frac{(d(i)-\mu_{c,1})^2}{2\sigma_{c,1}}\}}_{p^{sot}_i} + \underbrace{\exp\{-\frac{(d(i)-\mu_{c,2})^2}{2\sigma_{c,2}}\}}_{p^{eot}_i}
+\end{equation}
+\par In this way, class-level action sensitivity $p^{cls},p^{loc} \!\in \!\mathbb{R}^{N_f \times N_c}$ of all categories are learned with the optimization of model training.
+In addition, the initialization of $\mu_c$ and $\sigma_c$ counts as there exists prior knowledge~\cite{zhang2022actionformer,tian2019fcos} according to different sub-tasks. For classification sub-task, near-center frames are more sensitive. Thus we initialize $\mu_c$ as 0. For localization sub-task, near-start and near-end frames are more sensitive. Thus we initialize $\mu_1$ as -0.5 and $\mu_2$ as 0.5.
+For all $\sigma$, we initialize as 1.
+
+ 
+\textbf{Instance-level Modeling.} 
+Intuitively, a Gaussian can only give a single peak, and thus class-level action sensitivity learning may not discover all sensitive frames. To this end, we introduce instance-level modeling which is complementary and aims to capture additional important frames that haven’t been discovered by class-level modeling. 
+
+In the instance-level modeling, as more information about frame contexts of each instance is referred to, we obtain instance-level action sensitivity $q \in \mathbb{R}^{N_f}$ using an instance-level evaluator operated directly on each frame, composed of 1D temporal convolution network which aims to encode temporal contexts better, a fully connected layer and a Sigmoid activation function. We denote $\Phi^{cls}$ and $\Phi^{loc}$ as two sub-task specific instance-level evaluator, then $q^{cls}$ and $q^{loc}$ are computed:  
+\begin{equation} \small
+\left\{
+\begin{aligned}
+ & q_i^{cls} = \Phi^{cls}(f_i)\\
+& q_i^{loc}  = \Phi^{loc}(f_i)
+\end{aligned}
+\right.
+\end{equation}
+
+Unlike class-level modeling that contains some prior knowledge, instance-level sensitivity $q$ is hard to learn in an unsupervised manner. Intuitively, from the instance level a sensitive frame implies that it can result in fine predictions. Hence we utilize the quality $\{\bar Q_i\}_{i=1}^{N_f}$ of each frame's prediction to supervise the learning of $q$. 
+For localization, The higher tIoU indicates a higher degree of overlap between two segments. Thus tIoU between the predicted segment and the ground-truth segment can measure the quality of prediction.
+For classification, the probability of the ground-truth category can serve as the quality of prediction.
+Therefore, quality  $\bar Q^{cls}$ and $\bar Q^{loc}$ are defined as: 
+\begin{equation} \small
+\left\{
+\begin{aligned}
+ \bar Q_i^{cls} &= \varphi (\text{s}_i[\bar c)]) \\
+\bar Q_i^{loc} &= \text{tIoU}(\Delta_i, \bar \Delta)
+\end{aligned}
+\right.
+\end{equation}
+where $s$ denotes the classification logits, $\Delta_i$ is the predicted segment $(t^s, t^e)$ of the $i$-th frame, $\bar \Delta$ is the corresponding ground-truth segment, $\varphi(\cdot)$ is Sigmoid function. We use MSE loss to supervise the calculation of $q$. For $q^{cls}$, optimization objective is formed as~\ref{equ:ils}. Optimization of $q^{loc}$ is in a similar way.
+\begin{equation} \small \label{equ:ils}
+\mathcal{L}_{s} = \text{MSE} (q^{cls}, \bar Q^{cls}) 
+\end{equation}
+
+\textbf{Optimization with Action Sensitivity.} In this way, combining class-level and instance-level,  we obtain the final action sensitivity $h(\bar c) \! \in \! \mathbb{R}^{N_f}$ (disentangled to classification and localization sub-task: $h(\bar c) \rightarrow \{h^{cls}(\bar c),h^{loc}(\bar c)\}$) for the ground-truth $\mathcal{G}\!=\!\{\bar t^s, \bar t^e, \bar c\}$:
+\begin{equation} \small
+\left\{
+\begin{aligned}
+ & h^{cls}(\bar c) = p^{cls} \mathbbm{1}[\bar c] + q^{cls} \\
+& h^{loc}(\bar c) = p^{loc} \mathbbm{1}[\bar c] + q^{loc}
+\end{aligned}
+\right.
+\end{equation}
+where $\mathbbm{1}[\bar c] \!\in\! \mathbb{R}^{N_c}$ denotes the one-hot vector of $\bar c$. Action sensitivity $h$ is further used in training. For classification sub-task,  we use a focal loss~\cite{lin2017focal} to classify each frame, combined with classification action sensitivity $h^{cls}$:
+\begin{equation} \small \label{equ:lcls}
+\mathcal{L}_{cls}= \frac{1}{N_{pos}} \sum_i (\mathbbm{1}_{in_i} h^{cls}_i(\bar c_i) \mathcal{L}_{\text{focal}_i} 
+    + \mathbbm{1}_{bg_i} \mathcal{L}_{\text{focal}_i})
+\end{equation}
+where $\mathbbm{1}_{in_i}, \mathbbm{1}_{bg_i}$ are indicators that denote if the $i$-th frame is within one ground-truth action or if is background, $N_{pos}$ is the number of frames within action segments, $\bar c_i$ denotes the action category of the $i$-th frame.
+
+For localization sub-task, we use a DIoU loss~\cite{zheng2020diou} performed on frames within any ground-truth action instance, to regress offsets from current frames to boundaries, combined with localization action sensitivity $h^{loc}$:
+\begin{equation} \small \label{equ:lloc}
+\mathcal{L}_{loc}= \frac{1}{N_{pos}} \sum_i (\mathbbm{1}_{in_i} h^{loc}_i(\bar c_i) \mathcal{L}_{\text{DIoU}_i})
+\end{equation}
+\subsection{Action Sensitive Contrastive Loss}
+\label{sec:ascl} 
+\par Now with ASE, each frame is equipped with action sensitivity and valuable frames to specific sub-tasks will be discovered. We further boost the training from the perspective of feature enhancement. 
+Delve into feature representation, three shortcomings may hinder the performance: 
+i) classification sensitive and localization sensitive frames are quite different, resulting in the misalignment of these two sub-tasks.  
+ii) features in actions of different categories are not much discriminable.
+iii) features within action and outside boundaries are not much distinguished yet.
+\par Therefore, on the basis of ASE, we propose an Action Sensitive Contrastive Loss (ASCL) to correspondingly tackle the above issues.
+Specifically, for a given video feature $\{f_t\}_{t=1}^T$ and a ground-truth action instance $\mathcal{G}\!=\!\{\bar t^s, \bar t^e, \bar c\}$, 
+we generate two action-related features and one action-irrelevant feature. 
+First, to generate more valuable action-related features, we aim to find sensitive frames to these sub-tasks. Thinking that ASCL contrasts action instances of different classes, where class-level discrimination is more important, we hence utilize class-level sensitivity $p$ to parse the sensitive frame ranges $T_{cls}$ for classification and $T_{loc}$ for localization.
+With one ground-truth category $\bar c$, we get the most sensitive frames $a_{cls},a_{sot},a_{eot}$ for classification, start time localization, end time localization respectively. Take $a_{eot}$ as an example:
+\begin{equation} \small
+    a_{eot} = \underset{i}{\arg\max} (p_i^{eot} \mathbbm{1}[\bar c])
+\end{equation}
+$a_{cls}$ and $a_{sot}$ are obtained in a similar way. Then, centered on $a$ and extending forward and backward with a range of $\delta N_f$, where $\delta$ is the sampling length ratio, we get sensitive frame ranges $T_{cls}$ for classification and $T_{loc}$ for localization ($T_{cls}$ and $T_{loc}$ are limited inside the action instance).
+Furthermore,  we utilize class-level sensitivity to compute sensitive features $f_{cls}$ for classification, $f_{loc}$ for localization:
+\begin{equation}  \small
+\left\{
+\begin{aligned} 
+f_{cls} &=  \frac{1}{T}\sum_{t} p^{cls}_t \mathbbm{1}[\bar c] f_t , \ t \in T_{cls} \\
+f_{loc} &= \frac{1}{T} \sum_{t} p^{loc}_{t} \mathbbm{1}[\bar c]  f_{t}, \ t \in T_{loc} 
+\end{aligned}
+\right.
+\end{equation}
+\par Secondly, we aim to simultaneously discriminate actions and backgrounds better. Consequently we generate boundary-related background features $f_{bg}$:
+\begin{equation} \small
+    f_{bg} = \frac{1}{T} \sum_{t} f_t, \ t \in [\bar t^s-\delta N_f, \bar t^s]\cup [\bar t^e, \bar t^e+\delta N_f] 
+\end{equation}
+\par The learning objective of ASCL is based on a contrastive loss. As figure~\ref{fig:main} shows, the positive samples $\mathcal{P}$ are constructed from $f_{cls}$ and $f_{loc}$ in action instances of the same category while the negative samples $\mathcal{N}$ come from: i) $f_{cls}$ and $f_{loc}$ in action instances of different categories. ii) all background features $f_{bg}$. ASCL is computed for each batch $B$ with $N$ samples: 
+\begin{equation} \small{ 
+    \mathcal{L}_{\text{ASCL}} = \frac{1}{N}\sum_{B} -\log \frac{ \sum\limits_{f_x\in \mathcal{P}_{f_*}}\!\text{sim}(f_*, f_x) }{\sum\limits_{f_x \in \mathcal{P}_{f_*}}\! \text{sim}(f_*, f_x) +\! \sum\limits_{f_x \in \mathcal{N}_{f_*}}\! \text{sim}(f_*, f_x) }}
+\end{equation}
+\par Optimizing ASCL will be of benefits to tackle the corresponding issues above : 
+i) alleviate the misalignment of two sub-tasks by pulling features of their respective sensitive frames closer.
+ii) discriminate actions and backgrounds better by pushing action features of the same category closer and different categories apart, meanwhile pushing actions and backgrounds apart. Thus ASCL can enhance the feature representation and boost training furthermore.
+\subsection{Training and Inference}
+\label{sec:trainandinfer}
+\textbf{Training.} In the training process, our final loss function is designed: 
+\begin{equation} \small
+    \mathcal{L}=\mathcal{L}_{cls} + \mathcal{L}_{loc} + \mathcal{L}_{s} + \lambda \mathcal{L}_{\text{ASCL}}
+\end{equation}
+where $\mathcal{L}_{cls}$, $\mathcal{L}_{loc}$ and $\mathcal{L}_{s}$ are discussed in equation~\ref{equ:lcls}, equation~\ref{equ:lloc} and equation~\ref{equ:ils}. $\lambda$ denotes the weight of Action Sensitive Contrastive loss.
+\textbf{Inference.} At inference time, our model outputs predictions $(t^s,t^e,c)$ for every frame across all pyramids levels, where $t^s,t^e$ denote the start and end time of action, $c$ denote the predicted action category. $c$ also serves as the action confidence score. SoftNMS~\cite{softnms} is then applied on these results to suppress redundant predictions.
+
+
+
+Experiments
+
+\begin{table*}[ht]
+ \centering 
+ \small
+ \caption{\label{tab:mthumosandcharades} \textbf{Results on MultiThumos and Charades}. We report detection-\textit{m}AP at different tIoU thresholds. Average \textit{m}AP in $[$0.1:0.1:0.9$]$ is reported on MultiThumos and Chrades. Best results are in \textbf{bold}. $\ddagger$ indicates results trained with stronger image augmentation~\cite{tanpointtad, tadtr}. I3D denotes using I3D~\cite{i3d} features and E2E indicates results trained in an end-to-end manner.}
+ {
+  \begin{tabular}{l|l|l|cccc|cccc} 
+  \toprule
+  \multirow{2}{*}{Model} & \multirow{2}{*}{Modality} & \multirow{2}{*}{Feature} & \multicolumn{4}{c}{MultiThumos} & \multicolumn{4}{c}{Charades}\tabularnewline
+ & & & 0.2 & 0.5 & 0.7 & \textbf{Avg.} & 0.2 & 0.5 & 0.7 & \textbf{Avg.} \\
+
+    \hline
+    PDAN~\cite{dai2021pdan} & RGB & I3D & - & - & - & 17.3  & - & - & - & 8.5  \tabularnewline
+    Coarse-Fine~\cite{kahatapitiya2021coarsefine} & RGB & I3D & - & - & -& - & - & - & - & 6.1  \tabularnewline
+    MLAD~\cite{mlad} & RGB & I3D & - & - & - & 14.2  & - & - & - & - \tabularnewline
+    MS-TCT~\cite{dai2022mstct} & RGB & I3D & - & - & - & 16.3  & - & - & - & 7.9   \tabularnewline
+    PointTAD~\cite{tanpointtad} & RGB & I3D-E2E & 36.8 & 23.3 & 11.0 & 21.7 & 15.9 & 12.6 & 8.5 & 11.3 \tabularnewline
+    PointTAD$\ddagger$~\cite{tanpointtad} & RGB & I3D-E2E & 39.7 & 24.9 & 12.0 & 23.5 & 17.5 & 13.5 & 9.1 & 12.1 \tabularnewline
+   \hline
+    ASL & RGB & I3D & \textbf{42.4} & \textbf{27.8} & \textbf{13.7} & \textbf{25.5} & \textbf{24.5} & \textbf{16.5} & \textbf{9.4} & \textbf{15.4} \tabularnewline  \bottomrule
+  \end{tabular}
+ }
+\end{table*}
+
+\begin{table*}[ht]
+ \centering 
+ \caption{\label{tab:result_ego4d} \textbf{Results on Ego4D-Moment Queries v1.0}. We report \textit{m}AP at different tIoU thresholds. Average \textit{m}AP in $[$0.1:0.1:0.5$]$ is reported on Ego4D-Moment Queries. Best resu
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

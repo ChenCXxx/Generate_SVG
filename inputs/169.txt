@@ -1,0 +1,349 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\footnote{\Letter\ Corresponding author. $^\dag$Equal contribution. $^\ddag$ Project leader.}
+\vspace*{-4mm}
+\label{sec:intro}
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\linewidth]{figs/yoloseries_speed_plus.pdf} 
+\vspace*{-8mm}
+\caption{Compared to previously advanced real-time object detectors, our RT-DETR achieves state-of-the-art performance.}
+\vspace*{-6mm}
+\label{fig:yolo series}
+\end{figure}
+
+Real-time object detection is an important area of research and has a wide range of applications, such as object tracking~\cite{zeng2022motr}, video surveillance~\cite{nawaratne2019spatiotemporal}, and autonomous driving~\cite{bogdoll2022anomaly}, \textit{etc.}
+Existing real-time detectors generally adopt the CNN-based architecture, the most famous of which is the YOLO detectors~\cite{redmon2018yolov3,bochkovskiy2020yolov4,yolov5v7.0,long2020pp,huang2021pp,xu2022pp,li2023yolov6v3,ge2021yolox,wang2023yolov7,yolov8} due to their reasonable trade-off between speed and accuracy.
+However, these detectors typically require Non-Maximum Suppression~(NMS) for post-processing, which not only slows down the inference speed but also introduces hyperparameters that cause instability in both the speed and accuracy.
+Moreover, considering that different scenarios place different emphasis on recall and accuracy, it is necessary to carefully select the appropriate NMS thresholds, which hinders the development of real-time detectors.
+
+Recently, the end-to-end Transformer-based detectors~(DETRs)~\cite{carion2020end,sun2021sparse,zhu2020deformable,meng2021conditional,wang2022anchor,liu2021dab,li2022dn,zhang2022dino} have received extensive attention from the academia due to their streamlined architecture and elimination of hand-crafted components.
+However, their high computational cost prevents them from meeting real-time detection requirements, so the NMS-free architecture does not demonstrate an inference speed advantage. 
+This inspires us to explore whether DETRs can be extended to real-time scenarios and outperform the advanced YOLO detectors in both speed and accuracy, eliminating the delay caused by NMS for real-time object detection.
+
+To achieve the above goal, we rethink DETRs and conduct detailed analysis of key components to reduce unnecessary computational redundancy and further improve accuracy.
+For the former, we observe that although the introduction of multi-scale features is beneficial in accelerating the training convergence~\cite{zhu2020deformable}, it leads to a significant increase in the length of the sequence feed into the encoder.
+The high computational cost caused by the interaction of multi-scale features makes the Transformer encoder the computational bottleneck.
+Therefore, implementing the real-time DETR requires a redesign of the encoder.
+And for the latter, previous works~\cite{zhu2020deformable,yao2021efficient,zhang2022dino} show that the hard-to-optimize object queries hinder the performance of DETRs and propose the query selection schemes to replace the vanilla learnable embeddings with encoder features.
+However, we observe that the current query selection directly adopt classification scores for selection, ignoring the fact that the detector are required to simultaneously model the category and location of objects, both of which determine the quality of the features.
+This inevitably results in encoder features with low localization confidence being selected as initial queries, thus leading to a considerable level of uncertainty and hurting the performance of DETRs.
+We view query initialization as a breakthrough to further improve performance.
+
+In this paper, we propose the \textbf{R}eal-\textbf{T}ime \textbf{DE}tection \textbf{TR}ansformer~(RT-DETR), the first real-time end-to-end object detector to our best knowledge.
+To expeditiously process multi-scale features, we design an efficient hybrid encoder to replace the vanilla Transformer encoder, which significantly improves inference speed by decoupling the intra-scale interaction and cross-scale fusion of features with different scales.
+To avoid encoder features with low localization confidence being selected as object queries, we propose the uncertainty-minimal query selection, which provides high-quality initial queries to the decoder by explicitly optimizing the uncertainty, thereby increasing the accuracy.
+Furthermore, RT-DETR supports flexible speed tuning to accommodate various real-time scenarios without retraining, thanks to the multi-layer decoder architecture of DETR.
+
+RT-DETR achieves an ideal trade-off between the speed and accuracy.
+Specifically, RT-DETR-R50 achieves $53.1\%$ AP on COCO \texttt{val2017} and $108$ FPS on T4 GPU, while RT-DETR-R101 achieves $54.3\%$ AP and $74$ FPS, outperforming $L$ and $X$ models of previously advanced YOLO detectors in both speed and accuracy, \Cref{fig:yolo series}.
+We also develop scaled RT-DETRs by scaling the encoder and decoder with smaller backbones, which outperform the lighter YOLO detectors~($S$ and $M$ models).
+Furthermore, RT-DETR-R50 outperforms DINO-Deformable-DETR-R50 by $2.2\%$ AP~($53.1\%$ AP vs $50.9\%$ AP) in accuracy and by about $21$ times in FPS~($108$ FPS vs $5$ FPS), significantly improves accuracy and speed of DETRs.
+After pre-training with Objects365~\cite{shao2019objects365}, RT-DETR-R50 / R101 achieves $55.3\%$ / $56.2\%$ AP, resulting in surprising performance improvements. 
+The main contributions are summarized as: 
+(\romannumeral1). We propose the first real-time end-to-end object detector called RT-DETR, which not only outperforms the previously advanced YOLO detectors in both speed and accuracy but also eliminates the negative impact caused by NMS post-processing on real-time object detection; 
+(\romannumeral2). We quantitatively analyze the impact of NMS on the speed and accuracy of YOLO detectors, and establish an end-to-end speed benchmark to test the end-to-end inference speed of real-time detectors; 
+(\romannumeral3). The proposed RT-DETR supports flexible speed tuning by adjusting the number of decoder layers to accommodate various scenarios without retraining.
+
+
+Related Work
+
+\subsection{Real-time Object Detectors}
+YOLOv1~\cite{redmon2016you} is the first CNN-based one-stage object detector to achieve true real-time object detection.
+Through years of continuous development, the YOLO detectors have outperformed other one-stage object detectors~\cite{liu2016ssd,lin2017focal} and become the synonymous with the real-time object detector.
+YOLO detectors can be classified into two categories: anchor-based~\cite{redmon2017yolo9000,redmon2018yolov3,bochkovskiy2020yolov4,long2020pp,huang2021pp,wang2021scaled,yolov5v7.0,wang2023yolov7} and anchor-free~\cite{ge2021yolox,xu2022pp,li2023yolov6v3,yolov8}, which achieve a reasonable trade-off between speed and accuracy and are widely used in various practical scenarios.
+These advanced real-time detectors produce numerous overlapping boxes and require NMS post-processing, which slows down their speed.
+
+\subsection{End-to-end Object Detectors}
+End-to-end object detectors are well-known for their streamlined pipelines.
+Carion \etal~\cite{carion2020end} first propose the end-to-end detector based on Transformer called DETR, which has attracted extensive attention due to its distinctive features. 
+Particularly, DETR eliminates the hand-crafted anchor and NMS components.
+Instead, it employs bipartite matching and directly predicts the one-to-one object set.
+Despite its obvious advantages, DETR suffers from several problems: slow training convergence, high computational cost, and hard-to-optimize queries. 
+Many DETR variants have been proposed to address these issues.
+\noindent \textbf{Accelerating convergence.}
+Deformable-DETR~\cite{zhu2020deformable} accelerates training convergence with multi-scale features by enhancing the efficiency of the attention mechanism.
+DAB-DETR~\cite{liu2021dab} and DN-DETR~\cite{li2022dn} further improve performance by introducing the iterative refinement scheme and denoising training.
+Group-DETR~\cite{chen2022group} introduces group-wise one-to-many assignment.
+\noindent \textbf{Reducing computational cost.}
+Efficient DETR~\cite{yao2021efficient} and Sparse DETR~\cite{roh2021sparse} reduce the computational cost by reducing the number of encoder and decoder layers or the number of updated queries.
+Lite DETR~\cite{li2023lite} enhances the efficiency of encoder by reducing the update frequency of low-level features in an interleaved way.
+\noindent \textbf{Optimizing query initialization.}
+Conditional DETR~\cite{meng2021conditional} and Anchor DETR~\cite{wang2022anchor} decrease the optimization difficulty of the queries.
+Zhu \etal~\cite{zhu2020deformable} propose the query selection for two-stage DETR, and DINO~\cite{zhang2022dino} suggests the mixed query selection to help better initialize queries. 
+Current DETRs are still computationally intensive and are not designed to detect in real time.
+Our RT-DETR vigorously explores computational cost reduction and attempts to optimize query initialization, outperforming state-of-the-art real-time detectors.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\linewidth]{figs/num_boxes.pdf}
+\vspace*{-7mm}
+\caption{The number of boxes at different confidence thresholds.}
+\vspace*{-6mm}
+\label{fig:num_boxes}
+\end{figure}
+
+
+End-to-end Speed of Detectors
+\label{sec: speed}
+\subsection{Analysis of NMS}
+\label{subsec: analysis}
+NMS is a widely used post-processing algorithm in object detection, employed to eliminate overlapping output boxes. 
+Two thresholds are required in NMS: confidence threshold and IoU threshold.
+Specifically, the boxes with scores below the confidence threshold are directly filtered out, and whenever the IoU of any two boxes exceeds the IoU threshold, the box with the lower score will be discarded.
+This process is performed iteratively until all boxes of every category have been processed.
+Thus, the execution time of NMS primarily depends on the number of boxes and two thresholds.
+To verify this observation, we leverage YOLOv5~\cite{yolov5v7.0} (anchor-based) and YOLOv8~\cite{yolov8} (anchor-free) for analysis.
+
+We first count the number of boxes remaining after filtering the output boxes with different confidence thresholds on the same input.
+We sample values from $0.001$ to $0.25$ as confidence thresholds to count the number of remaining boxes of the two detectors and plot them on a bar graph, which intuitively reflects that NMS is sensitive to its hyperparameters, \Cref{fig:num_boxes}.
+As the confidence threshold increases, more prediction boxes are filtered out, and the number of remaining boxes that need to calculate IoU decreases, thus reducing the execution time of NMS.
+
+\begin{table}[!t]
+\centering
+\begin{minipage}{0.49\linewidth}
+\centering
+    \renewcommand{\arraystretch}{1.15}
+    \setlength{\tabcolsep}{4.43pt}
+    \begin{tabular}{c|cc}
+    \toprule
+    \textbf{\makecell[c]{IoU thr.\\\small(Conf=0.001)}}  &  \textbf{\makecell[c]{AP \\\small(\%)}} & \textbf{\makecell[c]{NMS\\\small(ms)}} \\ 
+    \midrule
+    0.5 & 52.1 & 2.24 \\
+    \midrule
+    0.6 & 52.6 & 2.29 \\
+    \midrule
+    0.8 & 52.8 & 2.46 \\
+    \bottomrule
+    \end{tabular}
+\end{minipage}
+\begin{minipage}{0.49\linewidth}
+\centering
+    \renewcommand{\arraystretch}{1.15}
+    \setlength{\tabcolsep}{4.43pt}
+    \begin{tabular}{c|cc}
+    \toprule
+    \textbf{\makecell[c]{Conf thr.\\\small(IoU=0.7)}}  &  \textbf{\makecell[c]{AP \\\small(\%)}} & \textbf{\makecell[c]{NMS\\\small(ms)}} \\
+    \midrule
+    0.001 & 52.9 & 2.36 \\
+    \midrule
+    0.01 & 52.4 & 1.73 \\
+    \midrule
+    0.05 & 51.2 & 1.06 \\
+    \bottomrule
+    \end{tabular}
+\end{minipage}
+\caption{The effect of IoU threshold and confidence threshold on  accuracy and NMS execution time.}
+\vspace*{-6mm}
+\label{tab:speed}
+\end{table}
+
+Furthermore, we use YOLOv8 to evaluate the accuracy on the COCO \texttt{val2017} and test the execution time of the NMS operation under different hyperparameters.
+6/plugin/efficientNMSPlugin}}}, which involves multiple kernels, including \texttt{EfficientNMSFilter}, \texttt{RadixSort}, \texttt{EfficientNMS}, \etc, and we only report the execution time of the \texttt{EfficientNMS} kernel.
+We test the speed on T4 GPU with TensorRT FP16, and the input and preprocessing remain consistent.
+The hyperparameters and the corresponding results are shown in ~\Cref{tab:speed}.
+From the results, we can conclude that the execution time of the \texttt{EfficientNMS} kernel increases as the confidence threshold decreases or the IoU threshold increases.
+The reason is that the high confidence threshold directly filters out more prediction boxes, whereas the high IoU threshold filters out fewer prediction boxes in each round of screening.
+ 
+The results show that inappropriate confidence thresholds lead to significant false positives or false negatives by the detector.
+With a confidence threshold of $0.001$ and an IoU threshold of $0.7$, YOLOv8 achieves the best AP results, but the corresponding NMS time is at a higher level.
+Considering that YOLO detectors typically report the model speed and exclude the NMS time, thus an end-to-end speed benchmark needs to be established.
+
+\begin{figure*}[!ht]
+\centering
+\includegraphics[width=\linewidth]{figs/variants_nips.pdf} 
+\vspace*{-6mm}
+\caption{The encoder structure for each variant. \textbf{SSE} represents the single-scale Transformer encoder, \textbf{MSE} represents the multi-scale Transformer encoder, and \textbf{CSF} represents cross-scale fusion. \textbf{AIFI} and \textbf{CCFF} are the two modules designed into our hybrid encoder.}
+\vspace*{-6mm}
+\label{fig:variants}
+\end{figure*}
+
+\subsection{End-to-end Speed Benchmark}
+\label{subsec: benchmark}
+To enable a fair comparison of the end-to-end speed of various real-time detectors, we establish an end-to-end speed benchmark. 
+Considering that the execution time of NMS is influenced by the input, it is necessary to choose a benchmark dataset and calculate the average execution time across multiple images.
+We choose COCO \texttt{val2017}~\cite{lin2014microsoft} as the benchmark dataset and append the NMS post-processing plugin of TensorRT for YOLO detectors as mentioned above.
+Specifically, we test the average inference time of the detector according to the NMS thresholds of the corresponding accuracy taken on the benchmark dataset, excluding \texttt{I/O} and \texttt{MemoryCopy} operations.
+We utilize the benchmark to test the end-to-end speed of anchor-based detectors YOLOv5~\cite{yolov5v7.0} and YOLOv7~\cite{wang2023yolov7}, as well as anchor-free detectors PP-YOLOE~\cite{xu2022pp}, YOLOv6~\cite{li2023yolov6v3} and YOLOv8~\cite{yolov8} on T4 GPU with TensorRT FP16.
+According to the results~(\textit{cf.~\Cref{tab:main}}), we conclude that \textit{anchor-free detectors outperform anchor-based detectors with equivalent accuracy for YOLO detectors because the former require less NMS time than the latter}.
+The reason is that anchor-based detectors produce more prediction boxes than anchor-free detectors~(three times more in our tested detectors).
+
+
+
+The Real-time DETR
+\label{sec: method}
+\subsection{Model Overview} 
+RT-DETR consists of a backbone, an efficient hybrid encoder, and a Transformer decoder with auxiliary prediction heads.
+The overview of RT-DETR is illustrated in~\Cref{fig:overview}.
+Specifically, we feed the features from the last three stages of the backbone $\{ \mathbfcal{S}_3, \mathbfcal{S}_4, \mathbfcal{S}_5 \}$ into the encoder.
+The efficient hybrid encoder transforms multi-scale features into a sequence of image features through intra-scale feature interaction and cross-scale feature fusion~(\textit{cf.}~\cref{subsec:encoder}).
+Subsequently, the uncertainty-minimal query selection is employed to select a fixed number of encoder features to serve as initial object queries for the decoder~(\textit{cf.}~\cref{subsec:query selection}).
+Finally, the decoder with auxiliary prediction heads iteratively optimizes object queries to generate categories and boxes.
+
+\begin{figure*}[!ht]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/rtdetr_overview.pdf}
+    \vspace*{-6mm}
+    \caption{
+Overview of RT-DETR. We feed the features from the last three stages of the backbone into the encoder.
+The efficient hybrid encoder transforms multi-scale features into a sequence of image features through the Attention-based Intra-scale Feature Interaction~(AIFI) and the CNN-based Cross-scale Feature Fusion~(CCFF).
+Then, the uncertainty-minimal query selection selects a fixed number of encoder features to serve as initial object queries for the decoder.
+Finally, the decoder with auxiliary prediction heads iteratively optimizes object queries to generate categories and boxes.
+}
+\vspace*{-6mm}
+\label{fig:overview}
+\end{figure*}
+
+\subsection{Efficient Hybrid Encoder} 
+\label{subsec:encoder}
+\noindent \textbf{Computational bottleneck analysis.}
+The introduction of multi-scale features accelerates training convergence and improves performance~\cite{zhu2020deformable}.
+However, although the deformable attention reduces the computational cost, the sharply increased sequence length still causes the encoder to become the computational bottleneck.
+As reported in Lin \etal~\cite{lin2022d}, the encoder accounts for $49\%$ of the GFLOPs but contributes only $11\%$ of the AP in Deformable-DETR.
+To overcome this bottleneck, we first analyze the computational redundancy present in the multi-scale Transformer encoder.
+Intuitively, high-level features that contain rich semantic information about objects are extracted from low-level features, making it redundant to perform feature interaction on the concatenated multi-scale features.
+Therefore, we design a set of variants with different types of the encoder to prove that the simultaneous intra-scale and cross-scale feature interaction is inefficient, \Cref{fig:variants}.
+Specially, we use DINO-Deformable-R50 with the smaller size data reader and lighter decoder used in RT-DETR for experiments and first remove the multi-scale Transformer encoder in DINO-Deformable-R50 as variant A.
+Then, different types of the encoder are inserted to produce a series of variants based on A, elaborated as follows~(Detailed indicators of each variant are referred to in~\Cref{tab:encoder}):
+\begin{itemize}
+    \item A $\rightarrow$ B: Variant B inserts a single-scale Transformer encoder into A, which uses one layer of Transformer block. The multi-scale features share the encoder for intra-scale feature interaction and then concatenate as output.
+    \item B $\rightarrow$ C: 
+    Variant C introduces cross-scale feature fusion based on B and feeds the concatenated features into the multi-scale Transformer encoder to perform simultaneous intra-scale and cross-scale feature interaction.
+    \item C $\rightarrow$ D: 
+    Variant D decouples intra-scale interaction and cross-scale fusion by utilizing the single-scale Transformer encoder for the former and a PANet-style~\cite{liu2018path} structure for the latter.
+    \item D $\rightarrow$ E: 
+    Variant E enhances the intra-scale interaction and cross-scale fusion based on D, adopting an efficient hybrid encoder designed by us.
+\end{itemize}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figs/enc_block.pdf}
+    \vspace*{-7mm}
+    \caption{The fusion block in CCFF.}
+    \vspace*{-5mm}
+ \label{fig:encoder_block}
+\end{figure}
+
+\noindent \textbf{Hybrid design.}
+Based on the above analysis, we rethink the structure of the encoder and propose an \textit{efficient hybrid encoder}, consisting of two modules, namely the Attention-based Intra-scale Feature Interaction~(AIFI) and the CNN-based Cross-scale Feature Fusion~(CCFF).
+Specifically, AIFI further reduces the computational cost based on variant D by performing the intra-scale interaction only on $\mathbfcal{S}_5$ with the single-scale Transformer encoder. 
+The reason is that applying the self-attention operation to high-level features with richer semantic concepts captures the connection between conceptual entities, which facilitates the localization and recognition of objects by subsequent modules. 
+However, the intra-scale interactions of lower-level features are unnecessary due to the lack of semantic concepts and the risk of duplication and confusion with high-level feature interactions.
+To verify this opinion, we perform the intra-scale interaction only on $\mathbfcal{S}_5$ in variant D, and the experimental results are reported in~\Cref{tab:encoder}~(see row D$_{\mathbfcal{S}_5}$).
+Compared to D, D$_{\mathbfcal{S}_5}$ not only significantly reduces latency~($35\%$ faster), but also improves accuracy~($0.4\%$ AP higher).
+CCFF is optimized based on the cross-scale fusion module, which inserts several fusion blocks consisting of convolutional layers into the fusion path.
+The role of the fusion block is to fuse two adjacent scale features into a new feature, and its structure is illustrated in~\Cref{fig:encoder_block}.
+The fusion block contains two $1\times1$ convolutions to adjust the number of channels, $N$ \textit{RepBlock}s composed of RepConv~\cite{ding2021repvgg} are used for feature fusion, and the two-path outputs are fused by element-wise add.
+We formulate the calculation of the hybrid encoder as:
+\begin{equation}
+\begin{split}
+\label{equ:encoder}
+    \mathbfcal{Q} & = \mathbfcal{K} = \mathbfcal{V} = \texttt{Flatten}(\mathbfcal{S}_5), \\
+    \mathbfcal{F}_5&=\texttt{Reshape}(\texttt{AIFI}(\mathbfcal{Q},\mathbfcal{K},\mathbfcal{V})), \\
+    \mathbfcal{O} & = \texttt{CCFF}(\{\mathbfcal{S}_3,\mathbfcal{S}_4,\mathbfcal{F}_5\}),
+\end{split}
+\end{equation}
+where $\texttt{Reshape}$ represents restoring the shape of the flattened feature to the same shape as $\mathbfcal{S}_5$.
+
+\subsection{Uncertainty-minimal Query Selection}
+\label{subsec:query selection}
+To reduce the difficulty of optimizing object queries in DETR, several subsequent works~\cite{zhu2020deformable,yao2021efficient,zhang2022dino} propose query selection schemes, which have in common that they use the confidence score to select the top $K$ features from the encoder to initialize object queries~(or just position queries).
+The confidence score represents the likelihood that the feature includes foreground objects.
+Nevertheless, the detector are required to simultaneously model the category and location of objects, both of which determine the quality of the features.
+Hence, the performance score of the feature is a latent variable that is jointly correlated with both classification and localization.
+Based on the analysis, the current query selection lead to a considerable level of uncertainty in the selected features, resulting in sub-optimal initialization for the decoder and hindering the performance of the detector.
+
+To address this problem, we propose the uncertainty minimal query selection scheme, which explicitly constructs and optimizes the epistemic uncertainty to model the joint latent variable of encoder features, thereby providing high-quality queries for the decoder.
+Specifically, the feature uncertainty $\mathcal{U}$ is defined as the discrepancy between the predicted distributions of localization $\mathcal{P}$ and classification $\mathcal{C}$ in~\cref{equ:uncertainty}.
+To minimize the uncertainty of the queries, we integrate the uncertainty into the loss function for the gradient-based optimization in~\cref{equ:loss}.
+\begin{equation}
+\label{equ:uncertainty}
+\mathcal{U}(\hat{\mathbfcal{X}}) = \| \mathcal{P}(\hat{\mathbfcal{X}}) - \mathcal{C}(\hat{\mathbfcal{X}}) \|, \hat{\mathbfcal{X}} \in \mathbb{R}^D
+\end{equation}
+\begin{equation}
+\begin{split}
+\label{equ:loss}
+\mathcal{L}(\hat{\mathbfcal{X}}, \hat{\mathbfcal{Y}}, \mathbfcal{Y}) = \mathcal{L}_{box}(\hat{\mathbf{b}}, \mathbf{b}) + \mathcal{L}_{cls}(\mathcal{U}(\hat{\mathbfcal{X}}), \hat{\mathbf{c}}, \mathbf{c})
+\end{split}
+\end{equation}
+where $\hat{\mathbfcal{Y}}$ and $\mathbfcal{Y}$ denote the prediction and ground truth, $\hat{\mathbfcal{Y}} = \{\hat{\mathbf{c}}, \hat{\mathbf{b}}\}$, $\hat{\mathbf{c}}$ and $\hat{\mathbf{b}}$ represent the category and bounding box respectively, $\hat{\mathbfcal{X}}$ represent the encoder feature.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figs/uncertainty.pdf}
+\vspace*{-3mm}
+\caption{Classification and IoU scores of the selected encoder features. \textcolor[rgb]{0.239, 0.188, 0.635}{Purple} and \textcolor[rgb]{0.525, 0.655, 0.537}{Green} dots represent the selected features from model trained with uncertainty-minimal query selection and vanilla query selection, respectively.}
+\vspace*{-6mm}
+\label{fig:iou-aware}
+\end{figure}
+
+\noindent \textbf{Effectiveness analysis.} To analyze the effectiveness of the uncertainty-minimal query selection, we visualize the classification scores and IoU scores of the selected features on COCO \texttt{val2017}, \Cref{fig:iou-aware}.
+We draw the scatterplot with classification scores greater than $0.5$.
+The purple and green dots represent the selected features from the model trained with uncertainty-minimal query selection and vanilla query selection, respectively.
+The closer the dot is to the top right of the figure, the higher the quality of the corresponding feature, \ie, the more likely the predicted category and box are to describe the true object.
+The top and right density curves reflect the number of dots for two types.
+
+The most striking feature of the scatterplot is that the purple dots are concentrated in the top right of the figure, while the green dots are concentrated in the bottom right.
+This shows that uncertainty-minimal query selection produces more high-quality encoder features. 
+Furthermore, we perform quantitative analysis on two query selection schemes. 
+There are $138\%$ more purple dots than green dots, \ie, more green dots with a classification score less than or equal to $0.5$, which can be considered low-quality features.
+And there are $120\%$ more purple dots than green dots with both scores greater than $0.5$.
+The same conclusion can be drawn from the density curves, where the gap between purple and green is most evident in the top right of the figure.
+Quantitative results further demonstrate that the uncertainty-minimal query selection provides more features with accurate classification and precise location for queries, thereby improving the accuracy of the detector~(\textit{cf.} \cref{subsec:ablation iou-aware}).
+
+\subsection{Scaled RT-DETR}
+\label{subsec:scaled rt-detr}
+Since real-time detectors typically provide models at different scales to accommodate different scenarios, RT-DETR also supports flexible scaling.
+Specifically, for the hybrid encoder, we control the width by adjusting the embedding dimension and the number of channels, and the depth by adjusting the number of Transformer layers and \textit{RepBlock}s.
+The width and depth of the decoder can be controlled by manipulating the number of object queries and decoder layers.
+Furthermore, the speed of RT-DETR supports flexible adjustment by adjusting the number of decoder layers.
+We observe that removing a few decoder layers at the end has minimal effect on accuracy, but greatly enhances inference speed~(\textit{cf.} \cref{subsec:ablation decoder}).
+We compare the RT-DETR equipped with ResNet50 and ResNet101~\cite{he2016deep,he2019bag} to the $L$ and $X$ models of YOLO detectors.
+Lighter RT-DETRs can be designed by applying other smaller~(\eg, ResNet18/34) or scalable~(\eg, CSPResNet~\cite{xu2022pp}) backbones with scaled encoder and decoder.
+
+
+
+Experiments
+\subsection{Comparison with SOTA}
+\begin{table*}[!ht]
+\footnotesize
+\centering
+\renewcommand{\arraystretch}{1.05}
+\setlength{\tabcolsep}{3.85pt}
+\begin{tabular*}{\textwidth}{ll | cccc | cccccc}
+    \toprule
+    \textbf{Model} &  \textbf{Backbone} & \textbf{\#Epochs} & \textbf{\#Params~(M)} & \textbf{GFLOPs} &  \textbf{FPS$_{bs=1}$} & \textbf{AP$^{val}$} & \textbf{AP$^{val}_{50}$} & \textbf{AP$^{val}_{75}$} & \textbf{AP$^{val}_S$} & \textbf{AP$^{val}_M$} & \textbf{AP$^{val}_L$} \\ 
+    \midrule
+    \hline
+    \rowcolor[gray]{0.9}
+    \multicolumn{12}{l}{\emph{Real-time Object Detectors}} \\
+    YOLOv5-L~\cite{yolov5v7.0} & - & 300 & 46 & 109 & 54 & 49.0 & 67.3 & - & - & - & - \\
+    YOLOv5-X~\cite{yolov5v7.0} & - & 300 & 86 & 205 & 43 & 50.7 & 68.9 & - & - & - & - \\
+    PPYOLOE-L~\cite{xu2022pp} & - & 300 & 52 & 110  & 94 & 51.4 & 68.9 & 55.6 & 31.4 & 55.3 & 66.1 \\
+    PPYOLOE-X~\cite{xu2022pp} & - & 300 & 98 & 206  & 60 & 52.3 & 69.9 & 56.5 & 33.3 & 56.3 & 66.4\\
+    YOLOv6-L~\cite{li2023yolov6v3} & - & 300 & 59 & 150  & 99 & 52.8 & 70.3 & 57.7 & 34.4 & 58.1 & 70.1 \\
+    YOLOv7-L~\cite{wang2023yolov7} & - &300 & 36 & 104  & 55 & 51.2 & 69.7 & 55.5 & 35.2 & 55.9 & 66.7 \\
+    YOLOv7-X~\cite{wang2023yolov7} & - &300 & 71  & 189 & 45 & 52.9 & 71.1 & 57.4 & 36.9 & 57.7 & 68.6\\
+    YOLOv8-L~\cite{yolov8} & - & - & 43 & 165  & 71 & 52.9 & 69.8 & 57.5 & 35.3 & 58.3 & 69.8 \\
+    YOLOv8-X~\cite{yolov8} & - & - & 68 & 257  & 50 & 53.9 & 71.0 & 58.7 & 35.7 & 59.3 & 70.7 \\
+    \midrule
+    \hline
+    \rowcolor[gray]{0.9}
+    \multicolumn{12}{l}{\emph{End-to-end Object Detectors}} \\
+
+    DETR-DC5~\cite{carion2020end} & R50 & 500 & 41 &  187 & - & 43.3 & 63.1 & 45.9 & 22.5 & 47.3 & 61.1 \\
+    DETR-DC5~\cite{carion2020end} & R101 & 500 & 60 &  253 & - & 44.9 & 64.7 & 47.7 & 23.7 & 49.5 & 62.3 \\
+    
+    Anchor-DETR-DC5~\cite{wang2022anchor} & R50 & 50 & 39 &  172 & - & 44.2 & 64.7 & 47.5 & 24.7 & 48.2 & 60.6 \\
+    Anchor-DETR-DC5~\cite{wang2022anchor} & R101 & 50 & - & - & - & 45.1 & 65.7 & 48.8 & 25.8 & 49.4 & 61.6 \\
+    
+    Conditional-DETR-DC5~\cite{meng2021conditional} & R50 & 108 & 44 & 195 & - & 45.1 & 65.4 & 48.5 & 25.3 & 49.0 & 62.2 \\
+    Conditional-DETR-DC5~\cite{meng2021conditional} & R101 & 108 & 63 & 262 & - & 45.9 & 66.8 & 49.5 & 27.2 & 50.3 & 63.3 \\
+
+    Efficient-DETR~\cite{yao2021effici
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

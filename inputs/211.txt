@@ -1,0 +1,250 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+	
+	3D reconstruction, which lifts 2D view images to a 3D representation of an object, is a challenging problem. It plays an important role in numerous technologies, including intelligent driving, augmented reality and robotics. In the situation of single-view input, previous works have attempted to improve performance by strengthening the network capabilities \cite{girdhar2016learning, wu2016learning, smith2017improved, liu2022spatial, xing2022semi} and leveraging the geometric information as priors knowledge \cite{yang2021single, yang2022exploring, xing2022few}. However, for multi-view reconstruction, researchers concentrate on how to extract sufficient feature representation for the object shape from unstructured multiple images \cite{choy20163d, xie2019pix2vox, yang2020robust, xie2020pix2vox++, wang2021multi}. This paper is devoted to multi-view 3D reconstruction using the voxel representation.
+	
+	\begin{figure}
+		\centering
+		\begin{subfigure}{0.48\linewidth}
+			\scalebox{1.25}{
+				\includegraphics[width=0.7\linewidth]{./figure/highlight_1.pdf}}
+			\caption{Video tasks}
+			\label{highlight_video}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}{0.5\linewidth}
+			\scalebox{1.25}{
+				\includegraphics[width=0.8\linewidth]{./figure/highlight_2.pdf}}
+			\caption{Multi-view 3D reconstruction}
+			\label{highlight_object}
+		\end{subfigure}
+		\caption{Comparison of the positional correspondence used for inter-image-decoupled feature extraction in (a) video tasks and (b) multi-view 3D reconstruction. Video tasks exploit the temporally-coherence property to establish the prior relationship as shown in (a). For multi-view reconstruction, each patch is treated as an anchor and associated with its similar tokens from other views to build the positional correspondence as shown in (b).}
+		\label{highlight}
+	\end{figure}
+	
+	In our investigation, the deep-learning-based algorithms for multi-view reconstruction typically involve two steps: feature extraction and shape reconstruction. The latter is generally accomplished using a 3D decoder module, while there are various solutions for the former including CNN-based and transformer-based methods.
+	
+	CNN-based methods usually separate the feature extraction process into two stages. The first stage exploits a backbone network to encode on intra-view-dimension while the second stage processing on inter-view-dimension aggregate the features obtained from different views. The fusion method can be a pooling layer \cite{su2015multi, paschalidou2018raynet, huang2018deepmvs}, a recurrent unit \cite{choy20163d, kar2017learning, ma2020improved} or an attention operator \cite{yang2020robust}. In addition, Pix2Vox series \cite{xie2019pix2vox, xie2020pix2vox++} put merger after decoder, which directly fusion the voxels predicted from different views, and also achieve good results. To realize the merger adapting the global state, GARNet \cite{zhu2023garnet} sets up two fusion modules, which are located before and after the decoder respectively.
+	
+	Transformer-based methods \cite{wang2021multi, yagubbayli2021legoformer, tiong20223d} that can directly handle views as a sequence also attend global awareness. It takes natural advantage of the architecture to couple the procedures for intra-image and inter-image feature extraction. However, such approaches work poorly when facing few views as input since the size of the extracted feature is too small to hold enough information. In contrast, 3D-RETR \cite{shi20213d} exploits transformer on the intra-view dimension and then aggregates the features from different views using an adaptive pooling layer. It is essentially the same method as before \cite{su2015multi} but with a more advanced backbone network. The success of this method reminds us that the power of vision transformer (ViT) \cite{dosovitskiy2021image} for the representation of views cannot be understated.
+	
+	In video tasks that also face multiple images as input, recent works \cite{arnab2021vivit, bertasius2021space, liu2021decoupled} have produced good performance using ViT as a spatially-decoupled feature extractor and additionally establish a temporally-decoupled feature extractor. They benefit from the fact that video frames are temporally coherent (as shown in Figure~\ref{highlight_video}). These approaches, however, cannot be directly transferred to our task since multi-view reconstruction should deal with unstructured multiple images without prior positional correspondence.
+	
+	To address this problem, we propose a novel inter-view-decoupled block (IVDB) based on mining the correlation between similar patches from different views (as shown in Figure~\ref{highlight_object}). It can be inserted between the blocks of ViT to create a transformer encoder for unstructured multiple images. This model maintains the advantages of ViT initialization pre-trained on large-scale datasets while alternating decoupling the intra- and inter-view encoding processes. Moreover, by clustering the tokens according to their similarities and exploiting a down-sampling transformer block, the tokens from all branches are compressed into a fixed-size compact representation, ensuring relatively steady performance for the varying number of views input.
+	
+	In detail, our contributions are as follows:
+	
+	\begin{itemize}
+		\item{To our best knowledge, we are the first to propose a transformer network that alternates decoupled intra- and inter-view feature extraction for multi-view 3D reconstruction, a problem facing unstructured multiple images as input.} 
+		\item{Leveraging the correlations between similar tokens, we proposes a novel inter-view-decoupled block (IVDB) that rectifies the tokens according to the related information from other views and a similar-token merger (STM) that compresses the features from all branches.}
+		\item{Experiments on ShapeNet \cite{chang2015shapenet} verify that our method achieves performance better than previous SOTA methods by a large margin and has the potential to be more robust for multi-view reconstruction when increasing training consumption.}
+	\end{itemize}
+	
+	
+
+
+Related Works
+	\label{sec:related_works}
+	\subsection{Multi-View 3D Reconstruction}
+	
+	In the early years, the traditional algorithms, e.g. SFM \cite{ozyecsil2017survey} and SLAM \cite{fuentes2015visual}, build mappings from 2D pixels to 3D positions based on feature matching. They are hard to deal with complex situation of view images. At present, neural network algorithms become the mainstream for solving multi-view reconstruction. 
+	
+	Among them, CNN-based methods usually extract features from each view in parallel and then aggregate these features to a representation of the shape. Most of the research works focus on the fusion approach. \cite{su2015multi, paschalidou2018raynet, huang2018deepmvs} employ pooling-based fusion method that concatenates the feature maps from different views and then compresses them to a specified size by a maximum pooling or an average pooling layer. Despite being straightforward, it performs poorly because it lacks learnable parameters. 3D-R2N2 series \cite{choy20163d, ma2020improved} and LSM \cite{kar2017learning} use recurrent neural network (RNN)-based fusion method that treats features from views as a sequence. However, a recurrent unit cannot satisfy invariant to permutations and is not suitable for facing a large number of views input due to limited long-term memory. Attsets\cite{yang2020robust}, Pix2Vox series \cite{xie2019pix2vox, xie2020pix2vox++} and GARNet \cite{zhu2023garnet} exploits attention-based fusion method that accumulates the features from different views weighted according to the score maps predicted by an extra branch.
+	
+	To learn the relatively complex latent correlation between different views, transformer-based methods are proposed. EVolT \cite{wang2021multi}, LegoFormer \cite{yagubbayli2021legoformer} and 3D-C2FT \cite{tiong20223d} treats the input as a sequence on the inter-view-dimension. However, their reconstruction quality is terrible when facing few view images due to the insufficient size of the feature. 3D-RETR \cite{shi20213d} deals with tokens on intra-view-dimension. It utilizes ViT \cite{dosovitskiy2021image} to extract features from each view and fuses them using the pooling-based fusion. Although the strong representation learning ability of the transformer for images is utilized, the potential information between views is not fully discovered.
+	
+	
+	\begin{figure*}[ht]
+		\centering
+		\scalebox{1.2}{
+			\includegraphics[width=0.8\linewidth]{./figure/pipeline.pdf}}
+		\caption{The architecture used for feature extraction in UMIFormer. The network encodes unstructured multiple images utilizing the intra-view-decoupled transformer block and the inter-view-decoupled block alternately. Then, the feature is compressed to a compact representation by the similar-token merger.}
+		\label{pipeline}
+	\end{figure*}
+	
+	
+	\subsection{Transformer for Multiple Images}
+	
+	The transformer paradigm is proposed by \cite{vaswani2017attention} for natural language processing. ViT \cite{dosovitskiy2021image} widely extends it to computer vision and mainly works on single-image. Some research about video tasks introduces the transformer network to solve the problems facing multiple images as input. Leveraging prior relationships based on spatial and temporal, TimeSformer~\cite{bertasius2021space} proposes decoupled spatial-temporal attention where the two kinds of attention operation coexist in a transformer block and DSTT~\cite{liu2021decoupled} decouples the spatial and temporal encoding into separate transformer blocks which are used alternately. ViViT~\cite{arnab2021vivit} factorises the multi-head dot-product attention operation to execute the two kinds of decoupled attention in parallel. In addition, DeViT~\cite{cai2022devit}, FGT~\cite{zhang2022flow}, E$^2$FGVI~\cite{li2022towards} and MotionRGBD~\cite{Zhou_2022_CVPR} further mine the relationship in spatial and temporal to acquire a better representation.
+	
+	These decoupling methods exploit spatial-temporal relations to achieve good representation learning capability. However, they cannot be transferred to solve multi-view reconstruction because there is no inter-image-coherent when processing unstructured multiple images.
+	
+	
+
+
+Methods
+	\label{sec:methods}
+	
+	According to an arbitrary number of view images $\mathcal{I} = \{I_1, I_2, \cdots, I_n\}$ with sizes of $224^2 \times 3$ of an object, our model is to generate the corresponding voxel representation $V$ with a size of $32^3$. To begin, views are used to extract a feature representation $f$ (described in section~\ref{sec:method:feature_extraction}). Then, the binary voxel $V$ will be constructed according to the feature (described in section~\ref{sec:method:shape_reconstruction}). The entire process is formulated as:
+	\begin{equation}
+		V = \mathtt{UMIFormer}(\mathcal{I}) = \mathtt{R}\left(\mathtt{E}\left(I_1, I_2, \ldots, I_n\right)\right),
+	\end{equation}
+	where $\mathtt{E}$ and $\mathtt{R}$ denote the processes of feature extraction and shape reconstruction respectively.
+	
+	\subsection{Feature Extraction}
+	\label{sec:method:feature_extraction}
+	
+	The feature extractor is designed based on ViT \cite{dosovitskiy2021image}. It contains four types of blocks: patch embedding, intra-view-decoupled transformer block, inter-view-decoupled block (IVDB) and similar-token merger (STM). The first two of them are derived from the ViT structure. Patch embedding is consist of splitting images into patches, linearly mapping them and adding position embeddings. The foundation structure of ViT is actually assembled by all the intra-view-decoupled transformer blocks.
+	
+	IVDBs (elaborated in Section~\ref{sec:method:feature_extraction:ivdb}), which construct the relationships between various views, are periodically inserted into the ViT backbone. Thus, it is feasible to alternate intra- and inter-view-dimension encoding. Comparing to the approaches that separate the two encoding modes, which extract features from each view and then fuse them, our method mines richer correlations between different views. Comparing to the approaches that couple these two dimensions, our method is equivalent to providing prior knowledge to reduce the complexity of representation learning.
+	
+	STM (elaborated in Section~\ref{sec:method:feature_extraction:stm}), at the end of the extractor, downsamples the feature obtained from all branches into a compact representation. Note that STM is utilized to compress the feature, as opposed to being employed for aggregating like the merger blocks in previous works \cite{su2015multi, choy20163d, yang2020robust}. Because the connection between various views has been created by IVDBs and the transformer-based decoder can handle sequences with variable lengths, it is not necessary to set a specific fusion function. STM is designed for enabling the extractor to provide fixed-size features for reconstruction when receiving varying numbers of views, ensuring relatively stable performance.
+	
+	The process of feature extraction is shown in Figure~\ref{pipeline}. The patched view images are alternately decoupled encoding by the transformer blocks and IVDBs and then compressed into a compact representation using STM.
+	
+	\subsubsection{Inter-View-Decoupled Block}
+	\label{sec:method:feature_extraction:ivdb}
+	
+	Since the unstructured images have no prior positional correspondence, we consider building a substitute property between different views. In fact, a token represents a particular region of the object and similar tokens correspond to related regions. Thus, we hold that the relationship created by similar tokens can be used as the auxiliary condition for bridging views. We adopt an inter-view KNN layer, which takes each token as an anchor $x_i$ and matches it with the nearest $k$ tokens $y_{i}$ from each other view in Euclidean space.
+	
+	\begin{figure}[t]
+		\centering
+		\scalebox{1.25}{
+			\includegraphics[width=0.8\linewidth]{./figure/token_rectification.pdf}}
+		\caption{Visual illustration of the token rectification used in IVDB.}
+		\label{token_rectification}
+	\end{figure}
+	
+	To exploit the above relationships, we propose token rectification for mining the inter-view correlation, illustrated in Figure~\ref{token_rectification}. The tokens are treated as point cloud in a high-dimensional manifold space. Among them, the neighboring points, which are regarded as the similar tokens, support the anchor modified to a more accurate representation.
+	
+	Firstly, a Generalized Laplace Operator extracts the related feature $r_i$ of the anchor $x_i$. This operator embeds the edge features based on the related positional relationship between anchor and its similar tokens in feature space and aggregates them through an attention-based fusion \cite{yang2020robust}. The definition is as follows:
+	\begin{equation}
+		e_{ij} = \mathtt{MLP_{edge}}\left(y_{ij} - x_{i}\right),
+	\end{equation}
+	\begin{equation}
+		r_{i} = \mathtt{Fusion}\left(e_{i1}, e_{i2}, \ldots, e_{i\left(k\left(n-1\right)\right)}\right),
+		\label{equation::fusion}
+	\end{equation}
+	where $\mathtt{MLP_{edge}}$ is a MLP (multilayer perceptron) with non-linear activation function and $\mathtt{Fusion}$ indicates the attention-based fusion approach. Then, the related feature help to rectify the anchor by predicting the feature offset $o_{i}$. Compared with mapping directly to update the anchor, adding offset better preserves the advantages of ViT initialization pre-trained on large-scale datasets due to keeping the token in the original feature space. We propose two strategies for predicting offsets:
+	\begin{equation}
+		o_i = \mathtt{MLP_{os}} \left(x_{i}, r_{i}\right),
+		\label{offset}
+	\end{equation}
+	\begin{equation}
+		o_i = \mathtt{MLP_{ow}} \left(x_{i}, r_{i}\right) \times x_{i},
+		\label{offset_weight}
+	\end{equation}
+	where $\mathtt{MLP_{os}}$ is an MLP layer to predict the offset directly, while $\mathtt{MLP_{ow}}$ is an MLP with a tanh function to predict the offset weight. Finally, the rectified anchor token is produced by a straightforward addition operation:
+	\begin{equation}
+		x_{i}^{\prime} = x_{i} + o_{i}.
+	\end{equation}
+	
+	\begin{figure}[t]
+		\centering
+		\scalebox{1.25}{
+			\includegraphics[width=0.78\linewidth]{./figure/down-sampling_transformer_block.pdf}}
+		\caption{Visual illustration of the down-sampling transformer block used in STM.}
+		\label{down-sampling_transformer_block}
+	\end{figure}
+	
+	\subsubsection{Similar-Token Merger}
+	\label{sec:method:feature_extraction:stm}
+	
+	The previous network fetches a large number of tokens from views. Several of these tokens contain relatively close information that may cause information redundancy, especially when facing extremely high input amounts. Moreover, the view images are composed of both foreground and background while only the foreground information supports reconstruction. As a result, we propose the feature compression method that maximizes diversity while minimizing irrelevant information for the preserved feature.
+	
+	\begin{table*}[]
+		\centering
+		\renewcommand\arraystretch{1.5}
+		\scalebox{0.63}{
+			\begin{tabular}{c|c|ccccccccc}
+				\multicolumn{2}{c|}{\textbf{Methods}} & \multicolumn{1}{c}{\textbf{1 view}} & \multicolumn{1}{c}{\textbf{2 views}} & \multicolumn{1}{c}{\textbf{3 views}} & \multicolumn{1}{c}{\textbf{4 views}} & \multicolumn{1}{c}{\textbf{5 views}} & \multicolumn{1}{c}{\textbf{8 views}} & \multicolumn{1}{c}{\textbf{12 views}} & \multicolumn{1}{c}{\textbf{16 views}} & \multicolumn{1}{c}{\textbf{20 views}} \\ \hline
+				\multirow{5}{*}{\rotatebox{90}{\textbf{CNN-Based}}} & \textbf{3D-R2N2} \cite{choy20163d} & 0.560 / 0.351 & 0.603 / 0.368 & 0.617 / 0.372 & 0.625 / 0.378 & 0.634 / 0.382 & 0.635 / 0.383 & 0.636 / 0.382 & 0.636 / 0.382 & 0.636 / 0.383 \\
+				& \textbf{AttSets} \cite{yang2020robust} & 0.642 / 0.395 & 0.662 / 0.418 & 0.670 / 0.426 & 0.675 / 0.430 & 0.677 / 0.432 & 0.685 / 0.444 & 0.688 / 0.445 & 0.692 / 0.447 & 0.693 / 0.448 \\
+				& \textbf{Pix2Vox++} \cite{xie2020pix2vox++} & 0.670 / \textbf{0.436} & 0.695 / 0.452 & 0.704 / 0.455 & 0.708 / 0.457 & 0.711 / 0.458 & 0.715 / 0.459 & 0.717 / 0.460 & 0.718 / 0.461 & 0.719 / 0.462 \\
+				& \textbf{GARNet} \cite{zhu2023garnet} & 0.673 / 0.418 & 0.705 / 0.455 & 0.716 / 0.468 & 0.722 / 0.475 & 0.726 / 0.479 & 0.731 / 0.486 & 0.734 / 0.489 & 0.736 / 0.491 & 0.737 / 0.492 \\
+				& \textbf{GARNet+} & 0.655 / 0.399 & 0.696 / 0.446 & 0.712 / 0.465 & 0.719 / 0.475 & 0.725 / 0.481 & 0.733 / 0.491 & 0.737 / 0.498 & 0.740 / 0.501 & 0.742 / 0.504 \\ \hline
+				\multirow{7}{*}{\rotatebox{90}{\textbf{Transformer-Based}}} & \textbf{EVolT} \cite{wang2021multi} & - / - & - / - & - / - & 0.609 / 0.358 & - / - & 0.698 / 0.448 & 0.720 / 0.475 & 0.729 / 0.486 & 0.735 / 0.492 \\
+				& \textbf{Legoformer} \cite{yagubbayli2021legoformer} & 0.519 / 0.282 & 0.644 / 0.392 & 0.679 / 0.428 & 0.694 / 0.444 & 0.703 / 0.453 & 0.713 / 0.464 & 0.717 / 0.470 & 0.719 / 0.472 & 0.721 / 0.472 \\
+				& \textbf{3D-C2FT} \cite{tiong20223d} & 0.629 / 0.371 & 0.678 / 0.424 & 0.695 / 0.443 & 0.702 / 0.452 & 0.702 / 0.458 & 0.716 / 0.468 & 0.720 / 0.475 & 0.723 / 0.477 & 0.724 / 0.479 \\
+				& \textbf{3D-RETR} \small{(3 views)} & 0.674 / - & 0.707 / - & 0.716 / - & 0.720 / - & 0.723 / - & 0.727 / - & 0.729 / - & 0.730 / - & 0.731 / - \\
+				& \textcolor{gray}{\textbf{3D-RETR}\space{$^\dagger$}\space\cite{shi20213d}} & \textcolor{gray}{0.680 / -} & \textcolor{gray}{0.701 / -} & \textcolor{gray}{0.716 / -} & \textcolor{gray}{0.725 / -} & \textcolor{gray}{0.736 / -} & \textcolor{gray}{0.739 / -} & \textcolor{gray}{0.747 / -} & \textcolor{gray}{0.755 / -} & \textcolor{gray}{0.757 / -} \\
+				\cline{2-11}
+				& \textbf{UMIFormer} & \textbf{0.6802} / 0.4281 & \textbf{0.7384} / \textbf{0.4919} & \textbf{0.7518} / \textbf{0.5067} & 0.7573 / \textbf{0.5127} & 0.7612 / 0.5168 & 0.7661 / 0.5213 & 0.7682 / 0.5232 & 0.7696 / 0.5245 & 0.7702 / 0.5251 \\
+				& \textbf{UMIFormer+} & 0.5672 / 0.3177 & 0.7115 / 0.4568 & 0.7447 / 0.4947 & \textbf{0.7588} / 0.5104 & \textbf{0.7681} / \textbf{0.5216} & \textbf{0.7790} / \textbf{0.5348} & \textbf{0.7843} / \textbf{0.5415} & \textbf{0.7873} / \textbf{0.5451} & \textbf{0.7886} / \textbf{0.5466} \\ \hline
+		\end{tabular}}
+		\caption{Evaluation and comparison of the performance on ShapeNet using IoU $\uparrow$ / F-Score$@1\%$ $\uparrow$. The best results are highlighted in bold. \textcolor{gray}{$^{\dagger}$} The results in this row are derived from models that train individually for the various number of input views.}
+		\label{total_result}
+	\end{table*}
+	
+	Inspired by \cite{zeng2022not}, we establish the similarity relationship of tokens again. The tokens are divided into $g$ groups by the DPC-KNN clustering \cite{du2016study} and then fed into the down-sampling transformer block (illustrated in Figure~\ref{down-sampling_transformer_block}). We fuse the features from each group to obtain an aggregated token set using the attention-based fusion method same as $\mathtt{Fusion}$ in Equation~\ref{equation::fusion}. The set is entered into multi-head attention (MHA) as $Q$ to extract information from the ungrouped tokens which provide $K$ and $V$. In contrast to the general MHA, we introduce the extra weights $W$, which reuse the importance score predicted by the additional branch in the attention-based fusion process, to ensure that tokens with different importance have different effects on the result. This MHA is following \cite{zeng2022not} and defined as:
+	\begin{equation}
+		\mathtt{Attention}(Q, K, V, W)=\mathtt{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}+W\right) V,
+	\end{equation}
+	where $d_k$ is the dimensions of $Q$, $K$ and $V$. At the end of STM, the down-sampled feature is further processed by a transformer block into the ultimate feature representation extracted from the multiple image views.
+	
+	It is a great promotion for the compactness of the compressed representation that similar features are stored in one token or a few tokens. In this way, the background tokens with typically limited details are easy to be clustered into the same group with the nearby certain range tokens and then are compressed to a small number of tokens after merging, thereby alleviating the information redundancy.
+	
+	\subsection{Shape Reconstruction}
+	\label{sec:method:shape_reconstruction}
+	We employ a decoder composed of a transformer stage and a CNN stage for shape reconstruction, which shares the same structure as \cite{shi20213d}. The transformer stage contains 8 transformer decoder blocks while excluding any upsampling layers. A feature map with a size of $64\times768$ is generated. After reshaping to $4^3\times768$, it entered into the CNN stage and upsample to $32^3$ voxel gradually.
+	
+	\subsection{Loss Function}
+	The task to reconstruct the shape of an object can be seen as a voxel-level segmentation for occupied or empty. Consequently, the loss function is defined as Dice loss \cite{milletari2016v} between predicting volume and the ground truth (GT). The previous work \cite{shi20213d} indicates that it is suitable for 3D reconstruction, the problem with an extremely unbalanced amount of samples between categories. Mathematically, this loss function is defined as:
+	\begin{equation}
+		\mathcal{L} = 1-\frac{\sum_{i=1}^{32^3}p_{i} gt_{i}}{\sum_{i=1}^{32^3}p_{i}+gt_{i}}-\frac{\sum_{i=1}^{32^3}\left(1-p_{i}\right)\left(1-gt_{i}\right)}{\sum_{i=1}^{32^3}2-p_{i}-gt_{i}}
+	\end{equation}
+	where $p$ and $gt$ indicate the confidence of the grids on the reconstructed volume and GT.
+	
+	
+
+
+Experiments
+	\label{sec:experiments}
+	
+	\subsection{Datasets and Implementation Details}
+	\label{sec:experiments:details}
+	
+	Following \cite{choy20163d}, our experiments are primarily carried out on a subset of ShapeNet \cite{chang2015shapenet} to evaluate the ability of multi-view 3D reconstruction. The subset includes 13 categories and 43,783 objects with a 3D representation and rendered images from 24 random poses. Moreover, single-view reconstruction experiments on the chair category from Pix3D \cite{sun2018pix3d} dataset including 2,894 data with untruncated and unoccluded view image are supplemented to verify that our model is capable of handling real-world data. The reconstruction results are measured using both 3D Intersection over Union (IoU) and F-Score$@1\%$ \cite{tatarchenko2019single, xie2020pix2vox++}. The evaluation strictly follows the metric used in the related advanced research works to ensure the comparison fairly and reliably.
+	
+	We adopt the pre-training model of DeiT-B \cite{touvron2021training}, a variant of ViT, to initialize the intra-view-decoupled transformer blocks in our model. To facilitate visualization and analysis, the cls token and distillation token are removed. The model contains 12 transformer blocks and we insert the IVDB with $k=5$ after every third block. For STM, $k_{dpc}$ in DPC-KNN clustering and $g$ are defined as $15$ and $196$. For multi-view 3d reconstruction, we eventually provide two models with the same structure called UMIFormer and UMIFormer+, whose input view numbers are respectively fixed to 3 and 8 during training. The models are trained by an AdamW optimizer \cite{loshchilov2018decoupled} with $\beta_{1}=0.9$ and $\beta_{2}=0.999$ with a batch size of 32 for 150 epochs. The learning rate is defined as 1e-4 and decreases by 0.1 after 50 and 120 epochs sequentially. UMIFormer is trained on 2 Tesla V100 for 2 days and UMIFormer+ is trained on 8 Tesla V100 for 2.5 days. The fixed threshold for binarizing the probabilities is set to 0.5 for UMIFormer and 0.4 for UMIFormer+.
+	
+	
+	\begin{figure*}[ht]
+		\centering
+		\begin{minipage}{0.98\linewidth}
+			\centerline{\includegraphics[width=1\linewidth]{./figure/show_result_1.pdf}}
+		\end{minipage}
+		\begin{minipage}{0.98\linewidth}
+			\centerline{\includegraphics[width=1\linewidth]{./figure/show_result_2.pdf}}
+		\end{minipage}
+		\caption{Multi-view reconstruction results on the test set of ShapeNet when facing 5 views, 10 views, 15 views and 20 views as input. Our method is compared with 3D-R2N2~\cite{choy20163d}, AttSets~\cite{yang2020robust}, Pix2Vox++~\cite{xie2020pix2vox++}, LegoFormer~\cite{yagubbayli2021legoformer}, 3D-RETR~\cite{shi20213d} and GARNet~\cite{zhu2023garnet}.}
+		\label{show_results}
+	\end{figure*}
+	
+	
+	\subsection{Multi-view 3D Reconstruction Results}
+	\label{sec:experiments:results}
+	
+	\begin{table}[]
+		\centering
+		\renewcommand\arraystretch{1.35}
+		\scalebox{0.675}{
+			\begin{tabular}{cc|cccccc}
+				\multicolumn{1}{c}{\textbf{IVDB}} & \multicolumn{1}{c|}{\textbf{Fusion}} & \multicolumn{1}{c}{\textbf{3 views}} & \multicolumn{1}{c}{\textbf{5 views}} & \multicolumn{1}{c}{\textbf{8 views}} & \multicolumn{1}{c}{\textbf{12 views}} & \multicolumn{1}{c}{\textbf{16 views}} & \multicolumn{1}{c}{\textbf{20 views}} \\ \hline
+				\XSolidBrush & \textbf{PBM} & 0.7325 & 0.7406 & 0.7447 & 0.7472 & 0.7487 & 0.7493 \\
+				\XSolidBrush & \textbf{ABM} & 0.7394 & 0.7479 & 0.7522 & 0.7545 & 0.7560 & 0.7566 \\
+				\XSolidBrush & \textbf{STM} & 0.7477 & 0.7557 & 0.7587 & 0.7598 & 0.7606 & 0.7606 \\
+				\Checkmark & \textbf{PBM} & 0.7372 & 0.7453 & 0.7488 & 0.7514 & 0.7530 & 0.7536 \\
+				\Checkmark & \textbf{ABM} & 0.7412 & 0.7503 & 0.7548 & 0.7574 & 0.7588 & 0.7593 \\
+				\Checkmark & \textbf{STM} & \textbf{0.7518} & \textbf{0.7612} & \textbf{0.7661} & \textbf{0.7682} & \textbf{0.7696} & \textbf{0.7702} \\ \hline
+		\end{tabular}}
+		\caption{The ablation experiments on ShapeNet evaluated by IoU about IVDB and STM. Among them, STM is compared with two mainstream fusion methods: pooling-based merger (PBM) and attention-based merger (ABM).}
+		\label{ablation_experiments}
+	\end{table}
+	
+	The performance qualification results of methods are shown in Table~\ref{total_result}. Undoubtedly, UMIFormer has a significant advantage over the previous methods in almost all metrics. It outperforms current SOTA methods by a large margin. Even training 3D-RETR models separately for different input view numbers (the row marked in gray) trails our model by a big gap. Furthermore, UMIFormer+ boasts a more powerful capability for multi-view reconstruction. Whereas, it has a somewhat limited capacity for single-view reconstruction.
+	
+	Figure~\ref{show_results} shows two examples of the reconstruction results when facing various view amounts as inputs. Compared with the other methods, our two models produce more accurate results for rifle reconstruction. In addition, the texture on predicted volumes is adjusted slightly and optimized gradually with increasing view inputs. It not only demonstrates the effectiveness of our algorithm but also verifies that our model can continue to mine information from the increasing input. For lamp reconstruction, our models, especially UMIFormer+, realize a relatively complete representation for the intermediate bracket, which is difficult for the other methods. Certainly, it also demonstrates the strong learning ability of our feature extractor for details.
+	
+	
+	\subsection{Ablation Experiments}
+	
+	Ablation analysis on IVDB and STM is based on experimental results as shown in Table~\ref{ablation_experiments}.
+	
+	\textbf{Effect of IVDB.} We observe that employing IVDB can consistently improve the reconstruction performance for various amounts of view inputs. Table~\ref{rectification_ablation} presents experimental results related to several rectification strategies (discussed in Section~\ref{sec:method:feature_extraction:ivdb}) used in IVDB. Token rectification by mapping directly performs terribly. It maps tokens to a new feature space that does not match the prior knowledge of the backbone network learned during pre-training. As a result, the benefits of pre-training are significantly disrupted. However, the other two strategies adjust tokens on their original feature space to avoid the problem and achieve the expected p
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

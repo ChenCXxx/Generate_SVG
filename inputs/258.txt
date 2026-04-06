@@ -1,0 +1,235 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+With the development of deep learning~\cite{cui2023generalized, cheng2021per}, semantic segmentation~\cite{tian2023learning, long2015fully, minaee2021image, zhang2023coinseg, jiao2023learning} has made a great progress. Traditional semantic segmentation relies on intensive annotations which is time-consuming and labour-intensive, once the segmentation model encounters samples with limited labeled data, it cannot output accurate prediction, making it difficult to apply in practice.  Few-shot segmentation~\cite{lang2022learning, tian2020prior, zhang2021self} is proposed to address the above problem, which aims to segment novel classes with a few annotated samples during inference. To achieve this, it divides data into a support set and a query set, the images in the query set are segmented using the provided information in the support set as a reference.
+\begin{figure}[!t]
+	\centering
+	\includegraphics[width=\columnwidth]{Fig/motivation.pdf}
+	\caption{Comparison of prior information. (a) Support images with ground-truth masks; (b) Query images with ground-truth masks; (c) Prior information from previous approaches generated based on the frozen ImageNet~\cite{deng2009imagenet} weights, which are biased towards some classes, such as the `Person' class; (d) Our prior information, which is generated utilizing the text and visual alignment ability of the frozen CLIP model. Our prior information is finer-grained and mitigates the bias of the class.}
+	\label{fig:1}
+\end{figure}
+Existing few-shot segmentation methods can be roughly categorized into two types: pixel-level matching~\cite{zhang2019pyramid, yang2020brinet,yang2020brinet, hong2022cost, shi2022dense} and prototype-level matching~\cite{tian2020prior, lang2022learning, peng2023hierarchical, fan2022self, zhang2021self, wang2023rethinking}. Pixel-level matching uses the pixel-to-pixel matching mechanism~\cite{rakelly2018few, zhang2022mfnet, shi2022dense} to enforce the few-shot model mine pixel-wise relationship~\cite{bi2023not, tavera2022pixel, zhang2022mfnet}. Prototype-level matching methods extract prototypes~\cite{wang2019panet, liu2023multi, huang2023prototypical, okazawa2022interclass} from the support set to perform similarity~\cite{lee2022pixel, peng2023hierarchical, he2023prototype, pandey2022adversarially} or dense comparisons~\cite{chen2021apanet, li2021adaptive, ding2023self, lang2022beyond, sun2023attentional} with the query image features to make predictions. No matter pixel-level matching or prototype-level matching, most recent approaches~\cite{peng2023hierarchical,lang2022learning, fan2022self, li2021adaptive, siam2019adaptive} introduce the prior masks~\cite{lang2022learning, zhang2021rich, liu2022dynamic} as a coarse localization map to guide the matching or segmentation process to concentrate on the located regions. However, such prior masks are mainly generated through interacting fixed high-dimensional features from the visual pre-trained models, \ie, CNN with ImageNet~\cite{deng2009imagenet} pre-train initialization, causing several insolvable problems as shown in Fig.~\ref{fig:1}: 1) incorrect target location response due to original ImageNet~\cite{deng2009imagenet} pre-training weights being insensitive to category information, which misleads the segmentation process and thus restricting generalization of the model. 2) coarse prior mask shapes, caused by undistinguished vision features between the target and non-target pixels, make the prior information locate many non-target regions, which further confuses the segmentation process.
+
+To address the aforementioned drawbacks, we rethink the prior mask generation strategy and attempt to use Contrastive Language-Image Pre-training (CLIP)~\cite{radford2021learning} to generate more reliable prior information for few-shot segmentation. A large amount of text-image training data pairs make the CLIP model sensitive to category due to the forced text-image alignment, which enables better localization of the target class~\cite{luddecke2022image, zhu2023not, zhang2022tip}. Besides, the success in the zero-shot task~\cite{lin2023clip, radford2021learning, guo2023calip} also demonstrates the powerful generalization ability of the CLIP model. Based on this, we attempt to utilize the CLIP model to generate better prior guidance.
+
+Finally, in this paper, we propose Prior Information Generation with CLIP (PI-CLIP), a training-free CLIP-based approach, to extract prior information to guide the few-shot segmentation. Specifically, we propose two kinds of prior information generation, the first one is called visual-text prior information (VTP) which aims to provide accurate prior location based on the strong visual-text alignment ability of the CLIP model, we re-design target and non-target prompts and force the model to perform category selection for each pixel, thus locating more accurate target regions. The other one is called visual-visual prior information (VVP) which focuses on providing more general prior guidance using the matching map extracted from the CLIP model between the support set and the query image. 
+
+However, as a training-free approach, the forced alignment of visual information and text information makes VTP excessively focus on local target regions instead of the expected whole target regions, the incomplete original global structure information only highlights local target regions which reduces the quality of guidance. Based on this, we build a high-order attention matrix based on the attention maps of the CLIP model, called Prior Information Refinement (PIR), to refine the initial VTP, which makes full use of the original pixel-pair structure relationship to highlight the whole target area and reduce the response to the non-target area, thus clearly improving the quality of the prior mask. Note that VVP is not refined to keep its generalization ability. Without any training, the generated prior masks overcome the drawback caused by inaccurate prior information in existing methods, significantly improving the performance of different few-shot approaches.
+
+Our contributions are as follows:
+\begin{itemize}
+ 	\item We rethink the prior information generation for few-shot segmentation, proposing a training-free strategy based on the CLIP model to provide more accurate prior guidance by mining visual-text alignment information and visual-visual matching information. 
+    \item To generate finer-grained prior information, we build a high-order attention matrix to refine the initial prior information based on the frozen CLIP attention maps to extract the relationship of different pixels, clearly improving the quality of the prior information.
+    \item Our method has a significant improvement over existing methods on both PASCAL-5$^{i}$~\cite{shaban2017one} and COCO-20$^{i}$~\cite{nguyen2019feature} datasets and achieves state-of-the-art performance.
+\end{itemize}
+
+ \begin{figure*}[!t]
+	\centering
+	\includegraphics[width=0.95\textwidth]{Fig/method.pdf}
+	\caption{Overview of our proposed PI-CLIP for few-shot segmentation. We design a group of text prompts for a certain class to attract more attention to target regions. The VTP module generates the visual-text prior information by aligning the visual information and text information with the help of softmax-GradCAM. The VVP module generates the visual-visual prior information by a pixel-level similarity calculation. The PIR module is proposed to refine the coarse initial prior information. Finally, the original prior information in the existing few-shot model is directly replaced by VVP and refined VTP, after passing the decoder, the final prediction is generated.}
+	\label{fig:2}
+\end{figure*}
+
+
+Related Work
+\subsection{Few-Shot Segmentation} 
+Few-shot segmentation aims to generate dense predictions for new classes using a small number of labeled samples. Most existing few-shot segmentation methods followed the idea of metric-based meta-learning~\cite{hu2019attention, sung2018learning}. Depending on the object of the metric, current approaches can be divided into pixel-level matching mechanism~\cite{yang2020brinet, hong2022cost, shi2022dense} and prototype-level matching mechanism~\cite{fan2022self, li2021adaptive, siam2019adaptive, zhang2021rich, liu2022dynamic}. No matter pixel-level matching or prototype-level matching mechanism, most recent approaches~\cite{tian2020prior, luo2021pfenet++, lang2022learning, yang2023mianet, zhang2021self} utilized prior information to guide the segmentation process.
+ 
+ 
+
+ PCN~\cite{lu2021simpler} fused the scores from base and novel classifier to prevent base class bias. CWT~\cite{lu2023prediction} adapted the classifier's weights to each query image in an inductive way. PFENet~\cite{tian2020prior} first proposed to utilize prior information extracted from pixel relationship between support set and query image to guide the decoder and designed a module to aggregate contextual information at different scales. PFENet++~\cite{luo2021pfenet++} rethinked the prior information and proposed to utilize the additional nearby semantic cues for a better location ability of the prior information. BAM~\cite{lang2022learning} further optimized the prior information and proposed to leverage the segmentation of new classes by suppressing the base classes learned by the model. SCL~\cite{zhang2021self} proposed a self-guided learning approach to mine the lost critical information on the prototype and utilize the prior information as guidance for the decoder. IPMT~\cite{liu2022intermediate} mined useful information by interacting prototype and mask to mitigate the category bias and design an intermediate prototype to mine more accurate prior guidance by an iterative approach. 
+ MM-Former~\cite{zhang2022mask} utilized a class-specific segmenter to decompose the query image into a single possible prediction and extracted support information as prior to matching the single prediction which can improve the flexibility of the segmentation network. MIANet~\cite{yang2023mianet} proposed to use general prior information from semantic word embedding and instance information to perform an accurate segmentation. HDMNet~\cite{peng2023hierarchical} mined pixel-level correlation with transformer based on two kinds of prior information between support set and query image to avoid overfitting.
+ 
+ Most recent existing methods utilized coarse masks to guide segmentation, our approach attempts to generate finer-grained masks with the help of CLIP models.
+ 
+\subsection{Contrastive Language-Image Pretraining}
+ Contrastive Language-Image Pretraining (CLIP)~\cite{radford2021learning} is able to map text and image into high-dimensional space by text-encoder and image-encoder respectively. Trained on a large amount of text-image data makes the CLIP~\cite{radford2021learning, huang2023clip2point} model has a strong feature extraction capability, which is used in many downstream applications such as detection~\cite{ju2022adaptive}, segmentation~\cite{lin2023clip, yang2023multi, shuai2023visual}, and so on. CLIPSeg~\cite{luddecke2022image} first attempted to introduce the CLIP model into few-shot segmentation. However, CLIPseg is more like to use the CLIP model as a validation method to show the powerful capability of the CLIP model in few-shot tasks. In this paper, we design a new prior information generation strategy using the CLIP model for few-shot segmentation through the visual-text relationship and the visual-visual relationship to perform a more efficient guidance.
+
+
+Method
+ \subsection{Task Description}
+Few-shot segmentation aims to segment novel classes by using the model trained on base classes. Most existing few-shot segmentation approaches follow the meta-learning paradigm. The model is optimized with multiple meta-learning tasks in the training phase and evaluates the performance of the model in the testing phase. Given a dataset $D$, dividing it into a training set ${D_{train}}$ and a test set ${D_{test}}$, there has no crossover between the class set ${C_{train}}$ in the training set and class set ${C_{test}}$ in the test set (${C_{train}} \cap {C_{test}}= \emptyset$). The model is expected to transfer the knowledge in ${D_{train}}$ with restricted labeled data to the ${D_{test}}$. Both training set ${D_{train}}$ and test set ${D_{test}}$ are composed of support set $S$ and query set $Q$, support set $S$ contains $K$ samples $S=\{S_1,S_2,\,\ldots,S_K\}$, each $S_i$ contains an image-mask pair $\{I_s, M_s\}$ and query set $Q$ contains $N$ samples $Q=\{Q_1,Q_2,\,\ldots,Q_N\}$, each $Q_i$ contains an image-mask pair $\{I_q, M_q\}$. During training, the few-shot model is optimized with training set ${D_{train}}$ by epochs where the model performs prediction for query image $I_q$ with the guidance of the support set $S$. During inference, the performance will be acquired with the test set ${D_{test}}$, and the model is no longer optimized.
+\subsection{Method Overview}
+In order to enhance the ability of prior information to localize target categories as well as to produce more generalized prior information, we propose to mine visual-text and visual-visual information instead of purely visual feature similarity to guide the segmentation process. Besides, to further improve the quality of the prior information to get finer-grained guidance, we design an attention map-based high-order matrix to refine the initial prior information by pixel-pairs relationships, Fig.~\ref{fig:2} shows our framework of the one-shot case with the following steps:
+
+\begin{enumerate}
+\item Given a support image and a query image with the target class name, we first input the query image and support image to the CLIP image encoder to generate corresponding visual support and query features. Meanwhile, the target class name is used to build two text prompts, \ie, target prompt and non-target prompt, which are then input to the CLIP text encoder to generate two text embeddings.  
+\item Then, two text embeddings and the query visual features are input to the visual-text prior (VTP) module to generate the initial VTP information by enforcing a classification process for each pixel.
+\item Meanwhile, the support visual features and query visual features are input to the visual-visual prior (VVP) module where the VVP information is generated through the pixel-level relationship.
+
+\item After that, we extract attention maps from the clip model, which are input to our prior information refinement (PIR) module to build a high-order attention matrix for refining the above initial VTP information.
+
+\item Finally, the original prior information in the existing method is directly replaced by our VVP and refined VTP to generate the final prediction for the query image.
+\end{enumerate}
+
+\subsection{Visual-Text Prior Information Generation}
+Few-shot Segmentation (FSS) remains one major challenge that an image might have more than one class, but the model is required to segment only one class at each episode. This challenge means that once the prior information is unable to provide the correct target region, \eg, a true target region is ``dog" but the prior information provides a ``cat" region, it will confuse the FSS model to segment the true target pixels, especially for the untrained novel class. 
+To correctly locate target regions, we utilize the visual-text alignment information from the CLIP model to produce a new prior information called VTP. We innovatively define a group of text prompts of the target class as a guidance to the model, in which the target (foreground) text prompts $t_{f}$ is defined as ``a photo of \{\emph{target class}\}" and the non-target (background) text prompts $t_{b}$ is ``a photo without \{\emph{target class}\}".
+
+Based on the designed text prompts, a pixel-level classification is performed for the query image so as to locate the true target foreground regions. To force the model to decide whether one pixel is the target or not, we use softmax-GradCAM~\cite{lin2023clip} to generate the prior information using the relationship between the visual and text features. Specifically, the designed target and non-target prompts, \ie, ``a photo of \{\emph{target class}\}" and ``a photo without \{\emph{target class}\}", are sent to the CLIP text encoder to get the high dimensional text features, represented as $F_{f}^{t}$ and $F_{b}^{t}$. Suppose the query image is $I_q$, after passing the CLIP visual encoder, the query features $F_q^v \in \mathbb{R}^{d \times (hw+1)}$, after removing the class token in $F_q^v$, visual query feature $F_q \in \mathbb{R}^{d \times hw}$ is generated, then the query token $v_q$ is obtained through global average pooling:
+\begin{equation}
+\begin{aligned}
+v_q = \frac{1}{hw} \sum_{i=1}^{hw} F_{q}(i), v_q \in \mathbb{R}^{d \times 1}.
+\end{aligned}
+\end{equation}
+
+Then classification scores are obtained by performing a distance calculation between the text features and the query token after the softmax operation:
+\begin{equation}
+\begin{aligned}
+S_i = softmax(\frac{v_q^\mathrm{T}F^t_i}{\|v_q\|\|F^t_i\|}/\tau), i \in \{ {f, b} \}
+\end{aligned},
+\end{equation}
+where \emph{T} represents the matrix transposition and $\tau$ is a temperature parameter. Then the gradient is calculated based on the final classification score:
+\begin{equation}
+\begin{aligned}
+w_{m} = \frac{1}{hw}\sum_{i}^{} \sum_{j}^{} \frac{\partial S_f }{\partial F_q^m(i, j) }
+\end{aligned},
+\end{equation}
+where $w_{m}$ is the weight for $m$-$th$ feature map of the foreground regions, $F_q^{m}$ means the activation value for $m$-$th$ feature map and $(i, j)$ means the pixel position.
+
+Finally, the visual-text prior information $P_{vt} \in \mathbb{R}^{1 \times h \times w}$ is obtained:
+\begin{equation}
+\begin{aligned}
+P_{vt} = ReLU(\sum_{m}^{} w_m F_{q}^m )
+\end{aligned},
+\end{equation}
+$ReLU$ means the ReLU activation function to filter the negative response. Due to the forced alignment of the semantic information from the visual modal and text modal with softmax-GradCAM, the generated visual-text prior information clearly locates accurate target regions, which avoids the confusion of the segmentation process.
+
+\subsection{Visual-Visual Prior Information Generation}
+We enforce VTP to make a classification for each pixel so that it can locate the correct region. However, we observe that VTP tends to locate a discriminative local region, \eg, the ``head" region of a ``dog" rather than the whole region. To overcome this drawback, we attempt to take advantage of the support information that is naturally present in few-shot segmentation and get region-larger and location-rougher prior information to give more generalized guidance to the model.
+
+We design VVP to mine more general target information by performing matching on the visual-visual relationship between the support image feature and the query image feature. Suppose the support image is $I_s$, after passing through the CLIP image encoder, its high dimensional image feature is generated and the visual support feature is $F_s^{v} \in \mathbb{R}^{d \times hw}$ (class token is removed). To get more target-focused support information, we extract the target information from the support image:
+\begin{equation}
+\begin{aligned}
+F_s = F_s^v \odot M_s
+\end{aligned},
+\end{equation}
+where $M_s$ represents the support mask, which is required to downsample to the same height and width as the feature map. Then we perform a cosine similarity calculation between all pixel pairs for $f_s^i \in F_s$ and $f_q^j \in F_q$ as:
+\begin{equation}
+\begin{aligned}
+cos(f_s^i, f_q^j)=\frac{(f_s^i)^\mathrm{T}f_q^j}{\|f_s^i\|\|f_q^j\|}\quad i,j \in \{0,1,2,\,\ldots hw\}
+\end{aligned}.
+\end{equation}
+
+For each pixel in $F_q$, the maximum similarity is selected from all pixels in the support feature as the correspondence value:
+\begin{equation} \label{max value}
+\begin{aligned}
+P_{vv}(j) = \max_{i,j \in \{1,2,\ldots,hw\}} cos(f_s^i, f_q^j)
+\end{aligned}.
+\end{equation}
+
+After computing all correspondence value by the above equation, prior information is generated, the values in $P_{vv}$ are normalized by a min-max normalization to generate the initial visual-visual prior information, $P_{vv} \in \mathbb{R}^{1 \times h \times w}$:
+\begin{equation}
+\begin{aligned}
+P_{vv} =\frac{P_{vv}-min(P_{vv})}{max(P_{vv})-min(P_{vv})+\varepsilon}
+\end{aligned},
+\end{equation}
+where $\varepsilon$ is set to $10^{-7}$. We utilize the feature from the CLIP model which contains more reliable semantic information to acquire the visual-visual prior information, thus matching support information with the query image, the model can provide more general location information as the prior guidance.
+
+\subsection{Prior Information Refinement}
+The above prior information is generated by the visual and textual features extracted from the frozen CLIP weights. As a training-free method, the representation of the prior information can not adaptively guide the model to perform an efficient segmentation. To generate finer-grained prior information that focuses more target regions, we propose a Prior Information Refinement (PIR) module to refine the initial prior information. PIR builds a high-order matrix based on the attention map from the query image, which can accurately build the pixel-wise relationship and retain the original global structure information, thus efficiently capturing spatial information and details of semantics to refine the prior information. In this way, the refined prior information pays more attention to the whole target regions and focuses less on non-target regions.
+
+Specifically, suppose $A_i \in \mathbb{R}^{hw\times hw}$ is the multi-head self-attention map generated from CLIP with the $i$-$th$ block, to acquire more accurate attention maps for each image, we first compute the average attention map by:
+\begin{equation}
+\begin{aligned}
+\overline{A} = \frac{1}{l} \sum_{i=n-l}^{n} A_i
+\end{aligned},
+\end{equation}
+where $l$ and $n$ are the block number of the vision transformer in CLIP and $l<n$. Based on the average attention map, in order to eliminate as much as possible the influence of the background region while preserving the intrinsic structural information, we design a high-order refinement matrix $R \in \mathbb{R}^{1 \times h \times w}$ follows:
+\begin{equation}
+\begin{aligned}
+R = max(D,(D\cdot D^{T})), D=Sinkhorn(\overline{A})
+\end{aligned},
+\end{equation}
+where $Sinkhorn$ means Sinkhorn normalization~\cite{sinkhorn1964relationship} to aligning data from rows and columns.
+We then utilize the refinement matrix $R$ to refine the initial coarse prior information from VTP and VVP by:
+\begin{equation}
+\begin{aligned}
+\hat{P}_i =  B \odot R \cdot P_{i} , \{ i \in {vt, vv} \}
+\end{aligned},
+\end{equation}
+where $B$ is a box mask generated from the prior mask following~\cite{lin2023clip} and $\odot$ represents the Hadamard product. We experimentally found that only refining the visual-text prior $P_{vt}$ is enough since the refinement matrix will make $P_{vt}$ and $P_{vv}$ produce similar responses, which will damage the generalization of the model. Therefore, we select the refined text-visual prior and initial visual-visual prior, \ie, $\hat{P}_{vt}$ and ${P}_{vv}$, as the final prior information.
+
+Finally, we directly replace the prior information in existing methods with the concatenation of our visual-visual prior information ${P}_{vv}$ and refined visual-text prior information $\hat{P}_{vt}$, to generate the final prediction.
+\begin{table*}[h]
+\caption{Performance comparisons with mIoU (\%) as a metric on PASCAL-5$^{i}$, ``\textbf{ours}-PI-CLIP (PFENet)", ``\textbf{ours}-PI-CLIP (BAM)" and ``\textbf{ours}-PI-CLIP (HDMNet)" represent the baseline is PFENet~\cite{tian2020prior}, BAM~\cite{lang2022learning} and HDMNet~\cite{peng2023hierarchical} respectively.}
+\label{tab:tab1}
+\centering
+\resizebox{\textwidth}{!}{$
+\begin{tabular}{llccccc|ccccc}
+\hline
+\multirow{2}*{Method} &\multirow{2}*{Backbone} &\multicolumn{5}{c|}{1-shot} &\multicolumn{5}{c}{5-shot}\\ 
+\cline{3-12}
+& &Fold0 &Fold1 &Fold2 &Fold3 &Mean &Fold0 &Fold1 &Fold2 &Fold3 &Mean\\
+\hline
+SCL (CVPR'21)~\cite{zhang2021self} & resnet50 & 63.0 & 70.0 & 56.5 & 57.7 & 61.8 & 64.5 & 70.9 & 57.3 & 58.7 & 62.9 \\
+SSP (ECCV'22)~\cite{fan2022self} & resnet50 & 60.5 & 67.8 & 66.4 & 51.0 & 61.4 & 67.5 & 72.3 & 75.2 & 62.1 & 69.3\\
+DCAMA (ECCV'22)~\cite{shi2022dense} & resnet50 & 67.5 & 72.3 & 59.6 & 59.0 & 64.6 & 70.5 & 73.9 & 63.7 & 65.8 & 68.5\\
+NERTNet (CVPR'22)~\cite{liu2022learning} & resnet50 & 65.4 & 72.3 & 59.4 & 59.8 & 64.2 & 66.2 & 72.8 & 61.7 & 62.2 & 65.7 \\
+IPMT (NeurIPS'22)~\cite{liu2022intermediate} & resnet50 & 72.8 & 73.7 & 59.2 & 61.6 & 66.8 & 73.1 & 74.7 & 61.6 & 63.4 & 68.2 \\ 
+ABCNet (CVPR'23)~\cite{wang2023rethinking} & resnet50 & 68.8 & 73.4 & 62.3 & 59.5 & 66.0 & 71.7 & 74.2 & 65.4 & 67.0 & 69.6 \\
+MIANet (CVPR'23)~\cite{yang2023mianet} & resnet50 & 68.5 & 75.8 & 67.5 & 63.2 & 68.8 & 70.2 & 77.4 & 70.0 & 68.8 & 71.6 \\
+MSI (ICCV'23)~\cite{moon2023msi} & resnet50 & 71.0 & 72.5 & 63.8 & 65.9 & 68.3 & 73.0 & 74.2 & 66.6 & 70.5 & 71.1 \\
+\hline
+PFENet (TPAMI'20)~\cite{tian2020prior} & resnet50 & 61.7 & 69.5 & 55.4 & 56.3 & 60.8 & 63.1 & 70.7 & 55.8 & 57.9 & 61.9 \\
+BAM (CVPR'22)~\cite{lang2022learning} & resnet50 & 68.9 & 73.6 & 67.6 & 61.1 & 67.8 & 70.6 & 75.1 & 70.8 & 67.2 & 70.9 \\
+HDMNet (CVPR'23)~\cite{peng2023hierarchical} & resnet50 & 71.0 & 75.4 & 68.9 & 62.1 & 69.4 & 71.3 & 76.2 & 71.3 & 68.5 & 71.8 \\
+\hline
+\textbf{ours}-PI-CLIP (PFENet) & resnet50 &67.4  &76.5  &71.3  &69.4  &71.2  &70.4  &78.2  &72.4  &70.2  &72.8  \\ 
+\textbf{ours}-PI-CLIP (BAM) & resnet50 &72.4  &80.2  &71.6  &70.5  &73.7  &72.6  &80.6  &73.5  &72.0  &74.7  \\ 
+\textbf{ours}-PI-CLIP (HDMNet) & resnet50 & \textbf{76.4} & \textbf{83.5} & \textbf{74.7} & \textbf{72.8} &\textbf{76.8} & \textbf{76.7} & \textbf{83.8} & \textbf{75.2} &\textbf{73.2} & \textbf{77.2} \\\hline
+\end{tabular}%
+$}
+\end{table*}
+
+\begin{table*}[!t]
+\caption{Performance comparisons on COCO-20$^{i}$, ``\textbf{ours}-PI-CLIP (HDMNet)" represent the baseline is HDMNet~\cite{peng2023hierarchical}.}
+\label{tab:tab2}
+\centering
+\resizebox{\textwidth}{!}{$
+\begin{tabular}{llccccc|ccccc}
+\hline
+\multirow{2}*{Method} &\multirow{2}*{Backbone} &\multicolumn{5}{c|}{1-shot} &\multicolumn{5}{c}{5-shot}\\ 
+\cline{3-12}
+& &Fold0 &Fold1 &Fold2 &Fold3 &Mean &Fold0 &Fold1 &Fold2 &Fold3 &Mean\\
+\hline
+SCL (CVPR'21)~\cite{zhang2021self} & resnet50 & 36.4 & 38.6 & 37.5 & 35.4 & 37.0 & 38.9 & 40.5 & 41.5 & 38.7 & 39.9 \\
+SSP (ECCV'22)~\cite{fan2022self} & resnet101 & 39.1 & 45.1 & 42.7 & 41.2 & 42.0 & 47.4 & 54.5 & 50.4 & 49.6 & 50.2\\
+DCAMA (ECCV'22)~\cite{shi2022dense} & resnet50 & 41.9 & 45.1 & 44.4 & 41.7 & 43.3 & 45.9 & 50.5 & 50.7 & 46.0 & 48.3\\
+BAM (CVPR'22)~\cite{kang2022integrative} & resnet50 &43.4  &50.6  &47.5  &43.4  &46.2  &49.3  &54.2  &51.6  &49.5  &51.2  \\ 
+NERTNet (CVPR'22)~\cite{liu2022learning} & resnet101 & 38.3 & 40.4 & 39.5 & 38.1 & 39.1 & 42.3 & 44.4 & 44.2 & 41.7 & 43.2 \\
+IPMT (NeurIPS'22)~\cite{liu2022intermediate} & resnet50 & 41.4 & 45.1 & 45.6 & 40.0 & 43.0 & 43.5 & 49.7 & 48.7 & 47.9 & 47.5 \\ 
+ABCNet (CVPR'23)~\cite{wang2023rethinking} & resnet50 & 42.3 & 46.2 & 46.0 & 42.0 & 44.1 & 45.5 & 51.7 & 52.6 & 46.4 & 49.1 \\
+MIANet (CVPR'23)~\cite{yang2023mianet} & resnet50 & 42.5 & 53.0 & 47.8 & 47.4 & 47.7 & 45.9 & 58.2 & 51.3 & 52.0 & 51.7 \\
+MSI (ICCV'23)~\cite{moon2023msi} & resnet50 & 42.4 & 49.2 & 49.4 & 46.1 & 46.8 & 47.1 & 54.9 & 54.1 & 51.9 & 52.0 \\
+\hline
+PFENet (TPAMI'20)~\cite{tian2020prior} & resnet101 & 34.3 & 33.0 & 32.3 & 30.1 & 32.4 & 38.5 & 38.6 & 38.2 & 34.3 & 37.4 \\
+HDMNet (CVPR'23)~\cite{peng2023hierarchical} & resnet50 & 43.8 & 55.3 & 51.6 & 49.4 & 50.0 & 50.6 & 61.6 & 55.7 & 56.0 & 56.0 \\
+\hline
+\textbf{ours}-PI-CLIP (PFENet) & resnet50& 36.1 & 42.3 & 37.3 & 37.7 &38.4  & 40.4 & 45.6 & 39.9 & 38.6 & 41.1  \\
+\textbf{ours}-PI-CLIP (HDMNet) & resnet50& \textbf{49.3} & \textbf{65.7} & \textbf{55.8} & \textbf{56.3} & \textbf{56.8} & \textbf{56.4} & \textbf{66.2} & \textbf{55.9} & \textbf{58.0} & \textbf{59.1}  \\ \hline
+\end{tabular}%
+$}
+\end{table*}
+\begin{figure*}[h]
+	\centering
+	\includegraphics[width=\textwidth]{Fig/result_vis.pdf}
+	\caption{Qualitative results of the proposed PI-CLIP and baseline (HDMNet~\cite{peng2023hierarchical}) approach under 1-shot setting. Each row from top to bottom represents the support images with ground-truth  (GT) masks (green), query images with GT masks (blue), baseline results (red), and our results (yellow), respectively.}
+	\label{fig:3}
+\end{figure*}
+
+
+
+Experiments
+\textbf{Datasets and Evaluation Metrics.}
+We utilize the PASCAL-5$^{i}$~\cite{shaban2017one} and COCO-20$^{i}$~\cite{nguyen2019feature} to evaluate the performance of our proposed method. PASCAL-5$^{i}$ is built on PASCAL VOC 2012~\cite{everingham2010pascal} with the complement of SDS~\cite{hariharan2011semantic} which is a classical computer vision dataset for segmentation tasks including 20 different object classes such as people, cars, cats, dogs, chairs, aeroplanes, etc. COCO-20$^{i}$ is built on MSCOCO~\cite{lin2014microsoft} consists of more than 120,000 images from 80 categories and is a more challenging dataset.
+To evaluate the performance of our proposed method, we adopt mean intersection-over-union (mIoU) and foreground-background IoU (FB-IoU) as the evaluation metrics following previous works~\cite{lang2022learning, peng2023hierarchical, tian2020prior}.
+
+\subsection{Implementation details.} We utilize HDMNet~\cite{peng2023hierarchical}, BAM~\cite{lang2022learning} and PFENet~\cite{tian2020prior} as the baseline to test our performance. In all experiments on PASCAL-5$^{i}$ and COCO-20$^{i}$, the images are set to 473$\times$473 pixels and the CLIP pre-trained model is ViT-B-16~\cite{radford2021learning}. For COCO-20$^{i}$, setting higher resolution can get higher performance but with more comput
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

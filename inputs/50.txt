@@ -1,0 +1,197 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Medical image segmentation methods generate accurate delineations of anatomical structures which are crucial for disease diagnosis~\cite{de2018clinically,shen2015multi} and treatment planning~\cite{nestle2005comparison,gao2021focusnetv2,gao2019focusnet}. To date, the prevailing paradigm for medical image segmentation promotes the development of separate models for specific medical objects (e.g., organs or tumors) and image modalities (e.g., CT or MR)~\cite{isensee2021nnu,gao2021utnet,liu2022transfusion,zhangli2022region,chang2022deeprecon,gao2019multi}. This paradigm is often constrained by the limited training data from the same domain, resulting in compromised model robustness and generalizability. Further scaling up data size for specific segmentation tasks is challenging due to the high cost of data acquisition, collection, and annotation~\cite{razzak2018deep,gao2021enabling}. Moreover, the current paradigm is unable to exploit relationships among medical imaging tasks that are critical for disease understanding. These hurdles together confine the capability and scalability of medical image segmentation models.
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.47\textwidth]{./fig/fig1.pdf}
+\end{center}
+\caption{A) Clinical diagnostic workflows typically focus on specific specialties and diseases, leading to the curation of image datasets that are partially annotated, multi-modal, and multi-regional. B) Traditional training paradigms involve training separate models for each segmentation task (or dataset). In contrast, we emphasize a universal medical image segmentation paradigm aiming at \textbf{one model for all}, leading to a robust and generalizable universal model for diverse tasks.}
+\label{fig:fig1}
+\end{figure}
+
+Inspired by radiology residency programs~\cite{acgme2022,acgme2023number,sarkany2018running}, we recognize that radiologists' expertise arises from routine exposure to wide-ranging images across body regions, diseases, and imaging modalities. Despite the fact that the human body exhibits anatomical variability, it is fundamentally composed of various types of tissues and structures whose appearance in images are often statistically similar~\cite{scanlon2018essentials}. These tissues display specific visual characteristics under different imaging modalities~\cite{bankman2008handbook,hussain2022modern}. During the training process, residents acquire prior knowledge about the regions of interest (ROI) across imaging modalities for interpreting various types of patterns. Inspired by this observation, we prioritize a paradigm shift toward universal medical image segmentation, which seeks to harness the diversity and commonality of medical images, to build a comprehensive, unified segmentation model. However, addressing the heterogeneity among medical imaging tasks faces daunting challenges. 
+
+First, each image dataset has partial and incomplete ROI annotations due to their distinct needs and clinical objectives. As seen in Figure \ref{fig:fig1}, dataset 1 contains annotations for 15 abdominal organs, while dataset 2 is only annotated for the liver and tumor. Secondly, class definitions can vary depending on the clinical target. To illustrate this point, in dataset 1, the liver is annotated as a whole organ, whereas in dataset 2, the same liver region is divided into two categories of liver and tumor. Additionally, images from different datasets can exhibit significant statistical divergence due to factors such as imaging modalities and body regions (dataset 3 and k).
+
+Given these challenges, intriguing questions remain to be fully explored. How can segmentation tasks with different target ROIs mutually benefit from each other? Is the underlying feature representation transferable across different body regions? Despite the visual difference in imaging modalities, how can a model discern and utilize the meaningful commonalities between them?
+
+In this paper, we strive to answer the above questions. Our main contributions are:
+
+\begin{itemize}[leftmargin=*]
+
+\item By exploring the universal medical image segmentation paradigm, we show a single unified model can handle tasks across various ROIs, anatomical regions, and modalities.
+
+\item We introduce a novel context-prior pool to learn two important types of prior knowledge, \textit{task} and \textit{modality}, directly from medical images. Different from using one-hot~\cite{zhang2021dodnet} or CLIP embeddings~\cite{liu2023clip} to inject task information, Hermes's learned priors are able to capture complex relations among tasks and modalities that are aligned with established anatomical and imaging principles.
+
+\item Through a carefully curated eleven datasets, our systematic analysis reveals the strong capability of Hermes in accuracy and model scalability.
+
+\item With two additional downstream datasets, we show Hermes's superior performance in transfer learning, incremental learning, and generalization, affirming the efficacy of the universal paradigm in acquiring robust and generalizable image representations.
+\end{itemize}
+
+
+
+Related Work
+\label{sec:related_work}
+
+\textbf{Partially labeled data problem.} 
+Disease-specific clinical workflows often yield datasets with single-modality images and partial annotations tailored to specific clinical objectives. Early efforts aimed to combine multiple datasets by conditioning on labels~\cite{dmitriev2019learning}, regularizing organ size distribution~\cite{zhou2019prior}, or generating multi-organ pseudo labels for co-training~\cite{huang2020multi}. Recent approaches propose different conditioning methods to inject task information. DoDNet~\cite{zhang2021dodnet} embeds the task index with one-hot vectors as additional model inputs, but these one-hot task vectors are orthogonal with no task relations embedded. CLIP-driven universal model~\cite{liu2023clip} conditions on CLIP text embeddings, but the CLIP encoder, rarely trained with medical data, struggles with the semantics and relationships of complex medical concepts (Fig. \ref{fig:prior_analysis}, \ref{fig:mod_prior_analysis}). MultiTalent~\cite{ulrich2023multitalent} uses multiple task-specific heads. Moreover, DoDNet, CLIP-driven and MultiTalent limit their scope to a single body region or imaging modality. UniSeg~\cite{ye2023uniseg} introduces novel learnable task prompts but does not consider the modality information. In contrast, our work focuses on learning priors directly from a diverse array of medical data sources by addressing both task and modality heterogeneity simultaneously.
+
+\noindent\textbf{Prior knowledge in medical image analysis.} Prior knowledge typically involves the understanding of anatomical structures or specifics of imaging modalities before further processing. Traditionally, atlas-based techniques~\cite{iglesias2015multi,cabezas2011review} and statistical shape models~\cite{cootes1995active}, leverage prior anatomical knowledge by aligning a predefined atlas or template to a patient's image. In deep learning, major methods embed prior knowledge into network architectures or training strategies. For example, integrating graphical models to embed spatial and anatomical knowledge~\cite{kamnitsas2017efficient,chen2019vertebrae}, or introducing a shape prior knowledge regularization loss through an autoencoder~\cite{oktay2017anatomically,gao2021focusnetv2}. Our work diverges by harnessing context-prior learning to learn task and modality knowledge directly from medical data, where this prior knowledge is injected into the backbone to enhance segmentation during inference.
+
+\noindent\textbf{Universal image segmentation} aims to unify semantic, instance, and panoptic segmentation into one framework~\cite{zhang2021k,cheng2021per,cheng2022masked}. However, in 3D medical imaging, it is uncommon to find multiple instances of the same object. In addition, fully annotated medical datasets are rarely available in the community, making instance and panoptic segmentation highly unsuitable. As a result, universal medical image segmentation focuses on the semantic segmentation of medical objects. While sharing similarities, developing universal medical image segmentation possesses unique challenges, including the presence of partial annotation, conflicting class definitions, and heterogeneous medical-image contents~\cite{razzak2018deep}. 
+
+
+
+Method
+\label{sec:method}
+
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=0.8\textwidth]{./fig/framework.pdf}
+\end{center}
+\caption{Illustration of Hermes. A context-prior knowledge pool, including task and modality priors, is learned with the backbone. Through oracle-guided selection and combination of these priors, Hermes can address a variety of segmentation tasks and image modalities. }
+\label{fig:framework}
+\end{figure*}
+
+\subsection{Preliminary}
+\textbf{Problem definition.} We hereby define \textit{universal medical image segmentation} as the endeavor to train a universal model that learns from diverse medical datasets and performs various image segmentation tasks. Given a set of $K$ datasets, let $\mathcal{D}_k = \{(\boldsymbol{x}_{k}^{i}, \boldsymbol{y}_{k}^{i}, m_{k}, \boldsymbol{t}_{k})\}_{i=1}^{N_k}$ be the $k$-th dataset comprised of $N_k$ data pairs, where each data pair $(\boldsymbol{x}_{k}^{i},\boldsymbol{y}_{k}^{i})\in(\mathcal{X}_k \times \mathcal{Y}_k)$. $m_{k}$ denotes the imaging modality of $\mathcal{D}_k$ and $\boldsymbol{t}_{k}$ represents the tasks contained in $\mathcal{D}_k$, where each task represents the segmentation of a unique clinical target annotated in $\mathcal{Y}_k$, and $|\boldsymbol{t}_k|=|\mathcal{Y}_k|$. The collective dataset is given by $\mathcal{D} = \cup_{k=1}^{K} \mathcal{D}_k$, the corresponding collective tasks are $\mathcal{T}=\cup_{k=1}^K\boldsymbol{t}_k$, and the collective modalities are $\mathcal{M}=\cup_{k=1}^Km_k$. The objective is to train a single model $f_\theta: \mathcal{X} \rightarrow \mathcal{Y}$, parameterized by $\theta$, where $\mathcal{X}=\cup_{k=1}^K\mathcal{X}_k$ and $\mathcal{Y}=\cup_{k=1}^K\mathcal{Y}_k$.
+
+\subsection{Oracle-guided context-prior learning}
+In this section, we introduce Hermes, an oracle-guided context-prior learning approach, as depicted in Fig. \ref{fig:framework}. Drawing inspiration from radiology residency training, Hermes explicitly learns context-prior knowledge along with the segmentation backbone from diverse medical imaging sources. 
+In line with radiologists' practice for image interpretation, Hermes uses the tasks to be processed $\boldsymbol{t}$,  and the imaging modality $m$ as guiding oracles during inference. These oracles guide the selection and combination of two types of priors - \textit{task} and \textit{modality} - to aid the backbone in addressing any specified tasks from the collective dataset. As a model-agnostic approach, Hermes can be seamlessly integrated with existing segmentation backbones, offering a versatile solution for universal medical image segmentation.
+
+\noindent\textbf{Task context prior.} 
+To learn from varied datasets and handle the incomplete annotation and potential conflict of class definition,  each task in $\mathcal{T}$ is formed as a binary segmentation task. For example, if ROIs in different datasets share the exact same definition, they are considered a single task, otherwise are treated as separate tasks. Each task is associated with a unique task prior, which is implemented as a learnable token. For the collective dataset $\mathcal{D}$ comprising $|\mathcal{T}|$ tasks, we initialize a task prior pool $\boldsymbol{p}_{\mathcal{T}}\in \mathbb{R}^{|\mathcal{T}|\times C}$, where $C$ denotes the token dimension.  Given a training image from $\mathcal{D}_k$, we use the task IDs $\boldsymbol{t}_{k}$ as an oracle to guide the selection of corresponding task priors $\boldsymbol{p}_{\boldsymbol{t}_k}\in \mathbb{R}^{|\boldsymbol{t}_k|\times C}$ from the pool, on which the model is conditioned to complete specified tasks. This design enables Hermes to flexibly select and combine task priors based on clinical objectives, accommodating a wide array of medical segmentation tasks.
+\noindent\textbf{Modality context prior.} Medical images come with a variety of imaging modalities, each possessing distinct image attributes, intensity profiles, and noise patterns. To reduce the modeling difficulty, we introduce a modality prior for each modality. Similar to the task prior, we initialize a modality prior pool $\boldsymbol{p}_{\mathcal{M}} \in \mathbb{R}^{|\mathcal{M}| \times l \times C}$, where $l$ denotes the length of the token, and $C$ is the dimension of each token. We employ multiple tokens of length $l$ for each modality. When an image with modality $m_k$ is processed, we select the corresponding modality prior token  $\boldsymbol{p}_{m_k}\in \mathbb{R}^{l\times C}$ and concatenate it with the task prior tokens: $\boldsymbol{p}=[\boldsymbol{p}_{\boldsymbol{t}_k}, \boldsymbol{p}_{m_k}]\in \mathbb{R}^{(|\boldsymbol{t}_k|+l)\times C}$. %We then process $\boldsymbol{p}$ with the prior fusion module. The only difference is that the modality prior does not participate in the final conditioned segmentation; its role is to provide modality-specific prior knowledge to the model.
+
+\noindent\textbf{Conditioned segmentation.} Given an encoded image feature map $X\in\mathbb{R}^{C\times D\times H\times W}$ from the segmentation backbone, where $D, H, W$ represent the 3D feature map sizes, a prior fusion module is applied to adaptively fuse context-prior tokens and image features:
+\begin{equation}
+\label{eq:fusion}
+    \boldsymbol{\hat{p}}, \hat{X}=Fusion(\boldsymbol{p}, X).
+\end{equation}
+Here, $\boldsymbol{\hat{p}}=[\boldsymbol{\hat{p}}_{\boldsymbol{t}_k}, \boldsymbol{\hat{p}}_{m_k}]$ represents the posterior tokens and and $\hat{X}$ is the prior-injected feature map. The prior fusion module can be implemented with the attention mechanism. For CNN backbones, we employ bi-directional cross-attention modules. For Transformer, we merge the prior tokens into the attention module (detailed in the supplementary).  The posterior tokens, processed through a multilayer perceptron (MLP), yield posterior prototypes serving as class classifiers. The predicted probability distribution for each task is computed via the inner product of these posterior task prototypes and image features, followed by a sigmoid function:
+\begin{equation}
+    \boldsymbol{\hat{y}}=p_{\theta}(y_k=1|\boldsymbol{x},\boldsymbol{p}_{t_k})=\sigma(\boldsymbol{\langle \hat{p}}_{t_k}, \tilde{X}\rangle),
+\end{equation}
+where $\boldsymbol{\hat{p}}_{t_k}\in \mathbb{R}^{|\boldsymbol{t}_k|\times C'}$ is the posterior prototypes (overload the $\boldsymbol{\hat{p}}_{t_k}$ in equation (\ref{eq:fusion})), $\tilde{X}\in\mathbb{R}^{C'\times D'\times H'\times W'}$ is the output feature map of the decoder, $\boldsymbol{\hat{y}}\in \mathbb{R}^{|\boldsymbol{t}_k|\times D'\times H'\times W'}$ is the predicted binary probability map for tasks $\boldsymbol{t}_k$. To help modality knowledge learning, we use auxiliary supervision on modality priors. Specifically, we predict image modality using posterior modality prototypes via global average pooling and a linear layer: $\boldsymbol{\hat{y}}_{mod}=\text{Linear}(\text{GAP}(\boldsymbol{\hat{p}}_{m_k}))$. 
+During training, Hermes learns class-specific representations for each task prior token and typical image features for each modality prior. In inference, context-priors and image feature maps undergo a bi-directional update, where priors assimilate instance-specific information from feature maps, and in turn, feature maps are augmented with learned prior knowledge. This interactive process is realized by attention weights, making Hermes a dynamic and adaptive model that enhances segmentation performance.
+
+
+\noindent\textbf{Hierarchical modeling.} The effectiveness of hierarchical modeling is well-established in dense prediction tasks~\cite{lin2017feature,chen2018encoder}. We apply our context-prior approach hierarchically at multiple scales. The posterior prototypes from each scale are concatenated together and processed by an MLP as the final prototypes for segmentation. This design allows Hermes to learn prior knowledge across different scales, effectively merging multi-scale contextual information to improve the segmentation performance.
+\begin{algorithm}[h]
+\small
+\caption{Hermes Training}
+\label{alg:Hermes_training}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Training dataset $\mathcal{D} = \cup_{k=1}^{K} \mathcal{D}_k$, where $\mathcal{D}_k = \{(\boldsymbol{x}_{k}^i, \boldsymbol{y}_{k}^i, m_{k}^i, \boldsymbol{t}_{k}^i)\}_{i=1}^{N_k}$. Randomly initialized segmentation backbone $f_{\theta}$, task and modality prior pool $\boldsymbol{p}_{\mathcal{T}}$ and $\boldsymbol{p}_{\mathcal{M}}$
+
+\While {\textit{not converged}}
+\For {j in [1, 2, \dots, batch size]}
+    \State Randomly choose a training sample $\boldsymbol{x}, \boldsymbol{y}$ from $\mathcal{D}$
+    \State Task and modality priors selection: $\boldsymbol{p}_{\boldsymbol{t}}$ and $\boldsymbol{p}_{m}$
+    \State Prior concatenation: $\boldsymbol{p} = [\boldsymbol{p}_{\boldsymbol{t}},\ \boldsymbol{p}_{m}]$ 
+\EndFor
+
+\State Assemble training mini-batch $\mathcal{B}$  % = \{\boldsymbol{x}, \boldsymbol{y}, \boldsymbol{p}\}$
+\State Predict segmentation and modality: $\boldsymbol{\hat{y}}, \boldsymbol{\hat{y}}_{mod} =f_{\theta}(\boldsymbol{x}, \boldsymbol{p})$
+\State Compute loss: $L_{seg} + \lambda L_{mod}$
+\State Update  $f_{\theta}$, $\boldsymbol{p}_{\mathcal{T}}$ and $\boldsymbol{p}_{\mathcal{M}}$
+\EndWhile
+
+\end{algorithmic}
+\end{algorithm}
+
+
+\noindent\textbf{Training and losses.} Hermes employs a joint training strategy, using mixed batch training that incorporates samples from multiple datasets within each mini-batch (see Algorithm \ref{alg:Hermes_training}). The primary segmentation loss is a combination of binary cross-entropy and Dice loss: $L_{seg} = L_{bce}(\boldsymbol{y},\boldsymbol{\hat{y}}) + L_{dice}(\boldsymbol{y}, \boldsymbol{\hat{y}})$, The auxiliary modality loss uses cross-entropy loss on the predicted modality $\boldsymbol{\hat{y}}_{mod}$ and ground truth modality $\boldsymbol{m}$: $L_{mod}=L_{ce}(\boldsymbol{\hat{y}}_{mod}, m)$. The backbone and priors are jointly optimized to synergize representation learning and context-prior knowledge learning.
+
+
+
+Results
+\label{sec:results}
+
+\subsection{Experiments setup}
+\textbf{Dataset selection and experiment design.} Our collective training dataset, detailed in Table \ref{tab:dataset}, comprises eleven public datasets, chosen for their variety in body regions, modalities, and clinical targets. We assess model scalability by exploring the effect of model size on performance in both traditional and universal segmentation approaches. In addition, we further evaluate Hermes' capability in downstream tasks under the settings of transfer learning, incremental learning and generalization with two additional datasets. Finally, we show the priors learned by Hermes are able to accurately capture the complex relationships between tasks and modalities.
+
+\noindent\textbf{Standardized preprocessing.} Training with diverse and heterogeneous data is a non-trivial problem. We implement a standardized preprocessing pipeline for all datasets. Firstly, we align all images to the same coordinate system and resample the spacing to a uniform $1.5\times 1.5\times 1.5\ mm$. Subsequently, we normalize image intensities; for CT data, we employ a clipping window of [-990, 500], while for MR and PET data, we clip at the 2nd and 98th percentiles of the intensity distribution. Finally, we conduct z-score normalization on each image, ensuring that all data exhibits a zero mean and unit standard deviation.
+
+\noindent\textbf{Implementation details.} We implement Hermes using PyTorch and train the model with a batch size of 16 over 200 epochs.  We use the LAMB~\cite{you2019large} optimizer with a learning rate of 0.002 and an exponential learning rate decay. Data augmentations, including random cropping, rotation, scaling, brightness, contrast, and gamma perturbation, are applied on the fly during training. We use a patch size of $128\times 128\times 128$ for 3D training. The context-prior learning method is applied at the scales of $4\times$, $8\times$, and $16\times$ down-sampling. Given the variation in annotation styles across datasets, Classes with identical names across datasets are considered unique ROIs, except in AMOS CT and AMOS MR, resulting in 71 task prior tokens. Different MRI sequences are treated as distinct modalities, leading to a total of five modalities (CT, T1 MRI, T2 MRI, cineMRI, and PET) in the modality prior pool, with the length $l$ set to 10. We set $\lambda=0.001$ for the auxiliary modality loss as it is much easier than segmentation. The details of the datasets and train/val/test split are available in the supplementary.
+\begin{table}
+  \caption{Datasets statistics. The upper datasets are for upstream training and analysis. The bottom two datasets are for downstream tasks on transfer learning, incremental learning, and generalization.}
+  \label{tab:dataset}
+  \centering
+   \scriptsize
+   \setlength{\tabcolsep}{1mm}{
+  \begin{tabular}{ccccccc}
+    \toprule
+    Dataset         & Body Region   & Modality  & Clinical Target   & \#Cls &   Size     \\
+    \midrule
+    BCV~\cite{bcv}     & Abdomen       & CT        & Organs            & 13        & 30    \\
+    LiTS~\cite{bilic2019liver}     & Abdomen       & CT        & Liver \& Tumor    & 2         & 131   \\
+    KiTS~\cite{heller2019kits19}     & Abdomen       & CT        & Kidney \& Tumor    & 2         & 210   \\
+    AMOS CT~\cite{ji2022amos}  & Abdomen       & CT        & Organs            & 15        & 300   \\
+    SS T~\cite{structseg}& Thorax        & CT        & Organs            & 6         & 50    \\
+    SS H~\cite{structseg} & Head \& Neck & CT   & Organs & 22 & 50\\
+    AMOS MR~\cite{ji2022amos}  & Abdomen       & MRI       & Organs            & 13        & 60    \\
+    CHAOS~\cite{CHAOS2021}    & Abdomen       & T1 \& T2 MRI & Organs         & 4         & 60    \\
+    M\&Ms~\cite{campello2021multi} & Cardiac & cineMRI & Structures & 3 & 320 \\
+    DLBS~\cite{rodrigue2012beta} & Brain & T1 MRI & Structures & 3 & 213 \\
+    AutoPET~\cite{gatidis2022whole} & Whole body & PET & Lesions & 1 & 1014 \\
+    \midrule
+    SegTHOR~\cite{lambert2020segthor}  & Thorax        & CT        & Organs            & 3         & 40    \\
+    MSD Pancreas~\cite{antonelli2022medical}& Abdomen       & CT        & Pancreas \& Tumor    & 2         & 281 \\
+    
+    
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+
+\subsection{Results}
+\begin{table*}
+  \caption{Universal segmentation results measured with Dice score (\%). The upper table presents models with CNN backbones. The lower table shows models with Transformer backbones. Hermes-R denotes our method using ResUNet backbone, while Hermes-M uses MedFormer backbone.}
+  \label{tab:universal_results}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{1.5mm}{
+  \begin{tabular}{c|ccccccccccccc}
+    \toprule
+    Paradigm    & Model    & BCV    & SS T & SS H & LiTS T    & KiTS T    & AMOS CT   & AMOS MR   & CHAOS & M\&Ms &  AutoPET & DLBS &  AVG       \\
+    \hline
+    Traditional & nnUNet~\cite{isensee2021nnu}  & 84.23	&88.53 & 78.17	&64.91	&81.72	&88.79	&85.49	&91.34	&85.65 & 65.43 & 94.22 & 82.59\\
+    Traditional &  ResUNet & 84.36	&88.59 & 78.12	&64.87	&81.89	&88.97	&85.43	&91.41	&85.74 & 65.52 & 94.31 & 82.65  \\
+    SSL & DeSD~\cite{ye2022desd} & 83.62 & 88.11 & 76.56 & 64.43 & 82.52 & 86.36 & 82.56 & 91.55 & 86.46 & 69.02 & 86.81 & 81.64 \\
+    \rowcolor{lightgray}
+    Universal  &  Hermes-R & \bf85.98	&\bf89.50 & \bf 80.62 	&\bf67.49	&\bf85.46	&\bf89.63	&\bf86.78	&\bf92.01	&\bf 86.94 & \bf 73.69 & \bf 96.21 & \bf 84.93 \\\midrule
+
+    Traditional  &  SwinUNETR~\cite{hatamizadeh2022swin} &83.32  & 88.36 & 72.21  & 64.82 & 74.32 & 88.29 & 83.97 & 88.34 & 83.28 & 64.39 & 92.01 & 80.32 \\
+    Traditional   &  MedFormer~\cite{gao2022data} & 84.61 & 89.04 & 78.71 & 66.24 & 82.09 & 89.45 & 85.58 & 91.85 & 86.02 & 66.01 & 95.13 & 83.39 \\
+    SSL & UniMiSS~\cite{xie2022unimiss} & 84.97 & 88.29 & 77.41 & 63.94 & 61.21 & 85.82 & 83.51 & 91.35 & 85.75 & 60.32 & 95.35 & 80.64\\
+    \rowcolor{lightgray}
+    Universal   & Hermes-M &\bf 86.29	&\bf 89.61 & \bf 81.19	&\bf 68.32	&\bf 85.98	&\bf 89.98	&\bf 87.20	&\bf 92.22	&\bf87.02 & \bf 74.04 & \bf 96.54 & \bf 85.28 \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+We start initial experiments under the traditional training paradigm by training individual models for each dataset. We use several representative medical image segmentation backbones, including CNN models nnUNet~\cite{isensee2021nnu}, UNet~\cite{ronneberger2015u} with residual building blocks~\cite{he2016deep}: ResUNet, and Transformer models SwinUNETR~\cite{hatamizadeh2022swin} and MedFormer~\cite{gao2022data}. From Table \ref{tab:universal_results}, ResUNet and MedFormer demonstrate slightly better results under the traditional paradigm. Therefore, in subsequent experiments under the universal paradigm, we employ ResUNet and MedFormer as representative backbones for CNN and Transformer to implement Hermes, i.e. Hermes-R and Hermes-M. We also compare against large-scale self-supervised pretraining and finetuning (SSL) methods: DeSD \cite{ye2022desd} (pretrained on 10,594 CT scans) and UniMiss \cite{xie2022unimiss} (pretrained with 5,022 CT scans and 108,948 2D images).
+
+\noindent\textbf{Results on target ROIs, body regions, and image modalities.} From Table \ref{tab:universal_results}, we see that: \textbf{First}, a mutual enhancement in performance is observed across different target ROIs. Specifically, Hermes-R shows significant gains over ResUNet in tumor and lesion segmentation in the LiTS and KiTS datasets, increasing by 2.62\% and 3.57\%, respectively. Across the other ROIs in eleven datasets, Hermes consistently improves results, with Hermes-R outperforming ResUNet by 2.28\%, and Hermes-M surpassing MedFormer by 1.89\%. \textbf{Second}, there's a clear transferability of underlying representations between different body regions. For example, in thoracic and head\&neck regions represented by SS T and SS H datasets, Hermes-R enhances segmentation in thoracic targets by 0.91\% in SS T and by 2.5\% in SS H compared to ResUNet. \textbf{Third}, the commonality between imaging modalities can be harnessed to enhance performance, even though they possess entirely different visual characteristics. For instance, despite the inherent image differences between PET to other MRI and CT datasets, Hermes-R has a remarkable improvement of 8.17\% with the universal paradigm. \textbf{Lastly}, although DeSD and UniMiss are pretrained on much larger datasets than Hermes, they do not transfer well to different tasks, especially cross-modalities. For example, DeSD is notably worse in the DLBS with brain T1 MRI images, and UniMiss underperforms in AutoPET.
+
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=1\textwidth]{./fig/plot.png}
+\end{center}
+\caption{(A) Comparison with other SOTA methods. ROIs with Dice scores lower than 80 under the traditional paradigm are defined as 'difficult classes'. (B) Model scalability analysis. We scale ResUNet down and up to three variants: ResUNet-Small (10.1M), ResUNet-Base (40.6M), and ResUNet-Large (157.9M), and the same for Hermes. All other experiments use ResUNet-Base as the backbone unless specified. (C) Generalization from StructSeg to SegTHOR.}
+\label{fig:plot}
+\end{figure*}
+\noindent\textbf{Comparison with other methods under the universal paradigm.} We adapt and extend several previous methods to fit the universal paradigm. Multi-decoder~\cite{chen2019med3d} uses a shared encoder and separate decoders per dataset. DoDNet~\cite{zhang2021dodnet} was originally designed for organ and tumor segmentation in CT images with one-hot task vector embeddings; we broaden it into multi-modality segmentation. CLIP-Driven~\cite{liu2023clip} was intended for partially labeled CT image analysis using CLIP text encoder; we adapt it by including modality information in its text prompt: "\textit{A CT/MRI/PET of a [CLS].}" MultiTalent~\cite{ulrich2023multitalent} uses multiple segmentation heads. UniSeg~\cite{ye2023uniseg} uses learnable task prompts. All methods were implemented using the same ResUNet backbone for fairness.
+
+Figure \ref{fig:plot} (A) presents a comprehensive comparison of traditional and universal paradigms from six perspectives, detailed numbers are in supplementary. All universal-trained methods demonstrate consistent improvement over the traditional paradigm, particularly for difficult classes, underscoring the universal paradigm's potency in deriving robust representations. Within the universal paradigm, Hermes outperforms other methods in all six perspectives. For example, Multi-Decoder's scalability is limited by the linear growth of decoders with dataset quantity, and it only allows knowledge sharing at the encoder level. DoDNet's one-hot task embedding is incapable of capturing inter-task relationships. CLIP-Driven, despite incorporating knowledge from text prompts, can't effectively encode discriminative information for medical tasks, as its CLIP text encoder lacks training on medical texts, leading to subpar performance, especially for tumors\&lesions. 
+MultiTalent demonstrates good performance with task-specific segmentation heads, yet it does not reach the effectiveness of Hermes because it lacks the integration of prior knowledge during inference. Although UniSeg incorporates learnable task prompt maps, it overlooks modality information and learns prompts at the lowest resolution, missing critical multi-scale information. In contrast, Hermes possesses two key advances: (1) It utilizes versatile task and modality context priors, learned 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

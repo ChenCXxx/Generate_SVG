@@ -1,0 +1,389 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Natural languages demonstrate \textit{compositionality}, which states that the meaning of a complex expression is determined by its structure and the meanings of its lexical constituents~\cite{chomsky1957syntactic,montague1970universal}.
+It leads to humans' algebraic capacity to \textit{systematically} understand a potentially infinite number of novel combinations of known structures and entities.
+For example, someone who understands ``\textit{The cat is asleep}'' and ``\textit{The dog is awake}'' must simultaneously understand ``\textit{The dog is asleep}'' and ``\textit{The cat is awake}''.
+Systematicity involves an intelligence's ability to process high-dimensional raw signals in a low-dimensional, abstract space and gives rise to its complex reasoning skills.
+Early works argued that neural networks are associative devices that cannot capture compositionality~\cite{fodor1988connectionism,marcus1998rethinking} and are supported by the empirical results that a Transformer~\cite{vaswani2017attention} trained to parse ``\textit{walk twice}'', ``\textit{walk around left}'', and `\textit{jump}' fails to parse ``\textit{jump twice}'' and ``\textit{jump around left}'' in SCAN \addjump~\cite{lake2018generalization}.
+Later works presented a more promising picture: for example, \citet{zhou-jiang-2023-datafactor} found that Transformers trained on an augmented, high-complexity dataset with more examples and diverse entities/structures
+can systematically generalize to novel compositions in SCAN \addjump. 
+Studies on large pretrained models~\cite{furrer2020compositional,drozdov2023compositional} also reveal their ability to systematically generalize.
+However, data augmentation requires domain-specific knowledge and pretraining on large datasets is also prohibitively expensive.
+Therefore, how to induce systematicity with low-complexity data has a significant value for improving the model's data efficiency, and remains an open and important research question.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=0.75\linewidth]{figures/different_attn_text.pdf}
+\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=0.7\linewidth]{figures/same_attn_text.pdf}
+\end{minipage}
+\\
+\subfloat[Attention maps encoding ``\textit{walk around left}'', trained on original \addjump.]{\label{subfig:1x_attn_maps_walkaroundleft} \includegraphics[width=0.23\textwidth]{figures/x1_attn_maps_walkaroundleft.pdf}}
+\hfill
+\subfloat[Attention maps encoding ``\textit{jump around left}'', trained on original \addjump.]{\label{subfig:1x_attn_maps_jumparoundleft} \includegraphics[width=0.23\textwidth]{figures/x1_attn_maps_jumparoundleft_v2_thicker.pdf}}%
+\hfill
+\subfloat[Attention maps encoding ``\textit{walk around left}'', trained on 20x augmented \addjump.]{\label{subfig:20x_attn_maps_walkaroundleft} \includegraphics[width=0.23\textwidth]{figures/x20_attn_maps_walkaroundleft.pdf}}
+\hfill
+\subfloat[Attention maps encoding ``\textit{jump around left}'', trained on 20x augmented \addjump.]{\label{subfig:20x_attn_maps_jumparoundleft} \includegraphics[width=0.23\textwidth]{figures/x20_attn_maps_jumparoundleft.pdf}}%
+\caption{Attention maps encoding a training example ``\textit{walk around left}'' and a test example ``\textit{jump around left}'' from the Transformers trained on the original SCAN \addjump training set (a and b), and 20x augmented training set (c and d) from~\citet{zhou-jiang-2023-datafactor} with 20 times more primitives like `\textit{walk1}' and more examples like ``\textit{walk1 around left}''.
+We highlight the attention maps in (b) that differ from (a) in red boxes.
+When trained on 20x augmented training set, the model encodes the two examples with highly similar attention maps across all layers and heads (c and d).
+We show the attention maps of other training instances of the structure ``$\$x$ \textit{around left}'' in~\figref{fig:1x_20x_lookrunwalkjump_attn_maps}.
+}
+\label{fig:20x_attn_maps}
+\end{figure*}
+
+To understand the emergence of systematicity in Transformers, we start by analyzing the attention maps from models trained on SCAN \addjump data of different complexities. 
+First, we demonstrate that a Transformer trained on the original, low-complexity training set (with only 4 primitives) uses different attention weights to encode in-distribution training sentences like ``\textit{walk around left}'' (\figref{subfig:1x_attn_maps_walkaroundleft}) and an unobserved sentence ``\textit{jump around left}'' (\figref{subfig:1x_attn_maps_jumparoundleft}).
+It only achieves 3.7\% test accuracy in parsing unobserved sentences. 
+On the other hand, the same model trained on large augmented data (with 84 distinct primitives like `\textit{walk}' and `\textit{jump}') uses highly similar attention patterns to encode these two sentences (as shown in~\figref{subfig:20x_attn_maps_walkaroundleft} and~\figref{subfig:20x_attn_maps_jumparoundleft}).
+This model achieves 100\% test accuracy and encodes the structure ``$\$x$ \textit{around left}'' with a unified attention pattern that is invariant to the choice of $\$x$, as long as $\$x$ has the same syntactic function (e.g., being a verb).
+Over the entire test set, we observe more of such reused attention from the model trained with augmented data.\footnote{We discuss a quantified analysis in~\secref{ssec:analysis_circuits}.}
+Therefore, we test the hypothesis that 
+this ability to systematically reuse learned attention patterns on novel sentences is critical for a Transformer to systematically generalize.
+
+To this end, in this work, 
+we propose \modelname with two improvements to the embeddings and attention layers respectively, 
+so as to induce the same systematicity seen above, even with low-complexity training data.
+The first improvement brings linguistic categorization to the word embeddings:
+as \citet{johnson2004systematicity} argues \textit{``the claim that natural languages are systematic presupposes a natural non-overlapping linguistic categorization of all the expressions.''}
+For example, for the model to generalize to the unseen ``\textit{jump twice}'', it first has to learn that `\textit{jump}' belongs to the same category as other primitives like `\textit{walk}' and `\textit{run}'.
+Motivated by this theory, we propose \textbf{S}tructure-\textbf{o}riented \textbf{V}ector \textbf{Q}uantization (\textbf{SoVQ}) to actively cluster all word embeddings into a fixed number of structural equivalence classes, and quantize each word into a code embedding shared among an entire class.
+We introduce a variational and generalized Brown Clustering~\cite{brown1992class} objective.
+This unsupervised objective encourages a ``\textbf{predictive clustering}'' such that the class of a token can be predicted by the classes of its context tokens,
+and hence ensures that words of the same syntactic function are in the same class.
+After being trained on examples like ``\textit{walk}'', ``\textit{walk around left}'', and ``\textit{jump}'',
+SoVQ can cluster `\textit{jump}' and `\textit{walk}' into the same class and quantize them into a shared code embedding that encodes their common structural information.
+
+The second improvement encourages a unified attention pattern for encoding sentences of a common structure. 
+The general belief in cognitive science states that \textit{systematicity involves a capacity to represent common structural relations among the equivalently cognizable entities}~\cite{phillips2016systematicity}.
+That is, a systematic mind can always represent a structure even if one or more of its entities is substituted with any equivalently cognizable entity.\footnote{The notion of ``equivalently cognizable entities'' generally refers to entities within an equivalence class with respect to certain structural equivalence (e.g., all proper nouns).}
+Since \textbf{SoVQ} has quantized each class of equivalently cognizable entities into a code embedding,
+we then propose the \textbf{S}ystematic \textbf{A}ttention \textbf{L}ayer (\textbf{SAL}) that uses these code embeddings as the queries and keys, and the word embeddings as the values (\figref{fig:sal}).
+When encoding sentences with a common structure like ``$\$x$ \textit{around left}'', SAL is \textbf{hard-invariant} for any $\$x$ in a structural equivalence class $C$ established by SoVQ.
+It thus enables the Transformer to systematically represent common structural relations among those quantized classes of equivalently cognizable entities.
+
+To retain the attention's ability to represent non-structural relations that commonly exist in natural languages, we also introduce an alternative to SAL: \textbf{S}ystematically \textbf{R}egularized \textbf{L}ayer (\textbf{SRL}).
+It inherits the architecture of a regular attention layer, but additionally minimizes the L2 distance between the layers' outputs computed from word embeddings and the layers' outputs computed from quantized word embeddings (\figref{fig:srl}).
+Therefore, unlike SAL, SRL encourages attention's \textbf{soft invariance} to structurally equivalent entities: sentences with common structures are processed with similar but not necessarily the same attention pattern.
+Overall, we name the Transformer with the SoVQ and SAL/SRL as \textbf{\modelname} (Structurally Quantized Transformer). 
+
+To demonstrate that predictive clustering in embeddings and invariance in attention can lead to systematicity in the model's predictions, 
+we train and evaluate \modelname from scratch on multiple low-complexity semantic parsing and machine translation datasets requiring compositional generalization.
+In semantic parsing, \modelname improves upon Transformer on SCAN \addjump x2~\cite{jiang-etal-2022-mutual} (40\%$\rightarrow$99.4\%), \aroundright~\cite{loula-etal-2018-rearranging} (69.5\%$\rightarrow$99.6\%), and COGS~\cite{kim-linzen-2020-cogs} (82.6\%$\rightarrow$83.4\%).
+In machine translation, \modelname achieves higher BLEU scores (60.5$\rightarrow$62.8) and lower novel compound translation error (29.6\%$\rightarrow$18.1\%) on CoGnition~\cite{li-etal-2021-compositional}.
+Interestingly, it also shows generalizability to higher-complexity, natural datasets that do not have a significant distribution shift between training and test sets:
+in WMT En$\leftrightarrow$De and En$\leftrightarrow$Fr, \modelname with SRL obtains significantly higher BLEU scores.
+We further analyze \modelname and present two findings:
+(1) SoVQ can more effectively cluster word embeddings based on their syntactic functions compared to VQ;
+(2) SAL and SRL learn attention patterns that can systematically encode unseen compositions of structure and entities.
+These analyses explain the working mechanism of \modelname and verify our insights in designing these modules.
+
+In summary, we propose \modelname, which quantizes word embeddings based on their syntactic functions and learns generalizable attention for sentences of the same structure.
+We hope this work can shed more light on the inner mechanism of Transformers' generalization and lay the groundwork for future improvement in architecture design and representation learning.
+
+
+
+Background and Motivation
+\label{sec:bg}
+
+\paragraph{Vector Quantization}
+(VQ)~\cite{agustsson2017soft,van2017vqvae} is a compression technique that represents a set of representations $e_x$ of the variable $x$ by a small, fixed number of code embeddings $\mathbf{z}$.
+The code is inferred with the nearest neighbor look-up on a codebook $Z\in R^{K\times D}$ made up of $K$ embeddings of the dimension $D$:
+\begin{equation}
+\label{eqn:quantization}
+\begin{split}
+q(z_k|x) &= 
+\begin{cases}
+1 \; \text{if} \; k = \mathop{\mathrm{argmin}}_{j} \;\mathrm{f}(e_x, z_j) \\
+0 \; \text{otherwise} \\
+\end{cases} \\
+\mathrm{VQ}(x) &= z_k \;\text{where}\; q(z_k|x) = 1 \\
+\end{split}
+\end{equation}
+where $\mathrm{f}$ is a distance function (e.g., negative cosine similarity).
+The discrete code embeddings are updated using exponential moving averages of $e_x$.
+Previous works~\cite{van2017vqvae,razavi2019vqvae2,ramesh2021dalle} have shown that VQ-VAE can generate high-fidelity, continuous signals like images and speech.
+The exploration of vector quantization on modeling languages~\cite{lingle2023transformer} remains limited, primarily because (sub)words are already discrete features.
+In this work, we use VQ to cluster words based on their syntactic function (\secref{ssec:method_vq}). 
+
+\paragraph{Brown Clustering}
+
+\cite{brown1992class} is a word clustering algorithm that divides a vocabulary $V$ into $m$ mutually exclusive classes by maximizing the mutual information $I(Z_1,Z_2)$ between the classes of a random bigram $(X_1,X_2)$ in a sentence:
+\begin{equation}
+\label{eqn:brown_lustering_1}
+\begin{split}
+\max_{Z:V\rightarrow[m]} &= \sum_{z_1,z_2} \frac{\#(z_1, z_2)}{N}\mathrm{log}(\frac{\#(z_1,z_2)N}{\#(z_1)\#(z_2)})\\
+\end{split}
+\end{equation}
+where $\#(z, z')$ denotes the number of occurrences of the cluster pair $(z, z')$ for any bigram in $[x_1 . . . x_N ]$.\footnote{By assuming a uniform distribution over consecutive word pairs $(x_{i-1}, x_i)$, \citet{brown1992class} approximate $p(z_1,z_2)$ and $p(z)$ using $\frac{\#(z_1,z_2)}{N}$ and $\frac{\#(z)}{N}$ to derive~\eqnref{eqn:brown_lustering_1}.}
+This algorithm can cluster a vocabulary based on the syntactic functions of words by promoting ``predictive clustering'': the class of a token must be predictable from the class of its context token.
+However, it requires nontrivial combinatorial optimization and is difficult to scale and generalize for modern neural networks.
+In this work, we propose a variational objective of Brown Clustering (\secref{sssec:variational_brown}) that can be optimized with gradient descent.
+
+
+\modelname
+
+In this section, we introduce the components of \modelname: 
+(1) Structural-oriented Vector Quantization (\secref{ssec:method_vq});
+(2) Systematic Attention Layer that operates on quantized embeddings (\secref{ssec:method_sal});
+and (3) Systematically Regularized Layer that regularizes the attention outputs (\secref{ssec:method_srl}).
+\paragraph{Notations.}
+
+We denote the source and target sequences as $[x_i]$ and $[y_j]$.
+The seq2seq framework consists of an encoder with word embeddings $E_x$ and a decoder with word embeddings $E_y$.
+For quantizing $E_x$ and $E_y$, we define two codebooks $Z_x$ and $Z_{y}$ with $K_x$ and $K_y$ code embeddings respectively.
+
+\subsection{Structure-oriented Vector Quantization}
+\label{ssec:method_vq}
+Same as the original VQ, Structure-oriented Vector Quantization (SoVQ) clusters the (sub)word embeddings into several classes and quantizes embeddings within a class to a shared code embedding (\eqnref{eqn:quantization}).
+We discuss a previous MMI objective and then propose variational Brown Clustering that better cluster words based on their syntactic functions.
+
+\subsubsection{Variational MMI objective}
+\citet{stratos-2019-mutual} proposed an unsupervised part-of-speech tagging method by maximizing the mutual information (MMI) between the inferred class $Z$ of a token $X$ and its surrounding context $\hat{X}$.
+It defines $q(z|x)$ that directly infers the class of $x$ (posterior) and $p(z|\hat{x})$ that predicts the cluster of $x$ based on its context $\hat{x}$ (prior).
+It maximizes the variational lower bound of the mutual information $I(\hat{X},Z)$:
+\begin{equation}
+\label{eqn:elbo_mmi}
+\begin{split}
+I(\hat{X},Z) &= H(Z) - H(Z|\hat{X}) \\
+&\geq H(Z) - H(q,p)\\
+\end{split}
+\end{equation}
+where $H(q,p)$ is the cross entropy over samples:
+\begin{equation}
+\label{eqn:h_q_p}
+\begin{split}
+H(q,p) &= \mathop{\mathbb{E}}_{x,\hat{x}\sim D}\left[-\sum_{z}q(z|x)\mathrm{log}p(z|\hat{x})\right] \\
+\end{split}
+\end{equation}
+
+As we can see in~\eqnref{eqn:elbo_mmi}, maximizing this ELBo is equivalent to (1) minimizing cross-entropy between the cluster inference posterior $q(z|x)$ and cluster prediction prior $p(z|\hat{x})$ and (2) maximizing the entropy $H(Z)$ of the cluster distribution. 
+
+\textit{First, minimizing the cross-entropy $H(q,p)$ enforces ``predictive clustering'': the class of $x$ must be predictable from its context $\hat{x}$.}
+We introduce a theorem to show how this leads to assigning words appearing in the same context to the same class.
+
+\begin{theorem}
+\label{theo:cross_entropy}
+    Let $x_a$ and $x_b$ be two tokens that only appear in the same sets of context $\hat{X}$. 
+    Let $p',q'=$ \[\mathop{\arg\min}_{p,q} H(q(z|x_a), p(z|\hat{x})) + H(q(z|x_b), p(z|\hat{x}))\] Then, we have:
+    $q'(z|x_a) = q'(z|x_b)\;\;\forall z\in Z$, which means $x_a$ and $x_b$ are clustered into the same class in the optimal solution.
+\end{theorem}
+The proof is straightforward: the minimum value of the cross-entropy loss is 0, and this can only be achieved when $q(z|x_a) = q(z|x_b) = p(z|\hat{x})$.
+To better understand the mathematical intuition of this theorem, consider the case where all adjectives are categorized into the same cluster.
+Then, we can confidently predict the class of $\$x$=`\textit{amazing}' based on the context ``\textit{The food tastes} $\$x$.'', thus achieving the low cross-entropy with the posterior.
+
+\textit{Second, maximizing the entropy of the cluster distribution pushes the model to utilize every cluster $z$ in the latent space with (almost) equal probability.}
+It thus prevents the trivial solution that assigns all tokens to only one random cluster $k$: $p(z_k|x)=q(z_k|x)=1$
+to minimize the first cross-entropy term ($H(p,q)=0$).
+Empirically, this variational MMI objective achieves strong unsupervised POS tagging performance~\cite{stratos-2019-mutual}.
+\begin{figure*}[t]
+\centering
+\hspace{-20pt}
+\subfloat[The Systematic Attention Layer (SAL).]{\label{fig:sal} \includegraphics[width=0.4\textwidth]{model_figures/sal.pdf}}
+\hspace{40pt}
+\subfloat[The Systematically Regularized Layer (SRL).]{\label{fig:srl} \includegraphics[width=0.4\textwidth]{model_figures/srl.pdf}}
+\caption{Architecture of the Systematic Attention Layer (SAL) and the Systematically Regularized Layer (SRL). 
+}
+\label{fig:sal_srl}
+\end{figure*}
+
+\subsubsection{Variational Brown Clustering}
+\label{sssec:variational_brown}
+In this work, we propose another MMI objective that marries the original Brown Clustering objective $I(Z_1, Z_2)$ and the variational MMI (\eqnref{eqn:elbo_mmi}).
+First, we redefine the cluster prediction distribution as $p(z|\hat{z})$, where $\hat{z}$ are the quantized codes of all context tokens $\hat{x}$ inferred from $\mathrm{argmax}(q(z|\hat{x}))$.
+This differs from the $p(z|\hat{x})$ that predicts the cluster of $x$ directly from its context $\hat{x}$.
+Then, instead of maximizing the ELBO of $I(\hat{X}, Z)$, we maximize the ELBO of $I(\hat{Z}, Z)$:
+\begin{equation}
+\label{eqn:elbo_mmi_reimagined}
+\begin{split}
+I(\hat{Z},Z) &= H(Z) - H(Z|\hat{Z}) \\
+&\geq H(Z) - H(q(z|x),p(z|\hat{z}))\\
+\end{split}
+\end{equation}
+} even though we replaced $\hat{X}$ and $p(z|\hat{x})$ in~\eqnref{eqn:elbo_mmi} with $\hat{Z}$ and $p(z|\hat{z})$.
+The objective $I(\hat{Z}, Z)$ becomes the exact Brown Clustering objective if we set $\hat{x}$ as a random context token rather than all of them.
+We argue that this variational Brown Clustering objective can better cluster words based on their syntactic functions than the lower bound of $I(\hat{X},Z)$ (\eqnref{eqn:elbo_mmi}).
+This is because, according to~\theoremref{theo:cross_entropy}, maximizing $I(\hat{X},Z)$ can only cluster words that appear in similar contexts into the same class.
+However, some words having the same syntactic function might rarely occur in the same context due to semantics.
+For example, `\textit{police}' and `\textit{professor}' usually appear in very different contexts: ``\textit{The police arrested a thief.}'' and ``\textit{The professor appraised a student.}''
+Therefore, maximizing $I(\hat{X},Z)$ might not push the model to assign them to the same cluster.
+In comparison, maximizing $I(\hat{Z},Z)$ (Brown Clustering objective) can encourage clustering structurally equivalent words that appear in various contexts together: even though `\textit{police}' and `\textit{professor}' have different $\hat{X}$, they share the same $\hat{Z}$ given a structure-oriented word cluster.\footnote{The necessary clustering scheme that can achieve the purpose is [\{\textit{arrested,appraised}\}, \{\textit{thief,student}\}]}.
+We support this claim with ablations in~\secref{table:ablation}.
+\subsection{Systematic Attention Layer}
+\label{ssec:method_sal}
+Now that we have quantized each word embedding into a code $z$ encoding its syntactic functions,
+we then use the quantizations as the queries and keys in computing the attention weights in the first layer.
+Here we show the encoder's self-attention module (visualized in~\figref{fig:sal}):
+\begin{equation*}
+\begin{split}
+z_{l+1} &= \mathrm{MHAttn}(q=z_l,k=z_l,v=z_l) \\
+x_{l+1} &= \mathrm{MHAttn}(q=z_l,k=z_l,v=x_l) \\
+\end{split}
+\end{equation*}
+where $x_0$ and $z_0$ are the non-contextualized word embeddings and their quantized code embeddings respectively.
+The two attention modules ($\mathrm{MHAttn}$) share all parameters.
+We call it the Systematic Attention Layer (SAL)
+because this modified attention module promotes the systematic reusing of attention patterns:
+as words of the same syntactic function (e.g., `\textit{cat}' and `\textit{dog}', `\textit{asleep}' and `\textit{awake}') are in the same cluster and hence share the same code embedding, the Transformer would process two sentences of the same syntactic structure (``\textit{The cat is asleep}'' and ``\textit{The dog is awake}'') using the same attention weights at every head and layer.
+As a result, a model that understands one sentence is more likely to generalize to the other one, which is the key ability stemming from a systematic language understanding.
+
+In summary, SAL enforces \textbf{hard attention invariance} among sentences of the same syntactic structure, but at the cost of the flexibility of encoding non-structural relations that commonly exist in natural languages (e.g., idioms, commonsense, etc).
+We discuss these cases in~\secref{ssec:discussion_compositionality}.
+\subsection{Systematically Regularized Layer}
+\label{ssec:method_srl}
+
+To encourage systematicity in attention while keeping its ability to encode non-structural relations, 
+we instead use the attention outputs computed from the quantized embeddings to regularize the attention outputs computed from word embeddings, 
+by minimizing their squared L2 distances (MSE):
+\begin{equation*}
+\begin{split}
+z_{l+1} &= \mathrm{MHAttn}(q=z_{l},k=z_{l},v=z_{l}) \\
+x_{l+1} &= \mathrm{MHAttn}(q=x_{l},k=x_{l},v=x_{l}) \\
+\mathcal{L} &\mathrel{+}= \beta\cdot\sum_{l=1}^{L}\lVert x_{l} - z_{l} \rVert^2_2 \\
+\end{split}
+\end{equation*}
+where $x_0$ are the word embeddings. 
+We name it Systematically Regularized Layer (SRL) and visualize it in~\figref{fig:srl}.
+Unlike SAL, SRL demonstrates ``\textbf{soft invariance}'' so that sentences of a common structure are processed with similar but not necessarily the same attention pattern.
+
+
+Experiments
+
+\subsection{Datasets}
+We use a series of semantic parsing and machine translation tasks requiring compositional generalization and the common WMT tasks.
+
+\paragraph{SCAN \addjump}
+\cite{lake2018generalization} tests the models' ability to generalize syntactic structures (e.g., ``$\$x$ twice'') to a novel entity ($\$x$ = `\textit{jump}').
+Here we use the augmented training set with 2 times more primitives~\cite{jiang-etal-2022-mutual}.
+
+\paragraph{SCAN \aroundright}
+\cite{loula-etal-2018-rearranging} tests the models' ability to generalize a common syntactic structure ``$\$x_1$ around $\$x_2$'' to an entity ($\$x_2$=`\textit{right}') that is only associated with other structures during the training.
+
+\paragraph{COGS}
+\cite{kim-linzen-2020-cogs} challenges models to parse a diverse set of natural language sentences into their corresponding logical forms based on lambda calculus to accurately reflect the semantic representation of the natural sentence. 
+
+\paragraph{CoGnition}
+\cite{li-etal-2021-compositional} is an English-to-Chinese translation dataset with a synthetic OOD test set, where each sentence contains novel compositions of common structures and constituents from the training set.
+
+\paragraph{WMT.}
+We use WMT17 English$\leftrightarrow$German~\cite{wmt17} and WMT14 English$\leftrightarrow$French~\cite{wmt14} translation tasks.
+
+\begin{table}[t!]
+\centering
+\begin{small}
+\begin{tabular}[t]{c|ccc}
+\toprule
+ \centering \textbf{Model} & \textsc{Jump} 2x & \textsc{AroundR} & \textsc{COGS}\\
+\midrule
+\multicolumn{4}{c}{\multirow{1}{*}{\textsc{Previous Models}}} \\
+\midrule
+ LSTM-RNN & 1.2 & 2.5\tiny{$\pm$2.7} & - \\
+ CGPS-RNN & 98.8\tiny{$\pm$1.4} & 83.2\tiny{$\pm$13.2} & - \\
+ Lex Learn & 92.0\tiny{$\pm$0.2} & 95.0\tiny{$\pm$0} & 82.0\tiny{$\pm$0} \\
+\midrule
+\multicolumn{4}{c}{\multirow{1}{*}{\textsc{Our Models}}} \\
+\midrule
+ Transformer & 40.04\tiny{$\pm$17.3} & 69.47\tiny{$\pm$9.2} & 82.60\tiny{$\pm$0.5}\\
+ \modelname  & 99.42\tiny{$\pm$1.0}$^{\star}$ & \textbf{99.63}\tiny{$\pm$0.6}$^{\star}$ & \textbf{83.36}\tiny{$\pm$0.7} \\
+\bottomrule
+\end{tabular}
+\caption{Test accuracy from the SCAN \textsc{AddJump} (2x augmented), \textsc{AroundRight}, and COGS.
+We report previous models: LSTM-RNN~\cite{lake2018generalization}, CGPS-RNN~\cite{li-etal-2019-compositional}, and Lex Learn~\cite{akyurek-andreas-2021-lexicon}.
+We report our models' average ($\pm$ std.) results from 5 random seeds. 
+\modelname results with $^{\star}$ use SAL while others use SRL.
+}
+\label{table:scan_results}
+\end{small}
+\end{table}
+
+\subsection{Results}
+\paragraph{Semantic Parsing results.}
+
+We report the results on the two SCAN tasks and COGS in~\tabref{table:scan_results}.
+Specifically, \modelname with SAL achieves significant\footnote{Bootstrapped test with $\alpha<0.01$.} improvements over the baseline on SCAN \addjump and \aroundright.
+With SRL, \modelname manages to outperform the baseline on the larger, more natural COGS dataset.
+This shows the effectiveness of \modelname in generalizing to unseen combinations of syntactic structure and lexical constituents.
+We compare the performance of SAL and SRL on a small, synthetic dataset and a larger, natural dataset in~\secref{ssec:ablation}.
+
+\begin{table}[t!]
+\centering
+\begin{small}
+\begin{tabular}[t]{c|cc|c}
+\toprule
+ \multicolumn{1}{c}{\multirow{2}{*}{\textbf{Model}}} & \multicolumn{2}{c}{\multirow{1}{*}{CTER ($\downarrow$)}} & \multicolumn{1}{c}{\multirow{2}{*}{BLEU}} \\
+ \cmidrule{2-3}
+  & Instance & Aggregate & \\
+\midrule
+\multicolumn{4}{c}{\multirow{1}{*}{\textsc{Previous Models}}} \\
+\midrule
+ Transformer & 28.4 & 62.9 & 59.5 \\
+ Proto-Transformer & 21.7 & 51.8 & 60.1 \\
+ Dangle-Transformer & 22.8 & 50.6 & 60.6 \\
+ Consistency-Reg & \underline{20.2} & \textbf{48.3} & \underline{61.3} \\
+\midrule
+  \multicolumn{4}{c}{\multirow{1}{*}{\textsc{Our Models}}} \\
+\midrule
+ Transformer & 29.55 & 61.62 & 60.45  \\
+ \modelnamenospace\tiny{$_{\text{SRL}}$} & \textbf{18.14} & \underline{48.89} & \textbf{62.78} \\
+\bottomrule
+\end{tabular}
+\caption{Compound Translation Error Rate (CTER, lower is better) and BLEU score on the Compositional Generalization test set from the CoGnition En-Zh.
+We also report the results from Proto-Transformer~\cite{yin-etal-2022-categorizing}, Dangle-Transformer~\cite{zheng-lapata-2022-disentangled}, and consistency-regularized Transformer~\cite{yin-etal-2023-consistency}.
+The best result is \textbf{bold} and the 2nd best is \underline{underlined}.
+}
+\label{table:cognition}
+\end{small}
+\end{table}
+
+\begin{table}[t!]
+\centering
+\begin{small}
+\begin{tabular}[t]{c|cccc}
+\toprule
+\textbf{Model} & En-De & De-En & En-Fr & Fr-En \\
+\midrule
+ Transformer & 28.10 & 31.30 & 37.01 & 34.24 \\
+ \modelnamenospace\tiny{$_{\text{SRL}}$} & \textbf{29.21} & \textbf{31.96} & \textbf{38.38} & \textbf{35.56} \\
+\bottomrule
+\end{tabular}
+\caption{BLEU scores on WMT17 En$\leftrightarrow$De and WMT14 En$\leftrightarrow$Fr test sets.
+}
+\label{table:wmt}
+\end{small}
+\end{table}
+\paragraph{Machine Translation results.}
+We evaluate the baseline Transformer as well as \modelname on the CoGnition compositional generalization test set and WMT test sets and report their BLEU 4~\cite{papineni2002bleu} scores.
+For CoGnition, we also report the novel compound translation error (CTER)~\cite{li-etal-2021-compositional}.
+It examines whether all of the atoms (tokens) in the novel compound are correctly translated in the generated Chinese sentence.
+Specifically, instance-level CTER denotes the percentage of the test instances in which one or more atoms in the novel compound are translated incorrectly.
+Aggregate-level CTER denotes the percentage of novel compounds that are translated wrong in at least one instance.
+
+Compared to the Transformer baseline, \modelname obtains significantly higher BLEU scores on CoGnition En$\rightarrow$Zh (\tabref{table:cognition}), WMT17 En$\leftrightarrow$De, and WMT14 En$\leftrightarrow$Fr tasks (\tabref{table:wmt}).
+On CoGnition, \modelname achieves substantially lower instance and aggregate compound error rate in its Chinese translation.
+This improvement shows that SoVQ and SRL enable the model to correctly translate more novel compounds.
+
+\begin{figure}[t]
+\centering
+\subfloat[Source embeddings trained with no quantization.]{\label{subfig:scan_src_baseline} \includegraphics[width=0.23\textwidth]{figures/tsne_src_scan_jump_baseline_largefont.pdf}}
+\hfill
+\subfloat[Source embeddings trained with SoVQ (6 classes).]{\label{subfig:scan_src_quantized} \includegraphics[width=0.23\textwidth]{figures/tsne_src_scan_jump_1000prim_quantized_48.3.1_450.pdf}}%
+\hfill
+\caption{T-SNE visualization of embeddings learned on \textsc{SCAN AddJump} dataset~\cite{lake2018generalization}. 
+}
+\label{fig:tsne_scanjump}
+\end{figure}
+
+\begin{figure*}[t]
+\centering
+\subfloat[$n_a$=1 (acc=2.08)]{\label{subfig:scan_src_jump1} \includegr
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

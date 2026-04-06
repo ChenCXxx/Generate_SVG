@@ -1,0 +1,182 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+The acquisition of high spatial resolution (HSR) remote sensing images has become possible with the advancement of sensors \cite{6198307}. These images enable the extraction of geospatial objects, such as buildings, roads, and aircraft, through image interpretation \cite{xia2018dota, waqas2019isaid, Li_2019_ICCV, Zhou_2018_CVPR_Workshops}. Furthermore, HSR remote sensing images facilitate the determination of more semantic land use/ land cover (LULC) categories, including industrial land, cropland, and residential land \cite{demir2018deepglobe}. Such LULC mapping is critical in urban management, planning, and ecological conservation \cite{bechtel2015mapping, huang2018urban, murray2022high}.
+
+The task of LULC mapping requires the semantic categorization of each pixel, also known as semantic segmentation. Recently, Fully Convolutional Networks (FCNs) \cite{long2015fully} have achieved significant progress for natural images in computer vision \cite{wang2021exploring, xie2021segformer, huang2019ccnet, unet, pspnet, deeplabv3p}. Deep learning techniques have also shown success in the automatic interpretation of HSR remote sensing images \cite{9174822, ding2021object, Zheng_2020_CVPR, Li_2021_CVPR, Mou_2019_CVPR}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figs/problem.png}
+  \caption{Illustration of the scale problem for HSR remote sensing image LULC segmentation. The sliding window \crule[white]{0.2cm}{0.2cm} is enlarged for a better view. Legend: \blackcrule[river]{0.2cm}{0.2cm} river, \blackcrule[lake]{0.2cm}{0.2cm} lake, \blackcrule[pond]{0.2cm}{0.2cm} pond.}
+  \label{fig:problem}
+\end{figure}
+In contrast to conventional ground-based images, HSR remote sensing images have a large length and width that can encompass thousands of objects in a single image. However, distinguishing LULC (Land Use and Land Cover) geo-objects that vary greatly at different scales using a fixed, finite size image patch is challenging. Although Fully Convolutional Networks (FCNs) can theoretically receive input of arbitrary size, when processing HSR remote sensing images, a sliding window (SW) of a specific size is often used to generate image patches \cite{wang2022cross,van2018spacenet,diakogiannis2020resunet}.
+In small patches, different LULC classes may consist of the same objects with similar patterns, making them almost indistinguishable \cite{zhong2020open, xia2017aid}. For instance, the same water may appear in rivers, lakes, and ponds, and the same dense housing may belong to rural or urban residential land. Moreover, some cultivated land and meadows may have similar soils \cite{tong2020land,tong2022enabling}. Regardless of the multi-scale module's design \cite{deeplabv3p, FPN,liu2015parsenet, pspnet,dosovitskiy2020image, wang2018non, liu2021swin}, the model's receptive field cannot surpass the image patch's size \cite{araujo2019computing}.
+Consequently, the commonly used Deeplabv3+ \cite{deeplabv3p} model's mapping results exhibit an apparent grid effect due to the gap between the sliding window's limited size and the river's enormous scale, as illustrated in Figure \ref{fig:problem}. 
+\par
+The accurate segmentation of land use and land cover (LULC) in high spatial resolution (HSR) remote sensing images poses a challenge due to the significant scale variance and limited receptive field of the network by patch size. Various models aim to address this issue by tackling the multiscale problem from the perspective of input data \cite{chen2019collaborative, WiCoNet, cascadepsp}. While incorporating contextual information can effectively resolve the problem of identifying rivers and water bodies within limited image patches, different LULC geo-objects necessitate different scales of image patches. For instance, local image patches or slightly larger scales may suffice for identifying a pit pond, whereas lakes and continuous rivers may require larger scales. An inappropriate scale of receptive field may have an adverse impact on the segmentation.
+\par
+The supervised learning methods have difficulty in adaptively determining the appropriate patch scales, as it requires manual labeling of images that correspond to the appropriate context scale. In contrast, reinforcement learning (RL) algorithms operate through interactions between the \textit{agent} and the \textit{environment}, receiving rewards for \textit{actions} and using that information to update model parameters, without requiring labeled data \cite{sutton2018reinforcement}. RL techniques have achieved success in various areas, including board games, video games, and mathematics \cite{mnih2013playing, silver2018general, fawzi2022discovering}. Thus, applying deep RL techniques to LULC segmentation networks may allow for the adaptive adjustment of the receptive field scale based on image features, dynamically controlling the data flow of HSR remote sensing images.
+Therefore, we propose a scale-adaptive segmentation network, called GeoAgent to dynamically select appropriate patch scale based on different geo-obejcts. A HSR remote sensing segmentation dataset WUSU is constructed for experiment. The main contributions include:
+
+(1) A RL-based HSR imagery segmentation method is proposed. In GeoAgent, the HSR remote sensing images are represented by different \textit{states}. GeoAgent observes different \textit{states} and performs a series of scale-selection \textit{actions} to control the area of each patch, obtaining the final global mapping \textit{reward} based on the selected scales. 
+
+(2) A Scale Control Agent (SCA) is proposed to dynamically controls the scale of the GeoAgent. The SCA contains two parts: an 'actor' network that learns a policy to map the \textit{states} to a probability distribution of \textit{actions} and a 'critic' network that evaluates the value of each \textit{action} using an advantage function. A feature indexing module is proposed to enhance the \textit{agent}'s ability to distinguish the location of the current image patch. 
+
+(3) GeoAgent use a dual-branch segmentation network for multi-scale image patches segmentation. The input scale and context branch are switched under the control of the \textit{actions} selected by SCA. The network processes the multi-scale context patches and local scale patches separately, and the multi-scale features are aggregated based on the geo-location information to generate the final multi-scale segmentation result.
+
+
+
+Related Works
+\subsection{Multi-Scale Segmentation Networks}
+
+There have been several techniques to solve multi-scale problems, ranging from multi-scale feature ensemble (e.g. Deeplab \cite{deeplabv3p}, FPN \cite{FPN}) to context information preservation (e.g. ParseNet \cite{liu2015parsenet}, PSPNet \cite{pspnet}).
+Through the self-attention mechanism, it is able to capture long-distance relationships in images \cite{dosovitskiy2020image,wang2018non,liu2021swin}.
+But no matter how the multi-scale module is designed, the receptive field of the model cannot break through the size of the sliding window. 
+\begin{figure*}[!t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figs/GeoAgent_v0.png}
+  \caption{The overall flowchart of the proposed reinforcement learning based scale-adaptive segmentation network GeoAgent.}
+  \label{fig:overall}
+\end{figure*}
+\par
+Therefore some models try to solve the multi-scale problem from the perspective of input data.
+\cite{recasens2018learning} proposed a saliency-based distortion layer for convolutional neural networks to improve the spatial sampling of input data with the condition of the given task.
+Some methods fetch larger scale image outside the patch to provide spatial context.
+\cite{chen2019collaborative} proposed the GLNet, which consists of a global branch and a local branch, which take the downsampled global image and the full-resolution cropped image as input, respectively, effectively preserving the detail information and the global context information.
+\cite{WiCoNet} propose a wide-context network (WiCoNet), a context transformer is introduced to extract the downsampled global context image. 
+On the other hand, some approaches address the problem by leveraging multi-scale processing.
+\cite{cascadepsp} proposed CascadePSP, which first performs segmentation on the downsampled coarse resolution images, and then uses the original resolution images to refine the segmentation results.
+\cite{MagNet} proposed multi-scale framework MagNet that uses multiple processing stages to resolve local ambiguity by examining the image at various magnification levels and propagating coarse-to-fine information.
+However, some of the above methods do not break the limits of image patches \cite{recasens2018learning}, or introduced a fixed scale context image\cite{chen2019collaborative,WiCoNet} and complex processes \cite{MagNet,cascadepsp} that do not allow the model adaptively choose appropriate scale to zoom the sliding window based on different objects.
+\subsection{DRL-based Dynamic Networks}
+Deep Reinforcement Learning (DRL) is able to autonomously make decisions about the following \textit{action} by observing the \textit{state} of \text{environment}, which in turn affects the \text{environment}, and updating the model parameters by receiving the \text{environment}'s \textit{reward} for the \textit{action}. By introducing the DRL approach, CNNs can be more dynamic and able to automatically change the network structure based on the input or influence the input to the network.
+\cite{wu2018blockdrop} uses reinforcement learning to train a policy network for double \textit{reward}. During training and testing time, the \textit{agent} uses the input image as a \textit{state} to try to utilize the least number of blocks while maintaining recognition accuracy.
+\cite{uzkent2020learning} proposed a Patch-Drop algorithm to selectively use high-resolution satellite data when necessary. A policy network is utilized to take low-resolution remote sensing images as \textit{state} to decide whether to sample high-resolution remote sensing images as additional inputs.
+\cite{ayush2021efficient} proposed a reinforcement learning setup to acquire high-resolution satellite images conditionally. A cost-aware \textit{reward} function was designed to reduce satellite image acquisition costs while maintaining accuracy.
+\cite{RAZN} proposed RAZN to achieve accurate and fast prediction of breast cancer segmentation in whole-slide images by learning a policy network to decide whether zooming is required in a given region of interest, motivated by the zoom-in operation of a pathologist using a digital microscope.
+To the authors' knowledge, there has yet to be work using RL to solve the problem of limited patch size in remote sensing imagery segmentation task, so the scale-variable network GeoAgent is proposed.
+
+
+Methodology
+\subsection{Overview}
+The GeoAgent for HSR remote sensing image segmentation comprises two sub-networks: the Scale Control Agent (SCA) $\pi(a|s)$ and the multi-scale segmentation network $\pi(Y|X)$. The entire HSR image is considered as the segmentation target, and the segmentation process is modeled as a Markov Decision Making (MDP) process. The SCA selects an appropriate scale based on the \textit{states} $s$ of global thumbnail $X^{\downarrow}_{thumb}$ and the position mask $M_{pos}$, and determines the \textit{action} $a$ which control the input scale of the segmentation network. The dual-branch segmentation network $\pi(Y|X)$ takes the local image patches $X_{loc}$ and the multi-scale context image patch $X^{\downarrow }_{context}$ to assign categories to each pixel of the current patch. The sequence of \textit{states}, \textit{actions}, and \textit{rewards} form a complete \textit{trajectory} $\tau $, representing the entire mapping process of image $X_{i} $. The large scale segmentation results $\hat{Y}_{i} $ are obtained and a final mapping \textit{reward} will be given. The objective of GeoAgent is to learn an \textit{agent} $\pi(a|s)$ and a segmentation network $\pi(Y|X)$ that maximize the expected expected cumulative \textit{reward} of $J(\tau )$.
+\subsection{Scale Control Agent Module}
+\subsubsection{Patch Scale Selection}
+The High Spatial Resolution (HSR) remote sensing image segmentation dataset, denoted as ${\mathcal D}=\left\{\left(X_{i} ,Y_{i} \right)\right\}_{i=1}^{N} $, comprising $N$ pairs of HSR remote sensing images $X{i}$ and the corresponding training labels $Y_{i}$, serves as the RL \text{environment} in this study. Each \textit{trajectory} $\tau$ begins with the \text{environment}'s initialization, achieved by randomly selecting an image $X_{i}$ of size $H\times W$ at its original resolution, which is subsequently divided into $T$ fixed-size image patches. Each image patch's segmentation defines a timestep $t$ in the \textit{trajectory}.
+\par
+At each timestep, the \textit{state} $s_{t}$ is represented by the global thumbnail $X^{\downarrow}_{thumb}$ and the position mask $M_{pos}$ of the current patch. The thumbnail $X^{\downarrow}_{thumb}$ is a downsampled HSR image of specific size $h\times w$ (e.g., $512\times 512$), containing the global-scale context under coarse resolution. The position mask $M_{pos}$ is a binary mask of size $h\times w$, indicating the current patch's position, with the value of the current extent set to 1 and the rest of the pixels set to 0.
+\par
+As shown in Fig.\ref{fig:overall}, the Scale Control Agent (SCA) $\pi(a|s)$ is comprised of a policy network, namely, the 'actor', that determines the appropriate \textit{action} $a_{t}$ for each timestep (image patch) $t$. The \textit{action} space $a_{t} \in 1,2,\ldots ,N$ represents the scale of the context. In addition to the local image patches $X_{loc}$ of size $h\times w$ with the original resolution, the context image patch $X^{\downarrow}_{context}$ of same size $h\times w$ with coarse resolution downsampled by a factor of $a{t}$ is acquired. The segmentation network $\pi(Y|X)$ assigns categories to each pixel of the current patch based on $X_{loc}$ and $X^{\downarrow}_{context}$. The \textit{action} $a_t$ receives an immediate \textit{reward} $r{t}$ based on the segmentation result and the \textit{environment} $Y_{i}$. Following the \textit{action}, the \textit{environment} transitions to the next \textit{state}, where the sliding window moves to the next image patch. This sequence of \textit{actions} is repeated until the entire image is observed, and the final mapping results $\hat{Y}_{i}$ are obtained.
+\par
+Since the difference between the \textit{states} of the different positions lies only in position mask $M_{pos} $, this makes discriminability of the different \textit{states} very small. When the \textit{states} are directly used as input, it is difficult for SCA to recognize the weak differences and thus select similar \textit{actions}. To improve the learning capability of the SCA, a feature indexing module is proposed to handle the subtle differences between \textit{states}. As shown in Fig.\ref{fig:overall}, the SCA is not directly trained to learn the mapping from similar \textit{states} to different \textit{actions}. First, the thumbnail $X^{\downarrow }_{thumb} $ is fed to a CNN-based backbone for whole-image feature extraction. Then, the features relevant to the current patch are indexed by the position mask $M_{pos} $, and the irrelevant features outside the patch are masked. The features of the current patch are extracted through a $3\times 3$ window and transformed into feature vectors by global average pooling. Finally, an actor head with multiple fully connected layers outputs the \textit{action} probabilities.
+\par
+\subsubsection{Segmentation Rewards and Values of Actions}
+\par
+After formulating the MDP of GeoAgent, the \textit{agent}'s parameters must be optimized using DRL methods to maximize the cumulative \textit{reward} $J(\tau)$. 
+The goal of the SCA is to select the appropriate scale to obtain contextual information outside the patch and improve mapping accuracy. To penalize inappropriate \textit{actions}, the immediate \textit{reward} for each patch is defined as the accuracy gain of the final result based on the \textit{action} $a_{t} $ chosen by the \textit{agent} compared to the result obtained only by the local scale, i.e., $a_{t} =1$: 
+\begin{equation}
+  \setlength{\abovedisplayskip}{3pt}
+  \setlength{\belowdisplayskip}{3pt}{\rm {\mathcal R}}_{patch} (a_{t} ,y)=Score(y,\hat{y}(a_{t} ))-Score(y,\hat{y}(1)) 
+\end{equation} 
+where $Score(y,\hat{y})=mIoU(y,\hat{y})+mF_{1}(y,\hat{y})$, and $mIoU$ and $mF_{1} $ are mean Intersection-Over-Union and mean F${}_{1}$ score, respectively. The \textit{reward} value based only on the local image is 0, and the value is positive if the \textit{action} leads to an accuracy improvement and negative if it results in a decline in accuracy. However, rewarding only the current single patch may cause the \textit{agent} to overlook the potential long-term benefits of whole image mapping. Therefore, after completing the episode, the accuracy of the predicted results for the entire image is evaluated, and the final global mapping \textit{reward} is given: 
+\begin{equation}
+  \setlength{\abovedisplayskip}{3pt}
+  \setlength{\belowdisplayskip}{3pt}{\rm {\mathcal R}}_{map} =T*(Score(Y_{i} ,\hat{Y}_{i} )-Score(Y_{i} ,\hat{Y}_{i}^{1} )) 
+\end{equation} 
+where $T$ is the number of generated patches for normalization, and $\hat{Y}_{i}^{1} $ is the mapping result of the whole image $X_{i} $ based only on the local scale.
+\par
+To evaluate the expected accumulative future \textit{reward} of a \textit{state} or \textit{state}-\textit{action} pair, \textit{value} function $V^{\pi } (s)$ and $Q^{\pi } (s,a)$ are introduced: $V^{\pi } (s)$ denotes the cumulative \textit{reward} from using policy $\pi $ from \textit{state} $s$: 
+\begin{equation} \label{2)} 
+V^{\pi } (s)={\rm {\rm E}}_{s_{0} =s,\tau {\rm \sim }\pi } \left[\sum _{t=0}^{T} \gamma ^{t} r_{t} \right] 
+\end{equation} 
+and $Q^{\pi } (s,a)$ denotes the cumulative \textit{reward} brought by performing \textit{action} $a$ from \textit{state} $s$ based on policy $\pi $: 
+\begin{equation} \label{3)} 
+Q^{\pi } (s,a)={\rm {\rm E}}_{s_{0} =s,a_{0} =a,\tau {\rm \sim }\pi } \left[\sum _{t=0}^{T} \gamma ^{t} r_{t} \right] 
+\end{equation} 
+\par
+To estimate the \textit{value} of each \textit{action}, in addition to the actor network to learn the mapping from current \textit{states} to \textit{actions}, SCA also contains a critic network that shares weights with the actor network to learn the \textit{value} function for evaluating the current \textit{states}and \textit{actions}. The critic network shares a CNN backbone with the actor network to extract the features, but has a separate header to output the estimated values for later optimization of the network parameters.
+\subsection{Scale-Variable Segmentation based on Dual-Branch Network}
+The Dual-Branch segmentation Network, denoted as $\pi(Y|X)$, produces the segmentation \textit{action} given the \textit{state} of a local image patch $X_{loc} $ and a multi-scale context patch $X^{\downarrow }_{context} $. The local patch $X_{loc} $, of size $h\times w$, is sampled from the original resolution image based on the patch position. The context patch $X^{\downarrow }_{context} $ is obtained by expanding the local patch size by a factor of $a_{t} $ centered at the current position and then downsampling it by the same factor to obtain a context patch of size $h\times w$.
+
+As shown in Fig.\ref{fig:overall},
+the $\pi(Y|X)$ network employs a two-branch structure sharing a common segmentation network to handle multi-scale input images. The context branch takes downsampled global thumbnails $X^{\downarrow }_{context} $, while the local branch receives local patches $X_{loc} $ of the same size. When $a_{t} =1$, i.e., when the \textit{agent} believes that only local image patches are sufficient, the context branch is deactivated, and the dual-branch segmentation network is reduced to a single branch network. During the segmentation process, all layers in either branch share the same weights. The high-level feature maps $f_{l} $ and $f_{c} $ are then combined to generate the final segmentation mask using a branch aggregation layer.
+
+During the feature fusion phase, the range corresponding to the local image is cropped from the context patch feature map based on its geographic coordinates. The two scales of feature maps are concatenated and fused by a convolutional layer of size $3\times 3$. Finally, the segmentation probability is computed using a $1\times 1$ convolution and a softmax layer. To facilitate training for both branches, auxiliary headers are added to output segmentation results for local patches and context patches based on either $f_{l} $ or $f_{g} $ at a single scale. 
+\subsection{Optimization of GeoAgent}
+The Advantage Actor Critic (A2C) algorithm is employed for stable learning of the \textit{agents} in an adaptive \textit{environment} \cite{A2C}. As illustrated in Section 3.2, the SCA module consists of two learnable components: an "actor" $\theta _{A} $ that learns the parameterized policy and a "critic" $\theta _{C} $ that learns the \textit{value} function to evaluate the \textit{state}-\textit{action} pair. The critic provides reinforcement signals to the actor by learning the advantage function $A^{\pi } (s,a)$ \cite{A2C}: 
+\begin{equation}
+  \setlength{\abovedisplayskip}{3pt}
+  \setlength{\belowdisplayskip}{3pt}A^{\pi } (s,a)=Q^{\pi } (s,a)-V^{\pi } (s) 
+\end{equation} 
+where $V^{\pi } (s)$ denotes the cumulative \textit{reward} from using policy $\pi $ from \textit{state} $s$, and $Q^{\pi } (s,a)$ denotes the cumulative \textit{reward} brought by performing \textit{action} $a$ from \textit{state} $s$ based on policy $\pi $. 
+
+The target advantage value $\hat{V}_{tar}^{\pi } (s_{t} )$ can be estimated by the temporal difference (TD) algorithm and \textit{trajectory} data (Sutton 1988), and used to train the critic network $\theta _{c} $ by mean squared error (MSE) loss \cite{A2C}: 
+\begin{equation}
+  \setlength{\abovedisplayskip}{3pt}
+  \setlength{\belowdisplayskip}{3pt}L_{value} (\theta _{C} )=\frac{1}{T} \sum _{t=0}^{T} (\hat{V}^{\pi } (s_{t} )-V_{tar}^{\pi } (s_{t} ))^{2}  
+\end{equation} 
+
+The actor network predict the advantage \textit{value} $\hat{A}^{\pi } (s_{t} ,a_{t} )$ and optimized by the advance based on the policy loss (Mnih et al. 2016; Williams 1992): 
+\begin{equation}
+  \setlength{\abovedisplayskip}{3pt}
+  \setlength{\belowdisplayskip}{3pt}L_{policy} (\theta _{A} )=\frac{1}{T} \sum _{t=0}^{T} (-\hat{A}^{\pi } (s_{t} ,a_{t} )\log \pi \theta _{A} (a_{t} |s_{t} )) 
+\end{equation} 
+
+The parameters of the segmentation network $\pi(Y|X)$ can be updated through supervised learning from the loss function calculated directly from the labels. The commonly used cross-entropy loss function is employed to optimize the segmentation network. In addition to the loss values computed from the final outputs, additional segmentation head outputs in the global and local branches are also used to compute the auxiliary losses. 
+
+When the entire GeoAgent is trained, the segmentation network $\pi(Y|X)$ is first pre-trained by taking random \textit{action} $a_{t} $. After completing the pre-training, the SCA $\pi(a|s)$ is trained to learn to select the appropriate scale dynamically. Finally, joint learning is performed to optimize the segmentation network and the SCA. Since the data reading pipelines of the two training methods differ greatly, $\theta _{scale} $ and $\theta _{cls} $ are updated asynchronously at specific intervals to avoid the instability caused by simultaneous optimization.
+
+
+
+Experiments
+\subsection{Experimental Setup}
+\begin{table*}[!htb]
+  \centering
+  \caption{Segmentation accuracies of different models on three datasets.}
+  \label{table:results}
+  \resizebox{1.9\columnwidth}{!}{
+      \begin{tabular}{llllllll} 
+      \hline
+      \multirow{2}{*}{Method} & \multirow{2}{*}{Backbone} & \multicolumn{2}{c}{WUSU}                                                    & \multicolumn{2}{c}{GID}                                                     & \multicolumn{2}{c}{FBP}                                                      \\ 
+      \cline{3-8}
+                              &                           & IoU(\%)                              & F$_1$(\%)                            & IoU(\%)                              & F$_1$(\%)                            & IoU(\%)                              & F$_1$(\%)                             \\ 
+      \hline
+      \multicolumn{8}{c}{Local scale patch based methods}                                                                                                                                                                                                                                                                   \\ 
+      \hline
+      -                       & UNet \cite{unet}                     & 54.10                                & 59.52                                & 58.76                                & 68.93                                & 53.02                                & 59.67                                 \\
+      -                       & PSPNet   \cite{pspnet}                 & 60.37                                & 69.29                                & 59.04                                & 69.34                                & 59.69                                & 64.27                                 \\
+      -                       & FPN    \cite{FPN}                   & 64.85                                & 72.68                                & 55.31                                & 65.79                                & 61.88                                & 65.50                                 \\
+      -                       & Deeplabv3+  \cite{deeplabv3p}              & 63.39                                & 69.97                                & 64.89                                & 68.65                                & 57.08                                & 59.46                                 \\
+      -                       & UNet++    \cite{zhou2018unet++}                & 60.26                                & 66.88                                & 61.71                                & 71.68                                & 55.31                                & 58.43                                 \\ 
+      \hline
+      \multicolumn{8}{c}{Global-local scale patch based methods}                                                                                                                                                                                                                                                              \\ 
+      \hline
+      GLNet \cite{chen2019collaborative}                   & FPN                       & 51.71                                & 59.09                                & 58.69                                & 68.79                                & 21.86                                & 24.34                                 \\
+      MagNet \cite{MagNet} & FPN &51.47&63.46&66.98&55.94&45.05 &49.09\\
+      RAZN \cite{RAZN} &Deeplabv3+&58.62&66.27&63.52&68.49&57.63      &57.73\\                                                  
+      WiCoNet \cite{WiCoNet}                 & ResNet50                  & 61.83                                & 75.68                                & 65.80                                & 76.72                                & 58.83                                & 70.28                                 \\
+      CascadePSP \cite{cascadepsp}              & PSPNet                    & 67.48                                & 77.42                                & 72.45                                & 77.24                                & 67.35                                & 70.03                                 \\ 
+      \hline
+      \multicolumn{8}{c}{Scale-variable segmentation network GeoAgent}                                                                                                                                                                                                                                                                           \\ 
+      \hline   
+      GeoAgent & UNet           & 70.33$_{\textcolor{cyan}{(+16.23)}}$ & 77.11$_{\textcolor{cyan}{(+17.59)}}$ & 75.88$_{\textcolor{cyan}{(+17.12)}}$ & 75.23$_{\textcolor{cyan}{(+6.30)}}$  & 57.77$_{\textcolor{cyan}{(+4.75)}}$  & 61.37$_{\textcolor{cyan}{(+1.70)}}$   \\ 
+      GeoAgent & UNet++           & 74.93$_{\textcolor{cyan}{(+14.67)}}$ & 79.17$_{\textcolor{cyan}{(+12.29)}}$ & 77.30$_{\textcolor{cyan}{(+15.59)}}$ & 78.62$_{\textcolor{cyan}{(+6.94)}}$  & 61.84$_{\textcolor{cyan}{(+6.53)}}$  & 60.01$_{\textcolor{cyan}{(+1.58)}}$   \\ 
+      GeoAgent & Deeplabv3+           & 76.19$_{\textcolor{cyan}{(+12.80)}}$ & 80.56$_{\textcolor{cyan}{(+10.59)}}$ & 75.51$_{\textcolor{cyan}{(+10.62)}}$ & 76.07$_{\textcolor{cyan}{(+7.42)}}$  & 62.25$_{\textcolor{cyan}{(+5.17)}}$  & 63.21$_{\textcolor{cyan}{(+3.75)}}$   \\ 
+      GeoAgent & PSPNet           & 75.19$_{\textcolor{cyan}{(+14.82)}}$ & 79.62$_{\textcolor{cyan}{(+10.33)}}$ & 75.57$_{\textcolor{cyan}{(+16.53)}}$ & 79.34$_{\textcolor{cyan}{(+10.00)}}$ & 69.67$_{\textcolor{cyan}{(+9.98)}}$  & 74.36$_{\textcolor{cyan}{(+10.09)}}$  \\ 
+      GeoAgent & FPN          & 76.00$_{\textcolor{cyan}{(+11.15)}}$ & 82.46$_{\textcolor{cyan}{(+9.78)}}$  & 78.16$_{\textcolor{cyan}{(+22.85)}}$ & 77.56$_{\textcolor{cyan}{(+11.77)}}$ & 73.95$_{\textcolor{cyan}{(+12.07)}}$ & 74.11$_{\textcolor{cyan}{(+8.61)}}$   \\ 
+      \hline
+      \end{tabular}        
+  }
+\end{table*}
+
+Three semantic segmentation datasets for HSR remote sensing images were used for experiments: 
+
+\textbf{Gaofen Image Dataset (GID)} \cite{tong2020land}: GID is a high reso
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

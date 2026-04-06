@@ -1,0 +1,229 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+As the thriving of large-scale vision-language pre-training models~\cite{glip,glipv2, uniPerceiverv2, MViTv2, groundingdino,florence,mdetr}, object detection recently has ushered in a new fashionable paradigm, which locates the desired objects via a queried text. Benefited from the generalization of the pre-training models on large scale data~\cite{coco,lvis,objects365,flickr,vg,gqa, cc,sbu,laion}, such a text queried paradigm makes steady progress on the long road to open-set object detection.
+
+Compared with previous fixed category sets (usually represented by finite numbers), the foregoing text query has the merit of representing broad concepts, 
+but also has an intrinsic limitation of insufficient description granularity~\cite{chen2022prompt,du2022learning,clip}. 
+For example, class homonyms (\emph{e.g.},   ``bat'' can be a piece of wood or a kind of animal) lead to ambiguous queries. 
+Meanwhile, as exemplified in Fig.\,\ref{fig:method}, for fine-grained fish species detection,  it is usually struggled to use limited text to describe the fish with specific patterns.
+Empirically, one straightforward solution for the insufficient description granularity problem is to design additional textual description, 
+but there are three distinct obstacles: 1) it is difficult to comprehensively describe visual details~\cite{cocoop}, and constructing textual description for a large amount of categories is a laborious work. 2) The longer queried text increases the understanding difficulty of the pre-training model and 3) brings more computational overhead. Experimentally, the state-of-the-art (SoTA) text queried detector GLIP~\cite{glip} merely improves average precision (AP) from 17.7\% to 18.4\% on the Aquarium dataset~\cite{elevater} (a fine-grained fish species detection dataset), even with extra manually designed textual description for some categories. 
+
+A picture paints a thousand word. Compared with the text, the image can provide richer clues about the target object. But at the same time, the human-generated text has higher information density and thereby brings stronger generalization capability~\cite{clip,bert,gpt3}. In light of this, a natural idea springs up, \emph{i.e.}, combining the text and the image to constitute a multi-modal query, which has the advantages of both breadth of the former and rich granularity of the latter. Nevertheless, how to acquire such a multi-modal queried detection model still faces challenges: 1) directly finetuning with limited visual exemplars, typically in previous vision-queried few-shot detection methods~\cite{tip-adapter, fsdet,kang2019few,han2022few}, leads to the risk of catastrophic forgetting. 2) Large foundation models have good generalization but require heavy training burden if re-organized and trained from scratch (e.g., over 30 million data storage and almost 480 V100 GPU days for GLIP~\cite{glip,glipv2}). 
+
+This work fills in the blank of \textbf{M}ulti-modal \textbf{Q}ueried object \textbf{Det}ection (\textbf{MQ-Det}), and introduces an efficient plug-in training architecture. The crux of the proposed MQ-Det is to fuse description-rich visual cues and the highly generalizable text representations, while only adding a small training cost on the basis of existing language queried fundamental detection models. 
+We evaluate our models on a \textit{finetuning-free} setting, where users can detect their customized objects through textual descriptions, visual exemplars, or both without any finetuning.
+With only one epoch of modulating on the Objects365~\cite{objects365} dataset, accounting for a mere 3\% of the total pre-training time for GLIP, our approach impressively improves the finetuning-free performance by +7.8\% on the LVIS benchmark through providing the model with 5 visual exemplars along with textual category descriptions.
+
+To be specific, as shown in Fig.\,\ref{fig:method}, we first interleave a \textbf{Gated Class-scalable Perceiver} (\textbf{GCP}) that bridges class-wise visual cues and textual cues in each high-level stage of the text encoder of the detector. This module consists of class-wise cross attention layers to augment textual semantic embeddings with visual details, and a conditional gating layer that varies based on the quality of visual cues from the vision queries. The output of this module is incorporated to each high-level stage of the text encoder in a residual-like manner, which conducts textual perturbation in initial general embedding space~\cite{flamingo}. Additionally, this simple design has no class-specific parameters and can be extended to classes of various granularity. Second, we design a \textbf{vision conditioned masked language prediction strategy} to ensure sufficient visual intervention in the modulating stage. We observed a learning inertia problem during modulating, namely, when incorporating visual cues in a gated residual-like manner, the learning process tends to be stuck around the initial optimum point of the frozen pre-training detector and cannot introduce much visual knowledge. Thus, we randomly mask the text tokens and let corresponding vision queries independently make object prediction. Note that we freeze the initial detection foundation model and only train the GCP modules in the modulating stage, which is quite efficient.
+
+\textbf{Contributions}.
+In summary, the contributions of this paper are as follows:
+\textbf{(i)} As far as we know, we are the pioneer to introduce the multi-modal query that has the characteristics of both breadth and rich granularity, paving a new path to the object detection in the wild.
+\textbf{(ii)} We propose a plug-and-play GCP module that dynamically fuses informative visual cues and highly generalizable text cues from the multi-modal query, and  employ a vision conditioned masked language prediction strategy  to permit sufficient multi-modal fusion upon frozen detection models.  
+\textbf{(iii)} Our proposed MQ-Det demonstrates powerful transferability on the finetuning-free and few-shot scenarios, while requiring much less training time than previous SoTA fundamental detectors. 
+Specifically, MQ-Det outperforms GLIP by +7.8\% AP in the finetuning-free detection on the challenging LVIS~\cite{lvis} and averagely +6.3\% AP on 13 downstream few-shot detection tasks~\cite{elevater}, modulated with merely 3\% of the training time required by GLIP.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.95\textwidth]{imgs/method.pdf}
+    \caption{\textbf{Method overview}. The plug-and-play \textbf{G}ated \textbf{C}lass-scalable \textbf{P}erceivers (GCPs) are inserted to text encoder layers, trained with our masked language prediction strategy. Class-wise attention mask is applied to make the text query of each category only attends to corresponding vision queries.}
+    \label{fig:method}
+\end{figure}
+
+
+
+
+
+
+
+
+
+Methodology
+
+This section describes MQ-Det: an efficient modulation architecture with elaborately designed multi-modal fusion strategy to let vision-language (VL) detection foundation models accept text interleaved with images as input queries, thus leveraging the generalization capability of semantic-rich language while enhancing detection discrimination with visual details. 
+We first briefly review the language-queried baseline GLIP~\cite{glip} in Sec.~\ref{Sec:Preliminaries}, then introduce the plug-and-play 
+ architecture that can support class-scalable vision queries as input in Sec.~\ref{Sec:Architecture design}, and finally shed light on the multi-modal fusion strategy in Sec.~\ref{sec:pre-training}.
+
+\subsection{Preliminaries}
+\label{Sec:Preliminaries}
+
+\textbf{Language-queried detection model}. Following CLIP~\cite{clip}, the paralleled formulation has been a mainstream architecture of existing VL detection foundation models~\cite{glipv2,MViTv2,yao2023detclipv2,florence,long2023capdet,groundingdino}. Take our baseline GLIP~\cite{glipv2} as an example, as shown in the left part of Fig.~\ref{fig:method}, it consists of paralleled text encoder $\Phi_{T}(\cdot)$ and image encoder $\Phi_{I}(\cdot)$ for feature extraction, and reformulates detection as a grounding task, by grounding/aligning each visual region to class content in a text prompt.  Since the detection models like GLIP recognize objects via class content only in the language queries, we denote them as language-queried detection models.
+
+Specifically, the model takes image-text pairs $\{(\mathcal{I},\mathcal{T})\}$ as inputs,  where the text prompt $\mathcal{T}=\textrm{``}t_{1}, \dots, t_{|C|}\textrm{''}$ contains $|C|$ categories to be detected, \emph{e.g.}, ``person, bicycle, ... , toothbrush''. 
+Then, the model extracts image and text features ($I, T$) via paralleled encoders. Every linear classification layer in traditional vision models are replaced by a vision-language matching dot-product layer, calculating the region-word similarity logits $S_{cls}$ in the detection head $H(\cdot)$. Formally, 
+\begin{equation}
+     I=\Phi_{I}(\mathcal{I}),\quad T=\Phi_{T}(\mathcal{T}),\quad R=H(I),\quad S_{cls}=R \cdot T^\mathsf{T},
+\label{Eq: glip}
+\end{equation}
+where $I$ is the extracted image features, $R \in \mathbb{R}^{N \times d}$ denotes  the object/region/box features of the input image, and $T \in \mathbb{R}^{|C| \times d}$ is the contextual word/token features from the text encoder in which each token represents one category.
+Additionally, a box regressor is applied to $R$ for localization that is similar to traditional detectors.
+The model is finally trained with a phrase grounding loss calculated via the logits $S_{cls}$ and a traditional localization loss. We refer to GLIP~\cite{glip} for more details.
+
+The language-queried model GLIP is trained on  massive image-text pairs, and thus scales up visual concepts beyond traditional detection vocabularies, and finally achieves strong open-set capacity. However, the inference process via a simple language-queried prompt limits its performance especially for non-descriptive, ambiguous or fine-grained class names.
+\subsection{Architecture design}
+\label{Sec:Architecture design}
+
+Considering the limited description granularity of text stated in Sec.\,\ref{sec:intro},
+we propose to integrate vision queries into the pre-trained language-queried detection models to enrich semantic cues.
+The architecture of such multi-modal queried detection models is expected to follow three principles:
+(1) \textbf{Class-scalable}: the introduced vision queries are open to arbitrary categories rather than fitting a closed set of categories.
+(2) \textbf{Semantic-complementary}: the vision queries are sufficiently interleaved with  coarse text queries to provide fine-grained visual details that support to distinguish various granularity of categories.
+(3) \textbf{Generalization-retainable}: the introduction of visual queries into foundation models accumulates rich details while still retaining the generalization capability.
+
+We compare three possible architecture designs for enriching queries as illustrated in Fig.\,\ref{fig:pipeline}, and show the superiority of our approach on the above-mentioned principles.
+First, soft prompt based designs~\cite{coop,pomp, chen2022prompt, du2022learning} (e.g., CoOp~\cite{coop}, Fig.\,\ref{fig:pipeline}\,(a)) can adapt text queries to describe diverse characteristics of categories beyond intensively-tuned manual prompts. However, most previous works only finetune task-specific prompts, which limits their generalization. 
+Second, existing two-branch few-shot detection architectures~\cite{han2022few,kang2019few,han2022meta,wu2021universal} (e.g., FCT~\cite{han2022few}, Fig.\,\ref{fig:pipeline}\,(b)) support vision queries and detect novel objects using very few training exemplars. 
+But their designs are incompatible with the language-queried pre-training foundation models due to deficiency of language inputs and model complexity (\emph{e.g.}, early and deep fusion in~\cite{han2022few}).
+We propose a simple yet effective plug-in architecture in Fig.\,\ref{fig:pipeline}\,(c), which interleaves class-wise visual cues with textual cues, to let highly semantic language-queried models “perceive” visual details.
+
+Inspired by~\cite{flamingo}, we augment  the semantics of each category query by conditioning the text on corresponding visual representations produced by our proposed \textbf{Gated Class-scalable Perceiver (GCP)} illustrated in Fig.\,\ref{fig:method}. Specifically, we insert GCP modules between  the frozen pre-trained text encoder blocks in a residual manner and only train these modules from scratch.
+In a GCP module, each category token from the text encoder block is independently cross-attended to corresponding vision queries to acquire rich details (Principles 1,2). Then, the interleaved category tokens are gated by the GCP module so that the frozen text encoder is kept intact at initialization for improved stability and generalization performance (Principle 3).
+
+Formally, given an image-text pair $(\mathcal{I},\mathcal{T})$ with 
+vision queries  $\mathcal{V}=\{\mathbbm{v}_{i} |\mathbbm{v}_{i} = \{v_{i}^{(j)}\}_{j=1}^{k} \}_{i=1}^{|C|}$ extracted from $k$ exemplars of each category, 
+the GCP module augments each text query features in $T=\Phi_{T}(\mathcal{T})=\{t_{i}\}_{i=1}^{|C|}$ in a residual-like way, namely,
+\begin{equation}
+         \bar{\textbf{v}}_{i}=\textrm{X-MHA}(\textbf{v}_{i},I), \quad 
+         \hat{v}_{i}=\textrm{X-MHA}(t_{i}, \bar{\textbf{v}}_{i}), \quad 
+         \hat{t}_{i}=t_{i}+\sigma(gate(\hat{v}_{i})) \cdot \hat{v}_{i}, 
+         \quad i = 1,2, \dots, |C|,
+    \label{eqn:gate}
+\end{equation}
+where $\textrm{X-MHA}(\cdot,\cdot)$ denotes a multi-head cross-attention layer with the former input as queries and the later as keys and values. $\sigma=tanh(\cdot)$ is a normalization function. 
+Concretely, the vision query features $\textbf{v}_{i} = \Phi_{I}(\mathbbm{v}_{i})$ are first augmented via the target image feature $I = \Phi_{I}(\mathcal{I})$ to gather content-aware information~\cite{cocoop}. 
+The augmented vision queries $\bar{\textbf{v}}_{i}$ are correlated with corresponding text token $t_{i}$ to enrich it from multiple views.
+The conditional gating value  $\sigma(gate(\hat{v}_{i}))$  is dynamically adjusted according to the quality of visual cues from the exemplars of each category, which is evaluated by a three-layer perceptron (MLP) that reduces the feature dimension gradually to a layer-specific learnable scalar. The conditional gating value multiplies the enriched feature $\hat{v}_{i}$ before adding it to the initial text token $t_{i}$ from the residual connection.
+Since the gating value is initialized to 0, the module output matches that of the pre-trained text encoder at initial training, improving training stability and final performance.
+It is worth noting that this independent class-wise cross-attention scheme has no class-specific parameters and can be scaled to any classes of various description granularity, as verified in Sec.\,\ref{sec:main_exp}.
+In addition, it importantly allows the model to seamlessly generalize to any number of vision queries in inference, regardless of the number used during training. 
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{imgs/pipeline.pdf}
+    \caption{Architecture designs for query enriching, with only classification branches presented for clarity. (a) Prompt-based designs~\cite{coop,cocoop} only tune upon language instruction while (b) two-branch few-shot detection architectures~\cite{han2022few,kang2019few} employ heavily coupled parallel encoders and merely take vision inputs. (c) MQ-Det elegantly combines both language and vision queries in an efficient way.}
+    \label{fig:pipeline}
+\end{figure}
+\subsection{Modulated pre-training}
+\label{sec:pre-training}
+Equipped with the plug-in architecture design described in Sec.\,\ref{Sec:Architecture design}, we propose an efficient pre-training strategy that permits sufficient multi-modal fusion and rapid learning upon frozen detection foundation models using only  a small subset of pre-training data. We denote this process as modulated pre-training in comparison to the massive pre-training of foundation models.
+
+\textbf{Vision query extraction}.
+We provide vision queries for $|C|$ categories from a bank $D$ built from pre-training data:
+\begin{equation}
+    D = \{\textbf{v}_{i} | \left| \textbf{v}_{i} \right|=K\}_{i=1}^{|C|}, \quad
+    v_{i}^{(j)}=RoIPool(\Phi(\mathcal{I}), \gamma b), \quad j=1,2,\dots, K,
+\end{equation}
+where each $\textbf{v}_{i} \in \mathbb{R}^{K\times d}$ contains $K$ vision queries modeled by the image encoder $\Phi_{I}$. 
+Specifically, given a query instance of the $i$-th category with box $b \in \mathbb{R}^{4}$ in an image $\mathcal{I}$ , an RoI pooler~\cite{faster-rcnn} is employed to extract the corresponding region feature $v_{i}^{(j)} \in \mathbb{R}^{d}$.  The parameter $\gamma=1.5^{2}$ enlarges the region area for contextual clues.
+During modulated pre-training, we randomly select $k \ll K$ vision queries from $D$ for each category at each forward process, simulating the downstream scenarios where only low-shot vision queries are provided. In practical implementation, we set $K=5000$ and $k=5$. 
+After modulating, our model can generalize to arbitrary categories and vision queries during downstream inference.
+
+
+\textbf{Training upon frozen pre-trained language-queried detectors}.
+Given the inherently general semantic representations in the pre-trained detector, we argue that the textual features only require minor modulation from the visual details rather than significant alteration.
+This viewpoint has been previously discussed in~\cite{cocoop, coop, flamingo}, and we have observed in Tab.\,\ref{tab:ablation}\,(c) that the full-model training on a limited number of categories faces the risk of catastrophic forgetting. Consequently, for efficiency purpose, we freeze the entire pre-trained detector and only train the newly-added gated class-scalable perceiver modules,  significantly accelerating the training process. 
+
+ 
+\textbf{Vision conditioned masked language prediction}.
+Since the fundamental VL models highly rely on text description, the learning process of the residual-like gated architecture will rapidly converge around the initial optimum point with frozen text features, causing failure of vision queries. That is, models still learn how to align region with text features not visual cues. We represent such an issue as a learning inertia problem. As shown in the first row of Tab.~\ref{tab:ablation}\,(a), the AP merely improves +0.9\% over GLIP-T~\cite{glip} on LVIS.
+To address this issue, we propose a simple yet effective masking strategy:
+\begin{equation}
+    \mathcal{T} = \{t_{1}, t_{2}, \dots, [\textrm{MASK}],\dots, t_{|C|} \}.
+\end{equation}
+Namely, given an image-text pair $(\mathcal{I},\mathcal{T})$, a ground-truth text token in $\mathcal{T}$ corresponding to instances occurring in $\mathcal{I}$ is  randomly masked by a [MASK] token with probability 40\%. 
+The [MASK] token is forced to extract visual cues from vision queries in the GCP modules to provide accurate predictions, thus bridging the model's dependence upon vision queries.
+As shown in Tab.\,\ref{tab:lvis_zeroshot}, our language masking strategy ensures sufficient visual intervention in the modulated pre-training stage and significantly boosts the performance, \emph{e.g.}, +4.4\% AP over GLIP-T on finetuning-free LVIS.
+
+
+
+
+
+
+Experiments
+
+
+
+\subsection{Setup}
+
+\subsubsection{Datasets and benchmarks}
+\textbf{Objects365 dataset}~\cite{objects365}
+is a large-scale, high-quality dataset for object detection. We use this dataset to conduct the modulated pre-training of our MQ-Det models.
+It contains 0.66 million images of 365 object categories, with 30 million bounding boxes, which are more diverse and fine-grained than those in other popular datasets such as COCO~\cite{coco} and Pascal VOC~\cite{everingham2010pascal}. Objects365 is a widely-used pre-training dataset in previous foundamental detection models~\cite{glip,glipv2,groundingdino,omdet,florence,yao2023detclipv2}.
+\textbf{LVIS benchmark}~\cite{lvis}
+is a challenging dataset for long-tail objects. It contains 1,203 categories for evaluation, with many rare categories that scarcely exist in the pre-training datasets. Therefore, 
+we use LVIS in the downstream task to evaluate the finetuning-free transferability. We report on MiniVal containing 5,000 images introduced in MDETR~\cite{mdetr} as well as the full validation set v1.0. 
+
+\textbf{ODinW benchmark}~\cite{elevater} (Object Detection in the Wild) is a more challenging benchmark for evaluating model performance under real-world scenarios. For example, Aquarium requires locating fine-grained fish species, and Pothole concerns detecting holes on the road. It collects more than 35 datasets for evaluation.
+There are two commonly used versions of the ODinW benchmark, \emph{i.e.}, ODinW-13 and ODinW-35, where ODinW-13 is a subset of ODinW-35 and contains much less noisy data.  The results on both benchmarks are reported for comprehensive comparison. We demonstrate that the fine-grained visual details in MQ-Det facilitate transfer to such diverse and challenging tasks.
+\subsubsection{Implementation details}
+\label{sec:implement_detail}
+We conduct extensive experiments on three settings: an open-set setting on finetuning-free LVIS~\cite{lvis} and ODinW~\cite{elevater} benchmarks, a few-shot setting and a close-set full-shot setting on ODinW. 
+To demonstrate the plug-and-play versatility of our approach, we apply MQ-Det on two typical SoTA language-queried object detectors, GLIP~\cite{glip} and GroundingDINO~\cite{groundingdino}, and obtain our multi-modal queried models \textbf{MQ-GLIP} and \textbf{MQ-GroundingDINO}, respectively. We incorporate our GCP modules into the last 6 layers of the frozen text encoder.
+We conduct modulated pre-training of our models on the Objects365 dataset~\cite{objects365} for only one epoch using 8 NVIDIA V100 GPUs. The finetuning process under few/full-shot settings completely follows the baseline method GLIP, where vision queries are extracted from the few/full-shot training set.
+We also evaluate our method in a \textit{finetuning-free} setting, namely, users can detect their customized objects through textual descriptions, visual exemplars, or both without any fine-tuning. During finetuning-free evaluation, we extract 5 instances as vision queries for each category from the downstream training set without any finetuning.
+
+\begin{table}[t]
+\centering
+\caption{Finetuning-free detection on the LVIS benchmark. $^{*}$ denotes supervised approaches. The training time is tested on one V100 GPU. We present the number of vision queries during evaluation.}
+\label{tab:lvis_zeroshot}
+\resizebox{\linewidth}{!}{
+\setlength{\tabcolsep}{1.0mm}{
+\begin{tabular}{lc|cc|c|c|cccc|cccc}
+\toprule
+\multicolumn{1}{l}{\multirow{2}{*}{Model}} & \multirow{2}{*}{Backbone} & \multirow{2}{*}{Pre-Train Data} & Data     & Training Time &  \#Vision & \multicolumn{4}{c|}{MiniVal (\%)}                                                                           & \multicolumn{4}{c}{Val v1.0 (\%)}                                                                         \\
+                       &                           &                                 &    Size   & (V100 days)   &  Query    & $\textrm{AP}$ & $\textrm{AP}_{r}$ & $\textrm{AP}_{c}$ & $\textrm{AP}_{f}$ & $\textrm{AP}$ & $\textrm{AP}_{r}$ & $\textrm{AP}_{c}$ & $\textrm{AP}_{f}$  \\
+\midrule
+MDETR~\cite{mdetr}$^{*}$                                     & RN101                    & GoldG,RefC             &   0.9M     &   400       &    0 & 24.2           & 20.9                       & 24.9                       & 24.3                       &    22.5   &       7.4              &         22.7          &          25.0         \\
+Mask R-CNN~\cite{maskrcnn}$^{*}$                             & RN101                    &  -             &    -     &    -  &      0    & 33.3           & 26.3                       & 34.0                       & 33.9                       &        -            &        -             &          -          &    -    \\
+Supervised-RFS~\cite{lvis}$^{*}$                             & RN50                    &  -             &    -     &      -    & 0                       & -                       & -       &    -                  & -          &    25.4   &        12.3            &        24.3             &          32.4           \\
+\midrule
+GLIP-T (B)~\cite{glip}                                     & Swin-T                    & O365             &  0.66M     &       300    &    0  & 17.8          & 13.5                       & 12.8                       & 22.2                      & 11.3         & 4.2                       & 7.6                       & 18.6                         \\
+GLIP-T~\cite{glip}                                     & Swin-T                    & O365,GoldG,CC4M             &  5.5M    &  480          &    0    & 26.0          & 20.8                       & 21.4                       & 31.0                        & 17.2          & 10.1                       & 12.5                       & 25.5                       \\
+GLIPv2-T~\cite{glipv2}                                     & Swin-T                    & O365,GoldG,CC4M             &  5.5M     &    -  &     0      & 29.0          &          -            &             -         &           -           &           -           &          -            &            -           &     -     \\
+GroundingDINO-T~\cite{groundingdino}                                       & Swin-T                    & O365,GoldG,Cap4M      & 5.5M     &    -  &       0     &      25.7    &        15.2            &        21.9               &      30.9                 &            -             &       -                   &          -                &     -        \\
+GLIP-L~\cite{glip}                                     & Swin-L                    & FourODs,GoldG,Cap24M             &   27.5M      &    600   &   0  & 37.3          & 28.2                       & 34.3                       & 41.5                       & 26.9          & 17.1                       & 23.3                       & 35.4                       \\
+GroundingDINO-L~\cite{groundingdino}                                       & Swin-L                    & O365,OI,GoldG,Cap4M,COCO,RefC  &   15.8M   &    -  &      0      &       33.9    &      22.2               &           30.7           &                38.8        &          -                &           -               &           -               &      -        \\
+\midrule
+\rowcolor{Tabcolor} MQ-GLIP-T-Img                                       & Swin-T                    & O365\tablefootnote{\label{note}Modulating upon pretrained models indirectly utilizes their pre-training data.}                    &   0.66M   &    10        &  5  &   17.6   &        12.0          &          14.5          &        21.2          &            12.4             &          8.9             &          9.2              &      18.3      \\
+\rowcolor{Tabcolor} MQ-GLIP-T-Txt                                       & Swin-T                    & O365\footref{note}                    &   0.66M   & 10     &   0          &   26.0     &        20.8           &      21.4              &         31.0        &         17.2               &          10.1              &           12.5             &     25.5       \\
+\midrule
+\rowcolor{Tabcolor} MQ-GroundingDINO-T                                       & Swin-T                    & O365\footref{note}             &    0.66M      &  10    &    5      &     30.2       &          21.7            &       26.2                &         35.2               &         22.1             &      12.9                  &           17.4             &       31.4    \\
+\rowcolor{Tabcolor} MQ-GLIP-T                                       & Swin-T                    & O365\footref{note}                    &   0.66M  & 10   &      5          &     30.4     &   21.0                   &   27.5                     &        34.6             &             22.6          &          15.4             &            18.4           &    30.4       \\
+\rowcolor{Tabcolor2} MQ-GLIP-L                                       & Swin-L                    & O365\footref{note}                    &     0.66M    &      22&     5     &    \textbf{43.4}      &   \textbf{34.5}                    &              \textbf{41.2}          &         \textbf{46.9}             &       \textbf{34.7}        &           \textbf{26.9}              &          \textbf{32.0}              &      \textbf{41.3}      \\
+\bottomrule
+\end{tabular}
+}
+}
+\end{table}
+
+
+
+
+
+
+
+
+\subsection{MQ-Det helps low-shot object detection}
+\label{sec:main_exp}
+\subsubsection{Multi-modal queried detection without finetuning}
+
+We evaluate the model’s ability to recognize rare and diverse objects on both LVIS and ODinW in a \textit{finetuning-free} setting, where users can detect their customized objects through textual descriptions, visual exemplars, or both without any fine-tuning.
+Each category is provided with both language and vision queries.
+Tab.\,\ref{tab:lvis_zeroshot} shows the results on LVIS. 
+Overall, MQ-Det demonstrates \textbf{strong finetuning-free transferability} with impressive \textbf{efficiency on both data usage and training time}. 
+MQ-GLIP-L surpasses the current SoTA by a large margin with simply 5 visual exemplars provided, reaching $34.7$\% AP on Val v1.0 (+7.8\% over GLIP-L), which verifies the superiority of multi-modal queries over single-modal queries. 
+Meanwhile, MQ-Det demonstrates good training efficiency, \emph{e.g.}, MQ-GLIP-T only requires additional 2\% training time and 12\% data usage when modulated upon GLIP-T. 
+
+Additionally, we ﬁnd three contributing factors: 
+\textbf{(i)} Strong generalization comes f
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

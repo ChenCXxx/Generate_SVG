@@ -1,0 +1,315 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{Introduction}
+
+The pretrain-finetune paradigm has achieved great success in natural language processing (NLP)~\cite{jacob2019bert,brown2020language}, computer vision (CV)~\cite{wang2022image}, and multimodal modeling~\cite{radford2021learning,jia2021scaling}, where models are first pre-trained with large-scale data, and then fully fine-tuned for each downstream task.
+Recent research further finds that fine-tuning/adapting a foundation model to a new modality by introducing additional trainable modules significantly outperforms previous works, such as temporal modeling modules~\cite{gao2021clip2tv,JuHZZX22,lu2022lgdn} for image-to-video transferring (see Figure~\ref{fig:fig1} (a)).
+
+However, as foundation models become increasingly large (\eg, GPT-3~\cite{brown2020language} with 175B parameters) and the number of downstream tasks increases, particularly in multimodal scenarios, the traditional method of full fine-tuning becomes impractical due to the significant computational and storage requirements that it entails.
+Finding new ways to efficiently transfer existing foundation models to downstream tasks without incurring excessive costs, becomes an important challenge in the field.
+
+\begin{figure}[t]
+    \begin{minipage}[t]{0.5\linewidth}
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=\linewidth]{figs/fig1-1.pdf}
+    \end{figure}
+     \hspace{110pt} \small(a)
+    \end{minipage}
+    \begin{minipage}[t]{0.5\linewidth}
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=1.00\linewidth]{figs/fig1-2.pdf}
+    \end{figure}
+     \hspace{110pt} \small(b)
+    \end{minipage}
+    \label{fig:fig1}
+    \caption{
+    (a) 
+    Comparison between standard vision-language full fine-tuning paradigm (for image-text and video-text downstream tasks) and our parameter-efficient approach for various downstream tasks.
+    (b) Performance comparison on cross-modal retrieval (horizontal axis) and visual question answering (VQA, vertical axis) tasks. The bubble size denotes the total tunable parameters. On either dataset, our UniAdapter achieves competitive performance on both two tasks while enjoying significantly fewer tunable parameters. N/A: several works focus on either VQA or cross-modal retrieval, and we set N/A for the non-report results.
+    }
+\end{figure}
+
+Alternative approaches have been explored to address the above challenge. A straightforward approach is the use of Linear Probe, which freezes almost the entire model and only tunes a lightweight head for each task. It is only sub-optimal since the representation and the feature space are fixed. 
+Another line of research alleviates the problem by few-shot learning with very large extra modules added to the foundation models (e.g., Flamingo~\cite{alayrac2022flamingo}), which is still far from the full fine-tuning strategy. 
+Recently, parameter-efficient adapters show remarkable results to generalize foundation models in many research fields. In NLP and CV, tunable efficient adapters~\cite{AdapterHoulsby19,hu2022lora} and tunable prompt vectors~\cite{li2021prompt} are applied with a frozen backbone during transfer learning~\cite{AdapterHoulsby19,hu2022lora}.
+They also show great potential for cross-modal modeling~\cite{JuHZZX22, sung22vladapter, pan2022st}, as they enable the transfer of pre-trained foundation models from cross-modal to single-modal (\eg, video classification~\cite{pan2022st}) or other downstream tasks (\eg, image-text reasoning~\cite{sung22vladapter}).
+However, the above works typically consider either a single modality or a single downstream task, without the support of single-/cross-modal and different downstream tasks.
+Considering various downstream tasks in multimodal modeling (\eg, video-text retrieval, image-text retrieval, video and visual question answering), a unified representation of adapters applicable to different multimodal downstream tasks is crucial.
+Meanwhile, previous approaches typically apply adapters without considering cross-modal interaction and knowledge sharing between them, which is the key to cross-modal modeling.
+
+Motivated by the above observations, in this work, we investigate a critical problem of \emph{\textbf{efficiently transferring a vision-language model to unified cross-modal modeling}}, which aims to enable a vision-language pre-training model to adapt to unified modalities (\eg, image and video) as well as unified cross-modal downstream tasks (\eg, retrieval and reasoning) in a parameter-efficient principle. 
+We propose \alias, which unifies adapters for multimodal modeling and distributes them to each modality and cross-modal interaction.
+\alias has several appealing benefits that previous works do not have:
+\textbf{1)} To model the cross-modal interactions, we introduce a knowledge-sharing scheme, where the down-projection layer in all adapters is shared while the up-projection can learn modality-specific knowledge.
+\textbf{2)} To preserve the integrity of language queries during the cross-attention process in multimodal models, we incorporate residual learning for language queries.
+\textbf{3)} We propose parameter-free frame-aware attention to unify the video and image modalities with no cost, not only making our approach applicable to more downstream tasks, but also alleviating the noise issue in video frames. 
+With these design considerations, our \alias capitalizes a pre-trained vision-language model for unified cross-modal downstream tasks by introducing a few tunable parameters.
+
+Our contribution is threefold: 
+\textbf{1)} We investigate the problem of unified parameter-efficient cross-modal transfer learning, which allows for the efficient utilization of a pre-trained vision-language model for a range of cross-modal downstream tasks.
+\textbf{2)} We propose \alias, a simple, efficient, yet effective framework with carefully considered designs, such as knowledge sharing and query residuals.
+To our best knowledge, we are the first adapter-based work that is applicable to various downstream tasks (including retrieval and reasoning) from both image-language and video-language domains.
+\textbf{3)} Extensive evaluations on six cross-modal downstream benchmarks show that our \alias 
+generally outperforms previous arts with fewer parameters, especially in the video domain.
+
+
+Related Work
+
+\noindent \textbf{Parameter-efficient Transfer Learning.} Parameter-efficient Transfer Learning technologies~\cite{AdapterHoulsby19, hu2022lora, li2021prompt} are first proposed in the NLP domain to alleviate the heavy training and storage cost in the full fine-tuning process facing the increasing foundation model size. These approaches aim to adapt a frozen large-scale model to downstream tasks by introducing small updating parameters. Recent works~\cite{pan2022st, chen2022adaptformer} also validate its effectiveness in the CV domain. Nevertheless, cross-modal parameter-efficient transfer learning is still not well explored. Although several pioneer works~\cite{pan2022st, sung22vladapter} are proposed for efficient cross-modal modeling, these works typically directly apply standard adapter or prompt approaches and focus on either single-modality tasks (\eg, video classification~\cite{pan2022st}) or single-type downstream tasks (\eg, image-text reasoning~\cite{sung22vladapter}). In this work, our proposed UniAdapter is different and more general, which unifies unimodal and multimodal adapters for parameter-efficient cross-modal modeling, and can cope with unified modalities and various downstream tasks.  
+
+\noindent \textbf{Vision-language Modeling.} Video-language models can be roughly divided into two-stream models (\eg, CLIP~\cite{radford2021learning}, ALIGN~\cite{jia2021scaling}) and single-stream models (\eg, SimVLM~\cite{wang22simvlm}, OSCAR~\cite{li2020oscar}). Recently, hybrid-stream methods (\eg, ALBEF~\cite{li2021albef}, BLIP~\cite{LXH22}) combine the advantages of both encoder-based and decoder-based methods, thus can support both cross-modal alignment tasks and multimodal generation tasks in one foundation model. Although these image-text foundation models can be extended to video-language domain by introducing additional modules (\eg, temporal transformer for aggregating the temporal information~\cite{JuHZZX22, lu2022lgdn}), the full fine-tuning strategy and additional module make the training and storage overhead further heavier.
+
+
+Methodology
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=0.90\linewidth]{figs/arthicecture_all.pdf}
+    \\    
+    \hspace{95pt} {\small (a) Framework Overview \hfill (b) \alias with Knowledge Sharing} \hspace{35pt} 
+    \caption{
+    (a) Semantic illustration of our overall parameter-efficient transfer learning framework. UniAdapters with the same color share the same weight.
+    (b) Detailed design of our UniAdapter. Each modality shares a unified down-projection layer. The cross-modal up-projection branch considers utilizing knowledge from the textual up-projection layer to better learn the fusion information.
+    }
+    \label{fig:architecture}
+\end{figure*}
+
+In this section, we first briefly describe the vision-language framework and the standard adapter. We then introduce our UniAdapter with query-based residual learning and frame-aware attention,
+to show how we capitalize a large-scale pre-trained vision-language model for a wide range of downstream tasks from both image-language and video-language domains. 
+The overall architecture is illustrated in Figure~\ref{fig:architecture}.
+
+\subsection{Preliminary}
+
+\textbf{Vision-language Framework.}
+We utilize a hybrid-stream video-language model as our frozen backbone for it combines the advantages of both two-stream and single-stream methods with superior performance and relatively high inference speed, which consists of a visual encoder (ViT~\cite{alexey2021vit}), a language encoder (BERT~\cite{jacob2019bert}, and a multimodal encoder
+as shown in Figure~\ref{fig:architecture}. 
+
+Given an image/video-text pair, our model first utilizes the unimodal encoders to extract the visual features $\mathbf{f}^v = \{f^v_{\mathrm{CLS}}, f^v_{0}, f^v_{1}, ...\}$ and the textual features $\mathbf{f}^t = \{f^t_{\mathrm{CLS}}, f^t_{0}, f^t_{1}, ...\}$, where $f^v_{\mathrm{CLS}}$ and $f^t_{\mathrm{CLS}}$ are [CLS] tokens. The cross-modal contrastive objectives are then applied for instance-level alignment on [CLS] tokens.
+The extracted visual features $\mathbf{f}^v$ and textual features $\mathbf{f}^t$ are then fed into the multimodal encoder for cross-modal token-level modeling. Specifically, the multimodal encoder takes text features as input and the visual features are inserted into each cross-attention layer for injecting the visual features.
+For video-language domain tasks, we first utilize the visual encoder to extract each frame feature $\mathbf{f}^e= \{f^e_{\mathrm{CLS}}, f^e_{0}, f^e_{1}, ...\}$. Then we concatenate the frame features as the visual input for each cross-attention layer. 
+ 
+\textbf{Adapter.}
+Adapter~\cite{AdapterHoulsby19} is proposed for parameter-efficient transfer learning in the NLP domain,
+which freezes the pre-trained parameters and inserts small tunable modules (adapters) between each layer.  
+Each adapter consists of a down-projection layer $W_{down} \in \mathcal{R}^{(d \times r)}$, a nonlinear activation function $\sigma$ and an up-projection layer $W_{up} \in \mathcal{R}^{(r \times d)}$, where $d$ (or $r$) is the input (or bottleneck) dimension. Given an input feature $x \in \mathcal{R}^{d}$, the computation process can be given in a residual from: 
+\begin{equation}
+    Adapter(x) = x + s\cdot\sigma( xW_{down})W_{up},
+\end{equation}
+where $s$ is the scaling factor.
+\subsection{Overall Architecture}
+\alias aims to enable a pre-trained vision-language model for unified cross-modal downstream tasks in a parameter-efficient principle.
+Apart from that we evenly insert uniadapters into each transformer layer of textual, visual, and multimodal encoders as shown in Figure~\ref{fig:architecture}(a), 
+our framework has three unique designs for cross-modal transfer learning: 
+(1) To preserve the integrity of language queries during the cross-attention process in multimodal encoders, we incorporate residual learning for language queries.
+(2) We introduce unified and cross-modal knowledge-sharing designs, where the down-projection layer in all adapters is shared while the up-projection can learn modality-specific knowledge, as shown in Figure~\ref{fig:architecture}(b). 
+(3) Considering the noisy issue in video frames, we propose parameter-free frame-aware attention to unify the video and image modalities with no cost and alleviate the noisy problem that exists in video-language domains. 
+We discuss each part below. 
+\subsection{Residual Learning for Language Queries}
+\label{sec:crossmodal}
+The multimodal encoder is adopted for cross-modal token-level modeling, which takes text features as query input and the visual features are inserted into each cross-attention layer for injecting the visual features. Standard approaches insert adapters behind the multi-head attention in the transformer encoder architecture. Nevertheless, directly following this approach (inserting adapters behind the cross-attention layer) for the multimodal encoder is hard to deal with hybrid information, and may break the integrity of language queries during the cross-attention process in the multimodal encoder. Therefore, we introduce Residual Learning for Language Queries to address this issue.
+
+Specifically, each multimodal encoder block consists of a multi-head self-attention (MSA), a multi-head cross-attention (MCA), and a fully connected feed-forward network (FFN). The multimodal encoder takes text features $\mathbf{f}^t$ as input and the visual features are inserted into each cross-attention layer for injecting the visual features as shown in Figure~\ref{fig:architecture}. 
+Each cross-attention layer takes the self-attention output features $\bm{q}$ as query $Q$ and the visual features $\mathbf{f}^v$ as key $K$ and value $V$.
+The computation process of each block can be formulated as: 
+\begin{align}
+    \bm{q} &= \bm{l}_{\bm{l-1}} + \mathrm{MSA}(\bm{l}_{\bm{l-1}}), \nonumber\\
+    \bm{h} &= \bm{q} + \mathrm{MCA}(Q=\bm{q}, K=\bm{\mathbf{f}^v}, V=\bm{\mathbf{f}^v}), \nonumber\\
+    \bm{l}_{\bm{l}} &= \bm{h} + \mathrm {FFN}(\bm{h}),   
+    \label{eq:1}
+\end{align}
+where $\bm{l}_0 = \mathbf{f}^t$, and $\bm{l}_{\bm{l}}$ denotes the output features of the $l$-th layer. 
+When the standard Adapter is inserted behind the cross-attention layer, Equation~\ref{eq:1} can be rewritten as:
+\begin{equation}
+    \bm{l}_{\bm{l}} = Adapter(\bm{h}) + \mathrm{FFN}(\mathrm{LN}(\bm{h})), 
+\end{equation}
+where $\mathrm{LN}$ denotes the layer norm. It can be observed from Equation~\ref{eq:1} that, the hidden state $\bm{h}$ contains both Query features as well as cross-modal fusion features. Learning such hybrid information with a single modality adapter is very hard. 
+Moreover, the textual query information may be lost during transmission in each cross-encoder block.
+Therefore, we propose to capture/maintain the Query information by introducing an additional adapter in a residual form,
+termed Query-Residual adapter. 
+Specifically, we insert it behind the self-attention layer and directly add the output to the feed-forward layer in a residual form, as shown in Figure~\ref{fig:architecture}. Equation~\ref{eq:1} can now be rewritten as:
+\begin{equation}
+    \bm{l}_{\bm{l}} = Adapter(\bm{q}) + Adapter(\bm{h})  + \mathrm {FFN}(\mathrm{LN}(\bm{h})).
+\end{equation}
+
+Simply introducing the Query-residual adapter may bring extra updating parameters, which is not expected in our lightweight principle.
+We observe that the textual encoder also takes the textual features as input and adds the output to the feed-forward layer. 
+Therefore, the textual adapter knowledge can be shared with Query-Residual adapter
+by fully weight-sharing between the two adapters to avoid extra parameter costs. 
+\subsection{UniAdapter}
+
+To transfer a vision-language model to downstream tasks, a straightforward way is to inject adapters into each modality module (visual, textual, and multimodal fusion). 
+However, utilizing separate
+adapters for each modality brings relatively high parameters. Meanwhile, there are no cross-modal interactions among these adapters, leading to suboptimal performance. We propose UniAdapter to address the above issues, which unifies unimodal and multimodal adapters into one framework by partial weight sharing.
+
+The core idea of UniAdapter is to share the knowledge from multiple modalities to enhance cross-modal interaction meanwhile reducing extra tunable parameters.
+As illustrated in Figure~\ref{fig:architecture}(b),
+UniAdapter consists of a unified down-projection layer $W_{down} \in \mathcal{R}^{(d \times r)}$, a nonlinear activation function $\sigma$, and a modality-specific up-projection layer $W^{\mathcal{M}}_{up} \in \mathcal{R}^{(r \times d)}, {\mathcal{M}} \in \{\mathcal{V}, \mathcal{T}, \mathcal{C}\}$, where $d$ and $r$ are the input and bottleneck dimensions, and $\mathcal{V}, \mathcal{T}, \mathcal{C}$ denote the visual, textual and cross-modal modality, respectively.
+The down-projection layer in all UniAdapters is shared while the up-projection can learn modality-specific knowledge. Below we introduce UniAdapter for each modality. 
+
+\textbf{Unimodal Case.} 
+Although we apply a unified down-projection for cross-modal knowledge-sharing, learning modality-specific representation is also important for the unimodal encoders. Therefore, we apply two modality-specific up-projection layers ($W^{\mathcal{V}}_{up}, W^{\mathcal{T}}_{up}$) respectively for the visual encoder and textual encoder: 
+\begin{align}
+    &UniAdapter(x^{\mathcal{V}}) = x^{\mathcal{V}} + s\cdot\sigma( x^{\mathcal{V}}W_{\textit{down}})W^{\mathcal{V}}_{up}, \nonumber
+    \\
+    &UniAdapter(x^{\mathcal{T}}) = x^{\mathcal{T}} + s\cdot\sigma( x^{\mathcal{T}}W_{down})W^{\mathcal{T}}_{up},
+\end{align}
+where $s$ denotes the scaling factor, and $x^{\mathcal{V}}$ and $x^{\mathcal{T}}$ denote the visual and textual features,  respectively.
+
+The visual encoder and textual encoder take the same transformer encoder architecture and we follow MAM~\cite{he2022mam} to inject UniAdapter between the self-attention layer and the feed-forward layer (see Figure~\ref{fig:architecture}). 
+
+\textbf{Cross-modal Case.} We also utilize a specific up-projection layer for multimodal encoder transfer learning.
+However, as we mentioned in Sec.~\ref{sec:crossmodal}, the input features consist of the Query features as well as cross-modal fusion features. 
+Learning such hybrid information with a single adapter is very hard. 
+Following the design of Sec.~\ref{sec:crossmodal}, we consider reusing the textual up-projection  layer $W^{\mathcal{T}}_{up}$ into UniAdapter for capturing the textual information. In this way, the cross-modal up-projection layer $W^{\mathcal{C}}_{up}$ can cope with the cross-modal information more easily. 
+The UniAdapter on the cross-modal modality can be expressed as:
+\begin{equation}
+    UniAdapter(x^{\mathcal{C}}) =  x^{\mathcal{C}} + s\cdot \big[\sigma(x^{\mathcal{C}}W_{down})W^{\mathcal{T}}_{up}  \nonumber  \hspace{0.0in} + \sigma( x^{\mathcal{C}}W_{down})W^{\mathcal{C}}_{up}\big],
+\end{equation}
+where $s$ denotes the scaling factor (as in the unimodal case), and $x^{\mathcal{C}}$ denotes the cross-modal features. 
+
+For the multimodal encoder, we insert UniAdapter between the cross-attention layer and feed-forward layer. We additionally consider Query-residual Adaption introduced in Sec.~\ref{sec:crossmodal}. Equation~\ref{eq:1} can be further rewritten as:
+\begin{equation}
+    \bm{l}_{\bm{l}} \hspace{-0.02in}=\hspace{-0.02in} UniAdapter(\bm{q}) \hspace{-0.02in}+\hspace{-0.02in} UniAdapter(\bm{h})  \hspace{-0.02in}+\hspace{-0.02in} \mathrm {FFN}(\mathrm{LN}(\bm{h})).
+\end{equation}
+
+\subsection{Parameter-free Frame-aware Attention}
+
+For video downstream tasks, we concatenate the frame features extracted from the visual encoder as the visual input for video-level cross-modal alignment. However, this approach considers all frames with equal weight and ignores the noise and misalignment problem in videos. Inspired by LGDN~\cite{lu2022lgdn}, we propose Parameter-free Frame-aware Attention (PFA) for video-text retrieval, which highlights the tokens in salient frames and while suppressing tokens in noisy or irrelevant frames during the cross-attention process, without introducing extra parameters.
+
+Formally, given a video-text pair with the extracted frame features
+$\{f^e_{\mathrm{CLS}, i}, f^e_{i, j} | i=1, ..., n, j=1, ..., m\}$, where $n$ is the length of the video and $m$ is the length of the token sequence, we first identify the attention weight $A_i$ of the $i$-th frame by computing the dot-product of the frame features and the paired text [CLS] token features $f^t_{\mathrm{CLS}}$:
+\begin{equation}
+    A_i = \frac{exp(f^e_{\mathrm{CLS}, i} \cdot f^t_{\mathrm{CLS}})}{\sum_{i}exp(f^e_{\mathrm{CLS}, i} \cdot f^t_{\mathrm{CLS}})},
+\end{equation}
+Then we apply the PFA attention weight for each frame feature $\mathbf{f}^e$ to formulate the final input visual features, which can be formulated as:
+\begin{equation}    
+    PFA(\mathbf{f}^e_i) \hspace{-0.02in} = \hspace{-0.02in} \{f^e_{\mathrm{CLS}, i}, A_i \hspace{-0.02in}*\hspace{-0.02in} f^e_{i, j} | 1\leq \hspace{-0.02in} i \hspace{-0.02in} \leq n, 1\leq \hspace{-0.02in} j \hspace{-0.02in} \leq m\}.
+\end{equation}
+
+
+
+Experiment
+
+\subsection{Datasets and Settings}
+
+\noindent\textbf{Downstream Datasets.}~~We evaluate our proposed UniAdapter on 6 public cross-modal downstream datasets, including video-text retrieval datasets: MSR-VTT~\cite{xu2016msr} and DiDeMo~\cite{anne2017localizing}; image-text retrieval datasets: MSCOCO~\cite{lin2014microsoft} and Flickr30K~\cite{bryan2015flickr}; video question answering dataset: MSRVTT-QA~\cite{XuZX0Z0Z17}; and visual question answering dataset: VQAv2~\cite{goyal17vqav2}.
+\begin{wraptable}[11]{htp}{.6\textwidth}
+\small
+\caption{Inserting Adapter (r=512) into different modalities (Visual $\mathcal{V}$, Textual $\mathcal{T}$ and Cross-modal $\mathcal{C}$) on Didemo. \# Tunable: the number of tunable parameters. }
+\label{tab:ablation1}
+\tabcolsep3.7pt
+\begin{tabular}{cccr|cccccc}
+\toprule
+$\mathcal{V}$ & $\mathcal{T}$ & $\mathcal{C}$ & \# Tunable &R@1&R@5&R@10& R@Mean & MedR\\ \midrule
+$\checkmark$&&&9.5M&42.6&70.9&79.4& 64.3 & 2.0\\
+&$\checkmark$&&9.5M&40.0&64.6&74.7& 59.8 &2.0\\
+$\checkmark$&$\checkmark$&&19.0M&44.5&73.1&80.9& 66.2 & 2.0\\
+&&$\checkmark$&9.5M&47.7&73.4&82.8& 68.0 & 2.0\\
+$\checkmark$&$\checkmark$&$\checkmark$&28.4M&\textbf{49.9}&\textbf{76.2}&\textbf{83.0}& \textbf{69.7} & {2.0} \\
+\bottomrule
+\end{tabular}
+\end{wraptable}
+
+
+\noindent\textbf{Implementation Details.}~~We apply BLIP-base~\cite{LXH22} as our vision-language backbone for both image-text and video-text downstream tasks. The parameters of the BLIP model are kept frozen/untouched during the fine-tuning process.
+We set the UniAdapter hyper-parameters uniformly for all modalities as: input/output dimension $d=768$, bottleneck dimension $r=128~(4.8\text{M})$ or $r=512~(19.0\text{M})$, and scaling factor $s=0.1$. 
+Following previous works, we initialize the weights of down-projection layers for UniAdapter with Kaiming Normal~\cite{HeZRS15} and configure the weights of the up-projection layers with zero initialization. 
+
+For video-text downstream tasks, we uniformly sample $N = 8$ frames per video during training, $N = 16$ frames per video during inference (but $N = 8$ for ablation study). 
+All experiments are conducted on 8x NVIDIA 3090Ti (24G) GPUs.
+
+
+
+\subsection{Ablation Study and Analysis}
+
+In this subsection, we conduct comprehensive ablation studies to 
+reveal how to successfully build a parameter-efficient transfer learning framework for cross-modal modeling and
+investigate the contributions of different components of our UniAdapter. If not specifically indicated, we set bottleneck dimension $r = 512$ for Adapter/UniAdapter, inference frames $N=8$ as the default setting in the ablation study.
+
+\textbf{Where to Insert Adapter.} 
+\label{sec:ablation1}
+Prior approaches~\cite{AdapterHoulsby19, chen2022adaptformer} have successfully applied adapters in single-modality domains. 
+To replicate the success, we choose to first identify which modality module is more crucial for cross-modal transfer learning. Specifically, we first apply adapters for different 
+modality encoders as shown in Table~\ref{tab:ablation1}. It can be observed that: (1) Inserting adapter into multimodal encoder significantly outperforms visual or textual modality (and even both visual and textual modality), suggesting that multimodal adaption should be paid more attention to. (2) Inserting adapters for all modality encoders achieves the best performance, and hence we adopt adapters for all modality modules as our default setting.
+
+
+\begin{table*}[t]
+\centering
+\caption{Ablation study results for the proposed components on the Didemo test set and MSRVTT-QA valid set. \# Tunable: the number of tunable parameters. PFA: Parameter-free Frame-aware Attention. The second best result is marked by underline. }
+\scalebox{0.78}{
+\tabcolsep8.5pt
+\begin{tabular}{lrcccccc}
+\toprule
+\multirow{2}{*}{Method} &  \multirow{2}{*}{\# Tunable} & \multicolumn{5}{c}{Didemo Text-to-Video Retrieval} & MSRVTT-QA \\
+&   & R@1 & R@5 & R@10 & R@Mean & MdR & Val Acc \\
+\midrule
+Linear Probe &   0.4M & 39.7 & 64.6 & 74.9 & 59.7 & 2.0 & -\\
+Full fine-tuning &  223 / 337M & \underline{51.3} & \bf79.1 & \bf85.7& \bf72.0& \bf1.0 & 42.7\\
+ \midrule
+Adapter (r=128) &  7.1 / 4.8M & 47.4 & 73.5 & 81.4 & 67.4 & 2.0 & 41.5\\ 
++Query-residual Adaption &   7.1M  & 48.7 & 73.9  & 83.0 & 68.5 & {2.0}& 42.2\\
++PFA & 7.1M  & {49.7} & 75.5  & 83.4 & 69.5 & {2.0}& -\\
++Weight-sharing (UniAdapter) &    4.8M  & 49.0 & 75.5  & 83.3& 69.3 & {2.0}& \underline{43.6}\\
+\midrule
+Full UniAdapter (r=512) &    19.0M  & \bf52.1 & \underline{77.3}  & \underline{85.2} & \underline{71.5} & \bf1.0 & \bf44.5\\
+\bottomrule
+\end{tabular}}
+\label{tab:ablation2}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\caption{Comparative results obtained by different weight-sharing strategies used for UniAdapter on the Didemo test set and MSRVTT-QA valid set.  \# Tunable: the number of tunable parameters. The second best result is marked by underline. }
+\scalebox{0.78}{
+\tabcolsep12pt
+\begin{tabular}{lrcccccc}
+\toprule
+\multirow{2}{*}{Method} &   \multirow{2}{*}{\# Tunable} & \multicolumn{5}{c}{Didemo Text-to-Video Retrieval} & MSRVTT-QA \\
+&   & R@1 & R@5 & R@10 & R@Mean & MdR & Val Acc \\
+\midrule
+w/o Share (r=512) &     28.4M  & \bf52.4 &  \bf77.6 & 84.2 & \underline{71.4} & 1.0& \underline{43.6} \\
+Share Down &    \underline{19.0M} & \underline{52.1} & \underline{77.3} & \bf85.2 & \bf71.5 & 1.0 & \bf44.5\\
+Share Up &  \underline{19.0M} & 50.1  & 76.6 & 84.2 & 70.3 & 1.0 & 43.1\\
+Share Up \& Down &  \bf9.5M & 50.8 & 77.1 & \underline{84.3} & 70.7 & 1.0  & 43.4\\ 
+\bottomrule
+\end{tabular}}
+\label{tab:ablation3}
+\end{table*}
+\textbf{Effectiveness of Each Component.}
+We compare our UniAdapter with three baselines (Linear Probe, Full fine-tuning, and Adapter) and demonstrate the contribution of each component of our UniAdapter in Table~\ref{tab:ablation2}. Note that we start with the standard Adapter, which evenly inserts adapters into all modality encoders. We can see that: (1) Query-residual Adaption leads to a noticeable improvement, suggesting that maintaining query information is vital for cross-modal transfer learning. (2) PFA brings certain performance improvements without introducing extra parameters. (3) The weight-sharing scheme leads to competitive performance but with significantly fewer tunable parameters.
+(4) With these design considerations, our UniAdapter largely outperforms the standard Adapter, and reaches comparable or even better performance compared with Full fine-tuning for both retrieval tasks and reasoning tasks. This clearly shows the effectiveness and efficiency of our UniAdapter. 
+
+
+\textbf{Different Wight-sharing Strategies for UniAdapter.} 
+Our UniAdapter shares a unified down-projection layer to enhance the cross-modal interaction and meanwhile reduce the tunable parameters. 
+In Table~\ref{tab:ablation3}, we make performance evaluation over our UniAdapter with different weight-sharing strategies. We observe that all sharing strategies achieve comparable performance but with 50\%-70\% fewer parameters compared with non-sharing (w/o Share), which demonstrates the effectiveness of the knowledge-sharing scheme. Among them, Share Down outperforms all the other strategies, indicating that modality-specific Up-projection layers are essential for cross-modal transfer learning. Considering both effectiveness and efficiency, we thus deploy Share Down as our weight-sharing strategy.
+
+\begin{wraptable}[10]{htp}{.7\textwidth}
+\small
+\caption{Comparisons between UniAdapter and other parameter-efficient transfer learning methods.}
+\label{tab:parameter-efficient}
+\tabcolsep3pt
+\begin{tabular}{lccccccc}
+\toprule
+Method                             &   \#Tunable      & R@1  & R@5    & R@10 & MedR & R@Mean \\
+\midrule
+LoRA~\cite{hu22lora}  & 56.6M & 43.3 & 70.6   & 79.7 & 2.0  & 64.5   \\
+Sequential Adapter~\cite{AdapterHoulsby19} & 28.4M & 49.6 & 75.9   & 82.8 & 2.0  & 69.4   \\
+ST Adapter~\cite{pan2022st}        & 42.5M & 49.9 & 75.6   & 83.2 & 2.0  & 69.6   \\
+Parallel Adapter~\cite{he2022mam}  & 28.4M & 49.9 & 76.2   & 83.0 & 2.0  & 69.7   \\
+MAM Adapter~\cite{he2022mam}       & 33.0M & 50.2 & 76.6   & 83.2 & 2.0  & 70.0   \\
+UniAdapter (r=512)                 & 19.0M & 52.1 & 77.3   & 85.2 & 1.0  & 71.6  \\
+\bottomrule
+\end{tabular}
+\end{wraptable}
+
+\textbf{Comparisons with other parameter-efficient 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

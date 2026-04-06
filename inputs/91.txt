@@ -1,0 +1,225 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Adaptive Frequency Filters As Efficient Global Token Mixers
+
+% ArXiv ID: 2307.14008
+
+
+
+
+\title{Adaptive Frequency Filters As Efficient Global Token Mixers}
+
+\author{Zhipeng Huang\textsuperscript{\rm 1,2}\thanks{This work was done when Zhipeng Huang was an intern at Microsoft Research Asia.} \quad 
+Zhizheng Zhang\textsuperscript{\rm 2}\quad 
+Cuiling Lan\textsuperscript{\rm 2}\quad 
+Zheng-Jun Zha\textsuperscript{\rm 1}\quad 
+Yan Lu\textsuperscript{\rm 2}\quad 
+Baining Guo\textsuperscript{\rm 2}\\
+\textsuperscript{\rm 1}{University of Science and Technology of China}\quad
+\textsuperscript{\rm 2}{Microsoft Research Asia}\\
+\tt\small \{zhizzhang,\ culan,\ yanlu,\ bainguo\}@microsoft.com \\ 
+\tt\small hzp1104@mail.ustc.edu.cn \quad
+\tt\small zhazj@ustc.edu.cn}
+
+
+\maketitle
+\ificcvfinal\thispagestyle{empty}\fi
+
+\begin{abstract}
+
+Recent vision transformers, large-kernel CNNs and MLPs have attained remarkable successes in broad vision tasks thanks to their effective information fusion in the global scope. However, their efficient deployments, especially on mobile devices, still suffer from noteworthy challenges due to the heavy computational costs of self-attention mechanisms, large kernels, or fully connected layers. In this work, we apply conventional convolution theorem to deep learning for addressing this and reveal that adaptive frequency filters can serve as efficient global token mixers. With this insight, we propose Adaptive Frequency Filtering (AFF) token mixer. This neural operator transfers a latent representation to the frequency domain via a Fourier transform and performs semantic-adaptive frequency filtering via an elementwise multiplication, which mathematically equals to a token mixing operation in the original latent space with a dynamic convolution kernel as large as the spatial resolution of this latent representation. We take AFF token mixers as primary neural operators to build a lightweight neural network, dubbed AFFNet. Extensive experiments demonstrate the effectiveness of our proposed AFF token mixer and show that AFFNet achieve superior accuracy and efficiency trade-offs compared to other lightweight network designs on broad visual tasks, including visual recognition and dense prediction tasks.
+
+\end{abstract}
+
+\section{Introduction}
+
+Remarkable progress has been made in ever-changing vision network designs to date, wherein effective token mixing in the global scope is constantly highlighted. Three existing dominant network families, \ieno, Transformers, CNNs and MLPs achieve global token mixing with their respective ways. Transformers \cite{dosovitskiy2020image,touvron2021training,liu2021swin,chu2021twins,yu2022metaformer} mix tokens with self-attention mechanisms where pairwise correlations between query-key pairs are taken as mixing weights. CNNs achieve competitive performance with transformers by scaling up their kernel sizes \cite{peng2017large,ding2022scaling,liu2022more,chen2022scaling}. MLPs \cite{tolstikhin2021mlp,hou2022vision,lian2021mlp} provide another powerful paradigm via fully connections across all tokens. All of them are effective but computationally expensive, imposing remarkable challenges in practical deployments, especially on edge devices.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.46\textwidth]{images/paramflops-acc.png}
+    \caption{Comparison of Top-1 accuracy on ImageNet-1K~\cite{russakovsky2015imagenet} between our proposed \ours~to some state-of-the-art lightweight networks that have global token mixing. The bubble size corresponds to FLOPs.}
+    \label{fig:paramflops-acc}
+\end{figure} 
+
+Recently, there is increased attention on improving the efficiency of token mixing in transformers. Some works ~\cite{kitaev2020reformer,liu2021swin,chu2021twins,hassani2022dilated,mehta2021mobilevit,pan2022fast,li2022next} squeeze the scope of token mixing in different ways to compromise the representation capacities of neural networks for their efficiencies. Other works reduce the complexity of the matrix operations in self-attention by making use of the associativity property of matrix products \cite{katharopoulos2020transformers} or low-rank approximation methods \cite{guo2019low,xiong2021nystromformer}. These methods all sacrifice the expressiveness of neural networks and lead to unsatisfactory performance of efficient network designs. A general-purpose global token mixing for lightweight networks is still less explored. Better trade-off between accuracy and efficiency for global-scope token mixing is worthy of further study. 
+
+In this work, we reveal that \textit{adaptive frequency filters can serve as efficient global token mixers}, inspired by the convolution theorem \cite{mcgillem1991continuous,rabiner1975theory,oppenheim1999discrete} widely used in conventional signal processing. 
+This theorem states that a convolution in one domain mathematically equals the Hadamard product (also known as elementwise product) in its corresponding Fourier domain. This equivalence allows us to frame global token mixing as a large-kernel convolution in the latent space and efficiently implement this convolution with a Hadamard product operation in the frequency domain by performing Fourier transforms on tokens in the latent space.
+
+
+Besides large scopes, the adaptability to semantics also matters for token mixing as studied in \cite{dai2017deformable,chen2020dynamic,activemlp,bau2020understanding,Wu_2021_CVPR}. This means that the weights for token mixing should be instance-adaptive. Moreover, different semantic attributes of the learned latent representations distribute in different channels \cite{bau2020understanding,wu2021stylespace}. This property poses requirements for channel-specific token mixing wherein the weights of token mixing vary across different channels. From the perspective of framing global adaptive token mixing as a convolution, the kernel of this convolution operation should be not only large but also spatially dynamic. However, it is well known that dynamic convolutions are computationally expensive in common. Large-kernel dynamic convolutions seem extremely prohibitive for efficient/lightweight network designs. In this paper, we propose to adopt frequency filtering in the Fourier domain with learned instance-adaptive masks as a mathematical equivalent of token mixing using large-kernel dynamic convolutions by making use of the aforementioned convolution theorem. This equivalent could reduce the complexity of token mixing from $\mathcal{O}(N^2)$ to $\mathcal{O}(N \log N)$ thanks to adopting Fast Fourier Transforms (FFT), which is more computationally efficient.
+
+
+With the key insight above, we propose Adaptive Frequency Filtering (\ourop) token mixer. In this neural operator, the latent representations (\ieno, a set of tokens) are transferred from its original latent space to a frequency space via a 2D discrete Fourier transform applied spatially. In this way, we get the frequency representations whose spatial positions correspond to different frequency components. We adopt an extremely lightweight network to learn instance-adaptive masks from these frequency representations, and then calculate the Hadamard product between the learned masks and the frequency representations for adaptive frequency filtering. The filtered representations are transferred back to the original latent space via an inverse Fourier transform. The features after this inverse transform could be viewed as the results of token mixing with depthwise convolution kernels whose spatial dimensions are as large as those of latent representations (\ieno, the token set). According to the convolution theorem \cite{mcgillem1991continuous}, our proposed operation mathematically equals to taking the tensors of applying an inverse Fourier transform to the learned masks in the Fourier domain as the corresponding kernel weights and perform convolution with this kernel in the original domain. Detailed introduction, demonstration and analysis are given in subsequent sections.
+
+Furthermore, we take the proposed \ourop~token mixer as the primary neural operator and assemble it into an \ourop~block together with a plain channel mixer. \ourop~blocks serve as the basic units for constructing efficient vision backbone, dubbed \ours. We evaluate the effectiveness and efficiency of our proposed \ourop~token mixer by conducting extensive ablation study and comparison across diverse vision tasks and model scales.
+
+Our contributions can be summarized in the following:
+
+\begin{itemize}[noitemsep,nolistsep,leftmargin=*]
+\item We reveal that adaptive frequency filtering in the latent space can serve as efficient global token mixing with large dynamic kernels, and propose Adaptive Frequency Filtering (\ourop) token mixer.
+\item We conduct theoretical analysis and empirical study to compare our proposed \ourop~token mixer with other related frequency-domain neural operators from the perspective of information fusion for figuring out what really matters for the effects of token mixing.
+\item We take \ourop~token mixer as the primary neural operator to build a lightweight vision backbone \ours. \ours~achieves the state-of-the-art accuracy and efficiency trade-offs compared to other lightweight network designs across a broad range of vision tasks. An experimental evidence is provided in Fig.\ref{fig:paramflops-acc}.
+\end{itemize}
+
+
+\section{Related Work}
+
+\subsection{Token Mixing in Deep Learning}
+
+Mainstream neural network families, \ieno, CNNs, Transformers, MLPs, differ in their ways of token mixing, as detailed in \cite{wei2022activemlp}. CNNs \cite{o2015introduction} mix tokens with the learned weights of convolution kernels where the spatial kernel size determines the mixing scope. Commonly, the weights are deterministic and the scope is commonly a local one. Transformers \cite{vaswani2017attention,dosovitskiy2020image} mix tokens with pairwise correlations between query and key tokens in a local \cite{liu2021swin,chu2021twins} or global\cite{dosovitskiy2020image,touvron2021training} range. These weights are semantic-adaptive but computationally expensive due to the $\mathcal{O}(N^2)$ complexity. MLPs commonly mix tokens with deterministic weights in manually designed scopes \cite{chen2022cyclemlp,touvron2021resmlp,tolstikhin2021mlpmixer,zhang2021morphmlp} wherein the weights are the network parameters. This work aims to design a generally applicable token mixer for lightweight neural networks with three merits: computation-efficient, semantic-adaptive and effective in the global scope.
+
+
+\subsection{Lightweight Neural Networks}
+Lightweight neural network designs have been of high values for practical deployments.
+CNNs, Transformers, and MLPs have their own efficient designs. MobileNets series \cite{howard2017mobilenets,sandler2018mobilenetv2,howard2019searching} introduce depthwise and pointwise convolutions as well as modified architectures for improving the efficiency. Shufflenet series \cite{zhang2018shufflenet,ma2018shufflenet} further improve pointwise convolution via shuffle operations.  MobileViT \cite{mehta2021mobilevit} combines lightweight MobileNet block and multi-head self-attention blocks. Its follow-up versions further improve it with a linear-complexity self-attention method \cite{mobilevitv2}. Besides, there are many works reducing the complexity of self-attention via reducing the region of token mixing \cite{liu2021swin,chu2021twins,pan2022fast,li2022next} or various mathematical approximations \cite{guo2019low,xiong2021nystromformer,ma2021luna}. Many efficient MLPs limit the scope of token mixing to horizontal and vertical stripes \cite{zhang2022morphmlp,hou2022vision,tang2022sparse} or a manually designed region \cite{chen2021cyclemlp}.
+
+\subsection{Frequency-domain Deep Learning}
+\label{sec: related-freq}
+Frequency-domain analysis has been a classical tool for conventional signal processing \cite{baxes1994digital,pitas2000digital} for a long time. Recently, frequency-domain methods begin to be introduced to the field of deep learning for analyzing the optimization \cite{xu2019training,yin2019fourier} and generalization \cite{wang2020high,xu2018understanding} capabilities of Deep Neural Networks (DNNs). Besides these, frequency-domain methods are integrated into DNNs to learn non-local \cite{chi2020fast,rao2021global,li2020fourier,guibas2021adaptive} or domain-generalizable \cite{lin2022deep} representations. Our proposed method might be similar to them at first glance but actually differs from them in both modelling perspectives and architecture designs. These five works propose different frequency-domain operations by introducing convolutions \cite{chi2020fast}, elementwise multiplication with trainable network parameters \cite{rao2021global}, matrix multiplication with trainable parameters \cite{li2020fourier}, groupwise MLP layers \cite{guibas2021adaptive} and elementwise multiplication with spatial instance-adaptive masks \cite{lin2022deep} to frequency-domain representations, respectively. All of them are not designed for the same purpose with ours. We provide detailed mathematical analysis on their shortcomings as token mixers and conduct extensive experimental comparisons in the following sections.
+
+
+
+\begin{figure*}[!t]
+	\centering
+	\includegraphics[width=0.96\textwidth]{images/iccv_pipeline_final.pdf}
+	\caption{Illustration of our proposed \ourop~token mixer and its corresponding network \ours. The \ourop~token mixer is implemented by adaptive frequency filters at the bottom left and mathematically equals to the mixing operation at the bottom right. This operation can be viewed as token mixing with a large-kernel dynamic convolution where the kernel weights are inferred by the sub-network as shown in the bottom right sub-figure.}
+	\label{fig:framework}
+\end{figure*}
+
+\section{Method}
+
+We first describe a unified formulation of token mixing, then introduce our proposed Adaptive Frequency Filtering (\ourop) token mixer. We further analyze what properties matter for a frequency-domain operation in terms of its effects on token mixing. We finally introduce \ours~which is a lightweight backbone with \ourop~token mixer as its core.
+
+
+\subsection{Unified Formulation of Token Mixing}
+
+Token mixing is of high importance since learning non-local representations is critical for visual understanding \cite{wang2018non,dosovitskiy2020image,touvron2021training}. In most mainstream neural networks, the input image is firstly patchified into a feature tensor $\mathbf{X}\in \mathbb{R}^{H \times W \times C}$ whose spatial resolution is $H\times W$ and the number of channels is $C$. This feature tensor could be viewed as a set of tokens, in which each token can be denoted as $\mathbf{x}\in \mathbb{R}^{1 \times 1 \times C}$. The updated token for a query $\mathbf{x}^q$ after token mixing in its contextual region $\mathcal{N}(\mathbf{x}^q)$ can be formulated in a unified form:
+\begin{equation}
+    \hat{\mathbf{x}^q} = \sum_{i\in\mathcal{N}(\mathbf{x}^q)} 
+    \bm{\omega}^{i\rightarrow q} \times \phi(\mathbf{x}^i), 
+    \label{eq: token-mix}
+\end{equation}
+where $\hat{\mathbf{x}^q}$ refers to the updated $\mathbf{x}^q$ and $\mathbf{x}^i$ refers to the tokens in $\mathcal{N}(\mathbf{x}^q)$. $\phi(\cdot)$ denotes the embeding functions. $\bm{\omega}^{i\rightarrow q}$ represents the weights of information fusion from token $\mathbf{x}^i$ to the updated $\mathbf{x}^q$. The symbol $\times$ could be Hadamard product or matrix multiplication.
+
+We revisit the prevailing token mixing methods in different types of network architectures in terms of their effectiveness and efficiency. For CNNs, tokens are mixed by matrix multiplication with deterministic network parameters as the mixing weights. Here, the kernel sizes of convolutions determine the scopes of token mixing. This makes mixing in a global scope quite costly due to the quadratically increased parameters and FLOPs as the kernel size increases. Transformers mix tokens with pairwise correlations between query and key tokens. Its computational complexity is $\mathcal{O}(N^2)$ ($N$ is the total number of tokens), limiting its applications in lightweight networks. Like CNNs, MLPs also mix tokens with deterministic network parameters. The scope of token mixing in advanced MLPs \cite{chen2022cyclemlp,touvron2021resmlp,tolstikhin2021mlpmixer,zhang2021morphmlp} are commonly manually design, where the globality comes at the cost of huge computational complexity. They are all not specifically designed for lightweight neural networks.
+
+
+This work aims to deign a \textit{computationally efficient}, \textit{semantically adaptive} and \textit{global-scope} token mixer for lightweight networks. This requires a large $\mathcal{N}(\mathbf{x}^q)$ and instance-adaptive $\bm{\omega}^{i\rightarrow q}$ with less network parameters and low computation costs as possible.
+
+
+\subsection{Adaptive Frequency Filtering Token Mixer}
+\label{sec:AFF-token-mixer}
+
+We apply the convolution theorem \cite{mcgillem1991continuous,rabiner1975theory,oppenheim1999discrete} to deep learning for designing a token mixer with aforementioned merits for lightweight neural networks. 
+Based on this theorem, we reveal that \textit{adaptive frequency filters can serve as efficient global token mixers}. In the following, we introduce its mathematical modelling, architecture design and the equivalence between them for our proposed token mixer.
+
+
+\paragraph{Modelling.} To simplify understanding, we frame token mixing in the form of global convolution, succinctly denoted by $\mathbf{\hat{X}}=\mathcal{K}*\mathbf{X}$. For the query token at position $(h, w)$, \ieno, $\mathbf{X}(h, w)$, Eq.(\ref{eq: token-mix}) can be reformulated as:
+\begin{equation}
+    \mathbf{\hat{X}}(h, w) =\!\sum_{h'=-\lfloor \frac{H}{2}  \rfloor}^{\lfloor \frac{H}{2} \rfloor} \sum_{w'=-\lfloor \frac{W}{2} \rfloor}^{\lfloor \frac{W}{2} \rfloor} \mathcal{K}(h', w') \mathbf{X}(h-h', w-w'),
+    \label{eq: modelling-1}
+\end{equation}
+where $\mathbf{\hat{X}}(h, w)$ represents the updated token for $\mathbf{X}(h, w)$ after token mixing. $H$ and $W$ are the height and weight of the input tensor, respectively. $\mathcal{K}(h', w')$ denotes the weights for token mixing, implemented by a global convolution kernel which has the same spatial size with $\mathbf{X}$. The padding operation for $\mathbf{X}$ is omitted here for simplicity and the specific padding method is introduced in the subsequent parts.
+
+
+With the expectation for our proposed token mixer as a \textit{semantic-adaptive} and \textit{global-scope} one, the weights $\mathcal{K}$ for token mixing should be adaptive to $\mathbf{X}$ and of large spatial size. As illustrated by the lower right subfigure in Fig.\ref{fig:framework}, a straightforward way for enabling $\mathcal{K}$ adaptive to $\mathbf{X}$ is to implement it with a dynamic convolution kernel \cite{jia2016dynamic,chen2020dynamic,he2019dynamic,zhang2021accurate}, \ieno, inferring weights of $\mathcal{K}$ with $\mathbf{X}$ as the inputs of a sub-network. However, adopting dynamic convolutions is usually computational costly, even more so, when using large-kernel ones. This thus imposes big challenges in designing an efficient token mixer for lightweight networks along this way. Next, we introduce an efficient method as its equivalent implementation by making use of the convolution theorem \cite{mcgillem1991continuous}.
+
+\paragraph{Architecture.} The convolution theorem \cite{mcgillem1991continuous,oppenheim1999discrete,rabiner1975theory} for inverse Fourier transform  states that a convolution in one domain mathematically equals the Hadamard product in its corresponding Fourier domain. This inspires us to propose a lightweight and fast architecture (illustrated by the lower left part of Fig.\ref{fig:framework}) as an extremely efficient implementation of our modelling above.
+
+Given feature $\mathbf{X} \in \mathbb{R}^{H\times W \times C}$, \ieno, a set of tokens in the latent space, we adopt Fast Fourier Transform (FFT) to obtain the corresponding frequency representations $\mathbf{X}_{F}$ by $\mathbf{X}_{F} = \mathcal{F}(\mathbf{X})$. The detailed formulation of $\mathcal{F}(\cdot)$ is:
+\begin{equation}
+    \mathbf{X}_{F} (u, v) = \sum_{h=0}^{H-1} \sum_{w=0}^{W-1} \mathbf{X} (h, w) e^{-2\pi i(uh+vw)}.
+    \label{eq: fft}
+\end{equation}
+As indicated by Eq.(\ref{eq: fft}), features of different spatial positions in $\mathbf{X}_{F}$ correspond to different frequency components of $\mathbf{X}$. They incorporate global information from $\mathbf{X}$ with a transform of $\mathcal{O}(N\log N)$ complexity.
+
+
+We apply the aforementioned convolution theorem to achieve efficient global token mixing for $\mathbf{X}$ by filtering its frequency representation $\mathbf{X}_{F}$ with a learnable instance-adaptive mask. We further adopt inverse FFT to the filtered $\mathbf{X}_{F}$ for getting the updated feature representations $\mathbf{\hat{X}}$ in the original latent space. This process can be formulated as:
+\begin{equation}
+    \mathbf{\hat{X}} = \mathcal{F} ^{-1} [\mathcal{M}(\mathcal{F} (\mathbf{X})) \odot \mathcal{F} (\mathbf{X})],
+    \label{eq: aff}
+\end{equation}
+where $\mathcal{M}(\mathcal{F}(\mathbf{X}))$ is the mask tensor learned from $\mathbf{X}_{F}$, which has the same shape with $\mathbf{X}_{F}$. As shown in the lower left subfigure in Fig.\ref{fig:framework}, to make the network lightweight as possible, $\mathcal{M}(\cdot)$ is efficiently implemented by a group $1\times 1$ convolution (linear) layer, followed by a ReLU function and another group linear layer. $\odot$ denotes Hadamard product, also known as elementwise multiplication, and $\mathcal{F}^{-1}(\cdot)$ denotes inverse Fourier transform. Here, $\mathbf{\hat{X}}$ can be viewed as the results of global adaptive token mixing for $\mathbf{X}$, which is mathematically equivalent to adopting a large-size dynamic convolution kernel as the weights for token mixing. The equivalence is introduced in the following.
+
+\paragraph{Equivalence.}
+The convolution theorem still applies to the latent representations of neural networks. The multiplication of two signals in the Fourier domain equals to the Fourier transform of a convolution of these two signals in their original domain. When applying this to the frequency-domain multiplication in Fig.(\ref{fig:framework}), we know that:
+\begin{equation}
+    \mathcal{M}(\mathcal{F}(\mathbf{X})) \odot \mathcal{F} (\mathbf{X}) = \mathcal{F}\{\mathcal{F} ^{-1}[\mathcal{M}(\mathcal{F} (\mathbf{X}))] \ast \mathbf{X}\}.
+    \label{eq: conv-theorem}
+\end{equation}
+Combining Eq.(\ref{eq: aff}) and Eq.(\ref{eq: conv-theorem}), it is easy to get that:
+\begin{equation}
+    \mathbf{\hat{X}} = \mathcal{F}^{-1}[\mathcal{M}(\mathcal{F} (\mathbf{X}))] \ast \mathbf{X},
+    \label{eq: equivalent-token-mix}
+\end{equation}
+where $\mathcal{F}^{-1}(\mathcal{M}(\mathcal{F} (\mathbf{X})))$ is a tensor of the same shape with $\mathbf{X}$, which could be viewed as a dynamic depthwise convolution kernel as large as $\mathbf{X}$ in spatial. This kernel is adaptive to the contents of $\mathbf{X}$. Due to the property of Fourier transform \cite{mcgillem1991continuous}, a circular padding is adopted to $\mathbf{X}$ here as shown in Fig.\ref{fig:framework}. So far, we understand why the operation in Eq.(\ref{eq: aff}) mathematically equals to a global-scope token mixing operation with semantic-adaptive weights.
+
+\subsection{Analysis}
+\label{sec:analysis}
+
+As introduced in Sec.\ref{sec: related-freq}, there have been some studies applying frequency-domain methods to DNN for learning non-local or domain-generalizable representations in previous works \cite{chi2020fast,rao2021global,li2020fourier,guibas2021adaptive,lin2022deep}. They are all designed for different purposes with ours. In this section, we revisit the frequency-domain operations in these works from the perspective of token mixing and compare our design with them.
+
+
+FFC~\cite{chi2020fast} and AFNO~\cite{guibas2021adaptive} adopt linear (also known as $1\!\times\!1$ convolution) layers with non-linear activation functions to the representations in the frequency domain. Specifically, AFNO~\cite{guibas2021adaptive} adopt a linear layer followed by a ReLU function, another linear layer and a SoftShrink\footnote{\url{https://pytorch.org/docs/stable/generated/torch.nn.Softshrink.html}} function to the frequency representations after Fourier transforms, which can be briefly described as \textit{FFT$\to$Linear$\to$ReLU$\to$Linear$\to$SoftShrink$\to$iFFT}. Here, linear layer and Fourier transform are in fact commutative, \ieno, $\operatorname{Linear}(\mathcal{F}(\mathbf{X}))\!=\!\mathcal{F}(\operatorname{Linear}(\mathbf{X}))$, which can be proved with the distributive property of matrix multiplication by:
+\begin{equation}
+\begin{split}
+    &\ \mathbf{W}_{Linear} \sum_{h=0}^{H-1} \sum_{w=0}^{W-1} \mathbf{X}(h, w) e^{-2\pi i(uh+vw)} \\
+    = &\ \sum_{h=0}^{H-1} \sum_{w=0}^{W-1} \left(\mathbf{W}_{Linear} \mathbf{X}(h, w)\right) e^{-2\pi i(uh+vw)},
+\end{split}
+\label{eq: commutative}
+\end{equation}
+where $\mathbf{W}_{Linear}$ denotes the parameters of a linear layer. We know that successive Fourier transform and its inverse transform equal to an identity function. Thus, the architecture of AFNO could be rewrote as: \textit{FFT$\to$Linear$\to$ReLU$\to$\\(iFFT$\to$FFT)$\to$Linear$\to$SoftShrink$\to$iFFT}. Upon the commutative law proved in Eq.(\ref{eq: commutative}), we can know this architecture is in fact equivalent to \textit{Linear$\to$\textbf{FFT$\to$ReLU$\to$iFFT}\\$\to$Linear$\to$\textbf{FFT$\to$SoftShrink$\to$iFFT}}. Now, it is easy to find that only ReLU and SoftShrink functions remain in the Fourier domain. These two deterministic functions cannot achieve semantic-adaptive filtering as our proposed \ourop~token mixer does. The same problem also exists in FFC~\cite{chi2020fast}.
+
+GFNet~\cite{rao2021global} and FNO~\cite{li2020fourier} multiply the representations after Fourier transforms with trainable network parameters. GFNet~\cite{rao2021global} adopts elementwise multiplication while FNO~\cite{li2020fourier} uses matrix multiplication. Both of them are not semantic-adaptive since the masks implemented by network parameters are shared over different instances and fixed after training. Besides, they cannot support for variable-size inputs since the shapes of these masks are fixed, leading to the lack of flexibility in their practical using.
+
+
+
+
+
+\begin{table}[t]
+  \centering
+  \resizebox{\linewidth}{!}{
+    \begin{tabular}{l|cccccc}
+    \toprule
+    \multicolumn{1}{c|}{Properties} & FFC & AFNO & \!GFNet\! & FNO & DFF & Ours \\
+    \midrule
+    Semantic-adaptive &   \ding{55}     & \ding{55}   &    \ding{55}   &   \ding{55}    &   \ding{51}    & \ding{51} \\
+    Variable-size input & \ding{51} & \ding{51} & \ding{55}  & \ding{55}  & \ding{51} & \ding{51} \\
+    Channel-wise mix &  \ding{51}      &  \ding{51}     &   \ding{51}    &   \ding{51}    &  \ding{55}     & \ding{51} \\
+    \bottomrule
+    \end{tabular}%
+    }
+    \vspace{+1.6mm}
+    \caption{Comparisons of our proposed \ourop~token mixer with other frequency-domain neural operators in terms of three important properties for token mixing.}
+  \label{tab:compare-operations}%
+\end{table}%
+
+DFF~\cite{lin2022deep} learns a spatial mask to filter out frequency components that are not conductive to domain generalization. It is proposed for domain generalization problems in which only spatial mask is needed as studied in~\cite{lin2022deep} since different spatial position of the features after a Fourier transform correspond to different frequency components. However, it is not competent as a token mixer since the learned mask is shared along the channel dimension. This means that the weights for its equivalent token mixing are shared for different channels. However, different channels commonly represent different semantic attributes \cite{bau2020understanding,wu2021stylespace}, thus requiring adaptive weights in token mixing.
+
+We summarize the comparisons of different frequency-domain designs in terms of three important properties for token mixing in Table \ref{tab:compare-operations}. The results of experimental verification are in Table \ref{tab:freq_operations} as follows.
+
+
+\subsection{Network Architectures}
+
+With our \ourop~token mixer as the core neural operator, we introduce its corresponding module and network design.
+
+\paragraph{\ourblock}
+For the output $\mathbf{X}^{l-1}$ of the ($l\!-\!1$)-th \ourblock, we adopt the commonly used module MBConv~\cite{mobilevitv2,tan2019efficientnet,tan2021efficientnetv2,mehta2021mobilevit,tu2022maxvit} with Layer Normalization (LN) for channel mixing, then feed it to our proposed \ourop~token mixer for global token mixing to get the output of $l$-th \ourop~block. Skip-connections for channel mixing and token mixing are adopted to facilitate model training. The entire architecture of \ourblock~can be formulated as:
+
+\begin{equation}
+\begin{split}
+    & \hat{\mathbf{X}}^l=\operatorname{MBConv}^l\left(\operatorname{LN}\left(\mathbf{X}^{l-l}\right)\right)+\mathbf{X}^{l-l} \\
+    & \mathbf{X}^l=\operatorname{\ourop}^l\left(\operatorname{LN}\left(\hat{\mathbf{X}}^l\right)\right)+\hat{\mathbf{X}}^l
+\end{split}
+\label{eq: block}
+\end{equation}
+
+
+\paragraph{\ours} 
+We stack multiple \ourop~blocks for constructing a lightweight backbone network, namely \ours, as shown in Fig.\ref{fig:framework}. Following the common practices \cite{mehta2021mobilevit,mobilevitv2}, we employ a convolution stem for tokenization and a plain fusion for combining local and global features at each stage. We build three versions of \ours~with different numbers of channels, yielding different parameter scales. \ours~and its tiny (\ours-T) and extremely tiny (\ours-ET) versions have 5.5M, 2.6M and 1.4M parameters, respectively. Their detailed configurations are i
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

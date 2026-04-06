@@ -1,0 +1,252 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+We focus on the image-goal navigation (ImageNav) task~\cite{imagenav} that requires an agent to navigate to an image-specified goal position and face the same orientation as where the photo is taken. In this task, the agent needs to explore the environment and try to find the objects with their surroundings that best match the ones specified in the goal image. 
+\camrdy{Though humans prefer to share information using language, an image is a much clearer and more detailed description to specify a goal location or an intermediate landmark for some household robots~\cite{VTVN} or self-driving vehicles.} 
+
+Despite its wide applications, this task is still very challenging for the embodied agent due to the following two aspects.
+First, compared to object-goal navigation which assigns goal descriptions with specific semantic categories, it requires the agent to perceive the visual observation as well as the goal image and make a comprehensive understanding of the scene in order to identify goal-relevant objects. %\ph{to be refined}
+Second, objects share similar semantic meanings within one environment, making it challenging to accurately find out the desired object instance.
+
+Previous methods~\cite{ORB-SLAM,ANL,NRNS,NTS,SPTM,Active-Neural-SLAM,EMPNet} seek to solve this task by decomposing the navigation system into several modules in isolation. In general, they tend to adopt efficient exploration skills to build a map incrementally as the understanding of the scene, and further predict a waypoint to navigate to.
+However, these map-based methods require depth maps or the agent's GPS position to build the occupancy map or topological map. The latest methods~\cite{CRL,Mem-Aug,ZER,ZSON,OVRL,OVRL-V2} instead try to learn a navigation policy in an end-to-end manner using reinforcement learning. These methods set up two different encoders to obtain semantic embeddings from goal and observation images independently. Subsequently, a recurrent model takes these embeddings as input to predict a possible action sequence. However, they suffer from two major limitations: 
+1) As the details in the goal image are gradually overlooked as it goes through deeper network layers, it is harder to find useful cues for reasoning and finding the goal location.
+2) Existing methods leave the goal image apart from the observation when performing encoding, it is hard for the agent to focus on the goal-relevant regions in the observation since there is no goal prompting to guide the agent to understand the observation.
+\begin{figure}
+\centering
+\begin{subfigure}[b]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{fig/cross_domain.pdf}
+    \caption{Success rate comparison with \textit{baseline} (ZER~\cite{ZER}) on three different datasets. Our method performs efficiently and robustly in both seen (\textit{i.e.}, Gibson) and unseen (\textit{i.e.}, MP3D and HM3D) environments. }
+    \label{fig:cross-domain}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.98\textwidth]{fig/model_size.pdf}
+    \caption{Comparison with SOTA both on success rate and the number of parameters. the \sexyname-EF, an early fusion variant of our method, achieved 90.4\% success rate with only 1/50 model size compared to SOTA.}
+    \label{fig:model-size}
+\end{subfigure}
+\caption{Main results of our proposed \sexyname on the image navigation task.}
+\label{fig:teaser}
+\end{figure}
+When people try to find a place captured in an image, they must look for the contextual cues presented with objects, shapes, colors, and textures in both the goal images and current visual observation. Spatial reasoning based on this information plays a critical role in understanding the scene, as people always compare and identify similarities, in order to consider the relative position of various elements and gain insights into the current position and the target location. 
+Motivated by this fact, instead of considering only semantic features of goal and observation images, 
+we propose a novel fine-grained goal prompting (\textbf{\sexyname}) architecture to learn observation embeddings conditioned on the fine-grained and high-resolution features of the goal image.
+
+Specifically, we implement the goal prompting scheme as a fusion process between the goal and observation images and design a mid fusion ({\sexyname-MF}) mechanism. This mechanism leverages fine-grained and high-resolution feature maps in the intermediate goal network layers as the prompts, which are proven to contain informative object details~\cite{understandFeat,ND_tpami}. 
+Hereafter, conditioned on these feature maps, we utilize FiLM~\cite{FiLM} layers to learn a transform function to adjust the observation activations to focus on goal-relevant objects. 
+In addition, we also design an early fusion ({\sexyname-EF}) mechanism by concatenating the goal and observation images at the pixel level. We then use a neural network to perform implicit information exchange.
+Experimental results show that our proposed method significantly outperforms state-of-the-art methods, as shown in Figure~\ref{fig:teaser}.
+To sum up, our contributions are as follows: 
+\camrdy{1) We propose a fine-grained image goal prompting (FGPrompt) architecture to explicitly exchange fine-grained information between goal image and observation image, reaching a new SOTA of the ImageNav task and also showing great potential in some other embodied tasks including instance image navigation and visual rearrangement tasks.
+2) We empower the agent with fine-grained information exchangeability through a simple channel concatenation technique. This scheme is parameter efficient yet shows an absolute advantage on the ImageNav task, even compared to some complex memory graph-based methods.
+3) We dedicately design a mid-fusion scheme through a novel fine-grained FiLM mapping module to perform a more robust information exchange. This scheme shows superior performance in more practical scenarios where the goal image possesses different camera parameters from the observation.}
+
+
+
+Related Work
+\paragraph{Modular methods.}
+Modular methods leverage strictly defined modules that are handcrafted~\cite{SPTM,VTVN} or learnable~\cite{ANL,NRNS,CMP,NTS,SPTM,Active-Neural-SLAM,EMPNet,active-cam} to address the image-goal navigation task step by step.
+Classical modular methods typically combine the exploration~\cite{FBE} component, simultaneous localization and mapping (SLAM~\cite{Hugh-SLAM-2006,Thrun-Probabilistic-2002}) component, and path planning component to achieve the navigation goal. In order to localize the agent in an unknown environment, some approaches build an explicit metric map of the environment~\cite{ANL,NRNS}, while others propose to obtain an implicit latent map~\cite{CMP} like a topological map~\cite{NTS,SPTM} or simply adopt object detectors without mapping~\cite{Habitat-Web}. 
+Chaplot~\etal~\cite{Active-Neural-SLAM} and Avraham~\etal~\cite{EMPNet} train supervised deep models to tackle the sub-tasks, which require a lot of annotated data. Although off-the-shelf modules can be used with zero fine-tuning~\cite{VTVN}, they still heavily rely on pose and depth sensors, which greatly limits their applicability in the real world.
+\paragraph{RL-based navigation.}
+Another pipeline for ImageNav is to directly learn from interactions with the environment using reinforcement learning (RL). RL-based navigation tends to learn an end-to-end reward-driven policy that maps observation to action~\cite{OVRL,OVRL-V2,ZER,ZSON,Mem-Aug,A2Nav} and shows great potential in this task. 
+However, these methods still face the challenge of the sparse reward mechanism and poor generalization performance. To address these issues, previous works~\cite{CRL,ZER,ZSON,lily} propose different methods to encourage the agent to explore more efficiently. Yu~\etal~\cite{CRL} combines RL policy and visual representation learning model in a min-max game way to incentivize the agent to explore its environment. 
+Al-Halah~\etal~\cite{ZER} proposes a zero-shot transfer learning approach with a novel reward for its semantic search policy. Similarly, Majumdar~\etal~\cite{ZSON} uses a CLIP model pre-trained in self-supervised manner~\cite{clip,mme,rspnet} to enhance image embedding. 
+To tackle the long-horizon planning problem, an external memory module has been proposed by~\cite{Mem-Aug,SMT,neuralPlanner,SPTM,VGM,TSGM,ws-mgmap} that learns a topological graph~\cite{SMT,neuralPlanner,SPTM,VGM,TSGM} or attention map~\cite{Mem-Aug} online.
+Self-supervised learning paradigm has also been explored by Yadav~\etal~\cite{OVRL,OVRL-V2} to endow the navigation model with better representation ability. Different from existing approaches, we proposed a goal-prompted observation understanding method that learns to focus on goal-relevant objects through fine-grained goal prompts.
+
+\paragraph{Goal-conditioned learning.}
+Existing RL-based navigation methods can be interpreted as learning a goal-conditioned policy, since they only perform fusion on the latent goal embedding and observation embedding. Only semantic-level information can be exchanged during fusing. 
+Some embodied robot planning methods~\cite{RT-1,stone2023open,BC-Z,Del-TaCo} learn a goal-conditioned observation encoder by injecting the goal embedding into it. Stone~\etal~\cite{stone2023open} and Brohan~\etal~\cite{RT-1} only consider the language as the goal description, while Jang~\etal~\cite{BC-Z} and Yu~\etal~\cite{Del-TaCo} try to fuse the goal image with the intermediate feature maps of observation encoder using an affine transformation proposed by FiLM~\cite{FiLM}. However, they still focus on the latent embedding of goal images and neglect the fine-grained information in high-resolution activation maps. In this paper, we propose to make use of the intermediate activations in the goal encoder as informative guidance to condition the learning of the observation encoder.
+
+
+
+Image Goal Navigation using Fine-Grained Goal Prompting
+
+\subsection{Task definition}
+Image-goal navigation (ImageNav) requires an agent to navigate to a goal position that matches where the goal image $v_g$ was shot. Specifically, the agent starts at a random location $p_0$ and only receives a goal image $v_g$ from the environment. At each time step $t$, the agent receives an egocentric RGB image $v_t$ captured by a RGB sensor fixed on its body, and executes an action $a_t$ conditioned on $v_t$ and $v_g$. In RL-based methods, the action $a_t$ is selected based on the learned policy. After performing the action $a_t$, the agent will be assigned a reward $r_t$ that encourages the agent to reach the goal position as soon as possible. A more detailed definition of our setup can be found in Section~\ref{sec:exp-implement}.
+
+Existing RL-based methods tackle the ImageNav problem by learning an observation encoder and a goal encoder separately, and then fusing their output embeddings together. As shown in Figure~\ref{fig:methods} (a), this fusion module is commonly equipped on most of the baseline methods.
+However, those embeddings preserve little detailed information, \eg, shape, texture, and spatial relationship, to promote finding and comparing objects relevant to the goal image~\cite{ND_tpami,understandFeat}. To tackle this challenge, we propose to leverage fine-grained information from lower-level goal image features as prompts to promote the agent's ability to focus more on goal-relevant objects. 
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{fig/methods.pdf}
+    \caption{
+    \textbf{Illustration of baseline fusion (a) and our goal prompting  (b, c, d) for image-goal navigation}. All these methods take observation and goal images as input and output fused features.
+    }
+    \label{fig:methods}
+\end{figure}
+
+\subsection{Fine-grained Goal Prompting}
+\label{sec:method-fusion} 
+We design and explore three different fine-grained goal prompting methods that vary from fusion mechanism, namely \textbf{Early Fusion}, \textbf{Mid Fusion}, and \textbf{Skip Fusion}. 
+For the first early fusion mechanism, we investigate injecting fine-grained information from the goal encoder through a simple but effective channel concatenation. After that, we delicately design an explicit information flow through a novel fine-grained FiLM mapping module. Finally, we replace the learnable modules with a heuristic one that injects goal-relative features using feature matching.
+\paragraph{Early Fusion via Joint Modeling.}
+\camrdy{A naive solution to exchange information in two images is to directly concatenate them together before input to the encoder.} In this way, we are able to fuse fine-grained image details in the very early stage and jointly model them using the same encoder.
+In particular, we concatenate the goal image with the observation image on the RGB channel dimension, resulting in an input tensor shaped $128\times128\times6$. This concatenated tensor is then fed into a ResNet encoder that takes the 6-channel image as input. In this case, the fusion mechanism can be written as:
+\begin{equation}
+    z_{fusion} = f_o(v_o \oplus v_g)
+\end{equation}
+
+\camrdy{This simple design yields a promising performance on the image navigation benchmark. Detailed ablation on this early fusion operation can be found in Section~\ref{sec:fusion}.}
+
+\paragraph{Mid Fusion via FiLM Layers.}
+\camrdy{However, as the early fusion mechanism enables spatial reasoning between two images using an identical convolution kernel, it is difficult to handle the situation when the orientation of the goal camera is noisy. }
+To alleviate this, we further propose an active fusion scheme, utilizing the adaptability of a novel fine-grained FiLM mapping module.
+Previous literature~\cite{BC-Z,Del-TaCo} inputs the goal embedding into the ResNet visual backbone via FiLM~\cite{FiLM} layers, which adapt a learnable affine transformation conditioned on the input embedding to the intermediate activation maps in each residual blocks. Through these layers, we can easily connect the intermediate layers in both the goal encoder and the observation encoder to perform mid fusion. 
+
+Different from the existing approaches that leverage abstract language embedding as a global condition for all layers, we propose to use the hierarchical representations from the intermediate goal encoder layers. This allows us to make good use of the fine-grained information in high-resolution feature maps. Specifically, we perform FiLM affine transformation on the resnet blocks of the observation encoder, where the affine factors $\beta_{\cdot,\cdot}^i,\gamma_{\cdot,\cdot}^i$ in block $i$ are conditioned on the shaped activation map $z_g^i$ from the correspondent block of the goal encoder. This process can be formulated as:
+\begin{equation}
+    \gamma_c^i=f_c(z_g)\quad \beta_c^i=h_c(z_g)
+    \label{eq:mapping}
+\end{equation}
+\begin{equation}
+    \hat{z}_o^{i}=\gamma_c^i z_o^{i}+\beta_c^i
+\end{equation}
+where $\hat{z}_o^i$ denotes a transformed activation map in block $i$ and $c$ denotes the $c^{th}$ feature of the feature map. The functions $f$ and $h$ learn to map the condition variable into the affine factors. In practice, we implement them as $1\times1$ convolutions to maintain the same resolution between the input and target activation map. Section~\ref{sec:ablation-film} further investigates the choices of the mapping function and the number of FiLM layers.
+The output from the conditioned observation encoder $f_o$ can then be viewed as the fused feature $z_{fusion}$, as shown in Figure~\ref{fig:methods} (c). The fused feature can be written as:
+\begin{equation}
+    z_{fusion} = f_o(v_o|v_g)
+\end{equation}
+
+\camrdy{Our experiments in Section~\ref{sec:robust} reveal that the mid fusion scheme performs more robustly when the configuration of the goal camera and the observation camera is not perfectly matched. }
+
+\paragraph{Skip Fusion via Keypoint Matching.}
+In order to evaluate the importance of the addition of the fusion modules, We finally replaced the aforementioned learnable modules with a heuristic one.
+To achieve this, we follow the idea of Wasserman~\etal~\cite{lastmile} that attach an additional low-level fusion module using handcrafted keypoint matching methods~\cite{SIFT,Superglue}, as an improvement of the Late Fusion baseline. 
+We name this mechanism Skip Fusion as it fuses the goal image and observation image in the both early and later stages but skip the others, as shown in Figure~\ref{fig:methods} (b).
+
+Keypoint matching, which aims to discover representative keypoints in an image and then describe and match them with the most similar ones in another image. As these points are detected based on the low-level statistic~\cite{SIFT, HOG} of image pixels, we leverage them to play a role as low-level fusion. This scheme is handcrafted as it is not learnable during training.
+To enable batch inference, we leverage a deep learning-based keypoint detecting~\cite{Superpoint} and a matching~\cite{Superglue} method to obtain matched keypoint between the goal image and the observation image. Hereafter, we select top-k matched points according to their matching score to compose a variable $z_k$ and concatenate them together with $z_g$ and $z_o$ as the fusion result:
+\begin{equation}
+    z_{fusion} = z_g \oplus z_o \oplus {\rm FC}(z_k)
+\end{equation}
+where $z_k=(x_1,y_1,x_1',y_1',...,x_k,y_k,x_k',y_k')$ is a flattened vector of $k$ keypoints \camrdy{and FC denotes to a fully connected layer}. The default value \camrdy{of vector $z_k$} is set to $-1$ if the number of matched keypoints is less than k. \camrdy{In Section~\ref{sec:ablation-film}, we show the superiority of our proposed Early Fusion and Mid Fusion schemes against this heuristic fusion baseline.}
+
+\subsection{Navigation Policy}
+Based on the fused embedding $z_{fusion}$ of the goal image and observation image, we train a navigation policy $\pi$ using reinforcement learning (RL):
+\begin{equation}
+    s_t = \pi(z_{fusion}\oplus a_{t-1}|h_{t-1})
+\end{equation}
+where $s_t$ is the embedding of the agent's current state. $h_{t-1}$ denotes hidden state of the recurrent layers in policy $\pi$ from previous step. Following previous methods~\cite{ZER, ZSON}, we adopt an actor-critic network to predict state value $c_t$ and action $a_t$ using $s_t$ and train it end-to-end using PPO~\cite{PPO}. We utilize the ZER reward~\cite{ZER} to encourage the agent to not only reach the goal position but also face the goal orientation.
+
+
+
+Experiments
+\label{sec:exp-implement}
+\paragraph{Datasets.}
+\camrdy{As for image-goal navigation,} we use the Habitat simulator~\cite{habitat,habitat2} and train our agent on the Gibson dataset with 72 training scenes and 14 testing scenes under the standard setting. We use the training episodes provided by~\cite{Mem-Aug} and train our agent for 500M steps. We report results under multiple datasets to allow direct comparison to various prior works. On the Gibson dataset, we validate our agent on split A generated by~\cite{Mem-Aug}, and split B generated by~\cite{NRNS}. On the MP3D and HM3D, we use the test episodes collected by~\cite{ZER}, \camrdy{as well as the instance image navigation dataset released by~\cite{iin}. We also extend our method to another embodied task named visual rearrangement, where we use the iTHOR simulator and ai2thor-rearrangement 2023 dataset with 80 training scenes, 20 validation scenes and 20 test scenes. Following ~\cite{weihs2021visual}, we train our agent for 75M steps and finally test the best validation checkpoint on the test set.}
+
+\paragraph{Agent configuration.}
+We follow the recipe of previous trails~\cite{ZER, ZSON, OVRL} to initialize an agent equipped with only RGB cameras of $128\times128$ resolution and $90^\circ$ FOV. When compared with methods that use a panoramic input, we initialize four RGB sensors to the front, left, right, and back directions of the agent, following~\cite{Mem-Aug,OVRL}. The agent's action space is comprised of four discrete actions, including {MOVE\_FORWARD, TURN\_LEFT, TURN\_RIGHT, STOP}. The minimum units of rotation and forward movement are $30^\circ$ and 0.25m respectively.
+
+\paragraph{Evaluation metrics.}
+We report the success rate (SR) and Success weighted by Path Length (SPL)~\cite{SPL}, which takes into account path efficiency of the navigation process.
+An episode is considered successful if  the agent stops within 1.0m Euclidean distance from the goal location and the maximum number of steps in an episode is set to 500 as the default setting.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Method        & Backbone & Pretrain & Sensor(s) & Memory & Split & SPL           & SR            \\ \midrule
+NTS~\cite{NTS}          & ResNet9         & N/A             & RGBD+Pose & \tiny\XSolidBrush & A & 43.0\%          & 63.0\%          \\
+Act-Neur-SLAM~\cite{Active-Neural-SLAM} & ResNet9         & N/A             & RGB+Pose  & \tiny\XSolidBrush & A & 23.0\%          & 35.0\%          \\
+SPTM~\cite{SPTM}        & ResNet9         & N/A             & RGB+Pose  & \tiny\XSolidBrush & A & 27.0\%          & 51.0\%          \\
+\midrule
+ZER~\cite{ZER}          & ResNet9         & N/A             & RGB       & \tiny\XSolidBrush & A & 21.6\%          & 29.2\%          \\
+ZSON~\cite{ZSON}        & ResNet50        & OSD             & RGB       & \tiny\XSolidBrush & A & 28.0\%          & 36.9\%          \\
+OVRL~\cite{OVRL}        & ResNet50        & OSD             & RGB       & \tiny\XSolidBrush & A & 27.0\%          & 54.2\%          \\
+OVRL-V2~\cite{OVRL-V2}  & ViT-Base        & HGSP            & RGB       & \tiny\XSolidBrush & A & 58.7\%          & 82.0\%          \\
+\textbf{\sexyname-MF (Ours)}    & ResNet9         & N/A             & RGB       & \tiny\XSolidBrush & A & 62.1\% & 90.7\% \\
+\textbf{\sexyname-EF (Ours)}    & ResNet9         & N/A             & RGB       & \tiny\XSolidBrush & A & 66.5\% & 90.4\% \\
+\textbf{\sexyname-EF (Ours)}    & ResNet50        & N/A             & RGB       & \tiny\XSolidBrush & A & \textbf{68.5\%} & \textbf{92.3\%} \\
+\midrule
+Mem-Aug~\cite{Mem-Aug}  & ResNet18        & N/A             & 4 RGB     & \checkmark & A & 56.0\%          & 69.0\%          \\
+VGM~\cite{VGM}          & ResNet18        & N/A             & 4 RGB     & \checkmark & A & 64.0\%          & 76.0\%          \\
+OVRL~\cite{OVRL}        & ResNet50        & OSD             & 4 RGB     & \tiny\XSolidBrush & A & 62.5\%          & 79.8\%          \\
+TSGM~\cite{TSGM}        & ResNet18        & N/A             & 4 RGB     & \checkmark & A & 67.2\%          & 81.1\%          \\
+\textbf{\sexyname-EF (Ours)}    & ResNet9         & N/A             & 4 RGB     & \tiny\XSolidBrush & A & \textbf{75.0\%} & \textbf{94.2\%} \\
+\midrule
+NRNS~\cite{NRNS}        & ResNet18        & N/A             & RGBD      & \tiny\XSolidBrush & B & 12.4\%          & 24.0\%          \\
+\textbf{\sexyname-EF (Ours)}   & ResNet9         & N/A             & RGB       & \tiny\XSolidBrush & B & \textbf{70.5\%} & \textbf{93.0\%} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Comparison with state-of-the-art methods on Gibson}. All methods are trained and evaluated both on the Gibson dataset.}
+\label{tab:sota-gibson}
+\end{table}
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\multirow{2}{*}{Methods} & \multirow{2}{*}{Backbone} & \multicolumn{2}{c}{MP3D} & \multicolumn{2}{c}{HM3D} \\ \cmidrule(l){3-6} 
+                         &                                 & SPL         & SR         & SPL         & SR         \\ \midrule
+Mem-Aug~\cite{Mem-Aug}   & Resnet18                        & 3.9\%         & 6.9\%        & 3.5\%         & 1.9\%        \\
+NRNS~\cite{NRNS}         & Resnet18                        & 5.2\%         & 9.3\%        & 4.3\%         & 6.6\%        \\
+ZER~\cite{ZER}           & Resnet9                         & 10.8\%        & 14.6\%       & 6.3\%         & 9.6\%        \\
+\textbf{\sexyname-MF (Ours)}            & Resnet9                         & \textbf{50.4\%}& \textbf{77.6\%}& \textbf{49.6\%}& \textbf{76.1\%}\\ \bottomrule
+\end{tabular}
+\caption{\textbf{Cross-domain evaluation on MP3D and HM3D}. The agent is trained in Gibson environments and directly transferred to new environments for evaluation.}
+\label{tab:cross-domain}
+\end{table}
+\subsection{Comparison with State-of-the-art Methods}
+\paragraph{Evaluation on Gibson.}
+In Table~\ref{tab:sota-gibson}, we report the ImageNav results on Gibson averaged over three random seeds (the variances of all random seed results are less than 1e-4.). We compare our methods with state-of-the-art methods in two different settings, one takes only one RGB sensor as input following~\cite{ZER,ZSON,OVRL} and another one takes 4 RGB sensors to assemble a panoramic view following~\cite{Mem-Aug,OVRL}. 
+For the SLAM-based methods in the first three rows, we report the number reproduced by Mezghani \etal~\cite{Mem-Aug}.
+We found that our proposed \sexyname-MF and \sexyname-EF methods take an absolute advantage compared with all previous methods. Even compared to OVRL-V2~\cite{OVRL-V2}, a method that utilizes a much larger visual backbone (ViT-B) pre-trained on an in-domain image dataset, we still achieved large performance gains on both SR (92.3\% vs. 82.0\%) and SPL (68.5\% vs. 58.7\%) in the absence of additional pose sensor input. This finding reveals the effectiveness and efficiency of our proposed method.
+
+We extend our \sexyname-EF to the panoramic view setting (4 RGB) for direct comparison with some memory-based methods~\cite{Mem-Aug,VGM,TSGM} and pre-trained method~\cite{OVRL}. 
+We found that our \sexyname-EF outperforms these memory-based methods by at least 13.1\% in success rate and 7.8\% in SPL, even without additional external memory module and pre-training phase. Besides, we also provide a comparison result on the non-mainstream testing episodes (split B) following~\cite{NRNS}. Compared with the self-supervised method NRNS~\cite{NRNS} that pretrained on passive videos, our \sexyname-EF brings 58.1\% improvement in success rate and 69.0\% in SPL, which shows a great advantage by learning to understand the scene based on goal prompting through interacting with the environment.
+\paragraph{Cross-domain evaluation on out-of-domain datasets.}
+In Table~\ref{tab:cross-domain}, we report the cross-domain evaluation results on the unseen scenes in the Matterport3D (MP3D)~\cite{MP3D} and HM3D~\cite{HM3D} to verify the generalization ability. Following~\cite{ZER}, we directly transfer our model trained on Gibson to these two new datasets, without any tuning. Since there exists a very large domain gap between these datasets (\eg more complex and larger scenes in MP3D and diverse scene types in HM3D), this setting is extremely challenging. We leverage the testing episodes released by ZER~\cite{ZER}. 
+Compared with the baseline method ZER, our fine-grained goal prompting method brings $7\times$ improvements in the success rate, which shows the generalization ability of our method.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Setting                                  & SPL    & SR     \\ \midrule
+Later Fusion (baseline)                  & 11.2\% & 13.0\% \\
+\midrule
+Skip Fusion via keypoint matching (\sexyname-SF) & 24.7\% & 41.6\% \\
+Mid Fusion via FiLM layers (\sexyname-MF)        & 50.4\% & 77.3\% \\
+Early Fusion via joint modeling (\sexyname-EF)   & \textbf{54.7\%} & \textbf{78.9\%} \\ \bottomrule
+\end{tabular}
+\caption{\textbf{Comparison of different goal prompting methods on Gibson ImageNav task}. Fusing the fine-grained goal prompts with the observation instead of directly concatenating their semantic embeddings yield significant improvement.}
+\label{tab:fusion}
+\end{table}
+\subsection{Ablation Study}
+In this section, we first compare the effectiveness of different variants of our method on the ImageNav task.
+Then we present the detailed ablation of each method to empirically discover their best implementation. For convenience and fairness, all variants in the ablation study are trained for 50M steps on the Gibson dataset.
+\label{sec:fusion}
+\paragraph{Comparing different goal prompting methods.}
+We first compare the proposed goal prompting variants on the image-goal navigation task. As shown in Table~\ref{tab:fusion}, the Skip Fusion (\sexyname-SF) variant, integrated fine-grained information by simply adding a keypoint matching-based fusion module to the baseline, performs significantly better (from 14.0\% to 41.4\%). 
+This reveals that fine-grained goal prompting is important.
+However, this heuristic method does not work when there is no matched area in the observation.
+The other two variants further tackle this problem by learning a joint-modeling framework.
+In detail, the Mid Fusion (\sexyname-MF) mechanism leverages the intermediate activation maps with varied resolutions to perform goal prompting. 
+As a result, this variant further increases the navigation success rate by 27.2\%. Besides, as a simplified version of our proposed Mid Fusion mechanism, the Early Fusion mechanism enables an implicit fusion process through jointly modeling the goal and observation images. 
+In Table~\ref{tab:fusion}, this simple but ingenious design brings a further improvement (4.3\% in SPL) compared to the Mid Fusion mechanism which is well-designed and ablated. We attribute this to its adaptive and learnable fusion fashion. 
+\begin{table}[t]
+    \small
+    \begin{minipage}{0.5\textwidth}
+    \centering
+    \makeatletter\def\@captype{table}
+        \begin{tabular}[t]{@{}lcc@{}}
+        \toprule
+        Mapping Method   & SPL    & SR     \\ \midrule
+        N/A              & 11.2\% & 13.0\% \\
+        Semantic Mapping & 24.0\% & 32.0\% \\
+        FG/HR Mapping    & \textbf{50.4\%} & \textbf{77.3\%} \\ \bottomrule
+        \end{tabular}
+        \caption{\textbf{How to map activation into aff
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

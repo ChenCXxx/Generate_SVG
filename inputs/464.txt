@@ -1,0 +1,338 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+With the rising popularity of conversational digital assistants, it is imperative for dialogue systems to integrate new services while sustaining proficiency in prior tasks seamlessly. Traditional research, often conducted within specific domains offline, falls short in adaptability to new scenarios~\cite{ni2023recent}. 
+Retraining pre-trained language models (PLMs) from scratch is both challenging and resource-intensive~\cite{liu2023good}, highlighting the necessity for efficient continual learning (CL) approaches in dialogue systems~\cite{ke2022continual}. 
+Dialogue state tracking (DST), crucial for task-oriented dialogue systems, dynamically updates (domain, slot, value) triplets to capture user intentions precisely. The urgent demand for advancing DST models to accommodate emerging services has catalyzed the development of the Continual DST task~\cite{cho2023continual}.
+
+An effective Continual DST system must address the issue of catastrophic forgetting~\cite{mccloskey1989catastrophic}, where a model's proficiency in old tasks diminishes after learning new ones. It should also promote knowledge transfer (KT)~\cite{ke2021achieving} across domains\footnote{In this work, different \textit{domains} in Continual DST are equivalent to different \textit{tasks} in CL.} to enhance end-task performances. Knowledge transfer includes forward transfer, which improves new task performance using knowledge from previous tasks, and backward transfer, which enhances performance on previous tasks after learning a new relevant task. Striking a balance between retaining previous knowledge and excelling in new tasks is vital for success.
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{imgs/intro2.png}
+  \caption{
+  Conceptual illustration of \ouralg. By identifying task-relevant areas across both previously accumulated and current tasks, we can consolidate the task-specific and task-shared parameters to facilitate efficient knowledge transfer and mitigate forgetting.
+  }
+  \label{fig:intro}
+\end{figure}
+However, current Continual DST methods \cite{madotto2020continual, liu2021domain, cho2023continual, feng2024ros} mainly focus on mitigating forgetting through memory replay or regularization, overlooking the advantages of KT that can be derived from the inherent correlations between different DST domains. 
+Task correlation in Continual DST is quite evident. For instance, domains like ``Hotel'' and ``Restaurant'' share semantically similar slots, such as ``area'' and ``bookday'', highlighting the need for models to identify and handle common information types. The similarity in these domain-shared slots is crucial for enabling KT. 
+However, learning domain-specific slots like ``food'' for ``Restaurant'' could introduce unique information that disrupts the retention of previously acquired knowledge, leading to catastrophic forgetting.
+To address these challenges, we introduce \textbf{Ta}sk \textbf{S}kill \textbf{L}ocalization and Consolidation ({\ouralg}), a framework designed to improve KT between tasks without relying on memory replay. This is achieved by identifying and consolidating the importance distribution of model parameters across tasks. {\ouralg} initially employs a group-wise importance-aware \textit{\textbf{skill localization}} technique that utilizes gradient trajectories to pinpoint tiny regions in the model that store crucial knowledge for the current task. By comparing the importance distribution with those of previous tasks, we can differentiate between task-specific and task-shared parameters, as illustrated in Figure \ref{fig:intro}. 
+Our innovative \textit{\textbf{skill consolidation}} phase then categorically integrates weights from previous tasks with the current one, enabling effective KT while minimizing forgetting.
+In detail, the importance-aware skill localization method employs a new group-wise metric to compute importance scores, effectively quantifying the significance of each ``\textit{\textbf{skill unit}}''\footnote{The definition of skill units is model-specific. For example, the \textit{Query} matrix within the self-attention layer may be regarded as a skill unit.} for the current task. 
+Our approach, focusing on parameter space rather than dataset-driven categorization of domain-shared and domain-specific slots, offers a more robust solution that accurately identifies task-specific and task-shared knowledge, overcoming inaccuracies caused by dataset noise.
+Our skill consolidation stage, then based on a fine-grained model averaging strategy, effectively manages different types of knowledge.
+We enable forward KT to new tasks by starting with a model initialized with weights from previously fine-tuned tasks, thus using past knowledge to improve learning for new tasks without restrictions. For backward KT, we merge knowledge from both current and past accumulated tasks into localized task-shared skill units, thereby enhancing their capability. To prevent catastrophic forgetting, we consolidate the integrity of skill units containing previous task-specific knowledge, ensuring they remain unaffected by new task learning.
+Through extensive experiments on different parameter-level backbones (from 60M to 7B), {\ouralg} exhibits superior performance in mitigating forgetting and showcases remarkable capabilities for KT, significantly outperforming state-of-the-art methods.
+
+
+Our main contributions include:
+\begin{itemize}[leftmargin=*,itemsep=2pt,topsep=0pt,parsep=0pt]
+\item 
+We propose a novel task skill localization and consolidation
+({\ouralg}) \textbf{framework} for CL. 
+\item 
+We develop new group-wise skill localization and fine-grained skill consolidation \textbf{techniques}. 
+
+
+\item 
+
+Extensive \textbf{evaluation} on continual DST tasks shows \ouralg{} effectively enables knowledge transfer, resulting in a 3.1\% absolute increase in Avg. JGA and an 8.8\% absolute boost in BWT metrics compared to previous SOTA methods.
+\end{itemize}
+
+
+Related Work
+
+\subsection{Continual Dialogue State Tracking}
+Continual Learning (CL) in task-oriented dialogue systems focuses on perpetually integrating knowledge from data streams for future application.
+Three kinds of CL methods have been developed.
+Architecture-based methods propose dynamically adding model weights when learning new data \cite{geng2021continual, lu2021getting, yang2023kerprint}.
+Replay-based methods store and replay some training samples from previous tasks \cite{hou2019learning, lu2021engage, xu2023seqcare}.
+Regularization-based methods employ additional loss functions to solidify new knowledge \cite{li2017learning, xu2023vecocare}.
+In the realm of Continual DST, pioneering efforts by \citet{madotto2020continual} and \citet{liu2021domain} have leveraged these CL strategies to set benchmark performance using PLMs. 
+The DST-EGQA approach by \citet{cho2023continual} reformulates the DST task to an example-guided question-answering task, aiming to align distribution shifts across different domains to mitigate forgetting. However, these methods overlook DST task correlations that could enhance knowledge transfer.
+The recent Continual Prompt Tuning (CPT) method by \citet{zhu2022continual} attempts knowledge transfer via domain-specific soft prompts but depends on inefficient memory replay and extensive retraining.
+This dataset-driven approach is inefficient and lacks robustness.
+Our {\ouralg} innovates by distinguishing between domain-specific and domain-shared knowledge within the parameter space, then leveraging the skill consolidation process for effective knowledge transfer and forgetting mitigation.
+\subsection{Task Skill Localization}
+Research indicates that model parameters contribute unevenly to performance \cite{michel2019sixteen}.
+\citet{panigrahi2023task} introduced the concept of ``skill localization'' to identify crucial parameters within PLMs, suggesting that fine-tuning critical parameters nearly matches the effect of full fine-tuning. However, their method requires additional time for identifying and retraining key parameters post-fine-tuning, lowering efficiency.
+
+Drawing inspiration from the pruning community, previous studies have used gradient-based metrics to identify important parameters during fine-tuning. Sensitivity-based scoring~\cite{sanh2020movement, zhang2022platon} assesses the impact on training loss and sensitivity smoothing, as applied by \citet{zhang2022adaptive}, eliminates unnecessary parameters for more efficient fine-tuning.
+However, these approaches, focusing on individual parameter importance, often lead to element-wise pruning with huge computational and storage burdens~\cite{feng2023towards}. Based on these advances, we introduce a new importance-aware skill localization method, for the first time, that distinguishes between task-specific and shared parameters to mitigate forgetting in CL.
+
+
+
+
+
+Proposed Method: TaSL
+\paragraph{Problem Formulation}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.8\linewidth]{imgs/method2.png}
+  \caption{\textbf{Overview of {\ouralg}.}
+\textbf{Step 1}: We compute the importance scores of skill units for the current task $\mathcal{T}_{k}$ using our importance-aware skill localization method during fine-tuning.
+\textbf{Step 2}: Based on a fine-grained model averaging strategy, the skill consolidation method merges the model $\hat{f}_{k-1}$, which accumulates knowledge of all previous tasks, with the current task's model $f_k$. 
+The integration is guided by the importance distributions of skill units across various tasks. We then update the cumulative importance scores for all skill units until task $\mathcal{T}_{k}$ using Eq. (\ref{eq:norm}).
+This process is designed to be iteratively repeated with the introduction of each subsequent task.
+  }
+  \label{fig:method}
+\end{figure*}
+
+In continual DST, we aim to train a model $f: \mathcal{X} \times \mathcal{T} \rightarrow \mathcal{Y}$ across a sequence of dialogue domains $\mathcal{T}_1,\ldots,\mathcal{T}_K$.
+Each dialogue domain has its dataset $\mathcal{D}_k$ for $\mathcal{T}_k$.
+This model predicts the target $y$ based on input $x$ and task $\mathcal{T}_k \in \mathcal{T}$.
+The notation $f_k$ refers to the model after training on task $\mathcal{T}_k$, while $\hat{f}_{k}$ denotes the model after averaging for $\hat{f}_{k-1}$ and $f_k$.
+Within a given task $\mathcal{T}_k$, a dialogue with $M$ turns of interaction between the system and the user is denoted as $\mathcal{X}_{M} = \left\{\left(A_{1}, U_{1}\right),\left(A_{2}, U_{2}\right) \ldots,\left(A_{M}, U_{M}\right)\right\}$, where $A$ and $U$ represent the system's response and the user's input, respectively.
+
+Each task $\mathcal{T}_k$ is associated with a predefined slot set\footnote{To specify the domain to which a slot belongs, a slot is defined as the concatenation of the specific domain and the slot name, e.g., ``<restaurant-area>''.} $\mathcal{S}=\left\{S_{1}, \ldots, S_{J}\right\}$, where $J$ is the total number of slots.
+The objective of DST is to predict the dialogue state $\mathcal{B}_{m}$ based on the dialogue context $\mathcal{X}_{m}$. 
+The dialogue state is a collection of (slot, value) pairs, expressed as $\mathcal{B}_{m}=\left\{\left(S_{1}, V_{1}^{m}\right), \ldots,\left(S_{J}, V_{J}^{m}\right)\right\}$, where $V_{J}^{m}$ is the value for slot $S_{J}$ at turn $m$.
+DST involves training a model $f: \mathcal{X}_{m} \oplus S_{j} \rightarrow V_{j}^{m}$, with $\oplus$ denotes simple text concatenation.
+
+\paragraph{Overview} {\ouralg} includes two key components: (i) \textit{\textbf{Skill Localization}}, utilizing a new group-wise importance metric to accurately identify the importance distribution of parameters across tasks, and (ii) \textit{\textbf{Skill Consolidation}}, which employs a novel fine-grained model averaging strategy to integrate model weights from both current and past tasks for effective knowledge transfer. Figure \ref{fig:method} provides a comprehensive overview of {\ouralg}, with the following subsections detailing each component.
+
+
+\subsection{Importance-aware Skill Localization}
+
+To address the substantial computational and storage demands imposed by previous parameter-level importance calculation methods \cite{konishi2023spg}, we propose a new group-wise metric for evaluating the importance of each skill unit $u$:
+\begin{equation}
+\mathcal{I}(u) = \frac{1}{d_1 \times d_2} \sum\limits_{i=1}^{d_1} \sum\limits_{j=1}^{d_2} s(w_{ij}) \label{eq:3}
+\end{equation}
+where $w_{ij}$ denotes the trainable parameters, and $d_1 \times d_2$ represents the total parameter count in a skill unit $u$. $\mathcal{I}(u)$ measures the collective importance of all parameters within each skill unit, where higher values signify increased importance.
+The function $s(\cdot)$ is a designated importance function for individual parameters, defined as the magnitude of the gradient-weight product:
+\begin{equation}
+I\left(w_{i j}\right)=\left|w_{i j} \nabla_{w_{i j}} \mathcal{L}\right| \label{eq:1}
+\end{equation}
+
+This approximates the loss change when a parameter is zeroed out. If removing a parameter has a significant influence, then the model is sensitive to it, and we should retain it \cite{liang2021super}.
+However, sensitivity in Eq. (\ref{eq:1}) may not reliably indicate importance \cite{zhang2022platon}. 
+This metric, calculated from a sampled mini-batch, suffers from variability due to stochastic sampling and training dynamics, introducing large uncertainty in estimating sensitivity.
+To mitigate this, we apply sensitivity smoothing and uncertainty quantification \cite{zhang2022adaptive}:
+\begin{equation}
+\begin{split}
+\bar{I}^{(t)}\left(w_{i j}\right)  =\alpha_{1} \bar{I}^{(t-1)}\left(w_{i j}\right)+ \left(1-\alpha_{1}\right) I^{(t)}\left(w_{i j}\right) \label{eq:I}
+\end{split}
+\end{equation}
+\begin{equation}
+\begin{split}
+\bar{U}^{(t)}\left(w_{i j}\right)  =\alpha_{2} \bar{U}^{(t-1)}\left(w_{i j}\right)+ \\ \left(1-\alpha_{2}\right)\left|I^{(t)}\left(w_{i j}\right)-\bar{I}^{(t)}\left(w_{i j}\right)\right| \label{eq:U}
+\end{split}
+\end{equation}
+where $\alpha_{1}$ and $\alpha_{2}$ are smoothing factors, and $t$ is the iteration number.
+$\bar{I}^{(t)}$ represents smoothed sensitivity by exponential moving average and $\bar{U}^{(t)}$ is the uncertainty term quantified by the local variation between $I^{(t)}$ and $\bar{I}^{(t)}$.
+Importance is then defined by multiplying $\bar{I}^{(t)}$ and $\bar{U}^{(t)}$, providing a more accurate importance assessment for $s(\cdot)$:
+\begin{equation}
+s^{(t)}\left(w_{i j}\right)=\bar{I}^{(t)}\left(w_{i j}\right) \cdot \bar{U}^{(t)}\left(w_{i j}\right) \label{eq:2}
+\end{equation}
+\paragraph{Calculating current task importance scores.}
+To compute the importance score of each skill unit for task $\mathcal{T}_k$, we employ Eq. (\ref{eq:3}) during fine-tuning. The model $f$ with $n$ skill units is denoted as $\mathcal{U} = \left\{u_1, \ldots, u_n\right\}$, with their importance scores for task $\mathcal{T}_k$ denoted by $\mathcal{I}(\mathcal{U}_k) \in \mathbb{R}^n$.
+The detailed computation process is provided in Algorithm~\ref{alg:ipt}.
+
+
+\paragraph{Computing accumulated importance scores for previous tasks.}
+After computing importance scores for each skill unit at the current task $\mathcal{T}_k$, it is essential to compare these with scores from all previously learned tasks to distinguish between task-specific and task-shared parameters. 
+To avoid the inefficiency of storing scores for each past task, we aggregate importance scores from all prior tasks into a cumulative score for tasks up to $\mathcal{T}_{k-1}$. This method allows for the iterative refinement of accumulated scores without separately saving past task scores. The skill units with these cumulative scores up to $\mathcal{T}_{k-1}$ are denoted as $\hat{\mathcal{U}}_{k-1}$, calculated using:
+\begin{equation}
+\begin{split}
+\mathcal{I}(\hat{\mathcal{U}}_{k-1}) = \beta \text{Norm} (\mathcal{I}(\hat{\mathcal{U}}_{k-2})) + \\ (1-\beta) \text{Norm} (\mathcal{I}(\mathcal{U}_{k-1})) \label{eq:norm}
+\end{split}
+\end{equation}
+where $\beta \in [0, 1]$, and \text{Norm($\cdot$)} normalizes importance scores to the [0, 1] range, thus resolving discrepancies across models. The initial scores, $\mathcal{I}(\hat{\mathcal{U}}_1)$, are set to be equal to $\mathcal{I}(\mathcal{U}_1)$. Following this, the importance distribution for skill units up to task $\mathcal{T}_{k-1}$ is combined with that of the current task, $\mathcal{T}_{k}$, to facilitate the skill consolidation process.
+
+
+\subsection{Skill Consolidation}
+After skill localization, the subsequent vital phase involves consolidating this knowledge into a unified framework. This process demands a sophisticated model averaging approach considering various factors to optimize task performance.
+Traditional coarse-grained model averaging assumes that all model weights are equally important for the training task \cite{kirkpatrick2017overcoming, eddine2023weighted}, which can be written as the following iterative computation format:
+\begin{equation}
+\hat{f}_k = \lambda \hat{f}_{k-1} + \left(1 - \lambda\right) f_k \label{eq:coarse}
+\end{equation}
+However, this method may overemphasize weights irrelevant to the current task, contaminating previously acquired task-specific knowledge and leading to forgetting. To counteract this, we introduce a fine-grained averaging strategy focusing on skill units rather than the entire model. Our approach distinguishes between task-shared and task-specific skill units, categorically applying weighted averaging to parameters within each skill unit. 
+
+We initially set importance thresholds $\delta$ using quantiles to select the top 20\% of skill units based on importance scores. A skill unit $u_i^k$ is deemed important (denoted as $(u_i^k)^+$) if its score $\mathcal{I}(u_i^k)$ is above $\delta_k$, and unimportant ($(u_i^k)^-$) otherwise.
+\begin{algorithm}[t]
+\caption{Importance-aware Skill Localization}\label{alg:ipt}
+\begin{algorithmic}[0.9]
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+\REQUIRE Training dataset $\mathcal{D}_k$ for task $\mathcal{T}_k$; total training iterations $T$; hyperparameters $\alpha_1, \alpha_2$.
+\FOR {$t = 1, \ldots, T$}
+    \STATE Sample a mini-batch from $\mathcal{D}_k$ and compute the gradient $\nabla \mathcal{L}$;
+    \STATE Compute the sensitivity $I\left(w_{i j}\right)$ via Eq. (\ref{eq:1});
+    \STATE Update $\bar{I}^{(t)}$ via Eq. (\ref{eq:I}) and $\bar{U}^{(t)}$ via Eq. (\ref{eq:U});
+\ENDFOR
+\STATE Compute the importance score $\mathcal{I}(u^k_i)$ for each skill unit $u^k_i$ by Eq. (\ref{eq:3}), for $i = 1, \ldots, n$.
+\ENSURE  $f_k$ and importance scores $\mathcal{I}(\mathcal{U}_k)$ for $\mathcal{U}_k$.
+\end{algorithmic} 
+\end{algorithm}
+
+Our fine-grained averaging strategy customizes parameter combination for each skill unit, based on its importance under different tasks, as follows:
+\begin{equation}
+\hat{u}_i^k =
+\begin{cases}
+  \gamma \hat{u}_i^{k-1} + (1-\gamma) u_i^k, & \text{if $(\hat{u}_i^{k-1})^+$, $(u_i^k)^+$} \\
+
+  \hat{u}_i^{k-1}, & \text{if $(\hat{u}_i^{k-1})^+$, $(u_i^k)^-$} \\
+  
+  u_i^k, & \text{if $(\hat{u}_i^{k-1})^-$, $(u_i^k)^+$} \\
+
+  \frac{1}{2}(\hat{u}_i^{k-1} + u_i^k), & \text{if $(\hat{u}_i^{k-1})^-$, $(u_i^k)^-$} \\
+
+\end{cases}
+\label{eq:5}
+\end{equation}
+
+This strategy performs the element-wise adjustment of parameters within each skill unit based on its relevance to previous and current tasks, using hyperparameter $\gamma$ to control their influences. 
+In the scenario where a skill unit $u_i$ is significant for both past and present tasks (case 1), we integrate newly acquired knowledge into this task-shared skill unit to enable backward KT. 
+If a skill unit $u_i$ is crucial solely for previous tasks (case 2), we maintain the knowledge within this previous task-specific skill unit untouched to prevent the contamination of historical knowledge with task-irrelevant information. 
+In contrast, for a skill unit important only to the current task (case 3), since the model $f_k$ is trained on the initialization of $\hat{f}_{k-1}$, the historically learned knowledge is utilized to enhance the performance of the current task, enabling forward KT. Thus, we ensure the integrity of parameters within this current task-specific skill unit, preserving essential knowledge for excelling in the new task. 
+We adopt a straightforward averaging for units not pertinent to either task (case 4).
+
+Skill consolidation is performed before starting a new task in CL, utilizing the averaged model for subsequent task initialization. Only the importance scores of $\hat{\mathcal{U}}_{k-1}$ and $\mathcal{U}_k$ are retained for use between tasks, starting with $\hat{\mathcal{U}}_1 = \mathcal{U}_1$ estimated from $f_1$ on $D_1$. 
+
+
+\paragraph{Dataset}
+We use the continual learning for DST setup proposed by \citet{zhu2022continual}, which uses 15 single domains from the Schema-Guided Dialog dataset (SGD)~\cite{rastogi2020towards}.
+We aggregate our results over the same five domain orders to make the most reliable comparisons with prior works.
+Comparing results with the same order is crucial as the results
+can have significant variance depending on the chosen domains and their order.
+
+
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+\begin{table*}[t]
+\centering
+\scalebox{0.8}{
+\begin{tabular}{l|c|ccc}
+\toprule
+Method&   Memory-Free & Avg. JGA&  FWT&  BWT \\
+\midrule
+\rule{0pt}{4pt} Fine-tuning~\cite{madotto2020continual}  &  \multirow{5}*{\tabincell{c}{\cmark}}   & 44.1_{0.9} & 8.3_{1.0} & -36.6_{3.9}  \\
+\rule{0pt}{8pt} EWC~\cite{kirkpatrick2017overcoming}  &   & 47.9_{1.1} & 8.4_{0.9} & -38.1_{4.1}  \\
+\rule{0pt}{8pt} AdapterCL~\cite{madotto2020continual}   &    & 49.8_{1.7} & - & - \\
+\rule{0pt}{8pt} DST-EGQA~\cite{cho2023continual} &    & 55.5_{3.5} & 23.6_{2.1} & -19.1_{4.2}  \\
+\rule{0pt}{8pt} \textbf{{\ouralg} (ours)} &   & \textbf{63.1}_{2.0} & \textbf{26.6}_{1.5} & \textbf{-8.1}_{2.2}  \\
+
+\midrule
+\rule{0pt}{8pt} Replay~\cite{madotto2020continual}  &  \multirow{3}*{\tabincell{c}{\xmark}}  & 58.6_{3.5} & 10.9_{0.5} & -3.2_{2.3}  \\
+\rule{0pt}{8pt} CPT~\cite{zhu2022continual} &    & 61.2_{2.5} & 13.7_{0.8} & 0.5_{0.4} \\
+\rule{0pt}{8pt} DST-EGQA~\cite{cho2023continual} &   &  68.9_{0.3} & 22.5_{1.8} & -5.9_{1.9}  \\
+
+\midrule
+\rule{0pt}{8pt} CPT Multi-task~\cite{zhu2022continual} & \multirow{2}*{\tabincell{c}{-}}  &  64.0_{1.9} & - & -  \\
+\rule{0pt}{8pt} DST-EGQA Multi-task~\cite{cho2023continual} &   & 74.2_{1.8} & - & -  \\
+
+\bottomrule
+\end{tabular}}
+\caption{CL metric results of different methods at the same T5-small backbone. Means and standard variances are reported. 
+The last two rows provide the multi-tasking results, which serve as an upper bound.
+Our memory replay-free {\ouralg} outperforms the previous best method, DST-EGQA, by achieving a 7.6\% absolute improvement on avg. JGA and an 11\% increase in BWT. Additionally, it exceeds the performance of the majority of methods that rely on memory replay and nearly matches the upper bound set by the CPT multi-task method.
+}
+\label{tbl:result}
+\end{table*}
+
+\paragraph{Evaluation Protocol}
+We evaluate DST performance using the widely adopted Joint Goal Accuracy (JGA) metric \cite{wu2019transferable}, which indicates the percentage
+of turns for which all slot values are correctly predicted.
+We denote $a_{j,i}$ as the JGA on the test set of task $\mathcal{T}_i$ right after training on task $\mathcal{T}_j$.
+The performance of Continual DST is assessed using three metrics from \citet{zhu2022continual}: 
+\begin{equation}
+    \mathbf{Avg.\ JGA} =\frac{1}{K} \sum_{i=1}^{K} a_{K, i}
+\end{equation}
+\begin{equation}
+    \mathbf{FWT} = \frac{1}{K-1} \sum\limits_{i=2}^{K} a_{i-1, i}
+\end{equation}
+\begin{equation}
+    \mathbf{BWT} = \frac{1}{K-1} \sum\limits_{i=1}^{K-1} a_{K, i}-a_{i, i}
+\end{equation}
+Avg. JGA represents the average JGA across all tasks after training on the final task $\mathcal{T}_K$.
+Forward Transfer (FWT) evaluates a model's generalization ability by measuring the averaged zero-shot performance. 
+Backward Transfer (BWT) assesses the impact of learning on subsequent tasks on a previous task.
+Negative BWT indicates the model lost some previously acquired knowledge.
+
+
+\paragraph{Baselines}
+We evaluate our method with the following Continual DST baselines:
+\textbf{\emph{Fine-tuning:}} Continuously fine-tune the backbone model on new task data.
+\textbf{\emph{Replay:}}
+Randomly save $\left| \mathcal{M} \right|$ samples from the training set of each previous task $\mathcal{T}_i$ in memory $\mathcal{M}_i$ and jointly train the model on new task data $\mathcal{D}_K$ and memory $\mathcal{M}_{<k}$.
+\textbf{\emph{EWC:}}
+Maintain a memory but leverage it to compute the Fisher information matrix for regularization \cite{kirkpatrick2017overcoming}.
+\textbf{\emph{AdapterCL:}}
+Freeze the pre-trained model and independently train a residual Adapter \cite{houlsby2019parameter} for each task \cite{madotto2020continual}.
+\textbf{\emph{Continual Prompt Tuning (CPT) \cite{zhu2022continual}:}}
+Freeze the backbone model and continually train soft prompts with memory-guided knowledge transfer in both forward and backward directions.
+\textbf{\emph{DST-EGQA \cite{cho2023continual}:}}
+Reformulate DST as a QA task to mitigate forgetting with retrieval-augmented in-context learning.
+
+\paragraph{Training Details}
+We utilize four distinct parameter-level backbones for experiments: T5-small \cite{raffel2020exploring}, T5-base, Flan-T5-large~\cite{chung2022scaling}, and LLaMA-7B \cite{touvron2023llama}. For the T5 series model, we perform full fine-tuning across all parameters. For LLaMA-7B, we adopt the Parameter-Efficient Fine-Tuning technique, specifically Low-Rank Adaptation (LoRA) \cite{hu2021lora}, to expedite the training process.
+In {\ouralg}, the hyperparameters $\alpha_1$ and $\alpha_2$ in Eq. (\ref{eq:I}) and Eq. (\ref{eq:U}) are set to 0.85. Similarly, we set $\beta$ in Eq. \ref{eq:norm} and $\gamma$ in Eq. (\ref{eq:5}) to 0.7.
+The memory size per task $\left| \mathcal{M} \right|$ is maintained at 50, aligning with previous studies.
+
+
+
+Experiments and Analysis
+\paragraph{Dataset}
+We use the continual learning for DST setup proposed by \citet{zhu2022continual}, which uses 15 single domains from the Schema-Guided Dialog dataset (SGD)~\cite{rastogi2020towards}.
+We aggregate our results over the same five domain orders to make the most reliable comparisons with prior works.
+Comparing results with the same order is crucial as the results
+can have significant variance depending on the chosen domains and their order.
+
+
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+\begin{table*}[t]
+\centering
+\scalebox{0.9}{
+\begin{tabular}{l|c|ccc}
+\toprule
+Method&   Memory-Free & Avg. JGA&  FWT&  BWT \\
+\midrule
+\rule{0pt}{4pt} Fine-tuning~\cite{madotto2020continual}  &  \multirow{6}*{\tabincell{c}{\cmark}}   & $44.1_{0.9}$ & $8.3_{1.0}$ & $-36.6_{3.9}$  \\
+\rule{0pt}{8pt} EWC~\cite{kirkpatrick2017overcoming}  &   & $47.9_{1.1}$ & $8.4_{0.9}$ & $-38.1_{4.1}$  \\
+\rule{0pt}{8pt} AdapterCL~\cite{madotto2020continual}   &    & $49.8_{1.7}$ & - & - \\
+\rule{0pt}{8pt} DST-EGQA~\cite{cho2023continual} &    & $55.5_{3.5}$ & $23.6_{2.1}$ & $-19.1_{4.2}$  \\
+\rule{0pt}{8pt} RoS~\cite{feng2024ros} &    & $59.0_{3.9}$ & $25.5_{2.0}$ & $-17.9_{3.7}$  \\
+\rule{0pt}{8pt} \textbf{{\ouralg} (ours)} &   & $\textbf{62.1}_{2.0}$ & $\textbf{26.6}_{1.5}$ & $\textbf{-9.1}_{2.2}$  \\
+\midrule
+\rule{0pt}{8pt} Replay~\cite{madotto2020continual}  &  \multirow{4}*{\tabincell{c}{\xmark}}  & $58.6_{3.5}$ & $10.9_{0.5}$ & $-3.2_{2.3}$  \\
+\rule{0pt}{8pt} CPT~\cite{zhu2022continual} &    & $61.2_{2.5}$ & $13.7_{0.8}$ & $0.5_{0.4}$ \\
+\rule{0pt}{8pt} DST-EGQA~\cite{cho2023continual} &   &  $68.9_{0.3}$ & $22.5_{1.8}$ & $-5.9_{1.9}$  \\
+\rule{0pt}{8pt} RoS~\cite{feng2024ros} &   &  $72.1_{0.8}$ & $26.7_{2.0}$ & $-2.6_{1.5}$  \\
+\midrule
+\rule{0pt}{8pt} CPT Multi-task~\cite{zhu2022continual} & \multirow{3}*{\tabincell{c}{-}}  &  $64.0_{1.9}$ & - & -  \\
+\rule{0pt}{8pt} DST-EGQA Multi-task~\cite{cho2023continual} &   & $74.2_{1.8}$ & - & -  \\
+\rule{0pt}{8pt} RoS Multi-task~\cite{cho2023continual} &   & $76.3_{0.3}$ & - & -  \\
+\bottomrule
+\end{tabular}}
+\caption{CL results of various methods, all utilizing the same T5-small backbone, on 15 different tasks from the SGD dataset. Means and standard variances are reported across five domain permutations. 
+The last two rows provide the multi-tasking results, which serve as an upper bound.
+Our memory replay-free {\ouralg} outperforms the previous best method, RoS, by achieving a 3.1\% absolute improvement on avg. JGA and an 8.8\% absolute increase in BWT. Additionally, {\ouralg} exceeds the performance of the majority of memory replay methods and nearly matches the upper bound of the CPT multi-task method.
+}
+\label{tbl:result}
+\end{table*}
+
+\paragraph{Evaluation Protocol}
+We evaluate DST performance using the widely adopted Joint Goal Accuracy (JGA) metric \cite{wu2019transferable}, which indicates the percentage
+of turns for which all slot values are correctly predicted.
+We denote $a_{j,i}$ as the JGA on the test set of task $\mathcal{T}_i$ right after training on task $\mathcal{T}_j$.
+The performance of Continual DST is assessed using three metrics from \citet{zhu2022continual}: 
+\begin{equation}
+    \mathbf{Avg.\ JGA} =\frac{1}{K} \sum_{i=1}^{K} a_{K, i}
+\end{equation}
+\begin{equation}
+    \mathbf{FWT} = \frac{1}{K-1} \sum\limits_{i=2}^{K} a_{i-1, i}
+\end{equation}
+\begin{equation}
+    \mathbf{BWT} = \frac{1}{K-1} \sum\limits_{i=1}^{K-1} a_{K, i}-a_{i, i}
+\end{equation}
+Avg. JGA represents the average JGA across all tasks after training on the final task $\mathcal{T}_K$.
+Forward Transfer (FWT) evaluates a model's generalization ability by measuring the averaged zero-shot performance. 
+Backward Transfer (BWT) assesses t
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,268 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\footnote{$^{*}$Corresponding author. }
+
+Three-dimensional human reconstruction, which aims to obtain a dense surface geometry from single-view or multi-view human images, is a fundamental topic in computer vision and computer graphics. While reconstructing high-fidelity 3D human models is possible using commercial multi-view/stereo software
+under the customized studio setting~\cite{collet2015high, liu2009point, tong2012scanning, guo2019relightables, vlasic2009dynamic}, it is highly desirable to lift the studio setting constraint, \ryn{which may be inaccessible to most users}. Low-cost RGBD sensors have recently become popular in 3D human reconstruction, and tracking-based methods are developed to fuse the depth data from RGBD sensors for reconstruction~\cite{newcombe2011kinectfusion}. During fusion, the estimation of non-rigid human body deformation is essential to improve the reconstruction quality~\cite{newcombe2015dynamicfusion,yu2018doublefusion}. However, it is technically challenging to ensure the stability of the depth fusion algorithm, due to occlusions and severe noise in the depth data. 
+
+Recently, learning-based 3D human reconstruction methods have significantly simplified the capture setting. \dz{The parametric human model~\cite{loper2015smpl,PavlakosCGBOTB19SMPLX, STAR:2020} is introduced to reduce the modeling difficulties from complex poses. After training on 
+images-to-model pairs, methods~\cite{kanazawa2018end, zhang2020perceiving} may even reconstruct 3D human shapes from single images. However, these methods typically only obtain \revise{minimally clothed} human bodies.} 
+\dz{As detail requirements increase, the focus of learning-based human reconstruction methods has been shifted to the implicit representation, \eg, pixel-aligned implicit function (PIFu)~\cite{saito2019pifu, saito2020pifuhd, hong2021stereopifu}. PIFu-based methods~\cite{saito2019pifu} can reconstruct human bodies with different types of details (\eg, hair and clothing) without utilizing predefined templates.}
+\dz{However, they often produce topology errors in the reconstructed human models, especially in the regions that are invisible or where the input depth is highly noisy (\eg, hairs).}
+While PIFuHD~\cite{saito2020pifuhd} partially alleviates this problem by synthesizing the body's normal maps at both front and back sides, the details reconstructed from the synthesized normals may not be consistent with the target. Hence, some methods~\cite{hong2021stereopifu, yu2021function4d} resort to the multi-view feature fusion scheme to reduce these topology errors.
+
+\dz{Although implicit methods develop fast, we observe that the quality of their recovered details is still unsatisfactory under the sparse capture settings (\eg, 3 RGBD sensors). Due to the less overlapping between sparse views, the input depth noise is typically amplified, increasing the difficulty of performing stable reconstruction. In addition, due to the ineffective fusion of RGB and depth features, these methods may not easily reconstruct high-frequency details. As a result, we often observe flat or incorrect facial surfaces, body geometries with topology errors, as shown in Fig.~\ref{fig:Teaser}(b,c,d).
+}
+
+
+\begin{figure}[h]
+  \adjustbox{center}{
+  \resizebox{1.02\columnwidth}{!}{
+  \hspace{-7pt}
+  \subfigure[Raw RGBD]{
+    \centering
+    \includegraphics[height=97pt]
+    {figures/teaser/rgbd.jpg}
+  }%
+  \hspace{-7pt}
+  \subfigure[PIFu~\cite{saito2019pifu}]{
+    \centering
+    \includegraphics[height=97pt]{figures/teaser/pifu_rgbd.jpg}
+  }%
+  \hspace{-7pt}
+  \subfigure[PIFuHD~\cite{saito2020pifuhd}]{
+    \centering
+    \includegraphics[height=97pt]{figures/teaser/pifuhd.jpg}
+  }%
+  \hspace{-7pt}
+  \subfigure[IPNet~\cite{bhatnagar2020combining}]{
+    \centering
+    \includegraphics[height=97pt]
+    {figures/teaser/ipnet.jpg}
+  }%
+  \hspace{-7pt}
+  \subfigure[\textbf{Ours}]{
+    \centering
+    \includegraphics[height=97pt]
+    {figures/teaser/ours.jpg}
+  }%
+  \hspace{-7pt}
+  \subfigure[Our Additional Results]{
+    \centering
+    \includegraphics[height=97pt]{figures/teaser/addition_results.jpg}
+  }%
+  }}
+  \caption{Given sparse and noisy inputs, with one of the three RGBD views shown in (a), existing methods such as Multi-view RGBD-PIFu~\cite{saito2019pifu}~(b), PIFuHD~\cite{saito2020pifuhd}~(c) and IPNet~\cite{bhatnagar2020combining}~(d) tend to produce over-smoothed facial details (b,d) or topology errors (c,d), due to the amplified noise in sparse views. Our method learns the geometry-aware two-scale PIFu representation, which can produce vivid facial/hair details and accurate bodies under different poses (e,f).}
+  \label{fig:Teaser}
+\end{figure}
+
+In this paper, we propose a geometry-aware two-scale PIFu representation for reconstructing digital humans from sparse, noisy inputs.
+Our method is based on two observations. First, depth denoising and 3D reconstruction are complementary to each other. The former task preserves local geometric fidelity, while the latter task provides global topology guidance.
+\dz{Second, while a function of high complexity may not be easy to express, it is much easier to approximate it piecewise (\eg, in two parts).}
+Inspired by these observations, we first formulate depth denoising and 3D reconstruction as a multi-task learning problem. \revise{The two tasks can work together to further improve the reconstruction quality.} \dz{We encode RGB and depth separately, and use fused features to perform depth denoising, enriching deep features with local geometric information.}
+\dz{Based on the denoised depth and geometry-aware features, we propose using two MLPs to represent the PIFus for the face (particular region) and the body, respectively. This separate modeling increases the network capacity for handling details at different scales.}
+As shown in Fig.~\ref{fig:Teaser}(e, f), our method can produce results with high-fidelity body and facial details for different actions. Our main contributions are:
+
+\textbf{1)}\;We propose a novel geometry-aware PIFu method for digital human reconstruction from sparse, noisy RGBD images. Our approach exploits the complementary properties of depth denoising and 3D reconstruction to learn robust geometry information \ryn{while} suppressing the input noise.
+
+\textbf{2)}\;We propose to learn a two-scale PIFu representation based on geometry-aware features, by using two individual MLPs for the face and the body separately. The two-scale formulation enhances the network capacity
+in producing high-frequency facial details and smooth body surfaces.
+
+\textbf{3)}\;Extensive experiments demonstrate that the proposed method can produce high-quality digital human reconstruction results, based on noisy depth maps taken by three Azure Kinect sensors.
+
+
+Related Works
+\noindent{\bf Tracking-based Human Reconstruction} methods~\cite{li2009robust,newcombe2011kinectfusion,zollhofer2014real,newcombe2015dynamicfusion,guo2015robust,dou2016fusion4d,leroy2017multi,Dou2017Motion2fusionRV,yu2018doublefusion,habermann2019livecap,Su2020robustfusion, yu2021function4d} track human motions and infer the non-rigid deformations of the references to reconstruct 3d human mesh in a temporal fusion manner.
+The references are typically parameterized as the 3D poses/skeletons~\cite{gall2009motion,ye2012performance,ye2014real,xu2018monoperfcap,yu2018doublefusion,habermann2019livecap,habermann2020deepcap,li2021posefusion} and/or parametric body models~\cite{bogo2015dfbr,simulcap,yu2018doublefusion,joo2018total} (\eg,SMPL~\cite{loper2015smpl,PavlakosCGBOTB19SMPLX,joo2018total}).
+Some methods combine tracking with segmentation~\cite{liu2011markerless} or optical flow estimation~\cite{mustafa2015general} to help compute the references for reconstruction.
+To tackle the occlusion and large motion problems, some methods develop high-end systems for the dense capture of human performance, consisting of a large number (up to 100) of RGBD sensors~\cite{collet2015high,liu2009point,tong2012scanning} or custom color lights~\cite{guo2019relightables,vlasic2009dynamic} (\eg, 1,200 individually controllable light sources in the acquisition setup in~\cite{vlasic2009dynamic}).
+
+\noindent{\bf Learning-based Human Reconstruction} methods~\cite{zhu2019detailed,Simth2019facsimile,alldieck2019tex2shape,gabeur2019moulding,wang2020normalgan,natsume2019siclope,zheng2019deephuman,varol2018bodynet,yan2018ddrnet, yu2021function4d} leverage the neural 3D representation for reconstructing the geometry and/or texture details.
+Some methods obtain 3D human meshes from a single RGB~\cite{Simth2019facsimile} or RGBD~\cite{wang2020normalgan} image by incorporating the SMPL template~\cite{ROMP}, which are ineffective for deformed human bodies.
+\revise{Some approaches reconstruct continuous results from RGB~\cite{xiang2020monoclothcap} or RGBD~\cite{zhi2020texmesh} videos, skeletal motions~\cite{habermann2021real}, but are limited by garments types and cannot obtain facial expression details.}
+Other methods adopt the image-to-image translation pipeline to regress the 3D mesh via 2D estimations of intermediate textures~\cite{alldieck2019tex2shape}, silhouettes~\cite{natsume2019siclope}, and depths~\cite{gabeur2019moulding}, while some approaches jointly exploit 2D and 3D information, \eg, body joints and per-pixel shading information~\cite{zhu2019detailed}, and 2D/3D poses and segmentation map~\cite{varol2018bodynet}. These methods typically suffer from over-smoothed surfaces in occluded regions.
+
+Recently, the pixel-aligned implicit function (PIFu)~\cite{saito2019pifu} has attracted much attention for 3D human reconstruction due to its effective implicit representation, and PIFuHD~\cite{saito2020pifuhd} estimates normal maps to reduce the geometry errors in the occluded regions based on PIFu.
+Due to its success, many methods promote PIFu with
+voxel-alignment~\cite{zheng2020pamir, hong2021stereopifu, he2020geopifu}, deformation field~\cite{he2021arch, huang2020arch}, real-time approach ~\cite{li2020monocular}, illumination~\cite{alldieck2022phorhum}, monocular fusion~\cite{li2020robust}, sparse-view temporal fusion~\cite{yu2021function4d}, or apply it for point clouds based human reconstruction~\cite{chibane2020implicit,bhatnagar2020combining,POP:ICCV:2021}.
+Typically, PIFu-based methods lack fine facial details in the sparse capture setting due to its all-in-one implicit 3D representation learning. 
+\revise{To tackle this problem, JIFF~\cite{cao2022jiff} employs the facial 3DMM~\cite{blanz1999morphable} model as a shape prior, enhancing pixel-aligned features for detailed geometry information. However, their face reconstruction capacity is constrained by the 3DMM parameters, so that JIFF may not handle dense facial geometry well.
+In this paper, we propose the geometry-aware two-scale PIFu representation, which utilizes high-resolution RGB images to obtain the face geometric details and explicitly fuses the face and body occupancy fields for high-quality full-body reconstructed results.}
+\noindent{\bf Depth Image Denoising} is essential for depth images captured from consumer-level depth sensors (\eg, Azure Kinect). Traditional filtering-based methods~\cite{kopf2007joint, chan2008noise, dolson2010upsampling, richardt2012coherent, he2012guided, shen2015mutual, ham2015robust} enhance depth data from various sensors.
+Color or infrared images are used to help depth image denoising~\cite{diebel2005application,yang2007spatial,lindner2007data,park2011high,liu2013joint,ferstl2013image,yang2014color,lu2014depth,ham2015robust}.
+These methods typically assume the intensity image to be edge-aligned with the depth image, and they tend to produce artifacts when this assumption is violated.
+Some methods~\cite{gudmundsson2008fusion,schuon2009lidarboost,newcombe2011kinectfusion,cui2012algorithms,henry2012rgb,chen2013scalable,newcombe2015dynamicfusion,guo2017real} fuse multiple frames to refine the depth images, but they tend to produce over-smoothed depth images.
+
+Learning-based depth image denoising methods are proposed based on dictionary-learning~\cite{kwon2015data} and deep-learning~\cite{gu2017learning,li2019joint,li2016deep,jeon2018reconstruction,yan2018ddrnet,sterzentsenko2019self}. Recently, Yan~\etal~\cite{yan2018ddrnet} propose the DDRNet for deep denoising using fused geometry and color images. Their method tends to produce inconsistent results. Sterzentsenko~\etal~\cite{sterzentsenko2019self} propose a self-supervised method that leverages photometric supervision from a differentiable rendering model to smooth the depth noise. However, the photometric supervision lacks 3D geometry information and their approach tends to produce homogeneous results.
+In this paper, we propose to formulate depth denoising and 3D reconstruction as a multi-task learning problem. The global topology information facilitates the depth denoising significantly.
+
+
+\noindent{\bf Monocular Face Reconstruction} methods aim to reconstruct personalized faces from monocular data.
+The parametric face model, \eg, 3D morphable model (3DMM)~\cite{blanz2003face,blanz1999morphable,roth2016adaptive} or multi-linear blend shapes~\cite{cao2013facewarehouse,vlasic2006face,garrido2016reconstruction}, are typically used in conventional methods.
+However, these methods may not reconstruct accurate or dense facial geometry.
+Deep-learning-based methods~\cite{huber2016multiresolution,yanga2018landmark,feng2018joint,9442802} that incorporate face landmarks or the 3DMM model for face reconstruction also tend to produce coarse reconstructions results. Other methods~\cite{tran2018extreme,huynh2018mesoscopic,feng2018joint,richardson2017learning,zeng2019df2net} estimate the facial dense shape instead of the low-dimensional template parameters. 
+All these approaches only reconstruct faces. In this paper, we apply the PIFu representation and extend it to two scales for modeling human bodies and faces. Our formulation enables producing vivid facial expressions with accurate body reconstructions.
+
+
+Proposed Method
+\begin{figure}[t]
+\centering
+\adjustbox{center}{\includegraphics[width=1.08\linewidth]{figures/pipeline.pdf}}
+\caption{Proposed method overview. Given sparse and noisy RGBDs as inputs, {\it Geometry-aware PIFu-Body} performs depth denoising and predicts the body occupancy field. {\it High-resolution PIFu-Face} predicts the face occupancy field with fine-grained details. The body and face occupancy fields are fused to produce final results via the {\it Face-to-body Fusion} scheme.
+}
+\label{fig:Pipeline}
+\end{figure}
+We propose the geometry-aware two-scale PIFu method, to address the problem of PIFu-based approaches that reconstruct flat facial and geometry-fallible body surfaces in the sparse capture setting. 
+First, to handle the noise issue of the sparse capture setting, we propose to formulate the depth denoising and the body reconstruction processes in the multi-task learning manner to exploit their complementary properties.
+Second, although the face only occupies a small proportion of the whole human model, it typically contains more high-frequency (\eg, vivid expressions) than other parts and plays a vital role in assessing the reconstruction fidelity. To this end, we propose the two-scale PIFu representation to allocate more network capacity for face reconstruction.
+
+As illustrated in Fig.~\ref{fig:Pipeline}, our network contains three parts: (1) the {\it Geometry-aware PIFu-Body}, $\mathcal{F}_b$ that predicts the body occupancy field $O_b$ and the refined depth maps from the noisy RGBD images of $\mathcal{N}$ (\ie, three) perspective views; (2) the {\it High-resolution PIFu-Face}, $\mathcal{F}_f$ which obtains the fine-grained face occupancy field $O_f$, using refined depth map from $\mathcal{F}_b$ and the high-resolution RGB image of the front view as inputs; (3) the light-weight {\it Face-to-body Fusion}, $\mathcal{W}$ that reconstructs the full human model by fusing the face and body occupancy fields (\ie, $O_b$ and $O_f$).
+
+ 
+
+
+\subsection{Geometry-aware PIFu-Body: $\mathcal{F}_b$}
+\label{sec:pb}
+\dz{PIFu-based methods predict 3D occupancy fields in an implicit manner, enabling image-aligned features to be aware of global topological information, which helps suppress depth noise.
+For example, in Fig.~\ref{fig:DR}(e), the holes can be filled using only geometric supervision. However, this depth map tends to be over-smoothed, and the reconstructed surface also lacks details (Fig.~\ref{fig:DR}(f)).
+On the other hand, with only depth supervision, image-to-image depth denoising can fill holes and add details. 
+\revise{However, the obtained depth contains incorrect details (\eg, face, hands, and clothing regions shown in Fig.~\ref{fig:DR}(g) and Fig.~\ref{fig:multi_task_design}(b)), when lacking of 3D geometric guidance.}}
+\dz{Based on these observations, we formulate depth denoising and PIFu-based occupancy estimation in a multi-task learning manner.} It exploits the global topological information of the 3D occupancy field to guide the denoising process, and the local high-frequency details of refined depth to improve occupancy estimation (Fig.~\ref{fig:DR}(h,i,j) and Fig.~\ref{fig:multi_task_design}(c,h)).
+
+\begin{figure}[h]
+\adjustbox{center}{
+\includegraphics[width=0.99\textwidth]{figures/depth_refine.pdf}
+}
+\caption{Visualization of depth denoising and the subsequent reconstruction results. Raw RGB and Depth images (a,b). Results of two depth denoising methods, ~\cite{yan2018ddrnet} and~\cite{sterzentsenko2019self} (c,d). Our results of only using occupancy supervision (e,f). Our refined depth under depth supervision only (g). Our refined depth, its normal map, and full-body  mesh (h,i,j).}
+\label{fig:DR}
+\end{figure}
+{\bf Formulation of $\mathcal{F}_b$}.\; Given the triplet ($\mathbf{T}$) of RGB ($\mathbf{I}$), depth ($\mathbf{D}$) images, body binary masks ($\mathbf{M}$) from $\mathcal{N}$ perspective views, and the query point $\mathbf{X}\in \mathbb{R}^3$ as inputs, we formulate the $\mathcal{F}_b$ to predict both the body occupancy value $\sigma_b \in [0, 1]$ and the refined depth maps $\mathbf{D}_{rf}$, as:
+\begin{equation}
+\mathcal{F}_b(\mathbf{X},\mathbf{T})
+=\{\mathcal{M}_b(\mathcal{A}(\{\mathcal{B}(\psi_g(\mathbf{T}_i), \mathbf{x}_i), \mathcal{C}_i(\mathbf{X})\}_{i=1,...,\mathcal{N}})), \mathcal{D}(\psi_g(\mathbf{T}_i)) \}:=\{\sigma_b, \mathbf{D}_{rf}^i\},
+\label{eq:fb}
+\end{equation}
+where $\psi_g(\cdot)$ is a mapping function that encodes $\mathbf{T}$ into multi-scale Geometry-aware features, $\mathbf{x}_i=\pi_i(\mathbf{X})\in\mathbb{R}^2$, is the 2D projection of point $\mathbf{X}$ at $i$-th view, and $\mathbf{z}_i\in \mathbb{R}$ is the depth of $\mathbf{X}$ in the local coordinate system of the $i$-th view. $\mathcal{C}_i(\mathbf{X})=[\mathbf{z}_i, p_i(\mathbf{X})]$ where $p_i(\mathbf{X})=\mathcal{T}(\mathbf{z}_i - \mathcal{B}(\mathbf{D}_{rf}^i, \mathbf{x}_i))\in[-\delta_p, \delta_p]$, is the truncated PSDF value as in~\cite{yu2021function4d}. 
+$\mathcal{B}(\cdot, \mathbf{x}_i)$ is the sampling function to obtain pixel-aligned 2D features $\mathcal{B}(\psi_g(\mathbf{T}_i), \mathbf{x}_i)$ and depth information $\mathcal{C}_i(\mathbf{X})$, which are processed by the multi-view feature aggregation module $\mathcal{A}$ and further fed into the implicit function $\mathcal{M}_b$ for occupancy querying. Meanwhile, the decoder $\mathcal{D}(\cdot)$ processes features $\psi_g(\mathbf{T}_i)$ for depth denoising.
+
+{\bf Geometry-aware Features: $\psi_g(\mathbf{T}_i)$}.\;
+The geometry-aware mapping $\psi_g(\cdot)$ aims to exploit the complementary properties of depth denoising and occupancy field estimation. Hence, it is expected to fuse the multi-modal RGB-D inputs effectively. 
+To handle their modal discrepancy, we use two independent {\it HRNets}~\cite{HRNet} (Fig.~\ref{fig:Pipeline}) to process the RGB ($\mathbf{I}$) and depth ($\mathbf{D}$) inputs respectively,  where $\{\mathbf{I}, \mathbf{D}\}$ will be pre-processed to filter out the background via \revise{
+the masks, \ie, $\mathbf{M}(\mathbf{I}, \mathbf{D})$.
+}
+To fuse the RGB and depth backbone features, we propose a novel Cross Attention Module (CAM) on the highest level of backbone features, and use the CAM output feature to guide the fusion of lower levels in a level-wise manner. We also propose a novel Geometry Aware Module (GAM) to enrich the CAM output features with high-frequency information. The enhanced features form the features $\psi_g(\mathbf{T}_i)$.
+\begin{wrapfigure}[10]{r}{0.46\textwidth}
+\centering{
+\includegraphics[width=0.46\textwidth]{figures/CAM.pdf}
+\caption{Cross Attention Module (CAM).}
+\label{fig:CAM}
+}
+\end{wrapfigure}
+\textbf{Cross Attention Module~(CAM)}.\;The CAM aims to fuse the RGB and depth features by computing their non-local correlations. Since depth is typically noisier than RGB information, we first compute the self-attention map based on the RGB feature and then use it to reweight both RGB and depth features before they are fused. The architecture of CAM is shown in Fig.~\ref{fig:CAM}, of which the implementation is based on the non-local model~\cite{wang2018non} but we extend it to handle the RGB-D fusion. Specifically, the fused feature $Y$ can be written as:
+\begin{equation}
+\begin{split}
+Y=\mathcal{R}_r(g_r(F_r)\otimes\kappa(F_r))\;\|\;\mathcal{R}_d(g_d(F_d)\otimes\kappa(F_r)),
+\end{split}
+\label{eq:CAM}
+\end{equation}
+where $\mathcal{R}_r$ and $\mathcal{R}_d$ represent two ResCBAMs~\cite{woo2018cbam} used for calculating the local attentions for fusion, $\|$ is the channel-wise concatenation and $\otimes$ denotes the matmul operation. $F_r$ and $F_d$ indicate the RGB and depth backbone features output by Layer4 (Fig.~\ref{fig:Pipeline}). $\kappa(F_r)$ computes the non-local feature affinity map as $\kappa(F_r)=softmax(\theta(F_r)^T \otimes \phi(F_r))$, where $\theta$ and $\phi$ are learnable linear embedding functions. $g_r$, $g_d$ are two functions to compute the value features of $F_r$ and $F_d$. 
+
+\begin{wrapfigure}[10]{R}{0.49\textwidth}
+\centering{
+\includegraphics[width=0.49\textwidth]{figures/GAM.pdf}
+\caption{Geometry Aware Module (GAM).}
+\label{fig:GAM}
+}
+\end{wrapfigure}
+\textbf{Geometry Aware Module~(GAM)}.\; The GAM aims to enrich the fused features of CAM with high-frequency information for reconstructing geometric details.
+To this end, we propose to calculate the depth contrasted feature between a local region and its surroundings to capture high-frequency depth variations, as shown in Fig.~\ref{fig:GAM}.
+Specifically, we split out the RGB and depth features: $F'_r$, $F'_d$, according to the channels number, and calculate the contrasted feature for $F'_d$ as:
+\begin{equation}
+\begin{split}
+C_d=(f_l(F'_d) - f_g(F'_d))\;\|\;(f_l(F'_d) - f_l(\mathcal{G}(F'_d))),
+\end{split}
+\label{eq:GAM}
+\end{equation}
+where $f_l$ denotes the local convolution with a 1x1 kernel and $f_g$ denotes the context convolution with a 3x3 kernel(dilate rate=$x$). $\mathcal{G}$ is a global average pooling operation. $\|$ is the concatenation operation. The second item after $\|$ represents the local depth feature of the pixels relative to the global feature $F'_d$. As a result, $C_d$ amplifies high-frequency signals at depth transitions, benefiting the prediction of these details (\eg, hairs in Fig.~\ref{fig:Teaser}). For $F'_r$, we maintain its information through local convolutions.
+\subsection{High-resolution PIFu-Face: $\mathcal{F}_f$}
+\label{sec:pf}
+
+Face regions typically have more high-frequency components than the body (\eg, mouth \vs soft clothing) (Fig.~\ref{fig:FBFusion}(a,b,f)). Even enhanced with depth denoising, the all-in-one PIFu~($\mathcal{F}$) still struggles to represent high-frequency facial details (\eg, nose $\&$ mouth in Fig.~\ref{fig:FBFusion}(c,f)). Hence, we propose to express the implicit function $\mathcal{F}$ in a piece-wise manner (\ie, $\mathcal{F}_b$ and $\mathcal{F}_f$) to reduce the complexity of joint occupancy estimation while producing vivid facial and body details.
+Specifically, we propose to learn the high-frequency facial PIFu representation ($\sigma_f\in[0, 1]$) conditioned on the high-resolution face image ($\mathbf{I}_f$ cropped from the frontal view) and the corresponding denoised facial depth map $\mathbf{D}^f_{rf}$.
+
+\begin{figure}[ht]
+  \adjustbox{center}{
+  \centering
+  \includegraphics[width=1.02\textwidth]{figures/face_fusion.pdf}
+  }
+  \caption{Facial mesh closure on {\it FaceScape}~\cite{yang2020facescape} dataset for training (a). Raw RGBD input images (b). Our reconstructed face model (w/ and w/o PIFu-Face) (c). The weight map $\mathbf{M}^e_{f}$ and 3D weights for {\it Face-to-body Fusion} (d). Comparison results on {\it Face-to-body Fusion} and PIFu-Face (e,f).}
+  \label{fig:FBFusion}
+\end{figure}
+
+{\bf Formulation of $\mathcal{F}_f$}.\; Given the above inputs (denoted as $\mathbf{T}_f=\{\mathbf{I}_f, \mathbf{D}^f_{rf}, \mathbf{M}_f\}$), we formulate the $\mathcal{F}_f$ along the query point $\mathbf{X}_f\in\mathbb{R}^3$ within the face regions as:
+\begin{equation}
+\begin{split}
+\mathcal{F}_f(\mathbf{X}_f,\mathbf{T}_f)=\mathcal{M}_f(\mathcal{B}(\mathcal{H}_f(U^{\uparrow}(\mathbf{T}_f)), \mathbf{x}_f), \mathcal{C}_f(\mathbf{X}_f)):=\sigma_f,
+\end{split}
+\label{eq:pf}
+\end{equation}
+where $\mathcal{H}_f$ denotes the feature extractor for facial images $\mathbf{T}_f$. The function $U^{\uparrow}(\cdot)$ up-samples $\mathbf{T}_f$ to the same resolution as $\mathbf{T}$. $\mathcal{M}_f$ is the implicit function for querying $O_f$. $\mathcal{C}_f(\mathbf{X}_f)$ is defined the same as $\mathcal{C}_i(\mathbf{X})$, but we use the up-sampled masked facial depth $\mathbf{M}_f(U^{\uparrow}(\mathbf{D}^f_{rf}))$ to compute $p_f(\mathbf{X})$.
+
+{\bf Facial Points Selection}.\; To determine the facial points for inferring $\sigma_f$, we select the points among all the querying points of which the projection $\mathbf{x}_f\in\mathbb{R}^2$ falls inside the bounding-box $\mathbf{R}_f$ of $\mathbf{D}^f_{rf}$ and absolute PSDF value is less than $\alpha$ as $\mathbf{X}_f$ (Fig.~\ref{fig:SF}(b)).
+We set a flag $v_f(\cdot)$ to mark the facial points as:
+\begin{equation}
+v_f(\mathbf{X}) =
+\left\{
+\begin{array}{rcl}
+1    & {\mathbf{x}_f \in \mathbf{R}_{f}\ \mathrm{\&} \  \mathrm{abs}(\mathbf{z}_f - \mathcal{B}(\mathbf{D}^f_{rf}, \mathbf{x}_f))<\alpha} \\
+0    & else
+\end{array}. \right.
+\label{eq:Xf}
+\end{equation}
+
+\subsection{Face-to-body Occupancy Fields Fusion: $\mathcal{W}$}
+\label{sec:fusion}
+
+\begin{wrapfigure}[15]{R}{0.45\textwidth}
+\centering{
+\includegraphics[width=0.45\textwidth]{figures/sample_and_fusion.pdf}
+\caption{Equal facial and body points sampling (a). Face-to-body fusion (b).}
+\label{fig:SF}
+}
+\end{wrapfigure}
+Simply merging the reconstructed face and body (\ie, replacing $\sigma_b$ with $\sigma_f$ for the facial points) would result in the discontinuity artifacts at the stitching (Fig.~\ref{fig:FBFusion}(e), 1st row).
+To address this issue, we propose to fuse $O_b$ and $O_f$ via adaptive weights calculated in 3D space. As shown in Fig.~\ref{fig:FBFusion}(d), we compute a 2D fusion weight map ($\mathbf{M}^e_f$) in the $x$-$y$ plane by eroding edges of the facial mask $\mathbf{M}_f$. Along the $z$ axis, we compute the weights through a Gaussian distribution model of the PSDF values. Then, we formulate the joint probability distribution of the final fusion weight $\omega$ as: 
+\begin{equation}
+\begin{split}
+\omega = \mathcal{B}(\mathbf{M}^e_f, \mathbf{x}_f)\cdot \exp(-\beta\cdot (\mathbb{P}(\mathbf{D}^f_{rf}, \mathbf{X}_f))^2),
+\end{split}
+\label{eq:fusion_weights}
+\end{equation}
+where $\mathbb{P}(\cdot, \cdot)$ denotes the function to calculate the PSDF value, \ie, $\mathbb{P}(\mathbf{D}^f_{rf}, \mathbf{X}_f)=\mathbf{z}_f - \mathcal{B}(\mathbf{D}^f_{rf}, \mathbf{x}_f)$ and the parameter $\beta$ is set to $1e^3$ in default. In Eq.~\ref{eq:fusion_weights}, the first term yields smaller values from the center of the face region to its boundaries, which improves the smoothness around the stitching. The second term emphasizes the occupancy values computed by $\mathcal{F}_f$ before and after the face surface. Hence, we can leverage $\omega$ to fuse the $\sigma_b$ and $\sigma_f$ as: $\mathcal{W}(\sigma_b, \sigma_f, \omega)=\omega\cdot\sigma_f + (1-\omega)\cdot\sigma_b$.
+
+\subsection{Loss Function}
+\label{sec:loss}
+
+We adopt the extended Binary Cross Entropy~(BCE) loss~\cite{saito2020pifuhd} to supervise the predicted occupancy values $\sigma_b$ and $\sigma_f$ on the sampled body and facial points $\mathbf{\tilde{X}}=[\mathbf{X}_b,\mathbf{X}_f]$, which can be written as:
+\begin{equation}
+\begin{split}
+L_{\sigma} = \mu_0\cdot\sum_{\mathbf{X}_b\in\mathcal{S}_0}\mathcal{L}_B(\sigma_b, \sigma^*_b) + \mu_1\cdot\sum_{\mathbf{X}_f\in\mathcal{S}_1}\mathcal{L}_B(\sigma_f, \sigma^*_f),
+\end{split}
+\end{equation}
+where $\sigma^*_b$, $\sigma^*_f$ are the ground-truth occupancy values for $\mathbf{X}_b$ and $\mathbf{X}_f$.
+$\mathcal{S}_0$ and $\mathcal{S}_1$ denote the sampled sets. $\mathcal{L}_B$ represents the BCE loss, $\mu_0$ and $\mu_1$ are the weights to balance PIFu-Body and PIFu-Face.
+
+{\bf Regularization Term}.\; We propose a {\it Regularization Loss} ($L_{reg}$) to reduce the artifacts in depth-jumping regions during multi-views aggregation, as:
+\begin{equation}
+\begin{split}
+L_{reg} = \sum_{\mathbf{X}_b\in\mathcal{S}_{j}}\mathcal{L}_2(\mathbf{n}(\mathbf{X}_b, \mathbf{T}), \mathbf{n}(\mathbf{X}_b+\mathbf{\epsilon}, \mathbf{T})),
+\end{split}
+\label{eq:loss_reg}
+\end{equation}
+where $\mathcal{S}_j \in \mathcal{S}_0$ is the set of points projected on the depth-jumping regions (refer to the supplemental for details of obtaining these regions). The parameter $\epsilon$ is a small random uniform 3D perturbation. $\mathbf{n}(\mathbf{X}_b, \mathbf{T})\in\mathbb{R}^3$ is the normal vector at $\mathbf{X}_b$, defined as $\nabla_{\mathbf{X}_b}\mathcal{F}_b(\mathbf{X}_b, \mathbf{T})/\|\nabla_{\mathbf{X}_b}\mat
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

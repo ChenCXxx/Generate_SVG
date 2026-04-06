@@ -1,0 +1,278 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Referring Expression Segmentation (RES) is one of the fundamental tasks in visual-linguistic understanding, which aims at localizing the referred object in an image with a natural language description. Despite achieving great progress in recent years~\cite{husegmentation2016, lavt, vlt, mmm, cris}, the simplification of RES formulation, where one object must be included in a sentence, still constrains its potential in various scenarios. Consequently, such limitation encourages the emergence of Generalized Referring Expression Segmentation (GRES). Different from the one-to-one setting in classic RES, GRES supports extra multiple-target and empty-target cases, rendering it more suitable in real-world applications.
+
+However, it poses new challenges with the additional generalized settings. The multiple-target referent necessitates more precise semantic clues to handle complicated spatial-text relationships between instances for arbitrary location segmentation. On the other hand, the empty-target one highlights the significance of contextual information in mitigating undesirable responses from similar objects.  
+Therefore, an intuitive approach is to endow prevalent RES paradigms~\cite{lavt, vlt, efn} with new capability. 
+For instance, ReLA~\cite{rela} introduces a large-scale generalized dataset gRefCOCO and utilizes spatial-aware queries to transform GRES into a related region retrieval task.
+Meanwhile, DMMI~\cite{refzom} and RefSegformer~\cite{rris} enhance modality interaction in the early-fusion process and incorporate new benchmarks Ref-ZOM and R-RefCOCO respectively, to realize robust segmentation.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\linewidth]{Figures/teaser.pdf}
+    \caption{\textbf{Illustration of different decoding processes.}  Previous GRES methods attempt to integrate all-grained context into one joint feature which is directly for mask and object-existence prediction (a), exhibiting vulnerability to challenges of multiple/non-target scenarios (c). Instead of relying on the single representation, we perform hierarchical semantic decoding with multi-level visual-linguistic correspondence aggregation for robust segmentation. Moreover, in contrast to simple binary classification, we empower HDC with counting ability to promote overall object awareness (b).}
+    \label{fig:teaser}
+\end{figure*}
+Although these methods have made advancements in GRES, they still have intrinsic weaknesses in two aspects: 
+1) They are limited by the bottleneck of capturing complete associations between visual and linguistic contents. As \cref{fig:teaser} shows, they strive to optimize the last modality-fused feature which is directly for final mask prediction. However, the extra complexity of text descriptions and geometric relationships among instances in GRES impedes the integration of all-grained contexts into one joint representation. Without complete modality alignment at each granularity, it potentially leads to incorrect or incomplete object response. 
+2) A simple binary classification head for object-existence identification not only occurs vulnerability to deceptive instances with accumulated bias in single representation but also incurs ambiguity for ignoring inherent differences of one-one/many referents.
+Therefore, the significant problem lies in how to excavate the potential of multi-grained semantic correspondence between visual and linguistic when decoding, as well as fully facilitate the comprehensive object perception by considering the specificity of each scenario. Motivated by that, we present a \textbf{H}ierarchical Semantic \textbf{D}ecoding with \textbf{C}ounting Assistance framework (HDC). In HDC, a Hierarchical Semantic Decoding module (HSD) progressively transfers complementary information between modalities across different granularities to formulate intricate instance-linguist correlation hierarchies. Instead of leveraging single joint features, HSD utilizes multi-level semantic aggregation for robust segmentation. 
+With hierarchical semantic-context alignment, we further introduce Multi-Adaptive Object Counting module (MAC) on HSD to empower the model with explicit counting ability, which improves overall object awareness under each referring setting.
+
+We conduct extensive experiments on three popular GRES benchmarks, \textit{i.e.}, gRefCOCO~\cite{rela}, Ref-ZOM~\cite{refzom} and R-RefCOCO~\cite{rris} and RES datasets RefCOCO/+/g~\cite{refcoco, refcocog} to validate the effectiveness of our methods. Results show that HDC sufficiently meets the challenges of GRES and addresses the limitations of existing methods, which notably outperforms them for all benchmarks.
+
+Overall, our contributions are summarized as follows:
+\begin{itemize}
+    \item  We present a Hierarchical Semantic Decoding with Counting Assistance framework (HDC) for GRES to boost the multi-grained comprehension of complex referring semantic associations at different levels. In HDC, a Hierarchical Semantic Decoding module (HSD) is designed to progressively transfer mutual modality complementary information across granularities, and utilize each well-aligned semantic correspondence for multi-level decoding.
+    \item Built on HSD, we further introduce Multi-Adaptive Object Counting module (MAC) to facilitate comprehensive object perception by assigning explicit counting capability, which seamlessly adapts to the specificity of multiple/single/non-target scenarios.
+    To our best knowledge, we are the first to bring object counting into GRES.
+    \item Without bells and whistles, our approach outperforms all existing state-of-the-art methods by a remarkable margin under fair comparison, \textit{e.g.}, $+4.7\%$ gIoU in gRefCOCO, $+6.7\%$ rIoU in R-RefCOCO and $+5.3\%$ Acc. in Ref-ZOM. 
+\end{itemize}
+ 
+
+
+Related Work
+\paragraph{Referring Expression Segmentation.} Referring Expression Segmentation (RES) aims to localize a single object referred by a natural language description, which is first introduced by Hu \textit{et al.}~\cite{husegmentation2016}. Conventional approaches~\cite{husegmentation2016, liu2017, chensee2019, cmpc, efn} typically utilize convolution-based operations as the cross-modal fusion to generate segmentation masks. To overcome the weakness of insufficiency in modeling visual-text relation that prior works suffer, recent studies~\cite{lavt,vlt,mmm,cris,Restr} design advanced attention-based mechanism~\cite{transformer} to facilitate multi-modal interaction. 
+
+Since previous works are restricted by pre-defined rules that one sentence must match an object, ReLA~\cite{rela} proposes the Generalized Referring Expression Segmentation (GRES) task, which additionally involves both empty-target and multiple-target scenarios. Moreover, DMMI~\cite{refzom} introduces a new benchmark and baseline to realize beyond one target segmentation. Similarly, RefSegformer~\cite{rris} endows the transformer-based model with empty-target sentence discrimination, achieving robust segmentation. However, they seek to integrate all-grained contents into a single joint representation for mask prediction, which is impractical in GRES. In contrast, we aggregate visual-linguistic semantic clues in hierarchical structures for more generalized segmentation.     
+
+\paragraph{Object Counting.} Object counting is to predict the number of conditional objects within an image, which can be divided into detection-based and regression-based approaches. The detection-based methods~\cite{psc,goldman2019,heish2017} obtain the number of instances by proposals localization and ranking while the regression-based ones~\cite{cholakkal2019, can, sun2023} generates predicted counts via density map integration. Different from the classic object counting mechanism, our proposed Multi-Adaptive Object Counting module performs at the query level. By considering various scenarios, \textit{i.e.}, multiple/single/non-target referents, our model achieves comprehensive object perception under each situation. 
+
+
+
+Method
+
+\subsection{Overview}
+\begin{figure*}
+    \centering
+    \includegraphics[width=\linewidth]{Figures/framework.pdf}
+    \caption{\textbf{Overview of HDC}. The model takes an image with the referring expression as input. After the encoding process, the Hierarchical Semantic Decoding module (HSD) transfers mutual modality complementary information hierarchically for multi-grained alignment and then aggregates each to perform multi-level decoding for final segmentation. Moreover, with well-aligned semantic contexts, we introduce Multi-Adaptive Object Counting module (MAC) to fully promote comprehensive object perception by the category-specific counting ability in multiple/single/non-target scenarios.}
+    \label{fig:framework}
+\end{figure*}
+
+\cref{fig:framework} depicts the overall pipeline of our HDC. Given an image $\mathcal{I}$, the visual backbone, \textit{e.g.}, Swin-Base~\cite{swin} is to extract a set of vision features $\mathcal{V}_i\in \mathrm{R}^{D^{V} \times H_i \times W_i}$, $i\in \{1, 2, 3, 4\}$, where $H_i$ and $W_i$ denote the width and height of each scale of feature maps respectively. $D^{V}$ signifies the channel dimension. $\mathcal{V}_i$ is further encoded as mask features $\mathcal{V}^m_i$ by deformable attention~\cite{deformabledetr}. Simultaneously, the textual expression $\mathcal{E}$ with $T$ words is sent into a transformer-based~\cite{bert} language encoder which generates the word-level embedding $\mathcal{L}^w \in \mathbb{R}^{T \times D^{L}}$ and sentence-level embedding $\mathcal{L}^s \in \mathbb{R}^{D^{L}}$. Considering that $\mathcal{L}^w$ contains fine-grained descriptions while $\mathcal{L}^s$ expresses the general information, language query $\mathcal{L}^O \in \mathbb{R}^{N \times D^{L}}$ is obtained via the concatenation of them. Meantime, $\mathcal{L}^O$ and $\mathcal{V}^m_i$ are sent into the Hierarchical Semantic Decoding (HSD) module, which generates corresponding object segmentation $\mathcal{M} \in \mathbb{R}^{H \times W}$ by the progressively mutual modality complementary across multi-granularity and multi-level semantic aggregation. In addition, Multi-Adaptive Object Counting (MAC) is designed to promote the precise object perception of different scenarios by category-specific counting ability. We elaborate on each module in the following sections.
+
+\subsection{Hierarchical Semantic Decoding Module}
+The extended formulation of multiple-target and empty-target referents in GRES brings significant challenges since the former necessities a more precise cross-modal understanding of the complex association between objects, \textit{e.g.}, different domains, geometrical relationships while the latter highlights long-range contextual information for mitigating interference from similar deceptive objects. 
+Previous GRES methods~\cite{rela, refzom, rris} struggle to optimize the last modality-fused features for the subsequent mask prediction, ignoring the significance of explicit modality alignment at each granularity. While it is acceptable in classic RES, the extremely intricate referring semantics between instances and text in GRES hinder the integration of all-grained modality correspondence in one representation, thus incurring misinterpretation.        
+To address the issues, we propose a Hierarchical Semantic Decoding module to perform mutual modality calibration at each granularity and multi-level semantic integration for robust segmentation. Specifically, we utilize cascaded Semantic To Mask/Query modules to progressively transfer complementary information between modalities, which captures the high-level visual-linguistic correlation at each hierarchy. 
+Then the subsequent Multi-level Mask Aggregation is to perform semantic aggregation for object-aware segmentation. 
+
+\paragraph{Semantic To Mask Module.}
+The core idea of STM is to perform bi-directional modality complementary to generate the fine-grained semantic map at each scale of visual features, which is further utilized in the multi-level decoding process. As \cref{fig:decoder} shows, the visual feature $\mathcal{V}^m_i$ and the language query $\mathcal{L}^O$ are concurrently input in STM. 
+To be specific, taking $\mathcal{V}^m_1$ as an example, we firstly leverage fully connected layers to map visual features and language query into a shared joint space $D$, respectively. The mapped representations are further denoted as $\mathcal{V}$ and $\mathcal{L}$ for clarity.
+Then, we derive the coarse semantic map $\mathcal{A}$ by attention mechanism and it is applied in visual-linguistic interaction to align information flow between modalities. 
+The preliminary modality complementary highlights the corresponding object activation of language-guided visual features, while simultaneously relieving the potential noise in visual-oriented textual representations.
+The above process can be formulated as:  
+\begin{gather}
+    \mathcal{A} =\frac{1}{\sqrt{D}}\left(\mathcal{L}\mathcal{W}^{k}_{L}\right)\left(\mathcal{V}\mathcal{W}^{k}_{V}\right)^T, \\
+    \mathcal{F}^{L \sim V} = \mathrm{softmax}(\mathcal{A}) \times (\mathcal{V}\mathcal{W}^{v}_{V}), \\
+    \mathcal{F}^{V \sim L} = \mathrm{softmax}(\mathcal{A}^T) \times \left(\mathcal{L}\mathcal{W}^{v}_{L}\right),
+\end{gather}
+where $\mathcal{W}^{k}_{V}$, $\mathcal{W}^{v}_{V}$, $\mathcal{W}^{k}_{L}$, $\mathcal{W}^{v}_{L}$ are learnable weights that map visual and linguistic representations into attention space. 
+As shown in \cref{fig:decoder}, after generating the object response in $\mathcal{F}^{V\sim L}$ (textual activation of $ H_{1}W_{1} $ pixels) and enhancing the informative tokens in $\mathcal{F}^{L \sim V}$ (visual response for $N$ tokens), we perform high-level cross-modal supplement between them to generate the fine-grained semantic map $\mathcal{S}$: 
+\begin{equation}
+\mathcal{S} = \mathcal{F}^{L \sim V} \times (\mathcal{F}^{V\sim L})^T.
+\end{equation}
+In this manner, the key tokens related to the referent are anticipated to emerge significant responses in the semantic map while suppressing the activation of non-related regions. Considering that spatial relationships between instances and empty-target identification are crucial in GRES, solely relying on the last plain visual feature~\cite{rela, refzom} for mask generation potentially causes the misinterpretation of the referred target. Therefore, we provide an effective way to address the issue, which is the direct utilization of the fine-grained semantic map as input $ \mathcal{M}_1 \in \mathbb{R}^{N \times H_1W_1}$ to the following Multi-level Mask Aggregation module. 
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.9\linewidth]{Figures/decoder.pdf}
+    \caption{\textbf{Structure of STM and STQ module.} STM takes visual and linguistic features as input and enables bi-directional modality calibration to generate the corresponding fine-grained semantic map at each level. Subsequently, STQ transfers modality complementary contents at the query level with the assistance of the referring semantics and original linguistic information. Further, we visualize the semantic map at each level, showcasing the semantic alignment at different granularities.}
+    \label{fig:decoder}
+\end{figure*}
+ 
+
+\paragraph{Semantic To Query Module.}
+The textual description in GRES weighs more crucial than the classic RES task in two folds: 1) It additionally encompasses implicit or complex multiple-target information such as counting expressions and relationships among various domains of instances. 2) The empty-target description appears relevant to the image, which will easily result in undesirable object responses. However, previous methods~\cite{rela, refzom} directly utilize the outputs from visual-attended cross attention, $\textit{i.e.}$, $\mathcal{F}^{L \sim V}$ for the consecutive cross-modal interaction. This approach potentially contributes to the loss of original linguistic information as contents in visual features are intensive but mostly irrelevant. 
+
+To address the issues, we propose the Semantic-to-Query (STQ) module, which performs comprehensive multi-modal complementary at the query level. It well incorporates the important referring semantics and preserves valuable language information simultaneously.     
+Formally, we leverage fully connected layers to project the fine-grained semantic map $\mathcal{S}$ into query space:
+\begin{equation}
+    \mathcal{Q}^{S} = \mathrm{MLP}(\mathcal{S}).
+\end{equation}
+Then, as shown in \cref{fig:decoder}, the high-level semantics in $\mathcal{Q}^{S}$, instead of the single visual modality, is injected into the language query $\mathcal{Q}^{L}$, \textit{i.e.}, the initial input query $\mathcal{L}^{O}$ or the one from previous STQ module:
+\begin{equation}
+    \mathcal{Q}^{L'} = \mathrm{MHA}\left(\mathcal{Q}^{L}, \mathcal{Q}^{S}, \mathcal{Q}^{S}\right),
+\end{equation}
+where $\mathrm{MHA}$ is the vanilla multi-head attention mechanism and $\mathcal{Q}^{L'} \in \mathbb{R}^{N \times D}$.
+
+As illustrated in \cref{fig:framework}, $\mathcal{Q}^{L'}$ is further processed in the next-level STM module. It is anticipated that details within visual features become more adequate as the scale increases, which necessitates the more fine-grained modality interaction. Moreover, to prevent the shifted emphasis on original textual information and facilitate a deeper understanding of that with incorporated holistic semantics, we perform language reactivation by reintroducing the original linguistic feature $ \mathcal{L} $. Thus, $\mathcal{Q}^{L'}$ gets greatly enriched by the progressive modality complementary. 
+
+\paragraph{Multi-level Mask Aggregation.}
+Multiple-target referents typically vary in shape or scale within an image. The existing GRES mask decoding methods which obtain segmentation directly by leveraging the information-redundant joint feature, may lead to undesirable object response in multiple/non-target scenarios. Therefore, we propose Multi-level Mask Aggregation (MMA) to unify the semantic clue progressively for final mask predictions. In MMA, the corresponding object responses of semantic-enriched masks from different levels are hierarchically aggregated, which enhances the activation of proper regions while suppressing the unrelated ones.
+
+Specifically, as shown in \cref{fig:framework}, the outputs $ \{\mathcal{M}_1, \mathcal{M}_2, \mathcal{M}_3\} $ from cascaded STMs are gathered into MMA for final segmentation. Firstly, we convert each level of semantic-enriched segmentation into a two-class mask by multiplying dynamic kernel $ B $:
+\begin{equation}
+  \mathcal{M}_i' = \mathcal{M}_i \times B_{i},
+\end{equation}
+where $B_i$ is conditional on $ \mathcal{Q}^{L'}_{i} $ from each STQ module. Subsequently, they are weighted aggregated through sequential upsampling in a multi-level paradigm, which can be expressed as:
+\begin{equation}
+  \left\{
+  \begin{aligned}
+   \mathcal{M}_{1}^o &= \mathcal{M}_1', \\
+   \mathcal{M}_{i+1}^o &= \alpha_i \mathrm{Up}(\mathcal{M}_i^o) + \mathcal{M}_{i+1}', \quad i \in \{1, 2\}
+  \end{aligned}
+  \right.
+\end{equation}
+where $\mathrm{Up}(\cdot)$ indicates bilinear upsampling operation and $\alpha$ controls the fusion ratio between levels. 
+\subsection{Multi-Adaptive Object Counting}
+Existing GRES methods tend to directly adopt a binary classification branch to judge the existence of objects. However, we observe that such simple design is not completely applicable in general referring segmentation settings. 
+Particularly, it broadly categorizes multiple-target and single-target scenarios into one objective, ignoring their inherent specificity, which can easily incur ambiguity. 
+
+Meanwhile, several studies~\cite{mmm, refzom} use the language reconstruction technique. Yet, it is not suitable in GRES since reconstructing unrelated content increases the burden of precise object awareness. Therefore, we propose Multi-Adaptive Object Counting (MAC) to endow our model with category-specific counting ability in multiple/single/non-target situations, which facilitates the understanding of both complicated sentences, \textit{e.g.}, counting, compound structure expression, and visual scenes. 
+
+Formally, the multi-modal semantic queries $\{ \mathcal{Q}^{L'}_1,\mathcal{Q}^{L'}_2,\mathcal{Q}^{L'}_3 \}$ corresponding to each grain are transformed into the counting vector of $C$ categories, respectively:
+\begin{equation}
+    \mathcal{C}_i = \mathrm{MLP}(\mathcal{Q}^{L'}_i),
+\end{equation}
+where $\mathcal{C}_i \in \mathbb{R}^{N \times C}$. Then $\{ \mathcal{C}_1, \mathcal{C}_2, \mathcal{C}_3 \}$ are incorporated for the counting prediction $\mathcal{C}_{all} \in \mathbb{R}^{N \times C}$ by average pooling. Finally, we provide the explicit supervision on $\mathcal{C}_{all}$ by computing the $\mathit{L_1}$ distance between the multi-level accumulated results $\mathcal{C}^{pred}$ and the ground truth $\mathcal{C}^{gt}$, where $\mathcal{C}^{gt}$ (see in \cref{fig:framework}) is annotated as the exact counts of each category. The whole process can be formulated as:
+\begin{equation}
+    \begin{aligned}
+    \mathit{Loss}_{count} &= \mathit{SmoothL1}(\mathcal{C}^{pred} - \mathcal{C}^{gt}), \\
+    \mathit{SmoothL1}(x) &= 
+    \begin{cases} 
+     0.5 \cdot x^2 & \text{if } |x| < 1. \\
+     |x| - 0.5 & \text{otherwise}.
+    \end{cases}
+    \end{aligned}
+\end{equation}
+On one hand, the MAC module is designed to seamlessly adapt to the specificity in generalized scenes, \textit{i.e.}, multiple/single/non-target tasks, which benefits the general object matching. 
+On the other hand, guided by the the precise categories and counts of referent targets, our method facilitates comprehensive object perception in both image and language wise.
+
+\subsection{Output and Loss}
+We supervise our framework with three types of training objectives. 
+Similar to~\cite{lavt, rela, refzom}, binary entropy loss $\mathit{Loss}_{mask}$ is adopted to measure the disparity between GT $\mathcal{M}^{gt}$ and the final mask prediction $\mathcal{M}_{3}^o$. As discussed above, $\mathit{Loss}_{count}$ is to promote the object perception. Lastly, due to the constrain of current GRES evaluation metrics, a lightweight count head is built upon MAC to judge the existence of objects. It is worth noting that it only trains on $\mathcal{C}^{pred}$ and will not have any impact on the main framework, which is highly different from existing GRES methods.
+\begin{equation}
+    \begin{gathered}
+    \mathcal{P}^{pred} = \mathrm{MLP}\left(\mathrm{Detach}(\mathcal{C}^{pred})\right), \\
+    \mathit{Loss}_{exist} = \mathit{Loss}_{ce}\left(\mathcal{P}^{pred}, \mathcal{P}^{gt} \right).
+    \end{gathered}
+\end{equation}
+Therefore, total loss with balance factor $\lambda$ can be formulated as:
+\begin{equation}
+    \mathit{Loss}_{total} = \lambda_{mask}\mathit{Loss}_{mask} + \lambda_{count}\mathit{Loss}_{count} + \lambda_{exist}\mathit{Loss}_{exist}.
+\end{equation}
+
+
+
+Experiment
+\subsection{Experiment Setups}
+We evaluate our model on three GRES benchmarks using official evaluation metrics: gRefCOCO~\cite{rela}, R-RefCOCO/+/g~\cite{rris} and Ref-ZOM~\cite{refzom}. Following previous GRES methods, we also conduct experiments on the RES dataset: RefCOCO/+/g~\cite{refcoco, refcocog}. We adopt Swin Transformer~\cite{swin} and BERT~\cite{bert} as the backbone.
+
+\begin{table*}
+\begin{center}
+\setlength{\tabcolsep}{2mm}{
+\renewcommand\arraystretch{1.0}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{l|c|ccc|ccc|ccc}
+\specialrule{.1em}{.05em}{.05em}
+\multicolumn{10}{c}{\textbf{Generalized Referring Expression Segmentation on gRefCOCO}} \\
+\multirow{2}{*}{Method} & \multirow{2}{*}{Backbone} & \multicolumn{3}{c|}{Validation Set} & \multicolumn{3}{c|}{Test Set A}  & \multicolumn{3}{c}{Test Set B} \\
+& & gIoU & cIoU & N-acc. & gIoU & cIoU & N-acc. & gIoU & cIoU & N-acc. \\
+\midrule
+\multicolumn{10}{c}{\textit{MLLM Methods}} \\
+\midrule
+LISA-V-7B~\cite{lisa} & SAM-ViT-H & 32.21 & 38.72 & 2.71 & 48.54 & 52.55 & 6.37 & 39.65 & 44.79 & 5.00 \\
+
+GSVA-V-7B~\cite{gsva} & SAM-ViT-H & 63.32 & 61.70 & 56.45 & 70.11 & 69.23 & 63.50 & 61.34 & 60.26 & 58.42  \\
+LISA-V-7B~\cite{lisa} (ft) & SAM-ViT-H & 61.63 & 61.76 & 54.67 & 66.27 & 68.50 & 50.01 & 58.84 & 60.63 & 51.91 \\
+
+GSVA-V-7B~\cite{gsva} (ft) & SAM-ViT-H & 66.47 & 63.29 & 62.43 & 71.08 & 69.93 & 65.31 & 62.23 & 60.47 & 60.56 \\
+
+\midrule
+\multicolumn{10}{c}{\textit{Specialist Methods}} \\
+\midrule
+MattNet~\cite{mattnet} & ResNet-101 & 48.24 & 47.51 & 41.15 & 59.30 & 58.66 & 44.04 & 46.14 & 45.33 & 41.32 \\
+LTS~\cite{lts} & DarkNet-53 & 52.70 & 52.30 & - & 62.64 & 61.87 & - & 50.42 & 49.96 & - \\
+VLT~\cite{vlt} & DarkNet-53 & 52.00 & 52.51 & 47.17 & 63.20 & 62.19 & 48.74 & 50.88 & 50.52 & 47.82 \\
+CRIS~\cite{cris} & CLIP-R101 & 56.27 & 55.34 & - & 63.42 & 63.82 & - & 51.79 & 51.04  & - \\
+
+ReLA$^{\dagger}$~\cite{rela} & Swin-T & 56.87 & 57.73 & 44.07 & 65.29 & 66.02 & 48.68 & 57.37 & 56.86 & 50.31 \\
+\rowcolor{gray!10} \textbf{HDC} (Ours) & Swin-T &
+\textbf{65.19} & \textbf{62.59} & \textbf{60.32} & \textbf{69.50} & \textbf{68.84} & \textbf{60.44} & \textbf{61.15} & \textbf{59.82} & \textbf{60.07} \\
+\midrule
+LAVT~\cite{lavt} & Swin-B & 58.40 & 57.64 & 49.32 & 65.90 & 65.32 & 49.25 & 55.83 & 55.04 & 48.46 \\
+ReLA~\cite{rela} & Swin-B & 63.60 & 62.42 & 56.37 & 70.03 & 69.26 & 59.02 & 61.02 & 59.88 & 58.40 \\
+\rowcolor{gray!10} 
+\textbf{HDC} (Ours) & Swin-B & \textbf{68.28} & \textbf{65.42} & \textbf{63.38} & \textbf{72.52} & \textbf{71.60} & \textbf{65.29} & \textbf{63.85} & \textbf{62.79} & \textbf{60.68} \\
+\specialrule{.1em}{.05em}{.05em}
+\end{tabular}}
+}
+\end{center}
+\caption{Comparison with the state-of-the-art methods on gRefCOCO. 
+-V-7B means Vicuna-7B. (ft) denotes that the model is finetuned on the training set of gRefCOCO. $^\dagger$ denotes that the results are from the official repository.}
+\label{tab:gres}
+\end{table*}
+
+\begin{table}
+   \centering
+   \renewcommand\arraystretch{1.0}
+   \setlength{\tabcolsep}{2mm}{
+   \begin{tabular}{l|ccc|ccc|ccc}
+      \specialrule{.1em}{.05em}{.05em}
+      \multirow{2}{*}{Method} & \multicolumn{3}{c|}{R-RefCOCO}  & \multicolumn{3}{c|}{R-RefCOCO+} & \multicolumn{3}{c}{R-RefCOCOg} \\
+      \cline{2-10}
+                        & mIoU & mRR & rIoU & mIoU & mRR & rIoU & mIoU & mRR & rIoU  \\
+      \hline
+      CRIS~\cite{cris}  & 43.58 & 76.62 & 29.01 & 32.13 & 72.67 & 21.42 & 27.82	& 74.47 &	14.60 \\
+      EFN~\cite{efn}    & 58.33  & 64.64 & 32.53 & 37.74  & 77.12 & 24.24 & 32.53 & 75.33 & 19.44 \\
+      VLT~\cite{vlt}    &  61.66  & 63.36 & 34.05 & 50.15 & 75.37 & 34.19 & 49.67 & 67.31 & 31.64\\
+      LAVT~\cite{lavt}   & 69.59 & 58.25 & 36.20 & 56.99 & 73.45 & 36.98 & 59.52 &  61.60 & 34.91 \\
+      LAVT+~\cite{lavt}     & 54.70 & 82.39 & 40.11 & 45.99 & 86.35 & 39.71 & 47.22 & 81.45 & 35.46 \\
+      RefSegformer~\cite{rris} & 68.78 & 73.73 & 46.08 & 55.82 & 81.23 & 42.14 & 54.99 &  71.31 & 37.65 \\ 
+      \hline
+      \rowcolor{gray!10} 
+      \textbf{HDC} (Ours) & \textbf{74.35} & \textbf{83.69} & \textbf{52.81} & \textbf{64.85} & \textbf{87.51} & \textbf{49.09} & \textbf{65.11} & \textbf{84.19} & \textbf{43.85} \\
+      \specialrule{.1em}{.05em}{.05em} 
+   \end{tabular}}
+   \caption{Comparison with state-of-the-art methods on the R-RefCOCO/+/g dataset.}
+   \label{tab:result_R-RIS}
+\end{table}
+
+\subsection{Main Results}
+
+\paragraph{Results on GRES tasks.}
+To verify our effectiveness in the generalized setting, we first compare our method with previous specialist methods in \cref{tab:gres} on gRefCOCO~\cite{rela}. It can be seen that our method achieves new state-of-art performance on all metrics of three evaluation sets in the large-scale GRES benchmark. Under fair comparison with the previous SOTA method ReLA~\cite{rela}, HDC achieves superior performance with a significant margin of $+4.7\%$, $+2.5\%$, $+2.8\%$ in gIoU of val, testA, testB set. Then, we report our results on Ref-ZOM benchmark~\cite{refzom}(see in \cref{table:ref_zom}). As illustrated, our method outperforms all methods under a fair setting, \textit{e.g.}, $+6.3\%$ in Acc., $+1.1\%$ in oIoU. It is worth noting that our method is even better than GSVA~\cite{gsva}, which utilizes Multi-Modal Large Language Model (MLLM)~\cite{llava}. In addition, we further make a comparison on R-RefCOCO/+/g~\cite{rris}. As depicted in \cref{tab:result_R-RIS}, our method yields a significant improvement of $+6.7\%$, $+7.0\%$, $+6.2\%$ rIoU in R-RefCOCO/+/g compared with RefSegformer~\cite{rris}. 
+
+\paragraph{Results on RES tasks.}
+Following existing GRES methods~\cite{rela, refzom, rris}, we train on each RES dataset without additional data~\cite{lavt}. HDC also outperforms all GRES methods in RES tasks.
+\begin{table}
+\begin{center}
+\setlength{\tabcolsep}{7mm}{
+\renewcommand\arraystretch{1.0}
+\resizebox{0.8\linewidth}{!}{
+\begin{tabular}{l|c|ccc}
+\specialrule{.1em}{.05em}{.05em}
+\multirow{2}{*}{Method}& \multirow{2}{*}{Backbone} & \multicolumn{3}{c}{Ref-ZOM Test Set} \\
+ & & oIoU & mIoU & Acc. \\ 
+\midrule
+\multicolumn{5}{c}{\textit{MLLM Methods}} \\
+\midrule
+LISA-V-7B~\cite{lisa}& SAM-ViT-H & 61.46 & 60.14  & 72.58 \\
+
+GSVA-V-7B~\cite{gsva} & SAM-ViT-H & 67.98 & 67.12  & 82.66 \\
+LISA-V-7B~\cite{lisa} (ft) & SAM-ViT-H & 65.39 & 66.41  & 93.39 \\
+GSVA-V-7B~\cite{gsva} (ft) & SAM-ViT-H & 68.13 & 68.29  & 94.59 \\
+\midrule
+\multicolumn{5}{c}{\textit{Specialist Methods}} \\
+\midrule
+MCN~\cite{mcn}   & DarkNet-53   & 54.70  & 55.03   & 75.81        \\ 
+CMPC~\cite{cmpc}  & ResNet-101    & 55.72   & 56.19    & 77.01        \\ 
+VLT~\cite{vlt}   & DarkNet-53     & 60.43    & 60.21    & 79.26        \\ 
+LAVT~\cite{lavt}  & Swin-B     & 64.78   & 64.45    & 83.11        \\ 
+DMMI~\cite{refzom}  & Swin-B   & 68.21   & 68.77   & 87.02  \\
+\midrule
+\rowcolor{gray!10} \textbf{HDC} (Ours) & Swin-B & \textbf{69.31} & \textbf{68.81} & \textbf{93.34}\\
+
+\specialrule{.1em}{.05em}{.05em}
+\end{tabular}}}
+\caption{Comparison with state-of-the-art methods on the Ref-ZOM d
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

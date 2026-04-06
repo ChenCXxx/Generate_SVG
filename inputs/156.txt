@@ -1,0 +1,259 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Transformer~\cite{vaswani2017attention} has been widely adopted in natural language processing (NLP)~\cite{brown2020language, kenton2019bert, raffel2019exploring} for its great capability of  capturing long-range dependencies with \emph{self-attention}.  Motivated by its success in NLP, Dosovitskiy~\etal~\cite{dosovitskiy2020image} introduced Vision Transformer (ViT) as a general backbone for computer vision tasks such as image classification~\cite{liu2021swin, wu2021cvt, dong2021cswin}, object detection~\cite{carion2020end, zhang2022dino}, and segmentation~\cite{cheng2021mask2former}. Nowadays, Transformer~\cite{vaswani2017attention} remains the dominant architecture for NLP~\cite{bommasani2021opportunities, brown2020language, raffel2019exploring}, computer vision~\cite{yuan2021florence, liu2021swin, wu2021cvt, dong2021cswin} and many other AI applications~\cite{ramesh2021zero, ramesh2022hierarchical, li2021grounded}. 
+Despite its success, training Transformer remains challenging~\cite{liu2020understanding, davis2021catformer} for practitioners: the training process can be prohibitively unstable, especially at the beginning of training. To address the root cause for training instability, we resort to examining Lipschitz continuity of Transformer components.   Intuitively, a Lipschitz continuous network is finite in the rate of change and its Lipschitz constant is an useful indicator for training stability. As shown in ~\cite{bubeck2021universal,bubeck2021law, szegedy2013intriguing}, Lipschitz properties reveal intriguing behaviours of neural networks, such as robustness and generalization. In this work, we focus on the trainability issue of Transformer architectures by explicitly enforcing Lipschitz continuity at network initialization. 
+
+Previous works for overcoming Transformer training instability usually focus on one or a combination of its components which can be divided into four categories: (1) \emph{improving normalization}~\cite{xiong2020layer,liu2020understanding,wang2022deepnet}; Xiong~\etal~\cite{xiong2020layer} has shown that, for a Transformer architecture, Pre-LayerNorm (Pre-LN) is more stable than Post-LayerNorm (Post-LN). Liu~\etal~\cite{liu2020understanding} identified that Post-LN
+negatively influences training stability by amplifying parameter perturbations. They introduced adaptive model initialization (Admin) to mitigate the amplification effect. Likewise, Wang~\etal~\cite{wang2022deepnet} introduced DeepNorm and a depth-specific initialization to stabilize Post-LN. However, even with normalization improvements such as Admin and DeepNorm, learning rate warmup~\cite{goyal2017accurate} is still a necessity to stabilize training.   (2) \emph{more stable attention} ~\cite{kim2021lipschitz,dasoulas2021lipschitz}; Kim~\etal~\cite{kim2021lipschitz} proved that the standard dot-product attention is not Lipschitz continuous and introduced an alternative L2 attention.  (3) \emph{re-weighted residual shortcut}; Bachlechner~\etal~\cite{bachlechner2021rezero} showed that a simple architecture change of gating each residual shortcut with a learnable zero-initialized parameter substantially stabilizes training. With ReZero, they were able to train extremely deep Transformers of 120 layers. (4) \emph{careful weight initialization}; To avoid gradient exploding or vanishing at the beginning of training, Zhang~\etal~\cite{zhang2019fixup} proposed fixed-update initialization (Fixup) by  rescaling a standard initialization. They also proved that Fixup could enable stable training of residual networks without normalization. 
+
+In this paper, we conduct a thorough analysis of Transformer architectures and propose a Lipschitz continuous Transformer called LipsFormer. In contrast to previous practical tricks that address training instability, we show that Lipschitz continuity is a more essential property to ensure training stability.
+We focus our investigation on the following Transformer components:  LayerNorm, dot-product self-attention,  residual shortcut, and weight initialization. For each analyzed module, we propose a Lipschitz continuous variant as a new building block for LipsFormer. The final LipsFormer network has an upper bound Lipschitz constant at initial stages of training. Such a Lipschitz guarantee has two implications: 1) we can train LipsFormer without using the common trick of learning rate warmup, yielding a faster convergence and better generalization; 2) Transformer is more unstable at the beginning of training. By ensuring initial network stability, we drastically increases the trainability of Transformer. Note that we could also enforce Lipschitz continuity during the whole training process by simply constraining updates on certain scaling parameters.  
+
+Our main contributions can be summarized as follows: 
+\begin{itemize}[leftmargin=*]
+    \item We give a thorough analysis of key Transformer components: LayerNorm, self-attention, residual shortcut, and weight initialization. More importantly, we identify potential instability problems each module brings to the training difficulty and propose their Lipschitz continuous counterparts: CenterNorm, scaled cosine similarity attention, scaled residual shortcut, and spectral-based initialization. The proposed Lipschitz continuous modules can serve as drop-in replacements for a standard Transformer, such as Swin Transformer~\cite{liu2021swin} and CSwin~\cite{dong2021cswin}. 
+    
+    \item  We propose a Lipschitz continuous Transformer (LipsFormer) that can be stably trained without the need of carefully tuning the learning rate schedule. We derive  theoretical Lipschitz constant  upper bounds for both scaled cosine similarity attention and LipsFormer. The derivation provides a principled guidance for designing LipsFormer networks. We build LipsFormer-Swin and LipsFormer-CSwin based on Swin Transformer and CSwin individually.
+ 
+
+    \item We validate the efficacy of the LipsFormer on ImageNet classification. We show empirically that LipsFormer can be trained smoothly without learning rate warmup.  As a result,  on the ImageNet-1K dataset, LipsFormer-Swin-Tiny training for 300 epochs can obtain a top-1 accuracy of 82.7\% without any learning rate warmup. Moreover, LipsFormer-CSwin-Tiny training for 300 epochs achieves a top-1 accuracy of 83.5\% with 4.7G FLOPs and 24M parameters. 
+    
+    
+\end{itemize}
+
+
+
+Preliminaries
+
+In this section, we first define Lipschitz continuity and Lipschitz constant and then discuss several Lipschitz properties of a neural network. We use the denominator-layout notation throughout this paper. A sequence of $N$ elements is denoted as $\bX = [\bx_1; \dots; \bx_N]^{\top} \in \mathbb{R}^{N\times D}$, where each vector $\bx_i \in \mathbb{R}^{D}, i \in \{1, ..., N\}$. Function transformation is parameterized by an associated weight matrix $\bW$ and an affine transformation is denoted as $f(\bx) = \bW^{\top} \bx$, where  $\bW \in \mathbb{R}^{D\times M}$.
+\begin{definition}
+\label{def-1}
+A function \(f(\bx, \bW)\) : $\mathbb{R}^{D} \rightarrow \mathbb{R}^{M}$ is Lipschitz continuous (L-Lipschitz) under a choice of p-norm $\| \cdot \|_p$ in the variable \(\bx\) if
+there exists a constant $L$ such that for all \((\bx_1, \bW)\) and \((\bx_2, \bW)\) in the domain of \(f\),
+\begin{equation*}
+  \|f(\bx_1, \bW)-f(\bx_2, \bW)\|_{p} \leq L \|\bx_1-\bx_2\|_{p},
+\end{equation*}
+\end{definition}
+where the smallest value of $L$ that satisfies the inequality is called the Lipschitz constant of $f$. To emphasize that the Lipschitz constant with respect to $\bx$ depends on $\bW$ and the choice of $p$, we denote $L$ as 
+$\operatorname{Lip}_p({f_{\bx}}(\bW))$.
+A function is generally referred to as expansive, non-expansive, and contractive in the variable $\bx$ for $\operatorname{Lip}_p({f_{\bx}}(\bW)) >1$,  $\operatorname{Lip}_p({f_{\bx}}(\bW)) \leq 1$, and $\operatorname{Lip}_p({f_{\bx}}(\bW)) <1 $, respectively, exhibiting characteristic differences in the change rate of its output. Contemporary neural networks are rarely Lipschitz continuous under the influence of any constituent non-Lipschitz module. Even if a network is Lipschitz continuous, calculating its Lipschitz constant exactly is a challenging task~\cite{virmaux2018lipschitz}.
+
+According to Definition~\ref{def-1}, the Lipschitz constant of $f(\bx, \bW)$ with respect to $\bx$ can be expressed as,
+\begin{equation*}
+  \operatorname{Lip}_p({f_{\bx}}(\bW))=\sup _{\bx_1 \neq \bx_2 \in \mathbb{R}^{D}} \frac{\|f(\bx_1, \bW)-f(\bx_2, \bW) \|_{p}}{\|\bx_1-\bx_2 \|_{p}}.
+\end{equation*}
+Exact computation of the above equation is an NP-hard problem. 
+For subsequent analyses, We use $p=2$ by default unless specified and  suppress $p$ to reduce clutter, but our conclusion can be easily extended to other choices of $p$.
+\begin{lemma}
+\label{lemma-continuously}
+Given $\bW$, let $f(\bx, \bW): \mathbb{R}^{D} \rightarrow \mathbb{R}$ be a continuously differentiable
+function and $\operatorname{Lip}({f}{_{\bx}}(\bW))$ be its Lipschitz constant with respect to $\bx$.
+According to the mean value theorem, we have the following inequality,
+$$
+\left\|\nabla_{\bx} f(\bx, \bW)\right\| \leq \operatorname{Lip}({f_{\bx}}(\bW)), \forall \bx \in \mathbb{R}^{D},$$
+\end{lemma}
+where $\left\|\nabla_{\bx} f(\bx, \bW)\right\|$ is the gradient norm of $f(\bx, \bW)$ with respect to $\bx$.
+
+From Lemma \ref{lemma-continuously}, 
+we can see that a practical method to compute the Lipschitz constant of a continuously differentiable function is to compute its maximum gradient norm. To prove a function is not Lipschitz, it is sufficient to show that its gradient norm is not bounded. For example, $f(x) = \frac{1}{x}$ and $f(x) = x^2$ are not Lipschitz continuous for $x \in (0,\infty)$,  because their gradient can be arbitrarily large as $x$ approaches $0$ and $\infty$, respectively. 
+\begin{definition} 
+\label{def-dnn}
+Let $F(\bx, \{\bW^l, l=1,\ldots,L \}): \mathbb{R}^{D} \rightarrow \mathbb{R}$ be an L-layer neural network defined as a composite function with L transformation functions:
+\begin{equation*} 
+F(\bx, \{\bW^l, l=1,\ldots,L \})=f^{L}\left(f^{L-1}\left(\ldots f^{1}\left(\bx, \bW^{1}\right) , \bW^{2}\right) \ldots , \bW^{L}\right),
+\end{equation*}
+\end{definition}
+where $\{\bW^l, l=1,\ldots,L \}$ is the parameter set, and $f^l$ is the  transformation function of the $l$-th layer. 
+For an affine transformation $f\left(\bx , \bW\right) = \bW^{\top} \bx$, its Lipschitz constant is,
+\begin{equation} 
+\label{eq:affine}
+\operatorname{Lip}_p({f_{\bx}}(\bW)) =\sup _{\|\boldsymbol{x}\|_{p}=1}\|\bW^{\top} \boldsymbol{x}\|_{p} \\ =\left\{\begin{array}{ll}\sigma_{\max }(\bW), & \text { if } p=2 \\ \max _{i} \sum_{j}\left|\bW_{i j}\right| & \text { if } p=\infty\end{array}\right.
+\end{equation}
+where $\sigma_{\max}(\bW)$ is the largest eigenvalue of $\bW$. 
+Many common activation functions such as Sigmoid, Tanh, ReLU, and GELU are 1-Lipschitz.
+\begin{lemma} 
+\label{lemma-ldnn}
+Given the Lipschitz constant of each transformation function in a network $F$, the following inequality holds
+$$
+\operatorname{Lip}(F_{\bx}(\{\bW^l, l=1,\ldots,L \})) \leq \prod_{l=1}^{L} \operatorname{Lip}(f^{l}_{\bx}(\bW^l)).
+$$
+\end{lemma}
+From Lemma~\ref{lemma-ldnn}, the Lipschitz constant of a network is upper bounded by the product of each layer's Lipschitz constant. 
+This multiplicative nature gives us an insight into understanding why deeper networks usually suffer more severe training instability: if a network's constituent layers are expansive, the upper bound of its Lipschitz constant increases monotonically with its network depth. We refer the interested readers to ~\cite{fazlyab2019efficient,latorre2020lipschitz} for estimating tighter bounds of deep neural networks.
+
+
+
+An Assumption for Training Stability
+
+Our design philosophy for LipsFormer is based on the following assumption.
+
+\begin{assumption}
+\label{cor-1}
+A network should satisfy the following Lipschitz conditions for training stability,
+\begin{enumerate}
+	\item \ \ \ \ \ \ \ \ \ \ $\|f(\bx_1, \bW)-f(\bx_2, \bW)\| \leq \operatorname{Lip}(f_{\bx}(\bW))\|\bx_1-\bx_2\|,$
+	\item \ \ \ \ \ \ \ \ \ \ $\|f(\bx, \bW_1)-f(\bx, \bW_2)\| \leq \operatorname{Lip}(f_{\bW}(\bx))\|\bW_1-\bW_2\|.$
+\end{enumerate}
+\end{assumption}
+
+
+The first inequality focuses on the forward process and assumes that a stable network should satisfy Lipschitz continuity with respect to its input $\bx$: a small perturbation of its input should not lead to a drastic change of its output. Guaranteeing smoothness is vital for guarding a network's generalization ability. 
+For the second inequality, recall that the forward process of a typical neural network propagates computation as $\bx^{l+1} = {(\bW^{l+1})}^{\top} \bx^l$, where $\bx^l$ and $\bW^{l+1}$ are the input and weight matrix of Layer $l+1$. Since common non-linearities are 1-Lipschitz, we drop non-linear activations here for simplicity. To backpropagate the network loss $\mathcal{L}$, we have
+$$
+\frac{\partial \mathcal{L}}{\partial \bx^{l}} = \bW^{l+1}
+\frac{\partial \mathcal{L}}{\partial \bx^{l+1}}, \ \ \ \ 
+\frac{\partial \mathcal{L}}{\partial \bW^{l+1}} = \bx^{l}
+{(\frac{\partial \mathcal{L}}{\partial \bx^{l+1}})}^{\top}.
+$$
+Gradient descent updates network weights according to 
+$\bW \leftarrow \bW - lr \times \frac{\partial \mathcal{L}}{\partial \bW}.$ As demonstrated above, any value explosion will propagate with the chain derivation: if $\frac{\partial \mathcal{L}}{\partial \bx^{l+1}}$ is unbounded, $\frac{\partial \mathcal{L}}{\partial \bx^{l}}$ and $\frac{\partial \mathcal{L}}{\partial \bW^{l+1}}$ will consequently be unbounded. Meanwhile, if $\frac{\partial \mathcal{L}}{\partial \bW^{l+1}}$ is not bound, it will largely influence the back-propagation chain in the next iteration.
+This justifies the second inequality for the purpose of training stability.
+
+Intuitively, guaranteeing that a network's output does not change too much under small perturbations of either its input or network weights induces a more stable training process. In this work, we focus on satisfying the first inequality in Assumption \ref{cor-1} for Transformer architectures. 
+
+
+
+
+LipsFormer
+A Lipschitz continuous Transformer (LipsFormer) requires all of its constituent modules to be Lipschitz continuous according to Lemma ~\ref{lemma-ldnn}. In this section, we analyze key Transformer components and introduce their Lipschitz continuous counterparts when any Lipschitz continuity is violated. 
+\subsection{Lipschitz Continuous Modules}
+\subsubsection{CenterNorm Instead of LayerNorm}
+LayerNorm~\cite{ba2016layer} is the most widely used normalization method in Transformer. It is defined as
+\begin{equation*}
+\begin{aligned} 
+\operatorname{LN}(\bx) &= \boldsymbol{\gamma} \odot \bz + \boldsymbol{\beta},
+\ \text{where}\ \ \bz = \frac{\by}{\mathrm{Std}(\by)} \ \ \text{and}\ \  \by = \left(\boldsymbol{I}-\frac{1}{D}  \boldsymbol{1} \boldsymbol{1}^{\top}\right) \bx,
+\end{aligned}
+\label{equ:ln}
+\end{equation*}
+where  $\bx, \by \in \mathbb{R}^{D}$, $\mathrm{Std}(\by)$ is the standard deviation of the mean-subtracted input $\by$, and $\odot$ is an element-wise product.  $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ are initialized to $\boldsymbol{1}$ and $\boldsymbol{0}$ respectively. For simplicity, we drop $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ from analysis because they can be explicitly constrained within any pre-defined range. 
+By taking partial derivatives, the Jacobian matrix of $\bz$ with respect to $\bx$ is,
+\begin{equation*}
+\begin{aligned} 
+\boldsymbol{J}_{\bz}(\bx) &=\frac{\partial \bz}{\partial \bx} =   \frac{\partial \bz}{\partial \by}\frac{\partial \by}{\partial \bx} = \frac{1}{\mathrm{Std}(\by)}\left(\boldsymbol{I}-\frac{1}{D} \boldsymbol{1} \boldsymbol{1}^{\top}\right) \left(\boldsymbol{I}-\frac{\by \by^{\top}}{\|\by\|_{2}^{2}}\right).
+\end{aligned}
+\label{equ:cn}
+\end{equation*}
+The equation above shows that LayerNorm is not Lipschitz continuous because when $\mathrm{Std}(\by)$ approaches 0, the values in the Jacobian matrix will approach $\infty$, causing severe training instability. 
+On the other end, when $\mathrm{Std}(\by)$ is very large, training will be hindered by 
+LayerNorm as gradients become extremely small. Also note that backpropagating through LayerNorm is slow due to poor parallelization when computing the Jacobian matrix, especially for the term $I-\frac{\by \by^{\top}}{\|\by\|_{2}^{2}}$.
+
+In practice, we notice that a single LayerNorm operation could cause severe training instability without learning rate warmup. The underlying reason is that LayerNorm is not Lipschitz continuous and some ill-defined input with zero variance will lead to a Jacobian matrix filled with infinity.
+To stabilize training by enforcing Lipschitz continuity, we introduce CenterNorm as,
+\begin{equation}
+    \operatorname{CN}(\bx) = \boldsymbol{\gamma} \odot \frac{D}{D-1}\left(\boldsymbol{I}-\frac{1}{D} \boldsymbol{1} \boldsymbol{1}^{\top}\right) \bx + \boldsymbol{\beta}, 
+\end{equation}
+where $D$ is the dimension of $\bx$. The Jacobian matrix $\frac{\partial \operatorname{CN}(\bx)}{\partial \bx}$ contains a term $\frac{D}{D-1}\left(\boldsymbol{I}-\frac{1}{D} \boldsymbol{1} \boldsymbol{1}^{\top}\right)$ where $\frac{D}{D-1}$ is a heuristic to avoid the eigenvalue contraction from $\left(\boldsymbol{I}-\frac{1}{D} \boldsymbol{1} \boldsymbol{1}^{\top}\right)$. It is easy to verify that, 
+\begin{equation*}
+    \|\operatorname{CN}(\bx_1) - \operatorname{CN}(\bx_2) \| \leq \operatorname{Lip}({\operatorname{CN}_{\bx}}) \| \bx_1 - \bx_2 \|,
+\end{equation*}
+where $\operatorname{Lip}({\operatorname{CN}_{\bx}}) = \frac{D}{D-1}$ for $\boldsymbol{\gamma} = \boldsymbol{1}$ and $\boldsymbol{\beta} = \boldsymbol{0}$. As most deep neural networks are dealing with high dimensional data with $D \gg 1$, we make a  simplification that $\operatorname{Lip}({\operatorname{CN}_{\bx}})$ is 1-Lipschitz for later discussions. CenterNorm is by design Lipschitz continuous at initialization. To guarantee its Lipschitz continuity through training we could simply constraint $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$ to a pre-defined range. 
+\subsubsection{Scaled Cosine Similarity Attention}
+Self-attention~\cite{vaswani2017attention} is a key component of Transformer, helping  capture long-range relationships within data. In practice, people use multi-head attention to effectively capture such relationships under different contexts. Since multi-head attention is a linear combination of multiple single-head attention outputs, for simplicity, we focus our analysis on single-head attention, which is defined as,
+\begin{equation}
+\operatorname{Attn}(\boldsymbol{X}, \boldsymbol{W}^{Q}, \boldsymbol{W}^{K}, \boldsymbol{W}^{V})=\operatorname{softmax}\left(\frac{ \boldsymbol{X} \boldsymbol{W}^{Q}  \left( \boldsymbol{X} \boldsymbol{W}^{K}\right)^{\top}}{\sqrt{D}}\right) \boldsymbol{X} \boldsymbol{W}^{V},
+\end{equation}
+where $\boldsymbol{W}^{Q}, \boldsymbol{W}^{K}, \boldsymbol{W}^{V}$ are the projection matrices to transform $\bX$ into query, key, and value matrices, respectively. Intuitively, every token aggregates information from all the visible tokens by computing a weighted sum of the values of the visible tokens according to the similarity between its query and each visible token's key. 
+The similarity between the $i$-th query $\mathbf{q}_{i}$ and $j$-th key $\mathbf{k}_{j}$ is denoted as  $\boldsymbol{P}_{ij}\propto	{\boldsymbol{x}_{i}}^{\top} \boldsymbol{W}^{Q} ({\boldsymbol{W}^{K}})^{\top} {\boldsymbol{x}_{j}}.$
+
+In~\cite{kim2021lipschitz}, Kim~\etal \ proved that the standard dot-product self-attention is \emph{not} Lipschitz continuous and introduced an alternative L2 self-attention that is Lipschitz continuous. Here we use a scaled cosine similarity attention, which is defined as,
+\begin{equation*}
+\label{eq:cosineattn}
+\begin{gathered}
+\operatorname{SCSA}(\boldsymbol{X}, \boldsymbol{W}^{Q}, \boldsymbol{W}^{K}, \boldsymbol{W}^{V}, \nu, \tau) =  \nu \boldsymbol{P} \bV, 
+\text{where } 
+\boldsymbol{P} = \operatorname{softmax}\left(\tau \bQ \bK^{\top} \right), \\
+\end{gathered}
+\end{equation*}
+\begin{equation*}
+\bQ =\left[\begin{array}{ccc}- & \mathbf{q}_{1}^{\top} & - \\ & \vdots & \\ - & \mathbf{q}_{N}^{\top} & -\end{array}\right]  \quad 
+\bK =\left[\begin{array}{ccc}- & \mathbf{k}_{1}^{\top} & - \\ & \vdots & \\ - & \mathbf{k}_{N}^{\top} & -\end{array}\right] \quad 
+\bV =\left[\begin{array}{ccc}- & \mathbf{v}_{1}^{\top} & - \\ & \vdots & \\ - & \mathbf{v}_{N}^{\top} & -\end{array}\right],
+\end{equation*}
+
+where $\nu$ and $\tau$ are predefined or learnable scalars; $\bQ, \bK, \bV$ are $\ell^2$ row-normalized: \\ $\mathbf{q}_i, \mathbf{k}_i, \mathbf{v}_i = \frac{{({\mathbf{x}_i}^{\top} \bW^{Q})}^{\top}}{\sqrt{{\|{\mathbf{x}_i}^{\top} \bW^{Q} \|}^2 + \epsilon}}, \frac{{({\mathbf{x}_i}^{\top} \bW^{K})}^{\top}}{\sqrt{{\|{\mathbf{x}_i}^{\top} \bW^{K} \|}^2 + \epsilon}}, \frac{{({\mathbf{x}_i}^{\top} \bW^{V})}^{\top}}{\sqrt{{\|{\mathbf{x}_i}^{\top} \bW^{V} \|}^2 + \epsilon}}$;$\epsilon$ is a smoothing factor to guarantee the validity of cosine similarity computation even when ${\|{\mathbf{x}_i}^{\top} \bW^Q \|} = 0$. 
+For arbitrary pair of rows of $\boldsymbol{Q}$ and $\boldsymbol{K}$ denoted as $\mathbf{q}_i$ and $\mathbf{k}_j$, the cosine similarity on their $\ell^2$-normalized vectors is proportional to their L2 dot product. The upper bound of $\operatorname{SCSA}$'s Lipschitz constant with respect to $\|\cdot\|_2$ and $\|\cdot\|_\infty$ is the following,
+
+
+\begin{theorem}
+\label{the:scsatheorem}
+Single-head scaled cosine similarity attention is Lipschitz continuous, its $\operatorname{Lip}_{\infty}$ and $\operatorname{Lip}_{2}$ are upper bounded by the following inequalities, 
+$$
+\begin{array}{l}
+{\operatorname{Lip}(SCSA)}_{\infty} \leq N^2 \sqrt{D}   \nu \tau \epsilon^{-\frac{1}{2}} {\|{{\bW^K}}\|}_{\infty} +N \sqrt{D}   \nu  \tau \epsilon^{-\frac{1}{2}} {\|{{\bW^Q}}\|}_{\infty} + 2 N  \nu \epsilon^{-\frac{1}{2}} {\|{{\bW^V}^{\top}}\|}_{\infty}, \\
+{\operatorname{Lip}(SCSA)}_{2} \leq 2 N (N-1)  \nu  \tau  \epsilon^{-\frac{1}{2}} {\|{{\bW^K}}\|}_{2} +  2 (N-1) \nu \tau \epsilon^{-\frac{1}{2}} {\|{{\bW^Q}}\|}_{2} + 2 N  \nu \epsilon^{-\frac{1}{2}} {\|{{\bW^V}^{\top}}\|}_{2}.
+ \end{array}
+$$
+\end{theorem}
+
+ For multi-head attention, we heuristically scale head feature concatenation by $\frac{1}{K}$ where $K$ is the number of heads. 
+
+\subsubsection{Weighted Residual Shortcut}
+\label{sec:wrs}
+Residual block~\cite{he2016deep} is a common component of contemporary neural networks~\cite{liu2021swin,wu2021cvt,vaswani2017attention}. It has been proven effective in avoiding gradient vanishing, especially when training deep networks. A standard residual shortcut block is defined as, 
+\begin{equation*}
+    \operatorname{RS}(\bx, \bW) = \bx + f(\bx, \bW).
+\end{equation*}
+The Lipschitz constant of a residual shortcut block with respect to $\bx$ is $\operatorname{Lip}(RS_{\bx}(\bW)) = 1+\operatorname{Lip}(f_{\bx}(\bW))$. For any non-degenerate Lipschitz continuous function $f(\bx, \bW)$, its Lipschitz constant is greater than 0, hence a residual block is strictly expansive. According to Lemma ~\ref{lemma-ldnn}, stacking $L$ identical residual blocks alone will grow the upper bound of a network's  Lipschitz constant exponentially to $\operatorname{Lip}(RS_{\bx}(\bW))^L$, causing substantial vulnerability to forward value explosion. One way to mitigate such an instability is to constraint the Lipschitz constant of the residual path to be much smaller than 1, especially at the beginning of training when the network is undergoing fast changes via learning. In this paper, we explicitly multiply the residual path with a scale factor initialized to a small value such as 0.1 and 0.2. We define the weighted residual shortcut as, 
+\begin{equation}
+    \operatorname{WRS}(\bx, \bW) = \bx + \boldsymbol{\alpha} \odot f(\bx, \bW),
+\label{eq-rescut}
+\end{equation}
+where $\boldsymbol{\alpha}$ is a learnable parameter vector with the same dimension as the channel size of $\boldsymbol{x}$.
+It is easy to verify that
+\begin{equation*}
+    \|  \operatorname{WRS}(\bx_1, \bW) - \operatorname{WRS}(\bx_2, \bW)\| \leq \operatorname{Lip}(\operatorname{WRS}_{\bx}(\bW)) \|\bx_1 - \bx_2\|,
+\end{equation*}
+where $\operatorname{Lip}(\operatorname{WRS}_{\bx}(\bW)) = 1 + \max(\boldsymbol{\alpha})$ when $\operatorname{Lip}(f_{\bx}(\bW)) = 1$.
+
+As training progresses, $\boldsymbol{\alpha}$ changes as part of the learning process. We could easily constrain $\boldsymbol{\alpha}$ to a pre-defined range to ensure the Lipschitz continuity of a network during the whole training process. Note that re-weighting shortcut and residual path has been explored before: in~\cite{wang2022deepnet, liu2020understanding}, the authors redefine a residual block as $ \boldsymbol{\alpha}  \odot \bx + f(\bx, \bW)$  to alleviate the LayerNorm instability; ReZero~\cite{bachlechner2021rezero} uses a similar formulation as Equation~\ref{eq-rescut} to speed up convergence, where $\alpha$ is a scalar instead of a vector. Our formulation is motivated by decreasing the Lipschitz constant of a network, instead of being a practical trick. It provides a more principled guidance to network design. For example, when training a very deep network, a smaller $\boldsymbol{\alpha}$ would be justified for the purpose of training stabilization. 
+
+\subsubsection{Spectral Initialization for Convolution and Feed-forward Connection}
+
+Both convolution and feed-forward connection are compositions of affine transformations. As shown in Equation ~\ref{eq:affine}, affine transformation is Lipschitz continuous, hence by Lemma \ref{lemma-ldnn} both convolution and feed-forward connection are Lipschitz continuous.
+
+Note that a careful initialization is important for successfully training a neural network. Many initialization methods have been proposed before such as Xavier~\cite{glorot2010understanding} and Kaiming~\cite{he2015delving} initialization. Inspired by spectral norm regularization~\cite{yoshida2017spectral}, we introduce a 1-Lipschitz initialization called spectral initialization,
+\begin{equation}
+    \bW_{si} = \frac{\bW}{\sigma_{max}(\bW)},
+\end{equation}
+where $\bW$ is Xavier-norm initialized and $\sigma_{max}(\bW)$ is its largest eigenvalue. For affine transformation $f(\bx, \bW_{si}) = {\bW_{si}}^{\top} \bx$, its Lipschitz constant satisfies the following inequality,
+\begin{equation*}
+    \| {\bW_{si}}^{\top} \bx_1 - {\bW_{si}}^{\top} \bx_2\| \leq \operatorname{Lip}(f_{\bx}(\bW_{si})) \|\bx_1 - \bx_2\|,
+\end{equation*}
+where $\operatorname{Lip}(f_{\bx}(\bW_{si})) = 1$ at initialization. We use spectral initialization on all convolutions and feed-forward connections.
+
+
+\subsection{LipsFormer}
+\subsubsection{LipsFormer Block}
+\begin{figure}[thb] \centering
+    \includegraphics[width=0.9\textwidth]{lipblock.pdf}
+    \caption{Comparison of a LipsFormer block with ConvNeXt, Transformer and Swin-Transformer Blocks. We use different colors to mark our Lipschitz improvements.} 
+    \label{fig:lipblock}
+\end{figure}
+We start by introducing the main building block for LipsFormer. As shown in Figure~\ref{fig:lipblock}, each LipsFormer block (LipsBlock) is composed of three sub-modules: convolution blocks (lightweight depth-wise and element-wise convolution), scaled cosine similarity attention, and feed-forward connection. CenterNorm operator is optional after each sub-module. In this work we apply CenterNorm after scaled cosine similarity attention and feed-forward connection. 
+Within each residual block, residual path is re-weighted with a learnable \textcolor[HTML]{ae6ffe}{$\alpha$} and randomly dropped with probability \textcolor[HTML]{f7d813}{$p$} during training as indicated by dashed lines. For the convolution blocks, we use a $7\times 7$ depth-wise and a $1\times 1$ element-wise convolution.
+Ablation study on each component can be found in Sec. \ref{ablation}. 
+\begin{table}[ht]
+\begin{center}
+\begin{tabular}{c c}
+ \hline
+  Post-Norm & $\boldsymbol{x}_{i+1} = \text{LayerNorm}(\boldsymbol{x}_i + f(\boldsymbol{x}_i))$  \\  
+  Pre-Norm & $\boldsymbol{x}_{i+1} = \boldsymbol{x}_i + f(\text{LayerNorm}(\boldsymbol{x}_i))$  \\ 
+  \textbf{LipsFormer} & $\boldsymbol{x}_{i+1} = \text{\textcolor[HTML]{f45463}{CenterNorm}}(\boldsymbol{x}_i + \textcolor[HTML]{f7d813}{\text{DropPath}_{p_i}}(\textcolor[HTML]{ae6ffe}{\boldsymbol{\alpha}_i}\textcolor[HTML]{689ef3}{f}(\boldsymbol{x}_i)))$  \\
+ \hline \\
+\end{tabular}
+\caption{\label{tab:norms} Various forms of residual blocks for Transformer architectures. As illustrated in Figure \ref{fig:lipblock}, $f$ represents a transformation function $\in \{\text{self-attention, feed-forward}\}$. For LipsFormer,  $\textcolor[HTML]{689ef3}{f} \in \{\text{\textcolor[HTML]{689ef3}{scaled cosine similarity  attention}, \textcolor{black}{feed-forward, convolution blocks}}\}$. 
+}
+\end{center}
+\end{table}
+
+In Table~\ref{tab:norms} we compare the LipsFormer residual block with commonly used Post-Norm and Pre-Norm residual blocks. CenterNorm and scaled cosine similarity attention are  Lipschitz continuous counterparts for LayerNorm and dot-product attention. Weighted residual connection and  DropPath~\cite{larsson2016fractalnet} are used to constrain the Lipschitz constant of a deep LipsFormer network.
+
+ \subsubsection{Overall Architecture of LipsFormer} \label{archietecture}
+In general, LipsFormer follows the architecture of Swin Transformer v1. We start by processing an input image with non-overlapped convolutional token embedding ($4 \times 4$ convolution with stride 4) to obtain a feature representation with resolution $\frac{H}{4} \times \frac{W}{4}$. Then the main computation passes four stages where each stage consists of a pre-defined number of LipsFormer blocks as shown in Figure~\ref{fig:lipblock}. Between consecutive stages, we reduce the output resolution by $2$ and double the size 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

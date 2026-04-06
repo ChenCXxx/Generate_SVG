@@ -1,0 +1,199 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[t]
+        \centering
+        \includegraphics[width=0.47\textwidth]{figs/Motivation.pdf}
+        \caption{\textbf{Motivation of our method. } (\textbf{a}) Large VLMs like CLIP~\cite{radford2021learning} can understand the image globally by learning rich knowledge from a huge amount of image-text pairs. Such knowledge can include diverse relations between visual concepts in the scene, as shown in (\textbf{b}). As illustrated in (\textbf{c}), current OVOD approaches focus on regional visual concept detection but they are weak in exploiting this global knowledge, which can fail to detect novel hard objects, such as 
+        ambiguous objects like the blurred tennis ball. (\textbf{d}) We instead learn an image-level multi-label recognition (MLR) module to leverage the global knowledge yielded from CLIP for recognizing those hard objects. (\textbf{e}) The image-level MLR scores are then utilized to refine the instance-level detection scores from a global perspective for more effective OVOD.
+        }
+        \label{fig:motivation}
+\end{figure}
+
+Open-Vocabulary Object Detection (OVOD) is a challenging task that requires detecting objects of novel categories that are not present in the training data. To tackle this problem, conventional approaches focus on leveraging external image-text data as weak supervisory information to expand the detection vocabulary of the categories. In recent years, large-scale pre-trained vision-language models (VLMs), \eg, CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling}, which are trained using billion-scale internet-crawled image-caption pairs (see Fig. \ref{fig:motivation}(a) for an example), have been widely used to empower OVOD. 
+
+Existing VLM-based OVOD studies focus on how to adapt the image-level pre-trained CLIP to a region-level object detection task. Typically they adopt a regional concept learning method, such as Region-level Knowledge Distillation~\cite{du2022learning, bangalath2022bridging} that aligns region embeddings to their corresponding features extracted from the image encoder of CLIP, Regional Prompt Learning~\cite{wu2023cora, du2022learning, feng2022promptdet} that learns continuous prompt representations to better pair with region-level visual embeddings, Region-Text Pre-training~\cite{zhong2022regionclip} that explicitly aligns image regions and text tokens during vision-language pre-training, or Self-Training~\cite{zhou2022detecting} that generates pseudo-labels of novel objects on the image-level labeled datasets (\eg, ImageNet-21k~\cite{deng2009imagenet} and Conceptual Captions~\cite{sharma2018conceptual}). 
+
+These methods have demonstrated remarkable performance in recognizing regional visual concepts, but they are weak in exploiting the VLMs' powerful global scene understanding ability that can capture important relations between different visual concepts \cite{wu2023aligning, zhong2021learning}. These relations can be the co-occurrence of different objects such as the tennis ball and the tennis racket, or their interdependence to commonly shared background environment such as the tennis ball and tennis court, as shown in Fig. \ref{fig:motivation}(b). This weakness can limit their capability in detecting \textbf{hard objects} that are of small, blurred, or occluded appearance, whose detection relies heavily on contextual features of other objects in the same image. Further, the OV detectors have naturally learned the context information for base categories when aligning regional features with corresponding text embeddings, since the network can automatically capture the context features within the receptive field that are related to base objects. However, the context features related to novel objects are not learned due to the absence of novel object annotations during the training of OV detectors. This can be one of the key reasons that incurs the performance gap between base and novel objects, especially the novel hard objects. 
+
+To address this issue, this work instead aims to utilize the global scene understanding ability for OVOD. The key motivation is that the image-level embeddings extracted from CLIP's image encoder carry global features about various objects in the entire scene, which are semantically related in the natural language descriptions. This knowledge can then provide important contextual information for detecting the aforementioned hard objects, \eg, the small, blurred tennis ball in Fig. \ref{fig:motivation}(c), which are otherwise difficult to detect using only regional features. 
+
+Inspired by this, we propose a novel approach that utilizes a \textbf{S}imple \textbf{I}mage-level \textbf{C}lassification module for \textbf{C}ontext-\textbf{A}ware \textbf{D}etection \textbf{S}coring, termed SIC-CADS. Our image-level classification task is specified by a Multi-Label Recognition (MLR) module which learns multi-modal knowledge extracted from CLIP. The MLR module predicts image-level scores of different possible object categories that could exist in a specific scene. For example, as shown in Fig. \ref{fig:motivation}(d), context information of the tennis racket and tennis court helps recognize the blurred tennis ball in such a sports-related scene. Thus, the image-level MLR scores can be used to refine the instance-level detection scores of existing OVOD models for improving their detection performance from a global perspective, as shown in Fig. \ref{fig:motivation}(e). 
+
+Our main contributions are summarized as follows. (i) We propose a novel approach SIC-CADS that utilizes a MLR module to leverage VLMs' global scene knowledge for improving OVOD performance. (ii) SIC-CADS is a simple, lightweight, and generic framework that can be easily plugged into different existing OVOD models to enhance their ability to detect hard objects. (iii) Extensive experiments on OV-LVIS, OV-COCO, and cross-dataset generalization benchmarks show that SIC-CADS significantly boosts the detection performance when combined with different types of state-of-the-art (SOTA) OVOD models, achieving 1.4 - 3.9 gains of AP$_{r}$ for OV-LVIS and 1.7 - 3.2 gains of AP$_{novel}$ for OV-COCO. Besides, our method also largely improves their cross-dataset generalization ability, yielding 1.9 - 2.1 gains of mAP$_{50}$ on Objects365~\cite{shao2019objects365} and 1.5 - 3.9 gains of mAP$_{50}$ on OpenImages~\cite{kuznetsova2020open}. 
+
+\begin{figure*}[t]
+        \centering
+        \includegraphics[width=0.80\textwidth]{figs/Method1.pdf}
+        \includegraphics[width=0.80\textwidth]{figs/Method2.pdf}
+        \caption{\textbf{Overview of our approach SIC-CADS.} \textbf{(a)} During training, our proposed MLR module learns CLIP's global multi-modal knowledge from the text encoder (text MLR) and image encoder (visual MLR). During inference, the two branches demonstrate superior performance in recognizing objects from base and novel classes respectively. Hence, we combine the two branches to make our full model, multi-modal MLR. 
+        \textbf{(b)} Our MLR module can be plugged into existing OVOD models, via a simple detection score refinement process, to boost the performance in detecting hard objects from a global perspective.}
+        \label{fig:overview}
+\end{figure*}
+
+
+
+Related Work
+\textbf{Vision-Language Models (VLMs):} The task of vision-language pre-training is to learn aligned multimodal representations from image-text datasets. Early works~\cite{joulin2016learning, li2017learning} demonstrate that CNNs trained to predict words in image captions can learn representations competitive with ImageNet training. Recently, the large-scale VLMs (\eg, CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling}) which are contrastively pre-trained on billion-scale internet-sourced image-caption datasets, have shown powerful zero-shot performance on image classification tasks. 
+With the advent of large VLMs, they have been applied to various downstream vision tasks, including object detection~\cite{gu2021open, du2022learning, zhou2022detecting}, instance segmentation~\cite{xu2022groupvit, ghiasi2021open}, image generation~\cite{nichol2021glide, ramesh2021zero}, and anomaly detection~\cite{zhou2023anomalyclip,wu2023vadclip}.  
+
+\noindent\textbf{Open-Vocabulary Object Detection (OVOD):} Traditional object detection models can only detect the base categories which are presented during training. OVOD aims to extend the vocabulary of object detectors using additional large image-text datasets. OVR-CNN~\cite{zareian2021open} first formulates this problem and proposes its baseline method by aligning the regional features with words in the caption. ViLD~\cite{gu2021open} addresses the problem of OVOD by distilling the regional representations using CLIPs' image encoder. Detic~\cite{zhou2022detecting} adopts self-training which produces pseudo-labels of novel objects on the datasets such as ImageNet-21k~\cite{deng2009imagenet} to expand the detection vocabulary. DetPro~\cite{du2022learning}, PromptDet~\cite{feng2022promptdet}, and POMP~\cite{ren2023prompt} use prompt tuning to adapt the image-level pre-trained VLMs to the region-level object detection task. RegionCLIP~\cite{zhong2022regionclip} learns region-level visual representations by region-text pre-training. F-VLM~\cite{kuo2022f} directly utilizes the regional features of frozen VLMs for object recognition and eliminates the need for regional knowledge distillation. Our simple MLR network adopts a similar score fusion strategy as ViLD and F-VLM. The key difference is that we recognize all objects via multi-modal MLR, while ViLD and F-VLM use an ensembled score for region-level object classification. Plus, our method is also orthogonal to ViLD and F-VLM, as shown in Tab. \ref{tab::ov_lvis} that our SIC-CADS can be plugged into ViLD to largely improve its performance. 
+\noindent\textbf{Zero-Shot Multi-Label Recognition (ZS-MLR):} The task of multi-label recognition is to predict the labels of all objects in one image. As an extension of Zero-Shot Learning (ZSL)~\cite{romera2015embarrassingly, xian2017zero, xian2019f, xu2020attribute}, ZS-MLR aims to recognize both seen and unseen objects in the image. The key of ZS-MLR is to align the image embeddings with the category embeddings. Previous ZS-MLR methods~\cite{zhang2016fast, ben2021semantic, huynh2020shared, narayan2021discriminative, gupta2021generative} mostly use the single-modal embeddings from language models (\eg, GloVe~\cite{pennington2014glove}) and adopt different strategies (\eg, attention mechanism~\cite{narayan2021discriminative, huynh2020shared} or generative models~\cite{gupta2021generative}) to boost the performance. He \etal~\cite{he2022open} further propose Open-Vocabulary Multi-Label Recognition (OV-MLR) task which adopts the multi-modal embeddings from CLIP for MLR. 
+They use the transformer backbone to extract regional and global image representations and a two-stream module to transfer knowledge from CLIP. Recognize Anything Model (RAM)\cite{zhang2023recognize} leverages the large-scale image-text pairs by parsing the captions for automatic image labeling. Then, they train an image-tag recognition decoder which reveals strong ZS-MLR performance.
+
+
+Method
+This work aims to exploit CLIP's image-level/global knowledge to better recognize hard objects for more effective OVOD. We first train a multi-label recognition (MLR) module by transferring global multi-modal knowledge from CLIP to recognize all existing categories in the entire scene. Then during inference, our MLR module can be easily plugged into existing OVOD models, via a simple detection score refinement process, to boost the detection performance. 
+
+\begin{table*}
+  \begin{minipage}{0.68\linewidth}
+    \centering
+    \caption{Enabling different SOTA OVOD models on the OV-LVIS benchmark. }\label{tab::ov_lvis}
+    \adjustbox{width=1.0\textwidth}{
+        \begin{tabular}{{l|c|c|>{\columncolor{gray!20}}cccc}}
+        \toprule
+        Method&Backbone &Supervision  &AP$_{r}$&AP$_{c}$&AP$_{f}$ & AP   \\\midrule
+        BoxSup~\cite{zhou2022detecting}&\multirow{2}*{\shortstack{CenterNet-V2 + \\ ResNet50}} &\multirow{2}*{\shortstack{LVIS-Base \\+ CLIP }}&16.4&31.0&35.4&30.2 \\
+        \hspace{0.4cm} + SIC-CADS& & &20.3\textcolor{blue}{(+3.9)}&31.8\textcolor{blue}{(+0.8)}&35.5\textcolor{blue}{(+0.1)}&31.2\textcolor{blue}{(+1.0)} \\ \midrule
+
+        ViLD~\cite{gu2021open}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50}} &\multirow{2}*{\shortstack{LVIS-Base \\+ CLIP }}&16.8&25.6&28.5&25.2 \\
+        \hspace{0.4cm} + SIC-CADS & & &18.7\textcolor{blue}{(+2.1)}& 26.4\textcolor{blue}{(+0.8)}&28.7\textcolor{blue}{(+0.2)}&26.1\textcolor{blue}{(+0.9)} \\ \midrule
+        
+        RegionCLIP~\cite{zhong2022regionclip}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50×4}} &\multirow{2}*{\shortstack{LVIS-Base + \\CLIP + CC3M~\cite{sharma2018conceptual} }} &19.7&28.2&30.7&27.7 \\
+        \hspace{0.4cm} + SIC-CADS& & &21.9\textcolor{blue}{(+2.2)}&29.1\textcolor{blue}{(+0.9)}&30.9\textcolor{blue}{(+0.2)}&28.5\textcolor{blue}{(+0.8)} \\ \midrule
+        OC-OVD~\cite{bangalath2022bridging}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50}} &\multirow{2}{*}{\shortstack{LVIS-Base + CLIP + \\LMDet~\cite{maaz2021multi} + IN21k}} &21.1&25.0&29.1&25.9 \\
+        \hspace{0.4cm} + SIC-CADS & & &22.5\textcolor{blue}{(+1.4)}&25.6\textcolor{blue}{(+0.6)}&29.0\textcolor{red}{(-0.1)}&26.3\textcolor{blue}{(+0.4)} \\ \midrule
+        Detic~\cite{zhou2022detecting}&\multirow{2}*{\shortstack{CenterNet-V2 + \\ ResNet50}} &\multirow{2}{*}{\shortstack{LVIS-Base +  \\CLIP + IN21k~\cite{deng2009imagenet}}} &24.9&32.5&35.6&32.4 \\
+        \hspace{0.4cm} + SIC-CADS & & &26.5\textcolor{blue}{(+1.6)}&33.0\textcolor{blue}{(+0.5)}&35.6\textcolor{gray}{(+0.0)}&32.9\textcolor{blue}{(+0.5)} \\ \midrule
+        POMP~\cite{ren2023prompt}&\multirow{2}*{\shortstack{CenterNet-V2 + \\ ResNet50}} &\multirow{2}*{\shortstack{LVIS-Base +  \\CLIP + IN21k~\cite{deng2009imagenet}}} &25.2&33.0&35.6&32.7 \\
+        \hspace{0.4cm} + SIC-CADS&& &26.6\textcolor{blue}{(+1.4)}&33.3\textcolor{blue}{(+0.3)}&35.6\textcolor{gray}{(+0.0)}&33.1\textcolor{blue}{(+0.4)} \\ \bottomrule
+        \end{tabular}
+    }
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.3\linewidth}
+    \centering
+    \caption{Results on the cross-dataset evaluation. }
+    \label{tab::cross_dataset}
+    \adjustbox{width=1.0\textwidth}{
+        \begin{tabular}{l|cc}\toprule
+        Method & Objects365 & OpenImages\\\midrule
+        BoxSup&26.6&46.4\\
+        \hspace{0.4cm} + SIC-CADS&28.7\textcolor{blue}{(+2.1)}&50.3\textcolor{blue}{(+3.9)} \\ \midrule
+        Detic&29.3&53.2\\
+        \hspace{0.4cm} + SIC-CADS&31.2\textcolor{blue}{(+1.9)}&54.7\textcolor{blue}{(+1.5)} \\ \bottomrule
+        \end{tabular}
+    }
+  \end{minipage}
+\end{table*}
+
+\subsection{Preliminaries\label{sec::pre}}
+In OVOD, typically we have an object detector trained with a detection dataset $\mathcal{D}_{\mathrm{det}}$ which contains the exhaustively annotated bounding-box labels for a set of base categories $\mathcal{C}_\text{B}$. Some external image-caption datasets may be available that can be used to expand the detection vocabulary, enabling the detector to recognize novel categories beyond the closed set of base categories. 
+During inference, the categories in the testing set comprise both base categories $\mathcal{C}_\text{B}$ and novel categories $\mathcal{C}_\text{N}$, \ie, $\mathcal{C}_{{test}}=\mathcal{C}_{\text{B}} \cup \mathcal{C}_{\text{N}}$ and $\emptyset =\mathcal{C}_{\text{B}} \cap \mathcal{C}_{\text{N}}$. 
+
+Therefore, the OVOD models are required to solve two subsequent problems: (1) the effective localization of all objects in the image, and (2) the correct classification of each object into one of the class labels in $\mathcal{C}_{{test}}$. 
+Many VLM-based OVOD methods~\cite{zhou2022detecting, gu2021open, bangalath2022bridging} adopt the two-stage detection framework (\eg, Mask-RCNN~\cite{he2017mask}) as the base detector. In the first stage, a RPN (\emph{region proposal network}) takes an image $\mathbf{I} \in \mathbb{R}^{H \times W \times 3}$ as input, and produces a set of class-agnostic object proposals $\mathcal{P} \subset \mathbb{R}^{4}$ which denotes the coordinates for the proposal boxes. In the second stage, a RoI (\emph{region of interest}) Align head computes the pooled representations $\mathcal{E} = \{e_r\}_{r \in \mathcal{P}} \subset \mathbb{R}^{d}$ for the proposals $\mathcal{P}$. To classify each proposal into one of the categories in $\mathcal{C}_{\text{B}} \cup \mathcal{C}_{\text{N}}$, for each category $c$, we obtain its text embedding $t_c$ by feeding the category name in a prompt template, \eg, \texttt{`a photo of a \{category name\}'} into the text encoder $\mathcal{T}$ of a pre-trained VLM like CLIP. The probability of a region proposal $r$ being classified into category $c$ is computed as:
+\begin{equation}
+  p(r, c) = \frac
+  {\exp\left(\mathit{cos}(e_r, t_c)/\tau\right)}
+  {\sum\limits_{c' \in \mathcal{C}_{test} } \exp\left(\mathit{cos}(e_r, t_{c'})/\tau\right)},
+\end{equation}
+where $\mathit{cos}(\cdot,\cdot)$ denotes a cosine similarity and $\tau$ is a temperature scaling factor. 
+
+\subsection{CLIP-driven Multi-modal MLR Modeling \label{sec::mlr}}
+
+\textbf{Overall Framework:} Our proposed MLR module is designed to leverage the superior scene understanding ability of CLIP for effective detection of both novel and base categories. Specifically, as shown in Fig. \ref{fig:overview}(a), given an input image $\mathbf{I} \in \mathbb{R}^{H \times W \times 3}$, we first extract the multi-scale feature maps $\mathcal{P} = \{P_2,P_3,P_4,P_5\}$ using a ResNet50-FPN backbone, followed by a Global Max Pooling (GMP) operator and a concatenation of all feature vectors in different FPN levels to obtain a global image embedding $e^{\mathit{global}}$. The global image embedding is then utilized in two branches, including one \textbf{text MLR} branch which is aligned $e^{\mathit{global}}$ to the text embeddings of different categories yielded from the text encoder of CLIP, and one \textbf{visual MLR} branch which distills the global image embedding from the image encoder of CLIP into $e^{\mathit{global}}$. During inference, the text MLR is weaker in recognizing novel categories since it is trained with only base categories, while the visual MLR can recognize both base and novel categories by distilling the zero-shot recognition ability of CLIP. Therefore, we combine the scores of both branches to achieve better recognition performance for novel and base categories, which is noted as \textbf{Multi-modal MLR}. Below we introduce them in detail.
+\noindent\textbf{Text MLR:} This branch aims to align the image embeddings with the corresponding category text embeddings yielded from the text encoder of CLIP so that each image can be classified based on CLIP text embeddings. We first use a linear layer $f(\cdot)$ to project the image embedding $e^{\mathit{global}}$ to a new feature space, namely learned text embedding space, and obtain $e^{text} = f(e^{\mathit{global}}) \in \mathbb{R}^{d}$. 
+We then use the commonly used prompt template \texttt{`there is a \{category\}'} and feed the template filled with category names into the CLIP text encoder to obtain category-specific text embeddings $t$. The classification score of each category $c$ for an image $i$ is computed using cosine similarity: 
+\begin{equation}
+  s_{i,c}^{text} = \mathit{cos}(e^{text}_i, t_{c}).
+\end{equation}
+To train this branch, we adopt a powerful MLR ranking loss to increase the scores of positive categories (\ie, categories that appear in the image) and decrease the scores of negative categories (\ie, categories that this image does not contain). Specifically, we define the rank loss as:
+\begin{equation}\label{equ::rank}
+  L_{rank} = \sum\limits_{i} \sum\limits_{p \in \mathcal{N}(i), n \notin \mathcal{N}(i)} \max(1 + s_{i,n}^{\mathit{text}} - s_{i,p}^{\mathit{text}}, 0),
+\end{equation} 
+where $\mathcal{N}(i)$ denotes the image-level labels of image $i$,
+and $s_{i,n}$ and $s_{i,p}$ denote the classification scores of positive and negative categories w.r.t. the image, respectively. During training, text MLR learns to align the text embeddings of multi-label base categories for each image by minimizing $L_{rank}$. For a test image $j$, the classification score w.r.t. a category $c$ is defined as $s_{j,c}^{text}$.  
+
+\begin{table*}
+  \begin{minipage}{0.70\linewidth}
+    \centering
+    \caption{Enabling different SOTA OVOD models on the OV-COCO benchmark. }\label{tab::ov_coco}
+    \adjustbox{width=1.0\textwidth}{
+        \begin{tabular}{l|c|c|>{\columncolor{gray!20}}ccc}
+        \toprule
+        Method &Backbone&Supervision  & AP$_{novel}$&AP$_{base}$& AP   \\\midrule
+        Detic~\cite{zhou2022detecting}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50}} &\multirow{2}*{\shortstack{COCO-Base + CLIP \\+ COCO Captions~\cite{chen2015microsoft}}}&27.8&51.1&45.0 \\
+        \hspace{0.4cm} + SIC-CADS & & & 31.0\textcolor{blue}{(+3.2)}&52.4\textcolor{blue}{(+1.3)}&46.8\textcolor{blue}{(+1.7)} \\ \midrule
+        BARON~\cite{wu2023aligning}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50}} &\multirow{2}*{\shortstack{COCO-Base + CLIP \\+ COCO Captions~\cite{chen2015microsoft}}} &35.1&55.2&49.9 \\
+        \hspace{0.4cm} + SIC-CADS & & &36.9\textcolor{blue}{(+1.8)}&56.1\textcolor{blue}{(+0.9)}&51.1\textcolor{blue}{(+1.2)} \\ \midrule
+        RegionCLIP~\cite{zhong2022regionclip} &\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50×4}}&\multirow{2}*{\shortstack{COCO-Base + \\CLIP + CC3M~\cite{sharma2018conceptual} }} &39.3&61.6&55.7 \\
+        \hspace{0.4cm} + SIC-CADS& & &41.4\textcolor{blue}{(+2.1)}&61.7\textcolor{blue}{(+0.1)}&56.3\textcolor{blue}{(+0.6)}\\ \midrule
+        OC-OVD~\cite{bangalath2022bridging}&\multirow{2}*{\shortstack{Faster-RCNN + \\ ResNet50}} &\multirow{2}{*}{\shortstack{CLIP + LMDet~\cite{maaz2021multi}\\ + COCO Captions~\cite{chen2015microsoft}}} &40.7&54.1&50.6 \\
+        \hspace{0.4cm} + SIC-CADS & & &42.8\textcolor{blue}{(+2.1)}&55.1\textcolor{blue}{(+1.0)}&51.9\textcolor{blue}{(+1.3)} \\ \midrule
+        CORA~\cite{wu2023cora}&\multirow{2}*{\shortstack{DAB-DETR + \\ ResNet50×4}} &\multirow{2}{*}{\shortstack{\shortstack{COCO-Base + CLIP \\+ COCO Captions~\cite{chen2015microsoft}}}} &41.6&44.7&43.9 \\
+        \hspace{0.4cm} + SIC-CADS & & &43.3\textcolor{blue}{(+1.7)}&45.7\textcolor{blue}{(+1.0)}&45.1\textcolor{blue}{(+1.2)} \\ \bottomrule
+        \end{tabular}
+      }
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.25\linewidth}
+    \centering
+    \caption{Effectiveness of hyperparameter $\gamma$. }
+    \label{tab::gamma}
+    \adjustbox{width=1.0\textwidth}{
+    \begin{tabular}{c|cccc}\toprule
+          $\gamma$ & AP$_{r}$&AP$_{c}$&AP$_{f}$&AP\\\midrule
+          0.3&19.3&31.6&\textbf{35.5}&31.0 \\
+          0.4&20.0&\textbf{31.8}&\textbf{35.5}&31.2 \\ 
+          0.5&20.3&\textbf{31.8}&\textbf{35.5}&\textbf{31.3}\\
+          0.6&20.6&31.6 &35.3&{31.1}\\ 
+          0.7&{20.7}& 31.1 &34.8&30.7\\ 
+          0.8&\textbf{21.1}&  29.8 &33.9&30.8 \\ \bottomrule
+          \end{tabular}
+    }
+  \end{minipage}
+\end{table*}
+
+\noindent\textbf{Visual MLR:} 
+In text MLR, since Eq.~\ref{equ::rank} includes only the base categories in the training set, the resulting learned text embeddings have weak zero-shot recognition of novel categories. To address this issue, we propose the visual MLR branch, which distills knowledge from the CLIP image encoder to achieve better zero-shot recognition performance. This is because the image encoder of CLIP has been trained on a huge amount of images using corresponding text supervision. This enables it to extract more generalized embeddings of images that include features of both base and novel categories, as well as important background environments. To distill these generalized embeddings, similar to text MLR, we use another linear layer $f(\cdot)$ to transform the global image embedding into the learned image embedding $e^{image} = f(e^{\mathit{global}}) \in \mathbb{R}^{d}$. Then, we minimize the distance between $e^{image}$ and the embedding from the CLIP image encoder using a $\mathcal{L}_1$ loss: 
+\begin{equation}
+  L_{dist} = \sum\limits_{i} \parallel \mathit{IE}(i) - e^{image}_i \parallel_{1},
+\end{equation}
+where $\mathit{IE}(i)$ denotes the embedding of image $i$ from the CLIP image encoder. Since $\mathit{IE}(i)$ contains rich knowledge of novel categories and important contextual features, the learned $e^{image}$ can well complement $e^{text}$ in text MLR in detecting novel object categories, especially objects whose detection requires the recognition of the global image contexts. During inference, the classification score of a test image $j$ to a category $c$ can be computed as follows:
+\begin{equation}\label{eq:visualmlr}
+    s_{j,c}^{image} = \mathit{cos}(e_{j}^{image}, t_{c}).
+\end{equation}
+Since there can still exist a performance gap between visual MLR (student) and CLIP $IE$ (teacher), directly using the CLIP image embedding $IE(j)$ to replace $e_{j}^{image}$ for obtaining ${s}_{j,c}^{image}$ in Eq. \ref{eq:visualmlr} often enables better performance. This variant is denoted as \textbf{visual MLR}$^{+}$. Notably, we adopt the ViT-B/32 CLIP image encoder which takes one $224\times224$ resolution image as input during testing,  so it incurs only minor computation and memory overhead.
+
+\noindent\textbf{Multi-modal MLR:} As discussed above, text MLR and visual MLR branches complement each other in identifying base and novel categories, so we combine their classification scores to have a multi-modal MLR. Particularly, the projection function $f(\cdot)$ in each branch is trained independently. After that, we obtain the learned text embedding $e_{i}^{text}$ and image embedding $e_{i}^{image}$ for each image $i$. Inspired by \cite{gu2021open, kuo2022f},  we ensemble the two probability scores of an image $j$ as follows:
+\begin{equation}\label{eqn:mmlr}
+  p_{j,c}^{mmlr} = \begin{cases}
+    (p_{j,c}^{text})^{\lambda_B} \cdot (p_{j,c}^{image})^{1 - \lambda_B}, & c \in \mathcal{C}_B \\
+    (p_{j,c}^{text})^{1 - \lambda_N} \cdot (p_{j,c}^{image})^{\lambda_N}, & c \in \mathcal{C}_N, \\
+  \end{cases}
+\end{equation}
+where $p_{j,c}^{text} = \mathit{sigmoid}(\tilde{s}_{j,c}^{text})$ is a sigmoid classification probability based on a normalized text embedding similarity score $\tilde{s}_{j,c}^{text}=\frac{{s}_{j,c}^{text}-\mu({s}_{j,\cdot}^{text})}{\sigma({s}_{j,\cdot}^{text})}$, and similarly, $p_{j,c}^{image}=\mathit{sigmoid}(\tilde{s}_{j,c}^{image})$ is a classification probability using the image embedding similarity score $s_{j,c}^{image}$ normalized in a similar way as $\tilde{s}_{j,c}^{text}$ ($s_{j,c}^{image}$ can be obtained from visual MLR or visual MLR$^+$), and $\lambda_B$ and $\lambda_N$ is the hyperparameters for controlling the combination of two scores. The zero-mean normalization is used based on the fact that the sigmoid function has a max gradient near zero, so that probability values of positive and negative categories can be better separated, which is beneficial for the detection score refinement process. 
+\subsection{Context-aware OVOD with Image-Level Multi-modal MLR Scores\label{sec::dsa}}
+Our multi-modal MLR learns to recognize both novel and base objects from the global perspective. We show that it can be plugged into different existing OVOD models that are often focused on regional visual concepts via a post-process step to enhance their detection performance. As shown in Fig. \ref{fig:overview}(b), given a test image $\mathbf{I} \in \mathbb{R}^{H \times W \times 3}$, the OVOD model produces a set of instance predictions $\{(b,p^{ovod})_{j}\}$ where $b_j$ is the bounding box coordinates and $p^{ovod}_{j} = \{p^{ovod}_{j, 1}, p^{ovod}_{j, 2},..., p^{ovod}_{j, C}\}$ represents the classification probability scores of the $j$-th instance for all $C=|\mathcal{C}_{\mathit{test}}|$ categories. Then, our MLR model predicts the image-level classification scores $p^{mmlr} = \{p^{mmlr}_{1}, p^{mmlr}_{2},..., p^{mmlr}_{C}\}$. Although the MLR model can not localize the objects, it provides scene context information and prior knowledge about the types of objects that may exist in the whole image. This contextual information enhances the region-level detection performance, especially in detecting the aforementioned hard objects. Therefore, we utilize the following weighted geometric mean to combine the image-level score $p^{mmlr}$ and instance-level score $p^{ovod}_{j}$ as follows:
+\begin{equation} \label{equ::dsa}
+  p_{j}^{\mathit{cads}} = (p^{mmlr})^{\gamma} \odot (p^{ovod}_{j})^{1 - \gamma},
+\end{equation}
+where $p_{j}^{\mathit{cads}}$ denotes the context-aware detection score of the $j$-th instance, $\odot$ denotes the element-wise multiplication, and $\gamma$ is a hyperparameter to balance the two types of scores. 
+
+
+Experiments
+\subsection{Datasets}
+We evaluate our method on LVIS v1.0 \cite{gupta2019lvis} and COCO \cite{lin2014microsoft} under the open-vocabulary settings, as defined by recent works~\cite{zareian2021open,gu2021open}, with the benchmarks named as OV-COCO and OV-LVIS respectively. 
+
+\noindent\textbf{OV-LVIS:} 
+LVIS is a large-vocabulary instance segmentation dataset containing 1,203 categories. The categories are divided into three groups based on their appearance frequency in the dataset: frequent, common, and rare. Following the protocol introduced by \cite{gu2021open}, we treat the frequent and common categories as base categories (noted as LVIS-Base) to train our model. It considers 337 rare categories as novel categories during testing. We report the instance segmentation mask-based average precision metrics for rare (novel), common, frequent, and all classes, denoted as AP$_{r}$, AP$_{c}$, AP$_{r}$, and AP respectively. 
+
+\begin{table*}
+  \be
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

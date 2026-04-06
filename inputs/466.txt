@@ -1,0 +1,187 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Novel Object Captioning (NOC)~\citep{agrawal2019nocaps} requires one to accurately describe images containing novel objects unseen during training captions. Despite impressive benchmark performance on COCO Captions~\citep{chen2015microsoft} and Flickr30K~\citep{young2014image}, existing image captioning models~\citep{huang2019attention, wang2019hierarchical, guo2020normalized, cornia2020meshed, zhou2020unified} or unsupervised image captioning works~\citep{gu2019unpaired, feng2019unsupervised} cannot generalize well. This is because existing unsupervised captioning models typically assume that training image and caption data share the same visual content (i.e., objects) of interest, which might not be held in practice~\citep{gu2019unpaired, feng2019unsupervised}.
+
+Without observing captions describing novel objects during training, a number of NOC works choose to rely on object detection results for filling in the generated slotted sentences~\citep{lu2018neural, wu2018decoupled}. Since the object words and the template sentences are generated separately, their relationships might not be well described. Therefore,~\citet{hu2020vivo} propose to relate images and the produced captions by aligning the region features of an object and its associated word embedding, aiming at improved description of novel objects in scenes which are similar to the training ones. However, if a word is not presented in the training corpus, it might not be properly presented in the predicted caption. That is, the word embedding related to novel objects such as verbs and adjectives might not be fully exploited during inference, resulting in unsatisfactory \textit{linguistic fluency} of output captions. On the other hand, despite the visual feature of a novel object is aligned with textual feature, existing methods generally are not designed to sufficiently caption images containing such objects of interest. In other words, the \textit{fidelity} and \textit{adequacy} of the output captions cannot be preserved.
+In this paper, we uniquely approach the task of NOC by introducing and learning paraphrasing capabilities into state-of-the-art captioning models. More specifically, we advance pre-trained language models to expand the word bank of a captioning model for NOC, followed by enforcing the self-paraphrasing ability of this NOC model. The goal of the former stage is to preserve the linguistic fluency for NOC models, while that for the latter stage is deployed to exhibit improved fidelity and adequacy of the learned model. Since no ground truth captions of novel object images are available during training, we apply cross-modality association model with objectives/critics particularly designed for NOC.
+It is worth noting that, for the evaluation part of this work, we not only show that our method achieves state-of-the-art performances on the nocaps and COCO Caption datasets, we further assess the metrics reflecting the fluency, fidelity, and adequacy of output captions. In addition, via ablation studies, we further confirm the practicality and flexibility of our learning framework, which does not limit to particular language or cross-modality association modules for paraphrasing and image-text alignment.
+
+
+
+
+
+
+
+
+Related Work
+\label{sec:related}
+\textbf{Image captioning.}
+Recent progress of image captioning focuses on different model architectures and learning methods.~\citet{ huang2019attention, wang2019hierarchical, guo2020normalized, cornia2020meshed} design different attention mechanisms for image captioning.~\citet{rennie2017self, li2019meta, yang2020fashion} adopt reinforcement learning to improve the performance. On the other hand, some researchers consider more challenging settings, such as partially supervised~\citep{liu2018show, kim2019image} or unpaired image captioning~\citep{gu2019unpaired, feng2019unsupervised}. However, these methods are restricted to the assumption that the unpaired images and captions share the same set of object class, and the number of object class is limited as well, which make them inapplicable to our task.
+\textbf{Novel object captioning.}
+Previously, novel object captioning approaches~\citep{anderson2016guided, anderson2018partially, hendricks2016deep} were only tested on a restrictive dataset with only eight novel object classes held out from the COCO dataset. Their extensions to large-scale image data with various novel objects are not sufficiently studied. Recent studies mainly rely on object detection results to improve the performance on novel object captioning.~\citet{lu2018neural, wu2018decoupled} generate slotted caption templates, which are later filled in with visual concepts identified by object detectors.~\citet{yao2017incorporating} exploit a copying mechanism to assemble words corresponding to object detector predictions to generate captions. Similarly, Constrained Beam Search (CBS)~\citep{anderson2016guided} is an architecture-agnostic decoding algorithm that can be exploited during inference to enforce the inclusion of novel object classes in the captions. Instead of explicitly using detection results,~\citet{hu2020vivo} and~\citet{vo2022noc} learn the relationship between image and text by aligning object detection tags with their corresponding image region features. Recently,~\citet{wang2021faier} indicate that a desirable caption should comprise properties of fluency, fidelity, and adequacy. Nevertheless, most existing NOC approaches are not designed to handle language expression and cross-modal association with the above properties preserved.
+
+\textbf{Large-scale Vision and Language Pre-training (VLP).}
+Recently, researchers discover that scaling up the sizes of both captioning model and training dataset would be effective to improve the performance on vision and language tasks. Dual-encoder frameworks such as CLIP~\citep{radford2021learning} and ALIGN~\citep{jia2021scaling} scale-up contrastive pre-training~\citep{oord2018representation} using 400M and 1.8B image-text pairs for cross-modal alignment. On the other hand, Transformer-based models like~\citep{li2020oscar, zhang2021vinvl} not only scale up the training corpus to 5.65M image and caption pairs, but also increase the transformer layers from 12 to 24. More recently, SimVLM~\citep{wang2021simvlm} and LEMON~\citep{hu2021scaling} further explore the \textit{huge} version of Transformer with a total of 32 layers, and scale up the pre-training corpus with 1.8B and 200M image-text pairs, respectively. Despite the dataset scale as an important factor in image captioning, we will demonstrate that our model still performs favorably against current large-scale methods under the same model size (i.e., Transformer~\textit{base} version, 12 layers) and with a smaller training caption corpus.
+
+
+
+Connecting fluency, fidelity and adequacy with perplexity and mutual information
+\label{sec:connection}
+
+We first discuss how fluency, fidelity, and adequacy can be fundamentally and technically related to perplexity and mutual information \frank{in or of what?}. For caption fluency, one would expect that the image caption to be linguistically natural and fluent. That is, the NOC model not only requires to capture the occurrence of novel-object vocabularies, the associated collocations such as verbs or modifiers are expected to be properly utilized. Thus, given the context containing novel-object vocabularies as $\tilde{\mathrm{y}}$ and the associated collocations as $\hat{\mathrm{y}}$, we define fluency as the probability of the NOC model which correctly predicts the collocation given the novel image context $\prod_{i=1}^N p(\hat{\mathrm{y_i}}|\tilde{\mathrm{y}})$ ($N$ as the number of collocations) \frank{I didn't see any definition of perplexity?}. In natural language processing, masked language models are widely applied to predict $N$ masked word $\hat{\mathrm{y}}$ given the context $\tilde{\mathrm{y}}$, whose perplexity can be defined as inverse probability of the prediction, i.e.,
+\begin{equation}
+    \label{perplexity}
+    \begin{aligned}
+        \sqrt[N]{\frac{1}{p(\hat{\mathrm{y}}_1, \hat{\mathrm{y}}_2, ... \hat{\mathrm{y}}_N|\tilde{\mathrm{y}})}} = (\prod_{i=1}^N p(\hat{\mathrm{y_i}}|\tilde{\mathrm{y}}))^{-\frac{1}{N}}.
+    \end{aligned}
+\end{equation}
+Thus, to achieve high linguistic fluency, the language model is expected to produce captions with low perplexity.
+
+We now relate fidelity and adequacy in image captions to \frank{mutual information}. We start by defining the probability of an object appearing in the images as $p(x)$, and the probability of an object mentioned by the captions as $p(y)$ \frank{(What's the relation between x and y?)}. Relevant objects $p(x,y)$ are defined as objects that are both included in the image and described by the associated caption. Since fidelity assesses whether the visual content presented in the produced caption is correct, it can be defined as the fraction of relevant objects among objects in captions $\frac{p(x,y)}{p(y)} = p(x|y)$. On the other hand, adequacy evaluates whether sufficient visual details have been expressed by captions, and it can be defined as the fraction of relevant objects among objects in an image $\frac{p(x,y)}{p(x)} = p(y|x)$. Thus, we can calculate the point-wise mutual information $pmi$ of an image $x$ and its caption $y$ as follows:
+\begin{equation}
+    \label{perplexity}
+    \begin{aligned}
+        pmi(x,y) \equiv log\frac{p(x,y)}{p(x)p(y)} = log\frac{p(x|y)}{p(x)} = log\frac{p(y|x)}{p(y)},
+    \end{aligned}
+\end{equation}
+with mutual information as the expected value of point-wise mutual information. For the task of NOC, both $p(x)$ and $p(y)$ are fixed (i.e., determined by the dataset). Therefore, the above derivation implies that when the mutual information between an image and its captions increases, the resulting fidelity and adequacy would be jointly improved. 
+
+\begin{figure*}[tp]
+  \centering
+  \includegraphics[page=1,trim={5 580 5 3}, clip, width=0.95\textwidth]{images/noc_nips.pdf}
+  \caption{Learning to caption novel objects with linguistic fluency. For caption-labeled image $x_l$, we impose the sequence-to-sequence objective $\mathcal{L}_{s2s}$ for training. For uncaptioned image $x_u$, we exploit $P$ to paraphrase the generated caption $\hat{y}^c_u$, producing the refined caption $\hat{y}^p_u$, followed by a semantic-preserving gate $g$ to verify whether the paraphrased caption has altered the visual content.}
+  \label{fig:stage1}
+\end{figure*}
+
+
+
+Method
+\label{sec:method}
+
+We first determine the notations and settings for the sake of completeness. Given a small set of images $X_l$ with the corresponding captions $Y_l$, as well as a large set of uncaptioned images $X_u$ containing novel objects, our goal is to generate the captions $\hat{Y}_u$ for $X_u$ via a captioning model $C_\theta$ ($\theta$ describes the parameters for the captioning model $C$). To achieve this, we propose \textit{Paraphrasing-to-Captioning (P2C)}, which allows $C$ to perform paraphrasing to preserve linguistic fluency, and to self-paraphrase for boosting the associated fidelity and adequacy. The former is regularized by a pre-trained language model $P$, while an image-text cross-modality model $A$ is utilized for guiding the unsupervised learning process.
+We note that the contribution of our proposed P2C lies in how to leverage the paraphrasing mechanism, together with the linguistic and visual information from pre-trained models $P$ and $A$, for performing NOC with sufficient caption fluency, fidelity and adequacy.
+
+\subsection{Describing Novel Objects with Linguistic Fluency}
+\label{subsec:bert}
+
+By observing image-caption pairs $(x_l, y_l)$, the captioning model $C_\theta$ in Fig.~\ref{fig:stage1} would learn the visual grounding (i.e., localization of known objects and referring their expressions) as well the linguistics information. The training objective of such labelled data is a conventional sequence-to-sequence loss $\mathcal{L}_{s2s}$, calculated on ground-truth caption $y_l$. That is, we have $\mathcal{L}_{s2s} = \text{CrossEntropy}(\hat{y}_l, y_l)$.
+
+However, using the image-caption pairs $(x_l, y_l)$ alone is not sufficient to produce fluent captions for uncaptioned images $X_u$. We observe that some commonly-used wording of the associated novel objects, are not presented in the training corpus. Therefore, we leverage a language model $P$, to learn its linguistic knowledge via \textit{paraphrasing}. That is, for uncaptioned images $X_u$ containing novel objects, we first generate a caption describing $X_u$. Then, we leverage pre-trained language models as the paraphrase model $P$, which replace the generated captions with the most probable wording of a given novel object context. A semantic-preserving gate $g$ is deployed to validate the paraphrased caption. As detailed later, this gate $g$ is realized by a cross-modal association model $A$, which assesses the relationship between the paraphrased caption and the input image, ensuring semantics of the caption is not modified by $P$.
+
+\textbf{Learning to paraphrase via language model $P$.} We now present the detailed paraphrasing processing for learning $C_\theta$. As illustrated in Fig.~\ref{fig:stage1}, given an uncaptioned image $x_u$, the captioning model $C_\theta$ generates a caption $\hat{y}_u^c = C_\theta(x_u)$, $\hat{y}_u^c = \{w^c_1, w^c_2, ..., w^c_T\}$, where $w^c_i$ denotes the $i$th word, and $T$ is the caption length. The superscript $c$ represents it is generated by our captioning model. We then obtain a masked caption $\hat{y}_u^M= \{w^c_1, w^c_2, ..., w^M_m, ..., w^c_T\}$ with $m$ indicating the mask index, by randomly masking out the words in the caption. We note that, we do \textit{not} mask nouns/objects in the above process, since they are related to objects grounded in the (novel) visual content and thus are not explicitly associated with caption fluency. As a result, $P$ takes the masked sequence $\hat{y}_u^M$ as input and predicts the masked word $w_m^p$ with the highest probability conditioned on the context of the entire sentence, producing the paraphrased caption $\hat{y}_u^p = P(\hat{y}_u^M)$, $\hat{y}_u^p= \{w^c_1, w^c_2, ..., w^p_m, ..., w^c_T\}$.
+
+\textbf{Semantic-preserving gate $g$.} In the above paraphrasing process, however, not every word substitution from $P$ is guaranteed to be semantically correct. We thus require a proper image-text model (i.e., association model) $A$ to validate the paraphrasing output. That is, if the paraphrased caption comprises a more accurate and associated word that human generally uses to describe the scene, then a higher score would be obtained (than that of the original caption). Thus, we propose the objective function $\mathcal{L}_{P}$ to calculate the loss for the replaced words, gated by the comparison of the association scores of the corresponding captions. More precisely, $\mathcal{L}_{P}$ is derived as:
+\begin{equation}
+    \label{bert_eq}
+    \begin{aligned}
+        \mathcal{L}_{P} = - g * t\log(s), \quad 
+        g = \max(0, \tanh(A(x_u, y_u^p) - A(x_u, y_u^c) - \alpha))
+    \end{aligned}
+\end{equation}
+where $g$ is the gating function preventing $C_\theta$ from learning from low-quality paraphrased captions, $t$ is the one-hot representation of the paraphrased word, and $s$ is the word distribution predicted by the captioning model at the masked timestep $m$, i.e., we have $w^c_m = \arg\max(s)$. We have $A(x,y)$ in $g$ to calculate the association between an image $x$ and its caption $y$, indicating how well the captions match the images, and $\alpha$ serves as the margin of the association scores for distinguishing between the two captions.
+
+\begin{figure*}[tp]
+  \centering
+  \includegraphics[page=2,trim={5 600 5 5}, clip, width=0.95\textwidth]{images/noc_nips.pdf}
+  \caption{Improving caption fidelity and adequacy via self-paraphrasing. For caption-labeled image $x_l$, we perform CIDEr optimization. The sampled caption $\hat{y}_d^s$ will be rewarded by $A$ if it has a higher cross-modal association than the greedy-decoded baseline $\hat{y}_d^g$. The superscript $d$ indicates the source of the image. Additionally, we regularize our model with $r_\text{rep}$ to avoid repetitive captions.}
+  \label{fig:stage2}
+\end{figure*}
+
+\subsection{Improving Caption Fidelity and Adequacy via Self-Paraphrasing}
+\label{subsec:clip}
+
+Recall that, as discussed in Sec.~\ref{sec:intro}, caption fidelity verifies whether the details of visual content are presented in the generated caption, while adequacy assesses whether the visual content is properly described  been expressed in it. While the previous paraphrasing stage increases the linguistic fluency for captions describing images containing novel objects, the novel object word itself still can be incorrectly predicted or missing in the output captions. This is because that, the caption corpus $Y_l$ does not contain any novel objects, and thus the novel object words have low probability to be captioned. 
+
+To tackle the above issues, one possible solution is to \textit{self-paraphrasing} for $C_\theta$ with captioning evaluation metric as a critic to reward the paraphrased captions. For labeled images $X_l$, we can exploit the CIDEr score~\citep{rennie2017self}, encouraging the generated caption to be consistent with that of the human annotated ones in the word level. 
+However, while CIDEr can be easily computed for captioning labeled images $X_l$, it cannot be explicitly calculated for captioning uncaptioned images $X_u$ due to the absence of ground-truth captions. Specifically, we utilize an association model $A$ to compute the association score between images and the generated captions, which serves as a \textit{label-free} critic in our learning framework. Then, when a paraphrased caption is rewarded by a higher association score, our P2C would increase the probability of using that word in the sentence to describe the image. This learning strategy allows producing captions that precisely describe the objects with plentiful visual details. 
+
+\textbf{Rewarding the generated captions.} 
+As a potential challenge in NOC, we observe that captioning models would achieve improved association by simply repeating the same object that occurs in the image, which undermines the linguistic fluency of the captions. For example, the image caption \textit{``a group of cans of soda and other items on a table"} can be replaced by \textit{``a pile of \textbf{cans} and bottles of soda on a counter with \textbf{cans} of \textbf{cans}"} with a higher association score. 
+
+To tackle this problem, we choose to impose a repetition penalty to avoid such trivial solutions. For image-caption pairs $(x_l, y_l)$, we directly calculate the CIDEr reward for the predicted caption $\hat{y}_l$ (i.e., $r_\text{CIDEr} = \text{CIDEr}(\hat{y}_l, y_l)$). To enforce the generated captions for $(X, Y) = (X_l, Y_l) \cup (X_u, Y_u)$ with sufficient fidelity and adequacy, we exploit $A$ to compute the association reward between $X$ and $\hat{Y}$ (i.e., $r_\text{A} = A(x, \hat{y})$). As for the repetition penalty to preserve linguistic fluency of the generated captions $\hat{y}_u = \{w1, w2, ..., w_T\}$ for $x_u$, we formulate it as a linear assignment problem, where every word is assigned to the most similar one in the same sentence except for itself. Then, we calculate the similarity between such pairs for each sentence. Intuitively, repetitive captions would have high similarity scores (with repeating words assigned to the exact same word)s. Thus, we define the assignment $\hat{\alpha}$ as the one that maximizes the average pairwise similarity of a sentence, i.e.,
+\begin{equation}
+    \label{rep_pen}
+    \begin{aligned}
+        \hat{\alpha} = \mathop{\arg\max}_{\alpha} \frac{1}{T} \sum_{i=1}^T C(w_i, w_{\alpha(i)}), 
+    \end{aligned}
+\end{equation}
+where $\alpha(i)$ is the index of the word assigned to the $i$-th word in the caption, and $C(w_i, w_j)$ is the cosine similarity between the GloVe~\citep{pennington2014glove} word representation of two words. Since a desirable captioning model would encourage captions with low repetition (i.e., low average pairwise similarity), the reward for repetition penalty is defined as follows:
+\begin{equation}
+    \label{rep_reward}
+    \begin{aligned}
+        r_\text{rep} = 1 - \frac{1}{T} \sum_{i=1}^T C(w_i, w_{\hat{\alpha}(i)}), 
+    \end{aligned}
+\end{equation}
+Note that we do not calculate repetition penalty for the labeled data $\hat{Y}_l$ since they are regularized by the aforementioned CIDEr rewards. 
+
+With the above discussions, the total reward for caption-labeled data would be $r(\hat{y}_l) = r_\text{CIDEr}(\hat{y}_l, y_l) + r_\text{A}(x_l, \hat{y}_l)$, and the total reward for uncaptioned data would be $r(\hat{y}_u) = r_\text{A}(x_u, \hat{y}_u) + r_\text{rep}(\hat{y}_u)$.
+
+\textbf{Back-propagation via reinforce algorithm.} 
+Unfortunately, computation of the aforementioned rewards is non-differentiable. Thus, we adopt reinforce algorithm~\citep{williams1992simple} to optimize our P2C learning. As shown in Fig.~\ref{fig:stage2}, for an image $x$ we use greedy decoding to obtain the baseline result $\hat{y}^g$, and the paraphrased captions $\hat{y}^s$ are derived from randomly sampling from the word distribution. If the sampled captions possess higher linguistic fluency or cross-modal association than the baseline caption, they will be encouraged by positive rewards and vice versa. We follow~\citet{rennie2017self, liu2017improved, liu2018show} and define the objective function as follows:
+\begin{equation}
+    \label{rl}
+    \begin{aligned}
+        \nabla_{\theta}\mathcal{L}_{RL}(\theta) \approx -(r(\hat{y}^s_d)-r(\hat{y}^g_d)) \nabla_{\theta} \log p_{\theta}(\hat{y}^s_d), \\
+        r(\hat{y}_d) = \begin{cases}
+             r_\text{CIDEr}(\hat{y}_d, y_d) + r_\text{A}(x_d, \hat{y}_d) & \text{if } x_d \in X_l \\
+            r_\text{A}(x_d, \hat{y}_d) + r_\text{rep}(\hat{y}_d) & \text{if } x_d \in X_u
+        \end{cases},
+    \end{aligned}
+\end{equation}
+where $d$ indicates the source of the image, $\theta$ being the parameters of captioning model, and $p_{\theta}(\hat{y}^s)$ represents the predicted word logits for the generated captions. With the objective functions defined in equations (\ref{bert_eq}), and (\ref{rl}), the NOC model $C_\theta$ can be trained accordingly.
+
+
+
+Experiments
+\label{sec:exp}
+
+\textbf{Implementation details.} Following~\citet{hu2020vivo,li2020oscar, zhang2021vinvl}, we consider a BERT-base~\citep{devlin2018bert} architecture for our captioning model $C_\theta$. To demonstrate the flexibility of our learning framework, we apply two different versions of BERT,~\textit{base} and ~\textit{large}, which are pre-trained on large-scale \textit{text}-only corpus to model human language as our paraphrase model $P$. For the association model $A$, we have three different cross-modal association models, VIFIDEL~\citep{madhyastha2019vifidel}, SR-PL~\citep{liu2018show}, and CLIP~\citep{radford2021learning} with its version being ViT/B-32. VIFIDEL associates image-caption data using word embedding of particular object labels, and SR-PL utilizes the triplet loss to learn the association of image captions, while CLIP is optimized via the contrastive pre-training. For our model reported in the following subsections, we use BERT large for $P$, and CLIP for $A$.
+
+\textbf{Datasets.} The training data for the \textbf{nocaps} benchmark comprises the Open Images V4~\citep{kuznetsova2020open} object detection training set (1.7M images annotated with bounding boxes for 600 object classes), plus the image-caption pairs from the COCO Captions 2017~\citep{chen2015microsoft} training set (0.5M image-caption pairs containing 80 object classes). No additional image-caption pairs are provided for training. We evaluate our model on the validation and test set of nocaps, which comprises 4500 and 10600 images from the Open Images validation and test sets, respectively. To compare with current large-scale methods and investigate our model performance when scaling up the training dataset, we jointly trained our model on the Conceptual Caption dataset~\citep{sharma2018conceptual} and compare our method to other methods that access additional image-text pairs during their training on the nocaps-XD~\citep{agrawal2019nocaps} benchmark (XD stands for extra data). In addition, to demonstrate that our method also enhances model performance on the general image captioning, we evaluate our P2C on the COCO Captions dataset.
+
+\begin{table*}[t]
+\caption{Quantitative results on nocaps. Note that C and S denote CIDEr and SPICE, respectively. We highlight the highest score in blue, while the second best scores are marked in bold.}
+\label{quantitative_table}
+\begin{adjustbox}{max width=1.0\textwidth, center}
+\begin{tabular}{l||cc|cc|cc|cc||cc|cc|cc|cc}
+\hline
+\multirow{2}{*}{Method} & \multicolumn{2}{c|}{in-domain} & \multicolumn{2}{c|}{near-domain} & \multicolumn{2}{c|}{out-domain} & \multicolumn{2}{c||}{overall} & \multicolumn{2}{c|}{in-domain} & \multicolumn{2}{c|}{near-domain} & \multicolumn{2}{c|}{out-domain} & \multicolumn{2}{c}{overall} \\
+ & C & S & C & S & C & S & C & S & C & S & C & S & C & S & C & S\\ \hline
+ & \multicolumn{8}{c||}{Validation Set} & \multicolumn{8}{c}{Test Set} \\ \hline
+UpDown & 79.3 & 12.4 & 73.8 & 11.4 & 71.7 & 9.9 & 74.3 & 11.2 & 76.0 & 11.8 & 74.2 & 11.5 & 66.7 & 9.7 & 73.1 & 11.2 \\
+Oscar$_B$ & 83.4 & 12.0 & 81.6 & 12.0 & 77.6 & 10.6 & 81.1 & 11.7 & 81.3 & 11.9 & 79.6 & 11.9 & 73.6 & 10.6 & 78.8 & 11.7 \\
+Oscar$_L$ & 85.4 & 11.9 & 84.0 & 11.7 & 80.3 & 10.0 & 83.4 & 11.4 & 84.8 & 12.1 & 82.1 & 11.5 & 73.8 & 9.7 & 80.9 & 11.3 \\
+\begin{tabular}[c]{@{}l@{}}Oscar$_B$\\ \ \ +VIVO\end{tabular} & 92.2 & 12.9 & 87.8 & 12.6 & 87.5 & 11.5 & 88.3 & 12.4 & 89.0 & 12.9 & 87.8 & 12.6 & 80.1 & 11.1 & 86.6 & 12.4 \\
+VinVL & \textbf{96.8} & 13.5 & 90.7 & 13.1 & 87.4 & 11.6 & 90.9 & 12.8 & 93.8 & 13.3 & 89.0 & 12.7 & 66.1 & 10.9 & 85.5 & 12.5 \\
+\begin{tabular}[c]{@{}l@{}}VinVL\\ \ \ +VIVO\end{tabular} & 94.8 & 13.3 & \textbf{91.4} & 13.0 & 88.7 & 11.6 & \textbf{91.4} & 12.7 & \textbf{94.5} & 13.1 & \textbf{90.9} & 12.9 & 77.9 & 11.3 & \textbf{88.3} & 12.6\\ \hline
+Human & 84.8 & \textbf{14.3} & 85.0 & \textbf{14.3} & \highest{95.7} & \textbf{14.0} & 87.1 & \highest{14.2} & 80.6 & \highest{15.0} & 84.6 & \highest{14.7} & \highest{91.6} & \highest{14.2} & 85.3 & \highest{14.6}\\ \hline
+Ours & \highest{101.4} & \highest{15.1} & \highest{96.8} & \highest{14.5} & \textbf{95.4} & \textbf{12.9} & \highest{97.2} & \highest{14.2} & \highest{101.7} & \highest{15.0} & \highest{95.7} & \textbf{14.4} & \textbf{82.5} & \textbf{12.2} & \highest{93.5} & \textbf{14.1}\\ \hline
+\end{tabular}
+\end{adjustbox}
+\end{table*}
+
+\subsection{Evaluation metrics}
+\label{subsec:metrics}
+
+\textbf{CIDEr.} Like the evaluation metrics~\citep{papineni2002bleu, lin2004rouge, banerjee2005meteor} in NLP, Consensus-based Image Description Evaluation (CIDEr) calculates the similarity between the reference and generated caption by n-gram overlap in a rule-based manner. To capture human consensus in image captioning, it introduces the tf-idf weight to reduce the matching weight of the n-grams that are common in all image captions.
+
+\textbf{SPICE.} Semantic Propositional Image Caption Evaluation (SPICE)~\citep{anderson2016spice} matches the semantics between sentences, such as objects, relations, and attributes of objects. Specifically, it converts sentences into semantic scene graphs, which allows evaluation to break grammatical constraints and focuses on propositional semantic content. It reflects the accuracy of the visual content and considers less about linguistic properties.
+
+\textbf{Fluency.} To quantitatively evaluate fluency, we remove the effect of the visual information and focus on the quality of linguistic properties in the conventional caption evaluation metrics. Specifically, we we disregard the n-grams containing the particular object word of interest during the computation BLEU@4~\citep{papineni2002bleu} and CIDEr scores. Take the sequence “a b c d” for example, when ‘b’ is the object word, only the unigram “a, c, d” and the bigram “cd” would be taken into account, n-grams such as “ab” or “abc” would be excluded from computation. Note that the fluency experiment is conducted on a subset of the nocaps validation set, which contains 1000 images whose caption annotations are available on the official website of the nocaps dataset. 
+
+\textbf{Fidelity \& Adequacy.} Fidelity and adequacy evaluate how well the captions are associated with images. As defined in Sec.~\ref{sec:intro}, fidelity evaluates whether the objects described by the caption are actually presented in the images, while adequacy assesses how many objects in the images are described by the captions. These two properties are analogous to the definition of precision and recall, respectively. Therefore, we extract the objects mentioned in the captions and the ground-truth objects in the images and calculate the precision (for fidelity), recall (for adequacy), and F1 (for overall association) scores. The experiment is performed on the validation set of nocaps.
+
+Following~\citet{agrawal2019nocaps}, we split the dataset into three subsets for evaluation: \textit{in-domain} images only contain the seen objects that have been described during training, \textit{out-of-domain} images are the unseen/uncaptioned (i.e., novel) ones, while \textit{near-domain} ones contain both seen and unseen objects.
+
+
+\subsection{Quantitative analysis}
+
+For performance comparisons, we choose UpDown~\citep{agrawal2019nocaps} as baselines, as well as Oscar~\citep{li2020oscar} and VinVL~\citep{zhang2021vinvl} which achieves SOTA results on the benchmark of nocaps. All methods are trained via the SCST optimization~\citep{rennie2017self} except for the UpDown baseline, and Constrained Beam 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

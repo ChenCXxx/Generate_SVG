@@ -1,0 +1,308 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{INTRODUCTION}
+
+The number of parameters and FLOPs of deep learning models \cite{devlin2018bert, shoeybi2019megatron, brown2020language, shao2021intern, smith2022using} have proliferated in recent years, which makes compression exceedingly critical for deploying the increasingly heavier models on edge devices. There are lots of approaches for model compression, such as weight sharing \cite{lan2019albert}, low-rank factorization \cite{yu2017compressing}, quantization \cite{tao2022compression}, parameter bootstrapping \cite{chen2022litevl}, knowledge distillation \cite{yang2022masked}, 
+and pruning \cite{han2015learning}. As the paradigm this paper focuses on, pruning approaches not only benefit from inheriting well-optimized parameters of the original model but also provide flexible design space for various architectures.
+
+Recently, pruning approaches dedicated to the Transformers \cite{vaswani2017attention} have attracted much attention. According to the pruned components, these approaches can be summarized into two categories. 1) Token Pruning: By eliminating the number of input tokens, these approaches \cite{goyal2020power, rao2021dynamicvit} can reduce the FLOPs of models. 2) Model Pruning. By reducing the model size, these approaches \cite{chen2021chasing, su2022vitas} can reduce both the parameters and FLOPs of models. This paper focuses on model compression so that the parameters and FLOPs of models can be reduced simultaneously.
+\begin{table}[t]
+  \setlength{\tabcolsep}{1.5pt}
+  \captionsetup{font={small}}
+  \setlength{\abovecaptionskip}{0.1cm}
+  \renewcommand{\arraystretch}{1.3}
+  \scriptsize
+  \centering  
+  \label{table exp overview}
+  \caption{Overview of experimental results at 2$\times$ compression. The proposed UPop framework is efficient and effective on various tasks, datasets, and architectures. \textbf{Bold} indicates the best post-compression performance. Mask-based Pruning is extended from the SOTA pruning method ViT-Slimming \cite{chavan2022vision}. }
+  \begin{tabular}{l l l l l @{\hspace{0.7 \tabcolsep}} l @{\hspace{0.7 \tabcolsep}} l}
+    \toprule
+    \multirow{2}{*}{Method} & \multirow{2}{*}{\makecell{Visual \\ Reason}} & \multirow{2}{*}{\makecell{Image \\ Caption}} & \multirow{2}{*}{\makecell{Visual \\ QA}} & \multicolumn{2}{c}{Retrieval\quad\,} & \multirow{2}{*}{\makecell{Image Cla-\\ ssification}}\\
+    & & & & COCO & Flickr & \\
+    \midrule
+    Original Model & 83.1 & 23.8 & 77.5 & 81.9 & 96.8 & 79.9\\
+    \rowcolor{gray!10} Mask-based Pruning & 76.4$_{\color{red}\downarrow 6.7}$ & 21.0$_{\color{red}\downarrow 2.8}$ & 71.6$_{\color{red}\downarrow 5.9}$ & 61.7$_{\color{red}\downarrow 20}$ & 78.9$_{\color{red}\downarrow 18}$ & 77.9$_{\color{red}\downarrow 2.0}$ \\
+    \rowcolor{highlight!18}  UPop (Ours) & \textbf{81.1}$_{\color{red}\downarrow 2.0}$ & \textbf{23.3}$_{\color{red}\downarrow 0.5}$ & \textbf{76.3}$_{\color{red}\downarrow 1.2}$ & \textbf{77.4}$_{\color{red}\downarrow 4.5}$ & \textbf{94.0}$_{\color{red}\downarrow 2.8}$ & \textbf{78.9}$_{\color{red}\downarrow 1.0}$ \\
+    \bottomrule
+  \end{tabular}
+  \label{performance comparison}
+\end{table}
+\begin{figure*}[t]
+    \centering
+    \captionsetup{font={small}}
+    \includegraphics[width=1.0\linewidth]{figures/comparison.pdf}
+    \caption{Comparison between the Mask-based Pruning (\eg, extending ViT-Slimming \cite{chavan2022vision} to the multimodal scenario) and our UPop framework. Mask-based Pruning manually assigns each compressible component with a predefined compression ratio, which is inefficient and sub-optimal. Moreover, the vanilla pruning paradigm fails when it comes to higher compression ratios. UPop enables adaptively assigning the pruning ratio to each compressible component, which achieves significant performance improvements at the same overall compression ratio. Moreover, the progressive pruning paradigm eliminates the weight gap between the searched model and the pruned subnet to be retrained, therefore gaining better convergence and performance, especially at high compression ratios.}
+    \label{figure comparison}
+\end{figure*}
+In real applications, there are lots of multimodal tasks that have been extensively studied, including but not limited to Visual Question Answer \citep{antol2015vqa}, Image Caption \citep{lin2014microsoft}, and Image-Text Retrieval \citep{https://doi.org/10.48550/arxiv.1509.04942}. To tackle these multimodal tasks, various multimodal models \cite{kiros2014unifying, karpathy2014deep, antol2015vqa, vinyals2015show, yang2016stacked, huang2017instance} have been proposed accordingly. Furthermore, as Transformer \cite{vaswani2017attention} has been more and more popular among deep models, transformer-based models \cite{tan2019lxmert, lu2019vilbert, zhou2020unified, li2020oscar, kim2021vilt, jia2021scaling, yu2022coca, wang2022image} have also dominated the recent studies of multimodal models. For example, CLIP \cite{radford2021learning} and BLIP \cite{li2022blip} are some of the most representative ones. Benefiting from massive image-text pairs as pre-training datasets, they can learn joint representations of multiple modalities and can be further used to fine-tune on downstream tasks. 
+
+Although compression on unimodal tasks has been widely investigated, how to compress multimodal models, especially vision-language Transformers, is still relatively under-explored. In this paper, we propose a novel multimodal pruning framework, Unified and Progressive Pruning (UPop).
+
+\begin{table*}[t]
+\begin{small}
+  \centering
+  \captionsetup{font={small}}
+  \caption{Here we list the notations table. In the later part of the article, superscript $^{\{v,l,c\}}$\ indicates notations for vision, language, and cross-modality, respectively, subscript $_{\{a,m\}}$\ indicates notations for Attention and MLP structure, respectively.}
+  \label{Notation}
+  \begin{tabular*}{\linewidth}{l @{\hspace{4\tabcolsep}} l @{\hspace{7\tabcolsep}} l @{\hspace{4\tabcolsep}} l}
+    \toprule
+    \bf{NOTATION}  & \bf{DESCRIPTION}  & \bf{NOTATION}  & \bf{DESCRIPTION} \\
+    \midrule
+    $L$ & Number of layers & $H$ & Number of heads \\
+    $N$ & Number of patches / Sequence length  & $D$ & Embedding size \\
+    $d$ & Embedding size of each head & $p$ & Total compression ratio \\
+    $\bm{\theta}$ & Parameters of the original model & $\bm{\zeta}$ & Parameters of the trainable mask \\
+    $w$ & Regularization coefficient in searching & $\mathcal{F}_p$ & $p\%$ compressed model $\mathcal{F}_p(x|\bm{\theta}, \bm{\zeta})$ \\
+    $\alpha,\ \beta$ & Learning rate during$\{$search, retrain$\}$ & $T_{\{s,r\}}$ & Iterations in $\{$search, retrain$\}$ phase \\
+    \bottomrule
+  \end{tabular*}
+ \end{small}
+\end{table*}
+
+A straightforward design of multimodal pruning is to compress each modality separately via the unimodal pruning approach. However, there exist two main challenges. One of the challenges is that we have to manually explore suitable compression ratios for different components in different modalities, which is inefficient, especially when the model has multiple types of modules (these modules may comprise Self-Attentions, Cross-Attentions, and Feed-Forward Nets in both vision and language branches for typical vision-language Transformers). Moreover, when given a total compression ratio, the optimal compression ratio for different modalities and modules may vary, and therefore manual assignment is most likely sub-optimal. To overcome this shortcoming, we propose to unifiedly search on different modalities and different structures, which enables our approach to adaptively assign appropriate compression ratios among all compressible components given a total compression ratio. Comparison is illustrated in Figure \ref{figure comparison} (Vanilla Search vs. Unified Search).
+
+The second challenge is that the traditional two-stage pruning paradigm (\ie, retraining after searching) fails when the compression ratio is high. After the search stage, unimportant neurons are going to be removed. However, many of them have non-zero weights, and suddenly binarizing them to zero after searching harms the convergence of the pruned subnet. In other words, the significant gap of parameter weights between the searched model (\ie, model after the searching stage) and the pruned subnet to be retrained cause it is hard to converge and severely degrades the final performance. Consequently, we propose an improved pruning paradigm that conducts searching and retraining progressively and simultaneously, which ensures weights of removed neurons will progressively converge to zero before the end of the search stage, and therefore effectively eliminate the gap mentioned above. Comparison is illustrated in Figure \ref{figure comparison} (Vanilla Pruning vs. Progressive Pruning). 
+
+Our main contributions can be summarized as
+\begin{itemize}
+    \item In this paper, we propose a novel and universal multimodal pruning framework UPop for compressing vision-language Transformers. 
+    \item The proposed \textit{Unified Pruning} enables adaptive compression ratio assignment among all compressible components. \textit{Progressive Pruning} proposes an improved pruning paradigm that gains better convergence and supports higher compression ratios.
+    \item As a structured pruning framework, UPop's effectiveness and versatility are validated on various multimodal tasks, datasets, and model architectures (\eg, dual-stream CLIP \cite{radford2021learning} and mixed-stream BLIP \cite{li2022blip}), and also evaluated on unimodal tasks (\eg, image classification and segmentation). 
+\end{itemize}
+
+
+Related Works
+\label{RELATED WORK}
+
+\textbf{Vision-Language Transformer} Recently, significant progress in vision-language tasks has been achieved by various Vision-Lanauge Transformers \cite{radford2021learning, yu2022coca, wang2022image}, among which BLIP \cite{li2022blip} is one of the most representative models. BLIP is a pure transformed-based multimodal model, which employs a Bert \cite{devlin2018bert} and a ViT \cite{dosovitskiy2020image} as text encoder and image encoder, respectively. To allow multimodal interaction, BLIP injects vision information from the image encoder into the text encoder by inserting an additional cross-attention layer after the self-attention layer of each transformer block in the text encoder. 
+
+\textbf{Transformer Pruning} There are several works exploring Transformers pruning on unimodal tasks. For example, structured pruning that removes layers \cite{fan2019reducing}, heads \cite{michel2019sixteen}, or channels \cite{zhu2021vision}, unstructured pruning \cite{yang2021nvit, chen2021chasing, sanh2020movement, chen2020lottery, liu2022win} that removes individual weights, and the intersection of structured and unstructured pruning such as ViT-Slimming \cite{chavan2022vision} that removes a different number of individual weights for different heads. UPop is a structured pruning approach whose minimum granularity is an entire row or column in the weights of model parameters. 
+
+\textbf{Multimodal Transformer Compression} A few works have investigated the compression of multimodal Transformers. For example, MiniVLM \cite{wang2020minivlm} suggest an efficient feature extractor and a compact BERT \cite{devlin2018bert} as basic components of visual-language models. DistillVLM \cite{fang2021compressing} proposes that knowledge distillation can be used to mimic attention distributions from large vision-language models. The prior work \cite{gan2022playing} directly applies the unimodal pruning method \cite{han2015deep} on the multimodal scenario to verify whether the lottery tickets hypothesis also exists on multimodal models. The difference between UPop and \cite{gan2022playing} are 3 aspects: 1) \textit{Unified Pruning} enables adaptively instead of manually assigning the appropriate pruning ratio to each compressible component, 2) \textit{Progressive Pruning} gains better convergence and performance at high compression ratios. 3) UPop is structured and relatively easier to deploy, while \cite{gan2022playing} is unstructured and harder to deploy.
+
+\begin{figure*}[t]
+    \centering
+    \captionsetup{font={small}}
+    \includegraphics[width=1.0\linewidth]{figures/UPop.pdf}
+    \caption{Diagram of \textit{Unified and Progressive Pruning} (UPop) framework. (1) Trainable masks are initialized to ones and inserted into Self-Attention, Cross-Attention, and MLP (Feed Forward Network) in each modality. (2) Combine all compressible components and trainable masks as a unified search space. Then, the current pruning mask is generated based on unified ranking and selecting the importance metric (\ie, accumulated gradients of the trainable masks). (3) Repeat the cycle consisting of unified search and progressive pruning until the target total compression ratio is reached. (4) Pruned subnet can be further fine-tuned to achieve better performance.}
+    \label{figure UPop}
+\end{figure*}
+
+
+
+Methodology
+\label{METHODOLOGY}
+
+We propose \textit{Unified and Progressive Pruning} as illustrated in Figure \ref{figure UPop}. Necessary notations are listed in Table \ref{Notation}. We start by revisiting \textit{Mask-based Pruning} and straightforwardly extend it to the multimodal scenario.
+
+\subsection{Mask-based Pruning}
+\label{Mask-based Pruning}
+Extended \textit{Mask-based Pruning} compresses vision and language Transformers separately via unimodal \textit{Mask-based Pruning}, consisting of a search phase and a retraining phase.
+
+\textbf{Search} Take searching on Self-Attentions of Vision Transformer as an example. Denote the input of Self-Attention in the $l^{th}$ layer as $\bm{a}_{l} \in \mathbb{R}^{N\times D}$, and every head $h$ in the Self-Attention will transform $\bm{a}_{l}$ into query $\bm{q}_{l,h} \in \mathbb{R}^{N \times d}$, key $\bm{k}_{l,h} \in \mathbb{R}^{N \times d}$, and value $\bm{v}_{l,h} \in \mathbb{R}^{N \times d}$. The trainable mask $\bm{\zeta}_{a}^{v} \in \mathbb{R}^{L \times 1 \times d}$ will be initialized to ones and inserted into Self-Attentions of each layer.\footnote{More fine-grained mask shape $\mathbb{R}^{L \times H \times d}$ will result in pruned heads within a layer has different dimensions, and thus matrix computation of attention map becomes unfeasible on regular devices.} Then attention map of each head can be derived from
+\begin{equation}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{-2pt}
+\small
+	\bm{A}_{l,h} = \text{Softmax}\left((\bm{q}_{l,h} \odot \bm{\zeta}_{a,l}^{v}) \times (\bm{k}_{l,h} \odot \bm{\zeta}_{a,l}^{v})^{\top}/ \sqrt{d}\right).
+\end{equation}
+
+\noindent The output of each head $h$ can be derived from
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{-4pt}
+\small
+\bm{O}_{l,h} = \bm{A}_{l,h} \times (\bm{v}_{l,h} \odot \bm{\zeta}_{a,l}^{v}) \in \mathbb{R}^{N \times d}.
+\end{equation}
+
+\noindent Search on other structures (\eg, Cross-Attentions, FFNs) and modalities (\eg, vision, language) can be conducted similarly. Besides, the $\ell_{1}$-norm of masks $\bm{\zeta}$ are added as additional loss items to drive the magnitude of masks smaller:
+\begin{equation}
+\setlength{\abovedisplayskip}{2pt}
+\setlength{\belowdisplayskip}{2pt}
+\small
+ \mathcal{L} = \mathcal{L_{O}} + w_a\sum\nolimits_{\bm{\zeta}_{i} \in \bm{\zeta}_a} \lVert \bm{\zeta}_{i} \rVert_{1} + w_m\sum\nolimits_{\bm{\zeta}_{i} \in \bm{\zeta}_m} \lVert \bm{\zeta}_{i} \rVert_{1}
+\end{equation}
+where $\mathcal{L_{O}}$ is the original loss to learn a multimodal model, and $w_a$ and $w_m$ are coefficients to balance the magnitude of loss items. It means that the model parameters $\bm{\theta}$ and trainable masks $\bm{\zeta}$ are optimized jointly in the search phase.
+
+\textbf{Retraining} After the search, the subnet can be pruned from the searched model based on mask $\bm{\zeta}$. The magnitude of the mask is used as the metric to evaluate the importance of corresponding neurons. Neurons with the smallest magnitude of $p\%$ in the mask are removed (\ie, binarized as zero during retraining) from the searched model. The obtained subnet is retrained to get the final compressed model.
+The major weakness of \textit{Mask-based Pruning} is two-fold: 1) the mask $\bm{\zeta}_i \in \bm{\zeta}$ on each module is assigned with a compression ratio manually, which is inefficient and sub-optimal, especially when the modules are usually various in a multimodal model; 2) for those neurons to be removed after search, their corresponding magnitude in the searched mask is not guaranteed to be zero. There are a lot of non-zero neurons with relatively small mask magnitudes, and suddenly binarizing them to zero after search harms the convergence of the pruned subnet. We tackle the aforementioned issues with \textit{Unified Pruning} and \textit{Progressive Pruning}, respectively.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[b]{\linewidth}
+\begin{algorithm}[H]
+    \small
+    \caption{\small UPop: Unified and Progressive Pruning}
+    \label{algorithm Upop}
+    \setcounter{AlgoLine}{0}
+    \LinesNumbered
+    
+    \KwIn{Original model $\mathcal{F}$, parameters of the original model $\bm{\theta}$, parameters of the trainable mask $\bm{\zeta}$, total compression ratio $p$, iterations in the search stage $T_{s}$ and retrain stage $T_{r}$, learning rate for the search stage $\alpha$ and retrain stage $\beta$ }
+
+    \KwOut{Model $\mathcal{F^{\star}}$ after the search and retrain}
+    
+    \For{$t\gets0$ \KwTo $T_{r} - 1$} {
+    
+    \eIf{$t < T_{s}$}{
+
+        \textcolor{gray}{\texttt{\# Calculate the loss $\mathcal{L}$, and normally update $\bm{\theta}$ with the original optimizer}}
+        
+        $\mathcal{L} \leftarrow \mathcal{L_{O}} + w_{a} \sum_{\bm{\zeta}_i \in \bm{\zeta}_a} \lVert \bm{\zeta}_i \rVert_{1} + w_{m} \sum_{\bm{\zeta}_i \in \bm{\zeta}_m} \lVert \bm{\zeta}_i \rVert_{1}$, \quad
+        $ \bm{\theta}^{(t+1)} \leftarrow \bm{\theta}^{(t)} - \alpha \frac{1}{n} \sum_{i=1}^{n} \nabla_{\bm{\theta}} \mathcal{L}(\bm{\theta}^{(t)}, \bm{\zeta}^{(t)})$ 
+
+        \textcolor{gray}{\texttt{\# Calculate the gradient of loss $\mathcal{L}$ with respect to the trainable mask $\bm{\zeta}$}}
+        
+        $\bm{G}^{(t)} \leftarrow \frac{1}{n} \sum_{i=1}^{n} \nabla_{\bm{\zeta}} \mathcal{L}(\bm{\theta}^{(t)}, \bm{\zeta}^{(t)}) $
+
+        \textcolor{gray}{\texttt{\# Conduct z-score standardization to make the current $\bm{G}_a$ and $\bm{G}_m$ comparable}}
+        
+        $\bm{G}_a^{(t)} \leftarrow (\bm{G}_a^{(t)}-\mathbb{E}[\bm{G}_a^{(t)}]) / (\mathbb{E}[[\bm{G}_a^{(t)} - \mathbb{E}[\bm{G}_a^{(t)}]]^2])^{\frac{1}{2}} $,\quad 
+        $\bm{G}_m^{(t)} \leftarrow (\bm{G}_m^{(t)}-\mathbb{E}[\bm{G}_m^{(t)}]) / (\mathbb{E}[[\bm{G}_m^{(t)} - \mathbb{E}[\bm{G}_m^{(t)}]]^2])^{\frac{1}{2}} $
+
+        \textcolor{gray}{\texttt{\# Generate pruning mask $\bm{M}_t$ by ranking and selecting on accumulated gradient $\sum_{i=0}^{t} \bm{G}^{(i)}$}}
+        
+        $p_t \leftarrow p(\frac{1}{2}(1-\small\text{cos}(\frac{\pi t}{T_s-1})))^{\frac{1}{2}}$, \quad
+        $\bm{M}^t \leftarrow {\tt\small TopKMask}(\sum_{i=0}^{t} \bm{G}^{(i)}, \ p_t \cdot {\tt\small Size} (\bm{\zeta}))$
+        
+        \textcolor{gray}{\texttt{\# Progressively compress $\bm{\zeta}_t$ based on $M_t$ and accordingly progressively compress $\mathcal{F}$}}
+        
+        $\bm{\zeta}^{(t+1)} \leftarrow (1 - \bm{M}^t) + (1 - \frac{p_t}{p})\bm{M}^t $, \quad
+        $\mathcal{F}_{p_{t+1}} \leftarrow \mathcal{F}_{p_t}(x|\bm{\theta}^{(t+1)}, \bm{\zeta}^{(t+1)}) $ 
+        
+    }{
+        \textcolor{gray}{\texttt{\# Optional further finetune the pruned subnet $\mathcal{F}(x|\hat{\bm{\theta}}, \bm{\zeta}^{(T_s)})$ with the original optimizer}}
+    
+        $ \bm{\theta}^{(t+1)} \leftarrow \bm{\theta}^{(t)} - \beta \frac{1}{n} \sum_{i=1}^{n} \nabla_{\bm{\theta}} \mathcal{L_{O}}(\bm{\theta}^{(t)})$ 
+    }
+    }
+    
+    \Return $ \mathcal{F^{\star}} \leftarrow \mathcal{F}_p(x|\bm{\theta}^{(T_r)})$
+
+\end{algorithm}
+\end{minipage}
+\end{figure*}
+\subsection{Unified and Progressive Pruning}
+\label{Unified and Progressive Pruning}
+
+\subsubsection{Unified Pruning}
+\label{Unified Pruning}
+The core idea of \textit{Unified Pruning} is to unifiedly instead of separately search on different modalities and structures, which enables adaptively instead of manually assigning the appropriate pruning ratio to each compressible component.
+\textbf{Unified Search on Different Modalities} \textit{Unified Pruning} groups the pruning masks by computation mechanisms. For typical vision-language Transformers, we divide the masks $\bm{\zeta} = \{\bm{\zeta}_{att}^{v},\ \bm{\zeta}_{att}^{l},\ \bm{\zeta}_{att}^{c}, \bm{\zeta}_{mlp}^{v},\ \bm{\zeta}_{mlp}^{l}\}$ into two groups:
+\begin{equation}
+    \setlength{\abovedisplayskip}{1pt}
+    \setlength{\belowdisplayskip}{-3pt}
+    \bm{\zeta}_a = \{\bm{\zeta}_{att}^{v},\ \bm{\zeta}_{att}^{l},\ \bm{\zeta}_{att}^{c} \},\quad \bm{\zeta}_m = \{\bm{\zeta}_{mlp}^{v},\ \bm{\zeta}_{mlp}^{l} \}.
+\end{equation}
+
+One group $\bm{\zeta}_a$ for different attention modules and another $\bm{\zeta}_m$ for different MLP modules. The ranking and selection of masks are performed within each group. Instead of searching on each $\bm{\zeta}_i \in \bm{\zeta}$ separately:
+\begin{equation}
+\setlength{\abovedisplayskip}{1pt}
+\setlength{\belowdisplayskip}{-3pt}
+\small
+\quad \quad \bm{M}_i \leftarrow {\tt\small TopKMask}(\bm{\zeta}_i^{(T_s)}, \ p \cdot \text{Size}(\bm{\zeta}_i)) \ \ \text{for} \ \ \bm{\zeta}_i \in \bm{\zeta}, 
+\end{equation}
+
+where $\bm{M}_i$ is a binary mask used for pruning components of the subnet from the searched model. $\bm{M}_i$ is obtained by ranking and binarizing trainable mask $\bm{\zeta}_i$ at the final iteration $T_s$, which keeps the most important $p\%$ parameters. \textit{Unified Pruning} searches on different modalities within each group which ranks weights across different components:
+\begin{equation}
+\setlength{\abovedisplayskip}{0pt}
+\setlength{\belowdisplayskip}{0pt}
+\small
+\bm{M}_{a} \leftarrow {\tt\small TopKMask}(\{{\bm{\zeta}_i^{(T_s)}} | \bm{\zeta}_i \in \ \bm{\zeta}_a\}, \ p \cdot \text{\small Size}(\bm{\zeta}_a)),
+\end{equation}
+\begin{equation}
+\setlength{\belowdisplayskip}{-4pt}
+\small
+\bm{M}_{m} \leftarrow {\tt\small TopKMask}(\{{\bm{\zeta}_i^{(T_s)}} | \bm{\zeta}_i \in \ \bm{\zeta}_m\}, \ p \cdot \text{\small Size}(\bm{\zeta}_m)),
+\end{equation}
+\textbf{Unified Search on Different Structures}
+We notice that simply uniting different structures degrades performance, and the reason is that the magnitude of the learned masks $\bm{\zeta}_i$ used for different structures vary greatly. 
+
+Intuitively, it is feasible to conduct unified searching after transforming the magnitudes distributions of different structures' masks to have the same mean and standard deviation, and thus masks $\bm{\zeta}_i$ used for different structures can be comparable. For the simplicity of implementation, we individually transform the mean and standard deviation of magnitudes distributions of different structures' mask to the $0$ and $1$ by z-score standardization, respectively:
+\begin{equation}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\small
+\bm{\zeta}^{(T_s)}_a \leftarrow (\bm{\zeta}^{(T_s)}_a - \mathbb{E}[\bm{\zeta}^{(T_s)}_a]) / (\mathbb{E}[[\bm{\zeta}^{(T_s)}_a - \mathbb{E}[\bm{\zeta}^{(T_s)}_a]]^2])^{\frac{1}{2}},
+\end{equation}
+\begin{equation}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{-2pt}
+\small
+\bm{\zeta}^{(T_s)}_m \leftarrow (\bm{\zeta}^{(T_s)}_m - \mathbb{E}[\bm{\zeta}^{(T_s)}_m]) / (\mathbb{E}[[\bm{\zeta}^{(T_s)}_m - \mathbb{E}[\bm{\zeta}^{(T_s)}_m]]^2])^{\frac{1}{2}}.
+\end{equation}
+Then search on different modalities of different structures can be feasible:
+\begin{equation}
+\setlength{\abovedisplayskip}{2pt}
+\setlength{\belowdisplayskip}{-4pt}
+\small
+    \bm{M} \leftarrow {\tt\small TopKMask}(\{{\bm{\zeta}_i^{(T_s)}} | \bm{\zeta}_i \in \ \bm{\zeta}\}, \ p \cdot \small{\tt\small Size}(\bm{\zeta})), 
+\end{equation}
+
+where $M$ is a binary mask used for pruning all compressible components, and $M$ is obtained by ranking and binarizing the whole trainable masks $\bm{\zeta}$ at the final iteration $T_s$. 
+\subsubsection{Progressive Pruning}
+\label{Progressive Pruning}
+
+Retrain the pruned model after the search is a traditional two-stage paradigm. However, this paradigm fails when it comes to high compression ratios, because there is no guarantee that the magnitude of searched mask $\bm{\zeta}^{(T_s)}$ corresponding to the eliminated neurons in compressible components will converge to $0$, which makes the pruned subnet with the parameters $\hat{\bm{\theta}}$ sliced from $\bm{\theta}^{(T_s)}$ difficult to converge. When the compression ratio becomes higher, the eliminated non-zero neurons from the parameters $\bm{\theta}^{(T_s)}$ is more, and the gap between $\hat{\bm{\theta}}$ and $\bm{\theta}^{(T_s)}$ is larger, thereby increasing the difficulty for the pruned subnet $\mathcal{F}(x|\hat{\bm{\theta}}, \bm{\zeta}^{(T_s)})$ to converge.
+
+To address the above issue, we further propose the \textit{Progressive Pruning}, whose core idea is to ensure each magnitude of the trainable mask $\bm{\zeta}$ corresponding to the eliminated neurons in compressible components converges to $0$. This is achieved by updating trainable mask $\bm{\zeta}$ with a customed optimizer that is a function of the current iteration number $t$, instead of updating trainable mask $\bm{\zeta}$ with the same optimizer as the parameter $\bm{\theta}$ of the original model used.
+
+Specifically, gradients $\bm{G}^{(t)}$ of $\bm{\zeta}$ in each iteration of the search phase is first collected:
+\begin{equation}
+\setlength{\abovedisplayskip}{0pt}
+\setlength{\belowdisplayskip}{0pt}
+\small
+    \bm{G}^{(t)} \leftarrow \frac{1}{n} \sum_{i=1}^{n} \nabla_{\bm{\zeta}} \mathcal{L}(\bm{\theta}^{(t)}, \bm{\zeta}^{(t)}),
+\end{equation}
+where $n$ is the number of batch size. Then the accumulated gradients $\sum_{i=0}^{t}\ \bm{G}^{(i)}$ can be used as a new metric to evaluate the importance of corresponding neurons. And the pruning mask $\bm{M}^t$ at this iteration can be generated accordingly:
+\begin{equation}
+\setlength{\abovedisplayskip}{0pt}
+\setlength{\belowdisplayskip}{0pt}
+\small
+    \bm{M}^t \leftarrow \small {\tt\small TopKMask}(\sum_{i=0}^{t} \bm{G}^{(i)}, \ p_t \cdot \small {\tt\small Size}(\bm{\zeta})),
+\end{equation}
+where $p_t$ is the current compression ratio when the iteration number is $t$. And the update strategy for optimizing $\bm{\zeta}$ in each iteration of the search phase can be written as
+\begin{equation}
+\setlength{\abovedisplayskip}{1pt}
+\setlength{\belowdisplayskip}{1pt}
+\small
+    \bm{\zeta}^{(t+1)} \leftarrow (1 - \bm{M}_i^t) + (1 - \frac{p_t}{p})\bm{M}_i^t,
+\end{equation}
+which ensures that as $p_t$ progressively increases to $p$, each magnitude of mask $\bm{\zeta}$ corresponding to the removed neurons in compressible components will exactly converge to $0$. \textit{Progressive Pruning} eliminates the parameter gap between the searched model and the pruned subnet to be retrained, therefore gaining better convergence and performance, especially at high compression ratios.
+
+The proposed \textit{UPop} framework combines \textit{Unified Pruning} and \textit{Progressive Pruning} as outlined in Algorithm \ref{algorithm Upop}.
+\begin{table*}[t]
+  \setlength{\tabcolsep}{5pt}
+  \captionsetup{font={small}}
+  \setlength{\abovecaptionskip}{0.2cm}
+  \small
+  \begin{minipage}{0.6\linewidth}  
+  \flushleft
+  \caption{Compression results on the NLVR2. Bold indicates the best performance at the same compression ratio. Reduce indicates compression times. The marker \ \textcolor{ForestGreen}{\cmark} or \textcolor{brickred}{\xmark} \ indicates whether the model converges at the current compression times. The units of Params and FLOPs are M and G, respectively.}
+  \begin{tabular}{c @{\hspace{1.0\tabcolsep}} c @{\hspace{1.0\tabcolsep}} c |c @{\hspace{1.0\tabcolsep}} c|l @{\hspace{1.0\tabcolsep}} l}
+    \toprule
+    Approach & Reduce & Status & Dev Acc & Test Acc & Params & FLOPs \\
+    \midrule
+    Uncompressed & $1 \times $ & \textcolor{ForestGreen}{\cmark} & 82.48 & 83.08 & 259.45 & 132.54 \\
+    \midrule
+    \multirow{2}{*}{\makecell{Mask-based \\ Pruning }} & $2 \times $ & \textcolor{ForestGreen}{\cmark} & 75.74 & 76.44 & 146.18 & 66.88 \\
+    & $3 \times $ & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} \\
+    \midrule
+    & $2 \times $ & \textcolor{ForestGreen}{\cmark} & 79.50 & 80.32 & 149.90 & 95.01  \\
+    & $3 \times $ & \textcolor{ForestGreen}{\cmark} & 71.25 & 71.66 & 106.33 & 68.19 \\
+    \multirow{-3}{*}{\makecell{Unified \\ Pruning \\ (Ours) }} & $4 \times $ & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} & \textcolor{brickred}{\xmark} \\
+    \midrule
+    & $2 \times $ & \textcolor{ForestGreen}{\cmark} & \textbf{80.33} & \textbf{81.13} & 150.15$_{\color{red}\downarrow 42\%}$ & 89.36$_{\color{red}\downarrow 33\%}$ \\
+    & $3 \times $ & \textcolor{ForestGreen}{\cmark} & \textbf{76.89} & \textbf{77.61} & 109.01$_{\color{red}\downarrow 58\%}$ & 65.29$_{\color{red}\downarrow 51\%}$ \\
+    & $4 \times $ & \textcolor{ForestGreen}{\cmark} & \textbf{72.85} & \textbf{73.55} & 88.61$_{\color{red}\downarrow 66\%}$ & 50.35$_{\color{red}\downarrow 62\%}$ \\
+    & $5 \times $ & \textcolor{ForestGreen}{\cmark} & \textbf{68.71} & \textbf{68.76} & 76.81$_{\color{red}\downarrow 70\%}$ & 39.93$_{\color{red}\downarrow 70\%}$ \\
+    \multirow{-5}{*}{\makecell{Unified and \\ Progressive \\ Pruning \\ (Ours) }} & $10 \times $ & \textcolor{ForestGreen}{\cmark} & \textbf{57.17} & \textbf{57.79} & 54.48$_{\color{red}\downarrow 79\%}$ & 19.08$_{\color{red}\downarrow 86\%}$ \\
+    \bottomrule
+  \label{table nlvr}
+  \end{ta
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

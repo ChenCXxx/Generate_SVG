@@ -1,0 +1,369 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Human perception of the world intrinsically comprises multiple modalities, including vision, audio, text, etc.~\citep{mcgurk1976hearing,baltruvsaitis2018multimodal}.
+Audio-visual speech recognition (AVSR) leverages both audio and visual modalities to understand human speech, improving the noise-robustness of audio-only speech recognition~\cite{chen2022noise,chen2022self,chen2023metric,chen2023unsupervised,hu2022interactive,hu2022dual,hu2023gradient,hu2023unifying,hu2023wav2code,zhu2023joint,zhu2023robust} with noise-invariant lip movement information~\citep{sumby1954visual}.
+Thanks to recent advances of deep learning techniques, AVSR research has gained a remarkable progress~\citep{afouras2018deep,ma2021end,shi2022robust}.
+
+Currently, the mainstream AVSR approaches are centered around developing sophisticated architectures and techniques for multi-modality fusion, including simple feature concatenation~\citep{makino2019recurrent,ma2021end,pan2022leveraging,chen2022leveraging,zhu2023vatlm}, recurrent neural network~\citep{petridis2018audio,xu2020discriminative} and cross-modal attention~\citep{afouras2018deep,lee2020audio,hu2023cross}.
+Despite the advances, these approaches are often challenged by the representation gap persisting between naturally heterogeneous modalities~\citep{hazarika2020misa}.
+
+\begin{figure}[t]
+\centering
+    \includegraphics[width=1.0\columnwidth]{fig1.drawio.pdf}
+    \caption{Multimodal learning of frame-level modality-invariant and -specific representations.}\label{fig1}
+\end{figure}
+Recently in some other multimodal tasks like sentiment analysis~\citep{hazarika2020misa,yu2021learning,yao2022modality} and cross-modal retrieval~\citep{xiong2020modality}, there have been research works proposing to learn two distinct representations to benefit multimodal learning.
+The first representation is \emph{modality-invariant}, where multiple modalities of a same utterance are mapped to a shared space, indicating the homogeneous semantic meaning from the speaker.
+In addition, they also learn \emph{modality-specific} representations that are private to each modality.
+Given an utterance, each modality contains some unique features with respect to speaker-sensitive information~\citep{tsiros2013dimensions}.
+Combing these two representations provides a holistic view of multimodal data for downstream tasks~\citep{yang2022learning}.
+However, these methods focus on utterance-level representations that could be easily mapped to either shared or individual modality space using similarity cost functions, which does not apply to AVSR task that requires sequence-to-sequence mapping with temporal contextual dependencies~\citep{petridis2018audio}.
+
+Motivated by above observations, we propose an adversarial network to refine frame-level modality-invariant representations (MIR-GAN) for capturing the commonality across modalities, which bridges their heterogeneous gap to ease the subsequent multimodal fusion.
+In particular, we first design a MIR generator to learn modality-invariant representations over the shared audio-visual modality space.
+Meanwhile, a modality discriminator is proposed to strengthen its modality agnosticism via adversarial learning.
+Moreover, to further enrich its contextual semantic information, we propose a mutual information maximization strategy to align the refined representations to both audio and visual modality sequences.
+Finally, both modality-invariant and -specific representations are fused for downstream speech recognition.
+Empirical results demonstrate the effectiveness of our approach.
+In summary, our main contributions are:
+\begin{itemize}
+\item We present MIR-GAN, an AVSR approach to refine frame-level modality-invariant representations, which captures the commonality across modalities and thus bridges their heterogeneous gap to ease multimodal fusion.
+
+\item We first learn modality-invariant representations with a MIR generator, followed by another modality discriminator to strengthen its modality agnosticism via adversarial learning.
+Furthermore, we propose a mutual information maximization strategy to enrich its contextual semantic information. 
+Finally, both modality-invariant and -specific representations are fused for downstream recognition.
+
+\item Our proposed MIR-GAN outperforms the state-of-the-arts on LRS3 and LRS2 benchmarks. Extensive experiments also show its superiority on ASR and VSR tasks.
+\end{itemize}
+
+
+
+Related Work
+\label{sec:related_work}
+\noindent\textbf{Audio-Visual Speech Recognition.}
+Current mainstream AVSR methods focus on sophisticated architectures and techniques for audio-visual modality fusion.
+Prior methods like RNN-T~\citep{makino2019recurrent}, Hyb-Conformer~\citep{ma2021end} and MoCo+wav2vec~\citep{pan2022leveraging} employ simple feature concatenation for multimodal fusion, other works including Hyb-RNN~\citep{petridis2018audio} and EG-seq2seq~\citep{xu2020discriminative} leverage recurrent neural network for audio-visual fusion.
+In addition, cross-modal attention has also become popular recently for multimodal interaction and fusion in AVSR tasks, such as TM-seq2seq~\citep{afouras2018deep}, DCM~\citep{lee2020audio} and MMST~\citep{song2022multimodal}.
+Despite the effectiveness, these fusion techniques are often challenged by the representation gap between naturally heterogeneous modalities.
+Recently, multimodal self-supervised learning has been popular for capturing unified cross-modal representations, like AV-HuBERT~\citep{shi2022learning} and u-HuBERT~\citep{hsu2022u}, which achieve the state-of-the-art but require abundant unlabeled data and computing resources.
+In this work, we propose a supervised learning scheme to efficiently refine modality-invariant representations for bridging the heterogeneous modality gap.
+
+\noindent\textbf{Modality-Invariant and -Specific Representations.}
+Recent studies in many multimodal tasks suggest that the model benefits from both shared and individual modality representations, including multimodal sentiment analysis~\citep{hazarika2020misa,yu2021learning,yang2022learning}, person re-identification~\citep{wei2021syncretic,huang2022exploring}, cross-modal retrival~\citep{zeng2022learning} and image-sentence matching~\citep{liu2019modality}, etc.
+MISA~\citep{hazarika2020misa} maps the multimodal features into two spaces as modality-invariant and -specific representations, and then fuses them for downstream classification.
+MCLNet~\citep{hao2021cross} learns modality-invariant representations by minimizing inter-modal discrepancy and maximizing cross-modal similarity.
+VI-REID~\citep{feng2019learning} builds an individual network for each modality, with a shared identity loss to learn modality-invariant representations.
+However, these methods map utterance-level representations to modality-invariant or -specific spaces via similarity cost functions, while AVSR is sequence-to-sequence task that requires contextual semantic information.
+To this end, we propose an adversarial network with mutual information maximization to refine frame-level modality-invariant representations that subjects to temporal contextual dependencies.
+
+\noindent\textbf{Adversarial Network.}
+The concept of adversarial network starts from GAN~\citep{Goodfellow2014}, which has attracted a surge of research interests due to its strong ability of generating high-quality novel samples according to existing data.
+The best-known applications include image-to-image translation~\citep{isola2017image} and image synthesis~\citep{denton2015deep,radford2015unsupervised}.
+Recently, GAN is further applied to multimodal tasks such as text-to-image synthesis~\citep{reed2016generative,tan2020kt}, video captioning~\citep{yang2018video,bai2021discriminative} and cross-modal retrieval~\citep{qian2021dual}.
+In this work, we leverage the strong distinguishing ability of adversarial network to strengthen the modality agnosticism of the learned modality-invariant representations.
+
+
+
+Methodology
+\label{sec:method}
+
+\begin{figure*}[t]
+\centering
+    \includegraphics[width=0.96\textwidth]{fig2.drawio.pdf}
+    \caption{Illustration of our MIR-GAN. (a) Overall architecture. (b) MIR generator that learns modality-invariant representation $f^{inv}_{va}$. (c) Modality discriminator that strengthens the modality agnosticism of $f^{inv}_{va}$. (d) Visual and audio encoders that learn modality-specific representations $f^{spe}_{v}, f^{spe}_{a}$.
+    ``MIM'' is mutual information maximization.}\label{fig2}
+\end{figure*}
+\subsection{Overview}
+\label{ssec:overview}
+The overall architecture of our proposed MIR-GAN is illustrated in Fig.~\ref{fig2}.
+} to process the input streams, which generate two modality sequences, \textit{i.e.}, $f_v, f_a \in \mathbb{R}^{T\times D}$, where $T$ is number of frames and $D$ is embedding size.
+These two sequences are then fed by visual and audio encoders respectively to generate modality-specific representations, \textit{i.e.}, $f_v^{spe}, f_a^{spe} \in \mathbb{R}^{T\times D}$.
+Based on that, we propose a MIR generator to learn modality-invariant representations by extracting the shared information of two modalities, \textit{i.e.}, $f_{va}^{inv} \in \mathbb{R}^{T\times D}$.
+Meanwhile, we design a modality discriminator to strengthen its modality agnosticism via adversarial learning.
+In addition, to further enrich its contextual semantic information, we propose a mutual information maximization (MIM) strategy to align the refined representations to both audio and visual modality sequences. 
+Finally, both modality-invariant and -specific representations are fused for downstream speech recognition.
+
+\subsection{Visual \& Audio Encoders}
+\label{ssec:va_encoders}
+As illustrated in Fig.~\ref{fig2} (d), we introduce a pair of visual and audio encoders to learn modality-specific representations.
+Following Transformer~\citep{vaswani2017attention} architecture, they first employ self-attention modules to capture the contextual dependencies within each modality, followed by cross-attention modules for interaction between two modalities, which can initially narrow their gap to benefit the subsequent modality-invariant representation learning.
+Finally, there are feed-forward networks to generate the modality-specific outputs.
+\subsection{MIR-GAN}
+\label{ssec:mir_gan}
+With learned modality-specific representations, we propose MIR-GAN to refine frame-level modality-invariant representations.
+First, we design a MIR generator to extract the shared information of two modalities, which generates a modality-invariant representation $f_{va}^{inv} \in \mathbb{R}^{T\times D}$.
+Meanwhile, we design a modality discriminator to strengthen its modality agnosticism via adversarial learning.
+
+\subsubsection{MIR Generator}
+\label{sssec:mir_G}
+Fig.~\ref{fig2} (b) details the architecture of proposed MIR generator $G$, where we design a hybrid-modal attention (HMA) module to extract out the part of information in each modality-specific representation that is related to both modalities:
+\begin{equation}
+\label{eq1}
+\begin{split}
+    s_m &= H\hspace{-0.04cm}M\hspace{-0.04cm}A(f_m^{spe}, f_{va}),\quad m \in \{v, a\},
+\end{split}
+\end{equation}
+\noindent where the subscript $m$ denotes modality. The resulted features are then added to input sequence $f_{va}$ to form the final modality-invariant representation:
+\begin{equation}
+\label{eq2}
+\begin{split}
+    f_{va}^{inv} &= \text{Norm}(f_{va} + \sum_{m \in \{v, a\}}\text{Conv}(s_m)),
+\end{split}
+\end{equation}
+\noindent where the ``Norm'' denotes layer normalization~\citep{ba2016layer}, ``Conv'' denotes 1$\times$1 convolution followed by PReLU activation~\citep{he2015delving}.
+
+\begin{figure}[t]
+\centering
+    \includegraphics[width=0.62\columnwidth]{fig3.drawio.pdf}
+    \caption{Illustration of the Hybrid-Modal Attention. Here we take the visual modality for example ($m = v$).}\label{fig3}
+\end{figure}
+
+\noindent\textbf{Hybrid-Modal Attention (HMA)} first involves a cross-attention sub-module to extract the information in each modality-specific representation that is related to both modalities, with the query input $f_{va}$ comprising both visual and audio sequence information, as shown in Fig.~\ref{fig3}:
+\begin{equation}
+\label{eq3}
+\begin{split}
+    f_{m}^{share} &= \text{Cross-Attention}(f_{va}, f_m^{spe}, f_m^{spe}),
+\end{split}
+\end{equation}
+
+To further make the extracted feature invariant to modalities, we design a parallel convolutional network to learn a mask for filtering out the modality-specific information:
+\begin{equation}
+\label{eq4}
+\begin{split}
+    s_m &= f_{m}^{share} \otimes \sigma(\text{Conv}(f_m^{spe} \hspace{0.05cm}\Vert\hspace{0.05cm} f_{va})),
+\end{split}
+\end{equation}
+\noindent where ``Conv'' denotes 1$\times$1 convolutional layer, $\Vert$ denotes feature concatenation, $\sigma$ denotes Sigmoid activation, $\otimes$ denotes element-wise multiplication.
+
+As a result, the output representation $s_m$ from HMA involves information regarding both visual and audio modalities, making the final output $f_{va}^{inv}$ (in Eq.~\ref{eq2}) invariant to modalities.
+
+\subsubsection{Modality Discriminator}
+\label{sssec:modal_D}
+With the generated modality-invariant representation, we further design a modality discriminator $D$ to strengthen its modality agnosticism via adversarial learning.
+As shown in Fig.~\ref{fig2} (c), the discriminator consists of two linear layers followed by Sigmoid activation to predict a scalar between 0 and 1 for each frame, indicating which modality it belongs to (\textit{i.e.}, 0 for visual and 1 for audio):
+\begin{equation}
+\label{eq5}
+\begin{split}
+    D(f) \in \mathbb{R}^{T \times 1}, \hspace{0.2cm} f \in \{f_v^{spe}, f_a^{spe}, f_{va}^{inv}\},
+\end{split}
+\end{equation}
+
+Therefore, for frames in modality-specific representations $f_v^{spe}$ and $f_a^{spe}$, we hope the discriminator can correctly classify the modality type, \textit{i.e.}, 0 or 1.
+In contrast, in order to strengthen the modality agnosticism of refined representation $f_{va}^{inv}$, we hope it can confuse the discriminator with the output around 0.5, \textit{i.e.}, a medium between two modalities.
+
+With above designs of generator and discriminator, the adversarial training objective of MIR-GAN can be mathematically formulated as:
+\begin{equation}
+\label{eq6}
+\begin{split}
+    \mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N} &= \mathcal{L}_D + \mathcal{L}_{G} \\ 
+    &= \mathbb{E}_f[\text{log}\hspace{0.02cm}D(f_a^{spe}) + \text{log}\hspace{0.02cm}(1 - D(f_v^{spe}))] \\
+    &+ \mathbb{E}_f[-\text{log}\hspace{0.02cm}D(f_{va}^{inv}) - \text{log}\hspace{0.02cm}(1 - D(f_{va}^{inv}))],
+\end{split}
+\end{equation}
+where $ f_{va}^{inv} = G(f_v^{spe}, f_a^{spe}, f_{va})$, $\mathbb{E}$ denotes the expectation over all the temporal frames in current data batch.
+Details of the corresponding optimization strategy are illustrated in Alg.~\ref{alg1}.
+
+\subsection{Mutual Information Maximization}
+\label{ssec:mim}
+The MIR-GAN successfully refines the modality-invariant representation by focusing on the modality commonality and agnosticism, while the original semantic information may not be preserved.
+To this end, we further design a mutual information maximization (MIM) strategy via contrastive learning to enrich the contextual semantic information in refined modality-invariant representation.
+
+In particular, we formulate a contrastive loss function to maximize the mutual information between modality-invariant representation $f_{va}^{inv}$ and the modality-specific representations $f_v^{spe}, f_a^{spe}$:
+
+\begin{equation}
+\label{eq7}
+\begin{split}
+    \mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M} = &-\sum_{i=1}^{T}\text{log}\frac{\text{exp}(\langle f_{va\_i}^{inv}, f_{v\_i}^{spe} \rangle / \tau)}{\sum_{j=1}^{T} \text{exp}(\langle f_{va\_i}^{inv}, f_{v\_j}^{spe} \rangle / \tau)} \\
+    &- \sum_{i=1}^{T}\text{log}\frac{\text{exp}(\langle f_{va\_i}^{inv}, f_{a\_i}^{spe} \rangle / \tau)}{\sum_{j=1}^{T} \text{exp}(\langle f_{va\_i}^{inv}, f_{a\_j}^{spe} \rangle / \tau)},
+\end{split}
+\end{equation}
+where $\langle\hspace{0.04cm}\cdot, \cdot\hspace{0.04cm}\rangle$ denotes cosine similarity, $\tau$ is temperature parameter.
+The subscripts $i$ and $j$ denote frame index, where $f_{va}^{inv}/f_v^{spe}/f_a^{spe} \in \mathbb{R}^{T\times D}$.
+
+The constructed positive and negative samples are distinguished by frame index. 
+As same frame of different representations express similar semantic meanings, we assign them as positive samples to strengthen consistency, while the mismatched frames are pulled apart from each other.
+As a result, the MIM strategy can enrich the semantic information in final modality-invariant representation.
+
+\subsection{Optimization}
+\label{ssec:optim}
+
+The optimization strategy of MIR-GAN is detailed in Alg.~\ref{alg1}.
+After the forward-propagation process, we calculate $\mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}$ and $\mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$ according to Eq.~\ref{eq6} and Eq.~\ref{eq7}.
+Meanwhile, the downstream speech recognition loss $\mathcal{L}_{rec}$ is calculated as the cross-entropy between recognized text and the ground-truth transcription.
+The final training objective of MIR-GAN can therefore be written as:
+\begin{equation}
+\label{eq8}
+\begin{split}
+    \mathcal{L} &= \mathcal{L}_{rec} + \lambda_{G\hspace{-0.02cm}A\hspace{-0.02cm}N} \cdot \mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N} + \lambda_{M\hspace{-0.03cm}I\hspace{-0.03cm}M} \cdot \mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M},
+\end{split}
+\end{equation}
+where $\lambda_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}, \lambda_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$ are weighting parameters to balance different training objectives.
+
+Inspired by GAN training strategy~\citep{Goodfellow2014}, we split the back-propagation process into two steps.
+First, we \emph{maximize} $\mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}$ to update the discriminator, where the generator is detached from optimization.
+According to Eq.~\ref{eq6}, maximizing the first term of $\mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}$ (\textit{i.e.}, $\mathcal{L}_D$) trains the discriminator to correctly classify the two modalities, while increasing the second term amounts to informing discriminator that $f_{va}^{inv}$ is modality-specific and can either be visual or audio\footnote{Function $\text{log}(x) + \text{log}(1-x)$ reaches maximum at $x=0.5$, and the minimum is obtained around $x=0$ and $x=1$.\label{fn3}} (this is opposite to what we desire as modality-invariant).
+Second, we freeze discriminator and update the rest network, where \emph{minimizing} $\mathcal{L}_G$ pushes the discrimination output of $f_{va}^{inv}$ to 0.5,\textsuperscript{\ref{fn3}} which is a medium between visual and audio modalities, \textit{i.e.}, modality-agnostic.
+In addition, $\mathcal{L}_{rec}$ optimizes the downstream speech recognition model and $\mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$ implements the MIM strategy.
+The entire system is trained in an end-to-end manner with well-tuned weighting parameters.
+\begin{algorithm}[t]
+\caption{\small MIR-GAN Optimization.}
+\label{alg1}
+\small 
+\begin{algorithmic}[1]
+    \Require Training data $D$ that contains visual-audio pairs $(x_v, x_a)$ and the text transcription $y$. 
+    The MIR-GAN network $\theta$ that consists of front-ends $\theta_{v\hspace{-0.02cm}f}$ and $\theta_{a\hspace{-0.02cm}f}$, encoders $\theta_{vae}$, MIR generator $\theta_G$, modality discriminator $\theta_D$ and downstream speech recognition model $\theta_{rec}$.
+    Hyper-parameter weights $\lambda_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}, \lambda_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$.
+    \State Randomly initialize the entire system $\theta$.
+    \If{select \emph{self-supervised setting}}
+        \State Load the pre-trained AV-HuBERT for speech recognition model $\theta_{rec}$ and front-ends $\theta_{v\hspace{-0.02cm}f}, \theta_{a\hspace{-0.02cm}f}$
+    \EndIf
+    \While{not converged}
+        \For{$(x_v, x_a) \in D$}
+            \State \textsc{Forward-Propagation}:
+            \State \hspace{0.3cm} $f_v = \theta_{v\hspace{-0.02cm}f}(x_v), f_a = \theta_{a\hspace{-0.02cm}f}(x_a)$ \Comment{\blue{front-ends}}
+            \State \hspace{0.3cm} $f_v^{spe}, f_a^{spe} = \theta_{vae}(f_v, f_a)$ \Comment{\blue{encoders}}
+            \State \hspace{0.3cm} $f_{va} = f_v\Vert f_a$
+	        \State \hspace{0.3cm} $f_{va}^{inv} = \theta_G(f_v^{spe}, f_a^{spe}, f_{va})$ \Comment{\blue{Generator}}
+	        \State \hspace{0.3cm} $\hat{y} = \theta_{rec}(f_v^{spe}\Vert f_a^{spe}\Vert f_{va}^{inv})$ \Comment{\blue{recognition}}
+	        \State \textsc{Training objectives}:
+	        \State \hspace{0.3cm} $\mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}$ ($\mathcal{L}_D$ and $\mathcal{L}_G$) in Eq.~\ref{eq6} \Comment{\blue{Discriminator}}
+	        \State \hspace{0.3cm} $\mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$ in Eq.~\ref{eq7} \Comment{\blue{MI maximization}}
+	        \State \hspace{0.3cm} $\mathcal{L}_{rec} = \text{CrossEntropy}(\hat{y}, y)$
+	        \State \textsc{Back-Propagation}: \Comment{\blue{adversarial training}}
+	        \State \hspace{0.3cm} \textsc{Update discriminator}: \Comment{\blue{unfreeze $\theta_D$}}
+	        \State \hspace{0.6cm} $\underset{\theta_D}{\arg\max}\hspace{0.1cm} \mathcal{L}_{G\hspace{-0.02cm}A\hspace{-0.02cm}N}$ 
+	        \State \hspace{0.3cm} \textsc{Update the rest network}: \Comment{\blue{freeze $\theta_D$}}
+	        \State \hspace{0.6cm} $\underset{\theta\backslash\theta_D}{\arg\min}\hspace{0.1cm} \mathcal{L}_{rec} + \lambda_{G\hspace{-0.02cm}A\hspace{-0.02cm}N} \cdot \mathcal{L}_G + \lambda_{M\hspace{-0.03cm}I\hspace{-0.03cm}M} \cdot \mathcal{L}_{M\hspace{-0.03cm}I\hspace{-0.03cm}M}$ 
+        \EndFor
+    \EndWhile
+\end{algorithmic}
+\normalsize
+\end{algorithm}
+
+
+
+Experiments
+\label{sec:exp}
+
+\subsection{Experimental Setup}
+\label{ssec:setup}
+\label{sssec:datasets}
+\noindent\textbf{Datasets.} We conduct experiments on two large-scale public benchmarks, LRS3~\citep{afouras2018lrs3} and LRS2~\citep{chung2017lip}. 
+LRS3 dataset collects 433 hours of transcribed English videos in TED and TEDx talks from over 5000 speakers, which is the largest publicly available labeled audio-visual speech recognition dataset. 
+LRS2 dataset contains 224 hours of video speech, with a total of 144K clips from BBC programs.
+
+\label{sssec:model_config}
+\noindent\textbf{Model Configurations.} 
+We first build a base model with only front-ends and downstream speech recognition module, which follows Transformer architecture with 24 encoder layers and 9 decoder layers.
+Based on that, we build the MIR-GAN with $N_E=3$ visual \& audio encoder layers and $N_G=3$ MIR generator layers.
+To maintain similar model size, we only use 12 encoder layers and 9 decoder layers in the recognition model.
+The number of parameters in our base model and MIR-GAN are 476M and 469M respectively.
+We also use Conformer~\citep{gulati2020conformer} as our backbone.
+
+Following prior work~\citep{shi2022robust}, we employ data augmentation and noisy test set based on MUSAN noise~\citep{snyder2015musan}.
+\label{sssec:baselines}
+\noindent\textbf{Baselines.} 
+To evaluate our proposed MIR-GAN, we select some popular AVSR methods for comparison, which can be roughly divided into two groups.
+The first is supervised learning method, including TM-seq2seq/CTC~\citep{afouras2018deep}, RNN-T~\citep{makino2019recurrent}, EG-seq2seq~\citep{xu2020discriminative} and Hyb-Conformer~\citep{ma2021end}.
+Another one is the recently popular self-supervised learning method such as MoCo+wav2vec~\citep{pan2022leveraging}, AV-HuBERT~\citep{shi2022robust} and u-HuBERT~\citep{hsu2022u}.
+
+\begin{table*}[t]
+\centering
+\resizebox{0.95\textwidth}{!}{
+\begin{tabular}{cccccccccc}
+\toprule
+\multicolumn{2}{c}{\multirow{2}{*}{Method}} & \multirow{2}{*}{Backbone} & \multirow{2}{*}{Criterion} & Unlabeled & Labeled & \multirow{2}{*}{DataAug} & \multirow{2}{*}{LM} & \multicolumn{2}{c}{WER(\%)} \\
+\multicolumn{2}{c}{} & & & data (hrs) & data (hrs) & & & Clean & Noisy \\
+\midrule
+\multicolumn{2}{c}{TM-seq2seq~\citeyearpar{afouras2018deep}} & Transformer & S2S & - & 1,519 & \cmark & \cmark & 7.2 & - \\
+\multicolumn{2}{c}{EG-seq2seq~\citeyearpar{xu2020discriminative}} & RNN & S2S & - & 590 & \cmark & - & 6.8 & - \\
+\multicolumn{2}{c}{RNN-T~\citeyearpar{makino2019recurrent}} & RNN & RNN-T & - & 31,000 & - & - & 4.5 & - \\
+\multicolumn{2}{c}{Hyb-Conformer~\citeyearpar{ma2021end}} & Conformer & S2S + CTC & - & 590 & \cmark & \cmark & \textbf{2.3} & - \\
+\multicolumn{2}{c}{AV-HuBERT~\citeyearpar{shi2022robust}} & Transformer & S2S & 1,759 & 433 & \cmark & - & 1.4 & \textbf{5.8}\\
+\multicolumn{2}{c}{u-HuBERT~\citeyearpar{hsu2022u}} & Transformer & S2S & 2,211 & 433 & \cmark & - & \textbf{1.2} & - \\
+\midrule
+\multirow{4}{*}{Ours} & Base model & \multirow{2}{*}{Transformer} & \multirow{2}{*}{S2S} & \multirow{2}{*}{-} & \multirow{2}{*}{433} & \multirow{2}{*}{\cmark} & \multirow{2}{*}{-} & 3.5 & 14.8 \\
+& MIR-GAN & & & & & & & 2.8 & 11.7\\
+\cline{2-10}
+& Base model & \multirow{2}{*}{Conformer} & \multirow{2}{*}{S2S} & \multirow{2}{*}{-} & \multirow{2}{*}{433} & \multirow{2}{*}{\cmark} & \multirow{2}{*}{-} & 2.5 & 10.9 \\
+& MIR-GAN & & & & & & & \textbf{2.1} & \textbf{8.5} \\
+\multirow{2}{*}{Ours} & Base model & \multirow{2}{*}{Transformer} & \multirow{2}{*}{S2S} & \multirow{2}{*}{1,759} & \multirow{2}{*}{433} & \multirow{2}{*}{\cmark} & \multirow{2}{*}{-} & 1.4 & 5.8 \\
+& MIR-GAN & & & & & & & \textbf{1.2} & \textbf{5.6} \\
+\bottomrule
+\end{tabular}
+}
+\caption{WER (\%) of our MIR-GAN and prior works on LRS3 benchmark.
+``S2S'' denotes sequence-to-sequence loss~\citep{watanabe2017hybrid}, ``CTC'' denotes CTC loss~\citep{graves2006connectionist}, ``DataAug'' denotes noise augmentation, ``LM'' denotes language model rescoring. 
+The noisy test set is synthesized using MUSAN noise~\citep{snyder2015musan}.}
+\label{table1}
+\end{table*}
+
+\begin{table}[t]
+\centering
+\resizebox{1.0\columnwidth}{!}{
+\begin{tabular}{ccccc}
+\toprule
+\multicolumn{2}{c}{\multirow{2}{*}{Method}} & \multirow{2}{*}{Backbone} & \multicolumn{2}{c}{WER(\%)} \\
+\multicolumn{2}{c}{} & & Clean & Noisy \\
+\midrule
+\multicolumn{2}{c}{TM-seq2seq~\citeyearpar{afouras2018deep}} & Transformer & 8.5 & - \\
+\multicolumn{2}{c}{TM-CTC~\citeyearpar{afouras2018deep}} & Transformer & 8.2 & - \\
+\multicolumn{2}{c}{Hyb-RNN~\citeyearpar{petridis2018audio}} & RNN & 7.0 & - \\
+\multicolumn{2}{c}{LF-MMI TDNN~\citeyearpar{yu2020audio}} & TDNN & 5.9 & - \\
+\multicolumn{2}{c}{Hyb-Conformer~\citeyearpar{ma2021end}} & Conformer & \textbf{3.7} & - \\
+\multicolumn{2}{c}{MoCo+wav2vec~\citeyearpar{pan2022leveraging}} & Transformer & \textbf{2.6} & - \\
+\midrule
+\multirow{4}{*}{Ours} & Base model & \multirow{2}{*}{Transformer} & 5.4 & 21.2 \\
+& MIR-GAN & & 4.5 & 16.7 \\
+\cline{2-5}
+& Base model & \multirow{2}{*}{Conformer} & 3.9 & 15.8 \\
+& MIR-GAN & & \textbf{3.2} & \textbf{11.9} \\
+\multirow{2}{*}{Ours} & Base model & \multirow{2}{*}{Transformer} & 2.3 & 7.3 \\
+& MIR-GAN & & \textbf{2.2} & \textbf{7.0} \\
+\bottomrule
+\end{tabular}
+}
+\caption{WER (\%) of our MIR-GAN and prior works on the LRS2 benchmark.
+Detailed configurations are further presented in Table~\ref{table6}.}
+\label{table2}
+\end{table}
+\subsection{Main Results}
+\label{subsec:main_results}
+We conduct experiments on two public datasets under \emph{supervised} and \emph{self-supervised} settings, depending on whether use the AV-HuBERT pre-trained model.
+Results show that our proposed MIR-GAN achieves the state-of-the-art under both settings.
+
+\noindent\textbf{LRS3 Benchmark.}
+Table~\ref{table1} presents the AVSR performance of our proposed MIR-GAN and prior methods on LRS3 benchmark.
+Under supervised setting, our MIR-GAN achieves significant improvement over the base model in both clean and noisy testing conditions, and the best performance achieves new state-of-the-art (2.1\% vs. 2.3\%) while without using the language model rescoring.
+In addition, the Conformer backbone consistently outperforms Transformer (2.1\% vs. 2.8\%, 8.5\% vs. 11.7\%).
+Under self-supervised setting, MIR-GAN also improves the performance of base model, which surpasses or matches previous state-of-the-art (1.2\% vs. 1.2\%, 5.6\% vs. 5.8\%) while using less unlabeled data for pre-training.
+
+\noindent\textbf{LRS2 Benchmark.}
+Table~\ref{table2} compares the AVSR results of MIR-GAN and baselines on LRS2 benchmark.
+We can observe that the proposed MIR-GAN outperforms previous state-of-the-art by a large margin under both supervised and self-supervised settings (3.2\% vs. 3.7\%, 2.2\% vs. 2.6\%).
+In addition, we also observe promising gains of performance in noisy testing conditions.
+
+As a result, our proposed MIR-GAN achieves new state-of-the-art under both supervised and self-supervised settings on two public benchmarks, which demonstrates its superiority on AVSR task.
+\begin{table*}[t!]
+\centering
+\resizebox{1.0\textwidth}{!}{
+\begin{tabular}{c|cccccc|cccccc}
+\toprule
+\multirow{2}{*}{Model} & \multicolumn{2}{c}{TF-Sup-3} & \multicolumn{2}{c}{CF-Sup-3} & \multicolumn{2}{c|}{TF-SelfSup-3} & \multicolumn{2}{c}{TF-Sup-2} & \multicolumn{2}{c}{CF-Sup-2} & \multicolumn{2}{c}{TF-SelfSup-2} \\
+ & Clean & Noisy & Clean & Noisy & Clean & Noisy & Clean & Noisy & Clean & Noisy & Clean & Noisy \\
+\midrule
+\textbf{MIR-GAN (Full)} & \textbf{2.8} & \textbf{11.7} & \textbf{2.1} & \textbf{8.5} & \textbf{1.2} & \textbf{5.6} & \textbf{4.5} & \textbf{16.7} & \textbf{3.2} & \textbf{11.9} & \textbf{2.2} & \textbf{7.0} \\
+\midrule
+w/o Modality-Invariant & 3.3 & 13.7 & 2.4 & 10.1 & 1.3 & 5.8 & 5.3 & 19.9 & 3.7 & 14.9 & 2.3 & 7.2 \\
+w/o Modality-Specific & 3.2 & 13.2 & 2.3 & 9.8 & 1.4 & 5.7 & 5.1 & 19.5 & 3.7 & 14.6 & 2.2 & 7.1 \\
+\midrule
+w/o Visual \& Audio Encoders & 3.0 & 12.1 & 2.1 & 8.9 & 1.2 & 5.6 & 4.8 & 18.1 & 3.4 & 13.1 & 2.2 & 7.0 \\
+w/o MIR Generator & 3.1 & 12.8 & 2.2 & 9
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

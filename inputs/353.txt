@@ -1,0 +1,260 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+In recent years, increasingly large-scale pre-trained language models (LLMs) have emerged, which leads to a substantial cost for fine-tuning different models for each downstream task. 
+Alternatively, in-context learning (ICL) has shown impressive performance on NLP downstream tasks without any modifications to LLMs. 
+Specifically, ICL prepends several input-label pairs (demonstrations) to a test sample via a task-specific template and conducts prediction conditioned on this prompt, namely context, for better inference \citep{DBLP:conf/nips/BrownMRSKDNSSAA20}.
+
+Most previous works focus on how to design the best prompt to steer its best performance. 
+For example, some works aim to search for the most suitable templates for specific tasks \citep{ DBLP:conf/acl/SorensenRRSRDKF22, DBLP:conf/eacl/PrasadHZB23}, while others focus on selecting the best demonstrations for each test sample \citep{DBLP:conf/acl-deelio/LiuSZDCC22,DBLP:conf/naacl/RubinHB22,DBLP:journals/corr/abs-2307-07164}. 
+There are even a few works that explore the order of demonstrations \citep{DBLP:conf/acl/LuBM0S22,DBLP:conf/acl/0003WYK23}.
+However, due to the context length constraints of LLMs, these ICL-based methods can only accept a limited number of samples as demonstrations put into the context, even if more labeled samples are available, which severely hinders performance on downstream tasks. 
+Thus, what we need is \textbf{data scalability}, that is, the model can accept scalable labeled data to enhance model performance.
+Recently, a few works have explored exploiting beyond-context samples, similar to KNN-LM \citep{DBLP:conf/iclr/KhandelwalLJZL20}.
+Instead of putting all labeled samples into the context at once, they divide the inference process into two parts: sequentially obtaining the feature representation of each sample, and conducting prediction based on the relevance of the feature representation.
+Specifically, they compute nearest neighbors for the test sample based on the distance in the feature space and adjust prediction results accordingly. 
+For example, kNN-prompt \citep{DBLP:conf/emnlp/ShiMGZ22} performs the final prediction by interpolating the original predicted distribution with the distribution of nearby samples, while kNN-prompting \citep{DBLP:conf/iclr/Xu0MLS023} adopts voting by them directly. 
+However, they ignore feature refinement for specific tasks and instead directly use general features obtained from the LLM designed for language modeling, which we refer to as the issue of \textbf{feature adaptation}.
+Such non-adaptive feature usage can also severely impair the performance on downstream tasks.
+From \autoref{fig:intro}, we can see that under the framework of ICL, data scalability and feature adaptation are both essential to performance on downstream tasks. 
+
+\begin{figure}[t!]
+\centering
+ \includegraphics[width=0.4\textwidth]{Fig/intro-perf.pdf}
+\caption{The effect of data scalability and feature adaptation on ICL. For data scalability, the performance of vanilla ICL cannot be further improved when exceeding a certain amount of data, but kNN-prompting and FADS-ICL can.  For feature adaptation, FADS-ICL conducts feature refinement for specific tasks, so that it outperforms kNN-prompting using general features by large margins under all data settings. }
+\label{fig:intro}
+\end{figure}
+To this end, we proposed a feature-adaptive and data-scalable in-context learning framework (FADS-ICL), which can leverage task-adaptive features to promote inference on the downstream task, with the supervision of beyond-context samples. 
+Specifically, FADS-ICL first extracts the general features of each sample by feeding them in the form of vanilla ICL to an LLM in turn. 
+Then, these features and corresponding labels are used to supervise the training of a lightweight modulator for feature adaptation in the downstream task. 
+Finally, during inference, this modulator can refine the general features to the task-adaptive features for test samples and perform the final prediction based on them.
+Here, FADS-ICL solves the issue of data scalability by feeding them in the form of ICL to the LLM one by one to extract general features, which does not need to put all samples into context. 
+Besides, FADS-ICL also implements feature adaptation by further refining general features through a modulator for a specific downstream task. 
+To verify the effectiveness of FADS-ICL, we conduct evaluation experiments on 10 established datasets under varying amounts of labeled samples and LLM scales. 
+The main experimental results show that FADS-ICL consistently outperforms state-of-the-art methods by a large margin under all data settings (4$\sim$128 shots, refer to \autoref{fig:intro}) and all LLM scale settings (0.8B$\sim$70B).
+Specifically, under the fixed 1.5B LLM and 32 shots, FADS-ICL can achieve \textbf{+14.3} average accuracy from feature adaptation over vanilla ICL on 10 datasets, with \textbf{+6.2} average accuracy over the previous state-of-the-art method, kNN-prompting.
+When growing to 128 shots, the improvement over vanilla ICL further increases to \textbf{+17.8}, showing its data scalability.
+In short, feature adaptation can improve downstream performance with a fixed amount of available data, while data scalability comes into play as more data becomes available. 
+
+Further, we systematically analyze the impact of three key settings in FADS-ICL, including modulators, selection of general features, and the number of demonstrations, which provides in-depth insights and the corresponding recommended configurations in FADS-ICL.
+The analysis experiment on different modulators reveals the importance of a parametric modulator that can promote feature adaptation in FADS-ICL.
+Besides, the analysis experiment on the selection of general features shows the hidden states containing rich semantics are more suitable for FADS-ICL than probability distribution. 
+Further, our study on the role of demonstrations shows that demonstrations during feature extraction are vital to FADS-ICL while FADS-ICL is robust to the number of demonstrations. 
+
+Our contributions are summarized below:
+(1) We propose a feature-adaptive and data-scalable in-context learning framework, which can leverage task-adaptive features to promote inference on the downstream task, with the supervision of beyond-context samples. To our knowledge, this is the first time that feature adaptation has been considered in ICL. 
+(2) Extensive experiments are conducted on 10 datasets under varying settings and show that FADS-ICL consistently outperforms previous state-of-the-art methods by a significant margin in almost all settings.
+(3) Detailed analytical experiments on key settings provide in-depth insights and recommended configurations in FADS-ICL. 
+
+
+Preliminary
+
+\subsection{ICL}
+ICL is actually a data-enhanced inference framework, which prepends demonstrations to a test sample and conducts prediction conditioned on this prompt for better inference. 
+Specifically, assuming a train set $\{(x_i, y_i)\}$, it first needs to randomly sample several demonstrations $D=\{(x_i^D, y_i^D)\}$, of which the number $|D|$ is limited to the context length.
+
+\begin{equation*}
+\begin{split}
+\mathcal{P}=\mathcal{T}(x_1^D, &\mathcal{V}(y_1^D))\oplus\mathcal{T}(x_2^D, \mathcal{V}(y_2^D))\oplus\cdots\oplus \\
+&\mathcal{T}(x_{|D|}^D, \mathcal{V}(y_{|D|}^D))\oplus\mathcal{T}(x_{test},*), 
+\end{split}
+\label{prompt}
+\end{equation*}
+where $\mathcal{V}(\cdot)$ is a label verbalizer, mapping each label id to a token in the vocab, {\it e.g.} positive/negative or optimistic/pessimistic in sentiment classification. 
+Finally, it takes the prompt as the input of the LLM, and computes the probability distribution by:
+\begin{equation}
+p(y|x) \propto p_{\theta}(\mathcal{V}(y)|\mathcal{P}), 
+\label{ICL}
+\end{equation}
+with normalization, where $\theta$ denotes the parameters of the LLM. 
+Absolutely, ICL can only make use of several demonstrations in context, in spite of the residual in the trainset, namely data non-scalability. 
+
+\subsection{KNN-prompting}
+To implement data scalability, kNN-prompting tries to obtain probability distributions of residual samples in the same way and vote the test label by $k$ nearest neighbors based on distances between distributions, instead of obtaining the label directly from the distribution. 
+Specifically, it first collects probability distributions of residual samples in the trainset by \autoref{ICL}. Then it computes distances between the distribution of the test sample and those of labeled samples based on KL divergence. Finally, $k$ nearest neighbors based on distances are responsible for voting on the test label. 
+KNN-prompting implements data scalability by exploiting distributions of the residual in the trainset, but these distributions directly come from the freezing LLM designed for language modeling, that is, ignoring specific adaptation to downstream tasks. 
+
+\begin{figure}[t!]
+\centering
+ \includegraphics[width=0.45\textwidth]{Fig/FADS-ICL.pdf}
+\caption{The overall framework of FADS-ICL. }
+\label{fig:framework}
+\end{figure}
+
+
+
+FADS-ICL
+
+
+For the sake of achieving both feature adaptation and data scalability, we propose FADS-ICL. 
+In this section, we elaborate on the architecture of FADS-ICL, including a feature extractor and a lightweight task-specific modulator. 
+The overall framework is depicted in \autoref{fig:framework}. 
+Note that the train set in FADS-ICL is split to a small demonstration set $S=\{(x_i^s, y_i^s)\}$ and a residual set $R=\{(x_i^r, y_i^r)\}$, with $D=S \cup R$ for fair comparison to ICL. 
+\subsection{Feature Extractor}
+
+In FADS-ICL, the LLM is actually regarded as a feature extractor with the form of the vanilla ICL, which obtains general features for subsequent usage. 
+Specifically, as in ICL, we first randomly choose a few labeled samples as demonstrations\footnote{Note that FADS-ICL is not as sensitive to the number of demonstrations as ICL, of which one can refer to the \autoref{roleofdemons} for detailed analysis, and thus a few demonstrations are enough, {\it e.g.} one sample per class. } $S$, making up the prompt $\mathcal{P}^s$ via a task-specific template. 
+Then we feed each template-wrapped sample $x_i$ (labeled sample $x_i^r$ or test sample $x_{test}$) prepended with this identical prompt $\mathcal{P}^s$ into the LLM. 
+The general feature of each sample can be obtained by a simple forward pass:
+\begin{equation}
+h(x_i) = f_{\theta}(\mathcal{T}(x_i,*)|\mathcal{P}^s),
+\label{featureextract}
+\end{equation}
+where we choose the last hidden state from the last layer of the LLM as the common setting\footnote{More settings are discussed in \autoref{featureselection}.}.  
+The obtained feature here serves language modeling rather than a specific downstream task, so-called the general feature, so it needs to undergo feature refinement before downstream usage. 
+
+\subsection{Task-specific modulator} 
+A lightweight modulator is used to refine general features for feature adaptation on a specific downstream task and perform the final prediction. 
+As downstream tasks are not visible to the LLM, inevitably there is the problem of task maladaptiveness. 
+In other words, general features from the LLM are not well suited for direct downstream usage. 
+Except for the heavy fine-tuning on the LLM, an efficient alternative solution is to utilize an extra lightweight module to perform feature adaptation to downstream tasks while keeping the LLM's parameters and generality. 
+Specifically, We match the general features extracted from the residual samples in the training set with their corresponding labels, and they are taken as supervisory signals to train a lightweight modulator:
+\begin{equation}
+\phi=\arg\min_{\phi}\sum_{1\le i\le |R|}\mathcal{L}(g_{\phi}(h(x_i^r)),y_i^r), 
+\label{clftrain}
+\end{equation}
+where the modulator\footnote{Modulator selection is discussed in \autoref{modulatorselection}. } $g_{\phi}(\cdot)$ can be \emph{Logistic Regression}, \emph{Linear SVM}, \emph{MLP}, {\it etc}, and the specific optimization objective $\mathcal{L}$ and algorithm depend on the specific choice of the modulator and possibly the specific task. 
+After training, the modulator can be taken as a solver for the specific task.
+During inference, the modulator can refine general features for the specific task and map them to the label space without label verbalization in vanilla ICL:
+\begin{equation}
+p(y|x) = g_{\phi}(h(x)). 
+\label{clf}
+\end{equation}
+In short, FADS-ICL achieves data scalability by the split use of labeled data ({\it i.e.} using a fixed small part of the data as demonstrations and the residual scalable part for supervising the feature adaptation process) and multiple model calls.
+Furthermore, FADS-ICL achieves feature adaptation by refining general features into task-specific features via a well-trained task-specific modulator.
+\begin{table*}[!t]
+\centering
+\resizebox{2\columnwidth}{!}{
+\begin{tabular}{{ccccccccccc}}
+\toprule
+&\textbf{SST2}&\textbf{SUBJ}&\textbf{MPQA}&\textbf{AGNews}&\textbf{CB}&\textbf{CR}&\textbf{DBPedia}&\textbf{MR}&\textbf{RTE}&\textbf{TREC}\\
+\midrule
+\textbf{Avg. Len. of Samples}&53.5&129.1&18.6&239.1&288.2&96.3&281.5&115.6&343.2&50.8\\
+\textbf{Num of Classes}&2&2&2&4&3&2&14&2&2&6\\
+\textbf{Num. of Shots (TP)}&20 (2\%)&12 (1\%)&39 (0\%)&3 (0\%)&2 (0\%)&14 (4\%)&1 (77\%)&14 (4\%)&4 (0\%)&8 (1\%)\\
+\bottomrule
+\end{tabular}}
+\caption{Data statistics for all used datasets. Num. of Shots (TP) denotes the Maximum number of training shots (per class) allowed by GPT2-xl, {\it i.e.} 1024 tokens of context.  Inside the parentheses are Truncation Probability (TP).} 
+\label{table:datasets}
+\end{table*}
+\begin{table*}[t]
+\centering
+\small
+\resizebox{2\columnwidth}{!}{
+\begin{tabular}{{p{0.9cm}l|cccccccccc|c}}
+\toprule
+\multicolumn{2}{c|}{\textbf{Setting\&Methods}}&\textbf{SST2}&\textbf{SUBJ}&\textbf{MPQA}&\textbf{AGNews}&\textbf{CB}&\textbf{CR}&\textbf{DBPedia}&\textbf{MR}&\textbf{RTE}&\textbf{TREC}&\textbf{AVG}\\
+\midrule
+\multirow{5}*{$m=4$}&\small\textbf{ICL}&70.4$_{\pm\textrm{6.5}}$&57.3$_{\pm\textrm{10.5}}$&66.8$_{\pm\textrm{8.1}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&52.0$_{\pm\textrm{3.2}}$&82.0$_{\pm\textrm{2.1}}$&52.0$_{\pm\textrm{3.8}}$&53.0$_{\pm\textrm{1.7}}$&55.4$_{\pm\textrm{3.7}}$&62.5$_{\pm\textrm{5.6}}$\\
+&\small\textbf{kNN-prompt}&60.1$_{\pm\textrm9.7}$&76.4$_{\pm\textrm7.8}$&55.7$_{\pm\textrm8.7}$&84.0$_{\pm\textrm5.3}$&42.1$_{\pm\textrm1.0}$&83.3$_{\pm\textrm6.0}$&85.2$_{\pm\textrm2.8}$&78.2$_{\pm\textrm7.7}$&53.5$_{\pm\textrm2.6}$&54.7$_{\pm\textrm3.6}$&67.3$_{\pm\textrm5.5}$\\
+&\small\textbf{kNN-prompting}&73.2$_{\pm\textrm12.3}$&70.4$_{\pm\textrm11.0}$&60.9$_{\pm\textrm12.6}$&77.3$_{\pm\textrm10.8}$&55.7$_{\pm\textrm8.3}$&84.9$_{\pm\textrm4.0}$&79.1$_{\pm\textrm1.6}$&82.9$_{\pm\textrm4.5}$&52.3$_{\pm\textrm3.5}$&55.5$_{\pm\textrm10.7}$&69.2$_{\pm\textrm8.0}$\\
+&\small\textbf{FADS-ICL}&68.7$_{\pm\textrm6.6}$&83.3$_{\pm\textrm4.3}$&61.6$_{\pm\textrm8.3}$&78.0$_{\pm\textrm6.1}$&52.9$_{\pm\textrm16.7}$&83.2$_{\pm\textrm9.9}$&\underline{91.1$_{\pm\textrm2.8}$}&76.1$_{\pm\textrm10.3}$&53.4$_{\pm\textrm0.3}$&58.4$_{\pm\textrm11.9}$&\textbf{70.7$_{\pm\textrm7.7}$}\\
+\midrule
+\multirow{5}*{$m=8$}&\small\textbf{ICL}&73.3$_{\pm\textrm{11.6}}$&64.1$_{\pm\textrm{11.3}}$&72.7$_{\pm\textrm{9.0}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&66.2$_{\pm\textrm{16.7}}$&82.0$_{\pm\textrm{2.1}}$&72.2$_{\pm\textrm{13.9}}$&53.0$_{\pm\textrm{1.7}}$&54.8$_{\pm\textrm{4.2}}$&67.4$_{\pm\textrm{8.7}}$\\
+&\small\textbf{kNN-prompt}&68.2$_{\pm\textrm12.2}$&84.4$_{\pm\textrm7.0}$&64.2$_{\pm\textrm7.7}$&83.8$_{\pm\textrm5.1}$&41.1$_{\pm\textrm0.0}$&84.5$_{\pm\textrm9.0}$&84.9$_{\pm\textrm2.8}$&82.5$_{\pm\textrm5.9}$&52.5$_{\pm\textrm0.2}$&53.8$_{\pm\textrm3.9}$&70.0$_{\pm\textrm5.4}$\\
+&\small\textbf{kNN-prompting}&81.4$_{\pm\textrm10.8}$&76.0$_{\pm\textrm5.4}$&71.4$_{\pm\textrm7.9}$&84.3$_{\pm\textrm1.2}$&45.7$_{\pm\textrm7.7}$&83.5$_{\pm\textrm2.9}$&89.9$_{\pm\textrm1.4}$&84.5$_{\pm\textrm4.0}$&53.6$_{\pm\textrm6.1}$&63.7$_{\pm\textrm9.4}$&73.4$_{\pm\textrm5.7}$\\
+&\small\textbf{FADS-ICL}&82.2$_{\pm\textrm6.9}$&85.4$_{\pm\textrm4.7}$&74.0$_{\pm\textrm2.4}$&84.2$_{\pm\textrm2.6}$&57.1$_{\pm\textrm4.2}$&88.0$_{\pm\textrm4.7}$&\underline{95.3$_{\pm\textrm1.9}$}&81.3$_{\pm\textrm7.6}$&51.1$_{\pm\textrm2.7}$&\underline{72.2$_{\pm\textrm6.8}$}&\textbf{77.1$_{\pm\textrm4.4}$}\\
+\midrule
+\multirow{5}*{$m=16$}&\small\textbf{ICL}&81.3$_{\pm\textrm{5.4}}$&64.1$_{\pm\textrm{11.3}}$&83.9$_{\pm\textrm{1.4}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&66.2$_{\pm\textrm{16.7}}$&82.0$_{\pm\textrm{2.1}}$&72.2$_{\pm\textrm{13.9}}$&53.0$_{\pm\textrm{1.7}}$&54.8$_{\pm\textrm{4.2}}$&69.4$_{\pm\textrm{7.3}}$\\
+&\small\textbf{kNN-prompt}&79.2$_{\pm\textrm13.6}$&85.9$_{\pm\textrm5.0}$&75.2$_{\pm\textrm6.7}$&83.4$_{\pm\textrm6.3}$&42.1$_{\pm\textrm1.0}$&82.3$_{\pm\textrm7.3}$&85.8$_{\pm\textrm2.1}$&79.7$_{\pm\textrm7.6}$&52.4$_{\pm\textrm0.2}$&54.7$_{\pm\textrm4.1}$&72.1$_{\pm\textrm5.4}$\\
+&\small\textbf{kNN-prompting}&78.7$_{\pm\textrm15.8}$&80.0$_{\pm\textrm2.9}$&73.9$_{\pm\textrm7.5}$&85.4$_{\pm\textrm1.9}$&48.9$_{\pm\textrm5.7}$&82.7$_{\pm\textrm4.4}$&93.5$_{\pm\textrm0.4}$&83.6$_{\pm\textrm3.7}$&52.3$_{\pm\textrm3.2}$&67.7$_{\pm\textrm4.7}$&74.7$_{\pm\textrm5.0}$\\
+&\small\textbf{FADS-ICL}&86.6$_{\pm\textrm7.8}$&89.1$_{\pm\textrm2.3}$&79.2$_{\pm\textrm1.7}$&86.5$_{\pm\textrm2.1}$&63.9$_{\pm\textrm3.4}$&88.7$_{\pm\textrm3.4}$&\underline{97.2$_{\pm\textrm0.6}$}&82.5$_{\pm\textrm3.4}$&48.8$_{\pm\textrm3.3}$&\underline{75.7$_{\pm\textrm6.0}$}&\textbf{79.8$_{\pm\textrm3.4}$}\\
+\midrule
+\multirow{5}*{$m=32$}&\small\textbf{ICL}&81.3$_{\pm\textrm{5.4}}$&64.1$_{\pm\textrm{11.3}}$&75.2$_{\pm\textrm{8.8}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&66.2$_{\pm\textrm{16.7}}$&82.0$_{\pm\textrm{2.1}}$&72.2$_{\pm\textrm{13.9}}$&53.0$_{\pm\textrm{1.7}}$&54.8$_{\pm\textrm{4.2}}$&68.5$_{\pm\textrm{8.1}}$\\
+&\small\textbf{kNN-prompt}&80.9$_{\pm\textrm12.9}$&88.0$_{\pm\textrm3.4}$&72.2$_{\pm\textrm6.0}$&83.6$_{\pm\textrm5.0}$&41.8$_{\pm\textrm1.6}$&85.2$_{\pm\textrm4.0}$&85.7$_{\pm\textrm2.6}$&84.5$_{\pm\textrm5.2}$&52.4$_{\pm\textrm0.2}$&55.0$_{\pm\textrm3.9}$&72.9$_{\pm\textrm4.5}$\\
+&\small\textbf{kNN-prompting}&83.9$_{\pm\textrm7.6}$&83.0$_{\pm\textrm1.6}$&71.8$_{\pm\textrm7.9}$&85.3$_{\pm\textrm1.5}$&55.0$_{\pm\textrm6.4}$&86.4$_{\pm\textrm3.3}$&94.5$_{\pm\textrm0.5}$&84.5$_{\pm\textrm1.2}$&51.5$_{\pm\textrm5.8}$&70.6$_{\pm\textrm2.9}$&76.6$_{\pm\textrm3.9}$\\
+&\small\textbf{FADS-ICL}&88.0$_{\pm\textrm4.6}$&\underline{90.1$_{\pm\textrm2.2}$}&\underline{81.4$_{\pm\textrm3.0}$}&84.9$_{\pm\textrm1.4}$&\underline{72.1$_{\pm\textrm2.0}$}&\underline{92.3$_{\pm\textrm0.7}$}&\underline{97.9$_{\pm\textrm0.9}$}&85.9$_{\pm\textrm2.8}$&55.5$_{\pm\textrm2.9}$&\underline{79.9$_{\pm\textrm4.7}$}&\textbf{82.8$_{\pm\textrm2.5}$}\\
+\midrule
+\multirow{5}*{$m=64$}&\small\textbf{ICL}&81.3$_{\pm\textrm{5.4}}$&64.1$_{\pm\textrm{11.3}}$&75.2$_{\pm\textrm{8.8}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&66.2$_{\pm\textrm{16.7}}$&82.0$_{\pm\textrm{2.1}}$&72.2$_{\pm\textrm{13.9}}$&53.0$_{\pm\textrm{1.7}}$&54.8$_{\pm\textrm{4.2}}$&68.5$_{\pm\textrm{8.1}}$\\
+&\small\textbf{kNN-prompt}&83.0$_{\pm\textrm6.8}$&87.3$_{\pm\textrm4.8}$&73.4$_{\pm\textrm8.2}$&83.8$_{\pm\textrm5.7}$&41.4$_{\pm\textrm0.8}$&86.5$_{\pm\textrm3.0}$&86.4$_{\pm\textrm2.1}$&85.2$_{\pm\textrm4.0}$&52.3$_{\pm\textrm0.0}$&54.7$_{\pm\textrm4.4}$&73.4$_{\pm\textrm4.0}$\\
+&\small\textbf{kNN-prompting}&87.2$_{\pm\textrm2.8}$&82.5$_{\pm\textrm1.2}$&82.9$_{\pm\textrm4.1}$&86.6$_{\pm\textrm2.1}$&61.4$_{\pm\textrm4.8}$&89.1$_{\pm\textrm1.7}$&95.2$_{\pm\textrm1.2}$&84.3$_{\pm\textrm1.9}$&49.1$_{\pm\textrm3.3}$&67.9$_{\pm\textrm5.5}$&78.6$_{\pm\textrm2.9}$\\
+&\small\textbf{FADS-ICL}&88.2$_{\pm\textrm1.8}$&90.5$_{\pm\textrm1.7}$&83.6$_{\pm\textrm1.5}$&87.8$_{\pm\textrm1.0}$&\underline{78.6$_{\pm\textrm3.6}$}&\underline{91.2$_{\pm\textrm0.8}$}&\underline{98.1$_{\pm\textrm0.7}$}&87.0$_{\pm\textrm1.3}$&\underline{58.7$_{\pm\textrm3.7}$}&\underline{84.4$_{\pm\textrm4.0}$}&\textbf{84.8$_{\pm\textrm2.0}$}\\
+\midrule
+\multirow{5}*{$m=128$}&\small\textbf{ICL}&81.3$_{\pm\textrm{5.4}}$&64.1$_{\pm\textrm{11.3}}$&75.2$_{\pm\textrm{8.8}}$&78.2$_{\pm\textrm{6.7}}$&57.9$_{\pm\textrm{9.7}}$&66.2$_{\pm\textrm{16.7}}$&82.0$_{\pm\textrm{2.1}}$&72.2$_{\pm\textrm{13.9}}$&53.0$_{\pm\textrm{1.7}}$&54.8$_{\pm\textrm{4.2}}$&68.5$_{\pm\textrm{8.1}}$\\
+&\small\textbf{kNN-prompt}&86.1$_{\pm\textrm3.9}$&87.5$_{\pm\textrm3.3}$&74.2$_{\pm\textrm4.0}$&84.0$_{\pm\textrm5.3}$&42.5$_{\pm\textrm1.5}$&87.0$_{\pm\textrm3.5}$&86.4$_{\pm\textrm2.2}$&87.3$_{\pm\textrm2.1}$&52.3$_{\pm\textrm0.0}$&55.3$_{\pm\textrm4.1}$&74.3$_{\pm\textrm3.0}$\\
+&\small\textbf{kNN-prompting}&86.0$_{\pm\textrm2.8}$&83.9$_{\pm\textrm2.2}$&82.1$_{\pm\textrm1.6}$&87.8$_{\pm\textrm1.5}$&65.0$_{\pm\textrm3.0}$&88.8$_{\pm\textrm2.2}$&96.8$_{\pm\textrm1.0}$&86.2$_{\pm\textrm0.8}$&51.4$_{\pm\textrm1.8}$&74.0$_{\pm\textrm3.2}$&80.2$_{\pm\textrm2.0}$\\
+&\small\textbf{FADS-ICL}&88.9$_{\pm\textrm0.8}$&\underline{92.1$_{\pm\textrm0.9}$}&\underline{84.8$_{\pm\textrm1.2}$}&88.4$_{\pm\textrm1.1}$&\underline{83.2$_{\pm\textrm4.5}$}&90.5$_{\pm\textrm1.9}$&\underline{98.6$_{\pm\textrm0.7}$}&86.1$_{\pm\textrm1.0}$&57.8$_{\pm\textrm4.1}$&\underline{90.5$_{\pm\textrm1.6}$}&\textbf{86.1$_{\pm\textrm1.8}$}\\
+\bottomrule
+\end{tabular}}
+\caption{Results under varying data settings. We re-implement kNN-prompt, while kNN-prompting is reproduced using the released code\footnotemark. Here, the LLM scale is 1.5B. \underline{Underline} indicates leading all baselines with $p<0.05$. }
+\label{table:mainresultsacrossshot}
+\end{table*}
+
+
+Experiments
+
+\subsection{Experimental Settings}
+
+\paragraph{Datasets} Following kNN-prompting \citep{DBLP:conf/iclr/KhandelwalLJZL20}, we established our experiments on 10 publicly available datasets, respectively four sentiment classification datasets: SST2 \citep{DBLP:conf/emnlp/SocherPWCMNP13}, MPQA \citep{DBLP:journals/lre/WiebeWC05}, CR \citep{DBLP:conf/kdd/HuL04}, and MR \citep{DBLP:conf/acl/PangL05}, two natural language inference datasets: CB \citep{de2019commitmentbank} and RTE \citep{DBLP:conf/mlcw/DaganGM05}, three topic classification datasets: AGNews \citep{DBLP:conf/nips/ZhangZL15}, DBPedia \citep{DBLP:conf/nips/ZhangZL15}, and TREC \citep{DBLP:conf/sigir/VoorheesT00}, one subjectivity judgment dataset: SUBJ \citep{DBLP:conf/acl/PangL04}. 
+The data statistics for all datasets are shown in \autoref{table:datasets}. 
+\paragraph{LLMs} 
+To verify the effectiveness of FADS-ICL on different LLM scales, we consider a wide range of LLM scales, including GPT2 series (0.8B and 1.5B), Llama-1 series (7B, 13B, and 30B), and Llama-2 series (7B, 13B and 70B)\footnote{Bitsandbytes for 8-bit quantification of Llama-2 (70B). }. 
+GPT2-xl (1.5B) is used for most subsequent experiments unless explicitly stated. 
+
+\paragraph{Other Settings or Details} For data setting, we consider varying training shots $m=\{4, 8, 16, 32, 64, 128\}$, which means the number of samples per class. 
+We implement all modulators by scikit-learn \citep{sklearn_api}, and conduct both the training and inference processes of modulators on the CPU. Note that even so, the total running time of the modulator is within a second \footnote{Refer to \autoref{subsec:mainresult} for detailed overhead comparison. } and it is negligible compared to the forward pass of the LLM.  
+Besides, without special instructions, the lightweight modulator we choose is \emph{Logistic Regression} with the last hidden states as general features, and the number of 
+ demonstrations used in FADS-ICL is one sample per class. 
+\paragraph{Evaluation} Accuracy is the direct metric for all datasets. We run each experiment with five different seeds, and average accuracy and standard deviation are reported. 
+
+\paragraph{Baselines} 
+In addition to vanilla ICL, we also consider stronger baselines for fair comparison. 
+kNN-prompt and kNN-prompting can both exploit beyond-context samples and improve the inference performance by interpolation or voting by k nearest neighbors. 
+Besides, since sometimes ICL can not put all labeled samples as demonstrations into context, some methods have emerged to improve ICL by selecting the most appropriate demonstrations for each test sample during inference.
+We put the detailed comparison with demonstration selection methods in \autoref{APP:comparisontoselection}.
+
+
+\begin{figure*}[t!]
+\centering
+\includegraphics[width=\textwidth]{Fig/LLM_scale.pdf}
+\caption{Results across LLM scales with 128-shots. }
+\label{fig:LLMscale}
+\end{figure*}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.4\textwidth]{Fig/overhead.pdf}
+\caption{The comparison for computational and memory overhead on the MPQA dataset (256 test samples).}
+\label{fig:overhead}
+\end{figure}
+
+\subsection{Main Results}
+\label{subsec:mainresult}
+\autoref{table:mainresultsacrossshot} and \autoref{fig:LLMscale} show the results across varying data settings and LLM scale settings\footnote{Full results are listed in \autoref{APP:Performance Across LLM Scales}.} respectively. Experimental results show that FADS-ICL consistently outperforms all baselines under all settings by a significant margin, verifying its effectiveness and superiority on downstream tasks.
+
+\paragraph{For Varying Data Settings} From \autoref{table:mainresultsacrossshot}, the performance of all methods improves significantly as available samples grow. 
+However, due to data non-scalability vanilla ICL stops improving and keeps 68.5 average accuracy on 10 datasets after training shots reach 32. 
+FADS-ICL can achieve \textbf{+14.3} improvement over ICL with 32 shots by feature adaptation, and can further achieve \textbf{+17.6} improvement with 128 shots, showing data scalability. 
+Besides, compared to the previous state-of-the-art method, kNN-prompting, FADS-ICL can achieve the improvement of \textbf{+6.2} average accuracy with 32 shots, and this large margin roughly keeps as available data scales up.
+From the perspective of stability,  KNN-based methods and FADS-ICL can both gradually lower the standard deviation of performance along with increasing data, while FADS-ICL can consistently obtain better stability than others under fixed data settings. 
+
+\paragraph{For Varying LLM Scale Settings} From \autoref{fig:LLMscale}, we can see the performance of all methods achieve consistent improvement roughly as the LLM scale increases along with the capability of the LLM itself, and FADS-ICL still consistently performs much better than all other baselines. 
+Besides, with the increasing context length (the context length of GPT-2, Llama-1, and Llama-2 series is respectively 1k, 2k, and 4k.), the number of demonstrations used in ICL will increase
+proportionally. Thus, the performance of ICL has been significantly improved and is even comparable to kNN-prompting on the Llama-2 series, which does not benefit from increasing context length, but there is still a considerable gap from FADS-ICL which can refine general features into task-specific features.
+Surprisingly, under the 0.8B setting, FADS-ICL obtains the best 84.9 average accuracy, even exceeding 81.9 for the entire LLM fine-tuning, which requires fitting the parameters that are 5 orders of magnitude larger than FADS-ICL. 
+It reveals that although fine-tuning is always the best way to adapt to downstream tasks, FADS-ICL effectively fitting extremely few designed parameters, can achieve the best performance at minimal cost in few-shot scenarios. 
+
+\paragraph{Overhead Comparison} \autoref{fig:overhead} shows the comparison for computational and memory overhead of FADS-ICL and baselines. We can see that FADS-ICL is significantly lower than ICL in both running time and GPU memory, especially with more available samples. This is because ICL puts as many demonstrations into context as possible and thus the computational and memory overhead will increase nearly quadratically to compute cross-attention within the LLM as available samples increase, and correspondingly, the input length increases. In comparison, FADS-ICL takes one sample per class as a demonstration all the time while it needs several forward passes of the LLM equal to the number of available samples, which causes the computational overhead to increase linearly and the memory overhead unchanged. Considering both points, the overall computational and memory overhead of FADS-ICL are even smaller than those of vanilla ICL. Note again that the overall overhead (including fitting and inference) of the newly introduced modulator in FADS-ICL is about 0.2s on the CPU, which is negligible compared to the LLM overhead. Besides, kNN-prompting takes similar overheads to FADS-ICL due to the same input form, while it takes a little more running time to compute distances between labeled examples and each test sample rather than directly perform prediction based on task-specific features in FADS-ICL. 
+\begin{figure*}[t!]
+\centering
+\includegraphics[width=\textwidth]{Fig/Ablation.pdf}
+\caption{\textbf{Left (a):} The effect of different modulators in FADS-ICL. \textbf{Middle (b):} The effect of different features as the general features in FADS-ICL. \textbf{Right (c):} The role of demonstrations in FADS-ICL.  }
+\label{fig:Ablation}
+\end{figure*}
+
+
+
+Analysis
+
+In this section, we first systematically analyze the impacts of three key settings in FADS-ICL including modulators, selection of general features, and the number of demonstrations, which provides in-depth insights and the corresponding recommended configurations in FADS-ICL.
+Visualization for feature adaptation is presented at last. 
+
+\subsection{Effect of Modulators}
+\label{modulatorselection}
+
+The modulator contributes to refining features for downstream tasks and performing the final prediction, of which the choice is quite important to FADS-ICL. In this section, we condu
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

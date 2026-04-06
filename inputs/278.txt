@@ -1,0 +1,235 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+\begin{figure}[t]
+    \centering
+    \small
+    \resizebox{0.93\linewidth}{!}{
+    \includegraphics{Figs/Fig_differ.pdf}}
+    \caption{The relationship between importance and sparsity score distributions in different search paradigms. (a) Importance scores are fixed during sparsity search, and sparsity scores are related to importance scores. (b) Importance scores of one submodule are also related to the sparsity of other to-prune submodules. (c) Importance and sparsity scores are entangled and simultaneously optimized, thus correlated at forward and backward phases of searching.}
+    \label{fig:correlation}
+\end{figure}
+
+Vision Transformers (ViTs) are developing rapidly in many practical tasks, but they suffer from substantial computational costs and storage overhead, preventing their deployments for resource-constrained scenarios. Vision Transformer Compression (VTC), as an effective technique to relieve such problems, has advanced a lot and can be divided into several types including Transformer Architecture Search (TAS) \cite{autoformer, sss, vitas, uninet, nasvit, tu2023efficient, tftas} and Transformer Pruning (TP)~\cite{spvit, iared, vit_slim, s2vit, s2vite, cpvit, vtclfc, wdpruning} paradigms. Although both TAS and TP can produce compact ViTs, their search process for the target sparsity often relies on a two-stage scheme, \ie, \textit{importance-then-sparsity evaluation}\footnote{The importance evaluation aims at learning each unit's contribution to the prediction performance, while the sparsity evaluation aims at learning each unit's pruning choice. In general, the importance and sparsity score distributions are correlated in the search process, as shown in Fig. \ref{fig:correlation}.} for units (\eg, filters) in each dimension / submodule, which potentially hinders search performance and efficiency of both paradigms.
+
+\begin{figure}[t]
+    \centering
+    \small
+    \resizebox{0.88\linewidth}{!}{
+    \includegraphics{Figs/Fig1.pdf}}
+    \caption{Different paradigms for VTC. (a): SPOS-based TAS implicitly encodes the piecewise-decreasing importance scores for units due to the uniform sampling in pre-training; (b): The threshold-based TP explicitly evaluates the importance scores for units and sets a global threshold to perform pruning; (c): DARTS learns the importance distribution in a differentiable manner and selects the subnet of the highest architecture score; (d): OFB proposes the bi-mask score that entangles importance and sparsity scores together, to perform the search process in a \textbf{single} stage.}
+    \label{fig:difference}
+\end{figure}
+
+As for TAS that mainly follows the Single-Path-One-Shot (SPOS) search paradigm \cite{spos}, the importance scores of units in each submodule are implicitly encoded into the supernet \cite{vitas}, as shown in Fig. \ref{fig:difference}\textcolor{red}{a}. This is mainly due to the ordinal weight-sharing mechanism during the pre-training of the pre-designed supernet \cite{vitas}.
+In other words, the submodules with small indexes are implicitly assigned higher importance scores by uniform sampling during the supernet pre-training. Afterwards, evolutionary algorithms are employed to search for the optimal subnet given the implicitly-encoded importance score distribution and target sparsity constraint \cite{autoformer, nat, bossnas, vitas, tftas}. Such an implicit encoding process causes TAS limited to compressing a supernet from scratch, thus leading to a high search cost.
+
+On the other hand, for TP that adopts the threshold-based pruning paradigm, the importance scores are pre-evaluated by a designed criterion, followed by the sparsity search using a designed strategy based on the importance distribution. However, searching for the fine-grained discrete sparsity from the evaluated importance distribution of each dimension is intractable and identified as an NP-hard problem \cite{rbp}. As visualized in Fig. \ref{fig:difference}\textcolor{red}{b}, the importance score distribution of one dimension is usually continuous, with most points distributed around the mean value. Considering that the importance distribution varies in different dimensions and may be influenced by the pruning choice of other dimensions \cite{vitas, pagcp}, the traditional threshold-based methods can hardly search for the optimal compact models in a global manner. From the above analysis, \textit{the high compression costs can be largely attributed to the separate score evaluation, and the gap between importance and sparsity score distributions}.
+
+To tackle the above issues induced by the two-stage VTC scheme, we propose to conduct the ViTs search in a one-stage manner, where the importance and sparsity scores are learned simultaneously and entangled, to learn a discrete sparsity distribution from the entangled distribution adaptively. To achieve this, inspired by the differentiable search strategy in DARTS \cite{darts, pdarts, ye2022beta}, we relax the sparsity score to a differentiable variable, and formulate a bi-mask score that entangles the importance and sparsity scores of each unit, to jointly assess the unit's prunability. Secondly, to optimize the bi-mask score, we introduce an adaptive one-hot loss function to adaptively convert the continuous bi-mask score into a binary one, \ie, the unit's pruning choice, as shown in Fig. \ref{fig:difference}\textcolor{red}{d}. Finally, during the search, we further develop a Progressive Masked Image Modeling (PMIM) technique, to regularize the dimension-reduced feature space with negligible additional costs. Our main contributions are:
+
+\begin{itemize}
+    \item To our best knowledge, our method is the first to explore the entanglement of importance and sparsity distributions in VTC, which relieves the bottleneck of searching the discrete sparsity distribution from the continuous importance distribution, highlighting the search efficacy and effectiveness of various ViTs compression.
+    \item We develop a novel one-stage search paradigm containing a bi-mask weight-sharing scheme and an adaptive one-hot loss function, to simultaneously learn the importance and sparsity scores and determine the units' prunability. Moreover, a PMIM regularization strategy is specially designed during searching, which gradually intensifies the regularization for representation learning as the feature dimension continues to be reduced.
+    \item Extensive experiments are conducted on ImageNet for various ViTs. Results show that OFB outperforms existing TAS and TP methods with higher sparsity and accuracy, and significantly improves search efficiency, \eg, costing one GPU search day to compress DeiT-S on ImageNet.
+\end{itemize}
+
+
+
+Related Works
+\label{sec:related_work}
+
+\paragraph{Transformer Architecture Search.}
+Recently, with various Vision Transformers spawning \cite{vit, swin, deit, twins}, several works have explored searching for the optimal Transformer-based architecture. Existing Transformer Architecture Search (TAS) works \cite{autoformer, vitas, tftas} mainly follow the SPOS NAS \cite{spos} scheme, which first trains the supernet from scratch by iteratively training the sampled subnets, then searches for the target optimal subnet, followed by retraining the searched model. These methods focus on either designing the search space or the training strategy for the randomly initialized supernet, yet the supernet training is still time-consuming due to the numerous randomly initialized parameters to be fully trained. To address this, TF-TAS \cite{tftas} provides a DSS indicator to evaluate the subnet performance without training all supernet parameters. Compared with prior methods, our work highlights the one-stage search for compact architectures in off-the-shelf pre-trained ViTs, thus saving high costs for supernet training and an extra sparsity search.
+
+\paragraph{Vision Transformer Pruning.}
+Unlike the pruning for Convolutional Neural Networks (CNNs) \cite{wen2016learning, tang2024enhanced}, the pruning for ViTs contains more prunable components, \eg, Patch Embedding, Patch Token, Multi-Head Self-Attention (MHSA), and MLPs, \etc. S$^2$VITE \cite{s2vite} presents a pruning-and-growing strategy with 50\% ratio to find the sparsity in several dimensions. WDpruning \cite{wdpruning} performs TP via binary masks and injected classifiers, meanwhile designing a learnable pruning threshold based on the parameter constraint. ViT-Slim \cite{vit_slim} employs soft masks with $\ell_1$ penalty by a manually-set global budget threshold for TP. UVC \cite{uvc} jointly combines different techniques to unify VTC. Compared with previous methods, our method features the entanglement of importance and sparsity distributions to jointly determine the prunability of each unit, and the adaptive conversion from the continuous score distribution into a discrete one, thus being able to better balance the sparsity constraint and model performance.
+
+\paragraph{Masked Image Modeling.}
+Masked Image Modeling (MIM) \cite{mae, simmim} is a self-supervised learning strategy for augmenting pre-training models, aiming to reconstruct the masked patches in the input image. Several works have explored the representation learning ability of MIM in the pre-training models for downstream tasks\cite{mimdet, mim_distill, m2ae, alpha_darts}, by predicting the patch- or feature-level labels. Differently, our work targets at the compression of pre-trained ViTs, and focuses on utilizing the representation learning ability of MIM to progressively improve the dimension-reduced feature space.
+
+
+The Proposed Approach
+\label{sec:approach}
+We first revisit the two-stage search paradigm and identify its problem, then propose a one-stage counterpart containing a bi-mask weight-sharing scheme with an improved optimization objective, to learn importance and sparsity scores simultaneously. Finally, PMIM is designed to boost the dimension-reduced features and enhance search performance.
+
+\begin{figure*}[t]
+    \centering
+    \small
+    \resizebox{0.86\linewidth}{!}{
+    \includegraphics{Figs/Fig3_2.pdf}}
+    \caption{The overview of OFB search framework, including the design of search space, search scheme, and regularization scheme. (a) For the search space, we consider four types of submodules. (b) For the search scheme, we simultaneously learn the importance score $\mathcal{S}$ and the sparsity score $\mathcal{V}$ based on the bi-mask weight-sharing strategy, under the guidance of an adaptive one-hot loss. (c) The PMIM technique is developed to augment the pruned feature space, which introduces a progressive masking strategy to MIM for better regularization.}
+    \label{fig:overview}
+\end{figure*}
+
+\subsection{Problem Formulation}
+\label{sec:pre}
+
+Prior VTC works mainly focus on searching for an optimal sub-network given a supernet and the resource constraint. Let $\mathcal{N}(\mathcal{A}, W)$ denote the supernet, where $\mathcal{A}$ and $W$ refer to the architecture search space and weights of the supernet, respectively. The search for the optimal architecture can be generally formulated as a two-stage problem in Eq. (\ref{nas_obj}).
+\begin{equation}\label{nas_obj}
+\footnotesize
+\begin{aligned}
+    &\text{{\bf Stage 1. }} \mathcal{S}_\mathcal{A} = \boldsymbol{f}(W; \mathcal{A}); \\ 
+    &\text{{\bf Stage 2. }} \mathop{\min}\limits_{\alpha \in \mathcal{A}, W} \mathcal{L}_{val}(\alpha, W; \mathcal{S}_\mathcal{A}),\,\, \text{s.t.}\,\, g(\alpha) \leq \tau,
+\end{aligned}
+\end{equation}
+where $\boldsymbol{f}$ denotes the criterion to evaluate (\eg, TP) or preset (\eg, TAS) the importance score of each unit $\mathcal{S}_{\mathcal{A}}$ based on the search space, and $\mathcal{L}_{val}$ denotes the loss on the validation dataset. The $g$ and $\tau$ represent the computation cost and the corresponding constraint, respectively. In the first stage, the importance distribution is globally learned from the weights of the supernet (\eg, TP) or naturally encoded in the training mode of the supernet (\eg, TAS). Based on the (piecewise) continuous importance distribution, the architecture parameter $\alpha$ is optimized to satisfy the sparsity constraint via the global threshold or evolutionary algorithms in the second stage, which can be viewed as a discretization process. Since the importance distribution is fixed during the search, the gap between the importance distribution and the searched discrete sparsity distribution (pruned or not pruned) may cause the sub-optimal search result. In other words, the pre-assessed importance score may change with the discretization of other units, and cannot fully represent the actual importance distribution in the searched model. Therefore, a better indicator to assess the unit's prunability could be an adaptively discretized score, that bridges the gap between the importance and sparsity distributions. 
+
+Inspired by DARTS \cite{darts}, which designs a differentiable scheme to relax the pruning choice of each subspace to a $\mathrm{softmax}$-activated probability over all subspaces in one dimension, we further develop a bi-mask scheme to learn the prunability of units in the pre-trained ViTs. In this scheme, the importance and sparsity scores are learned simultaneously in a differentiable manner to jointly determine the unit's prunability. In other words, the search objective is formulated into a one-stage problem, as shown in Eq. (\ref{our_objective}).
+\begin{equation}\label{our_objective}
+\footnotesize
+    \mathop{\min}\limits_{\mathcal{S}, \mathcal{V}, W}\mathcal{L}_{train}(\mathcal{S}, \mathcal{V}, W), \,\, \text{s.t.}\,\, g(\mathcal{V}) \leq \tau,
+\end{equation}
+where importance scores $\mathcal{S}$, sparsity scores $\mathcal{V}$, and supernet weights $W$ are continually optimized to find the optimal subnet. Consequently, the model is evaluated and searched in a single stage, which is different from the prior works separately evaluating and searching subnets. The optimization of Eq. (\ref{our_objective}) comprises a bi-mask weight-sharing strategy to assign units with prunability scores, and an adaptive one-hot loss to achieve the target sparsity (See Sec. \ref{sec:bi-mask} and \ref{sec:one-hot}).
+
+\begin{table}[t]
+    \centering
+    \resizebox{\linewidth}{!}{
+    \begin{tabular}{lccccc}
+        \toprule
+         Model & Q-K-V ratio & MLP ratio & Head number & P. E. ratio \\ \hline
+         DeiTs \cite{deit} & (1/4, 1, 1/8) & (1/4, 1, 1/8) & (1, num\_heads, 2) & (1/2, 1, 1/32)\\
+         Swin-Ti \cite{swin} & (1/4, 1, 1/8) & (1/4, 1, 1/8) & (1, num\_heads, 2) & (1/2, 1, 1/32)\\
+         \bottomrule
+    \end{tabular}}
+    \caption{Search spaces of DeiTs \cite{deit} and Swin-Ti \cite{swin}. Tuples in parentheses denote the lowest value, the highest value, and step size. \textbf{Note}: the step size of P. E. is smaller for its more significant impact on multiple layers (See Fig. \ref{fig:overview}) and compression performance.}
+\end{table}
+
+\paragraph{Search Space.} We first follow the TAS paradigm to construct a discrete search space for all units in each prunable submodule, including Q-K-V ratio, MLP ratio, Head number, and Patch Embedding (P. E.), as described in Table \ref{tab:search_space}. Then, the search space is relaxed in a differentiable manner.
+
+\subsection{Bi-mask Weight-sharing Strategy}
+\label{sec:bi-mask}
+In order to assess the prunability of each unit, we introduce a bi-mask weight-sharing strategy in the search process. Each prunability score is represented by the value of the designed bi-mask $m_{ij}$ that considers both the importance score and the sparsity score, which can be illustrated as follows:
+\begin{equation}
+\footnotesize
+\label{prunability_score}
+    m_{ij}\left( t \right) =\lambda \left( t \right) \mathcal{S} _{ij} +\left[ 1-\lambda \left( t \right) \right] \mathcal{V} _{ij}\left( \alpha \right), 
+\end{equation}
+where the subscript index $ij$ denotes the $j$-th unit in the $i$-th prunable submodule. $\lambda(t)$ denotes the time-varying weight coefficient of the importance score. Specifically, $\lambda$ linearly changes from one to zero until the model finishes searching. The motivation behind this is two-fold. From the lens of score optimization, \ie, the backward process, the sparsity score of each unit is related to its importance rank among all units in the same submodule. Therefore, before transmitting a large gradient to the sparsity score, more attention should be paid to learning a reliable importance score. Since the model weights $W$ are well trained in the supernet, the importance score could be learned appropriately in several epochs, thus providing a relatively accurate importance rank for the assignment of the sparsity score to each unit. After obtaining a relatively accurate importance score, optimization should be focused more on the sparsity score to make the pruning decision. From the lens of the discretization process, \ie, the forward process, the search target is to learn a discrete score for each unit; thus, the searched score should approach an approximately binary (0/1) distribution, which is exactly the desired distribution of the sparsity score $\mathcal{V}$. Therefore, the learning focus of the prunablility score should be gradually transferred from importance to sparsity during searching.
+
+As for the importance score $\mathcal{S}$, inspired by ViT-Slim \cite{vit_slim}, we introduce a soft mask that is randomly initialized and learnable in each unit, to indicate its contribution to supernet performance. The importance score is normalized to vary between $(0, 1)$ via $\mathrm{sigmoid}$. As for the sparsity score $\mathcal{V}$, we leverage the architecture parameter $\alpha$ to generate the sparsity score of each unit. Given $\alpha$, $\mathcal{V}$ is computed via $\mathrm{softmax}$ to indicate the preserving potential, as formulated in Eq. (\ref{sparsity_score}):
+\begin{equation}
+\footnotesize
+    \mathcal{V} _{ij}(\alpha )=\frac{\sum\nolimits_{k=\lfloor j/\varDelta _i \rfloor}^{\|\alpha_i\|_0}{\exp \left( \alpha _{ik} \right)}}{\sum\nolimits_{k=0}^{\left\| \alpha _{i,:} \right\| \!\:\!_0}{\exp \left( \alpha _{ik} \right)}}=\sum\nolimits_{k=\lfloor j/\varDelta _i \rfloor}^{\|\alpha_i\|_0}{p_{ik}},
+    \label{sparsity_score}
+\end{equation}
+where $\alpha_i$ is the architecture parameter vector of the $i$-th submodule to parameterize the sub-space into a continuous space. $p_{ik}$ and $\varDelta _i$ represent the step-wise normalized architecture score and the step size in the search space of the $i$-th submodule, respectively, where $p_{ik}=\mathrm{softmax}_k \left( \alpha _{ik} \right)$. Note that the weights in all sub-spaces of the submodule are shared as DARTS \cite{darts} does; therefore, the sparsity score of each unit is the sum of those shared architecture scores, making the sparsity distribution piecewise continuous. Unlike previous differentiable search methods uniformly initializing $\alpha$ for the randomly initialized supernet, our method randomly initializes $\alpha$ to reduce the inductive bias.
+
+As for the weight-sharing strategy in differentiable search, considering the units with higher importance scores are more likely to be preserved, sparsity scores of more important units should be correspondingly higher than those less important (a high sparsity score means high preserving potential). Thus, at forward steps, the units in each submodule are reorganized \wrt their importance score rank and assigned sparsity scores in a descending order, as shown in Fig. \ref{fig:difference}\textcolor{red}{d}.
+
+\subsection{Adaptive One-hot Loss}
+\label{sec:one-hot}
+Given bi-masks as introduced above, which soft mask units to indicate the prunability during searching, the optimization target of these masks is another important issue. In Sec \ref{sec:one-hot}, we present an adaptive one-hot loss to solve this problem.
+
+Considering $m$ is derived from $\mathcal{S}$ and $\mathcal{V}$, the optimization could be decomposed into two parts. As for the importance score, the aim of $\mathcal{S}$ is to learn an importance rank according to the unit's impact on model performance under the sparsity constraint. Thus, we follow ViT-Slim \cite{vit_slim} to regularize $\mathcal{S}$ with $\ell_1$ norm to drive unimportant units towards low-ranking and zero-score distribution, \ie, $\mathcal{L}_\mathcal{S}=\|\mathcal{S}\| \!\!\:_1$.
+
+As for the sparsity score, the aim of $\mathcal{V}$ is to learn a binary distribution as the unit pruning choice. In other words, the target label of each $p_i$ is ideally designed as a progressively shrunk one-hot vector, with no prior information about the one-hot index, thus being difficult to impose a definite target to $\mathcal{V}$ and $\alpha$. To address this, we propose to regularize the sparsity score by introducing an alternative constraint that aligns the entropy and variance of $p_i$ with one-hot vectors. The motivation stems from the invariance of the two properties in one-hot vectors, regardless of the one-hot index. Especially, the entropy of any one-hot vector always equals zero, while the variance solely depends on the dimension number. The regularization \wrt $p$ is formulated as follows:
+\begin{equation}
+\footnotesize
+\label{regularization}
+\begin{aligned}
+R\left( p \right) &=\sum_{i=1}^M{\left[ \mathcal{H} \left( p _i \right) +\varPsi \left( p _i \right) \right]} \\ &=\sum_{i=1}^M{\left[ -p_{i}^{T}\log \left( p_i \right) +\tan \left( \frac{\pi}{2}-\pi \omega _i \right) \right]},
+\end{aligned}
+\end{equation}
+where $M$ denotes the number of searchable submodules in {\small $\mathcal{N}(\mathcal{A}, W)$, $\omega _i=\sigma _{i}/\sigma _{i}^{t}$}
+with $\sigma _{i}$, $\sigma _{i}^{t}$, and $\omega_i$ meaning the measured, target and normalized variances of $p_i$, respectively, where {\small $\sigma _{i}^{t}=\left( \left\| \alpha _i \right\| _{\!\:\!0}-1 \right) /\left\| \alpha _i \right\| _{\!\:\!0}^{2}$}.
+ In addition to Eq. (\ref{regularization}), $\mathcal{V}$ is also constrained by the sparsity constraint, $\tau$. Therefore, the total regularization objective of $\mathcal{V}$ is formulated as follows:
+\begin{equation}
+\footnotesize
+    \label{sparsity_loss}
+    \mathcal{L} _{\mathcal{V}}=\mu_1 R\left( p \right) +\mu_2 \left\| g\left( \mathcal{V} \right) -\tau \right\| \!\!\:_2,
+\end{equation}
+where $\mu_1$ and $\mu_2$ are the weight coefficients to balance two items. Note that during search, the ground-truth value $\sigma^t$ would change with the decrease of $\|\alpha\|\!\!\:_0$ when the pruning happens in $\alpha$. Thus, $\mathcal{L} _{\mathcal{V}}$ is adaptive to the pruning process in the search stage. The pruning process in one dimension (\eg, the $i$-th submodule) is triggered by the condition that {\small $\left( p_i \right) _{\min}\leqslant \eta \cdot \bar{p}_i$}, where $\eta$ is the scaling factor and $\bar{p}_i$ is the mean of $p_i$, \ie, {\small $\bar{p}_i=1/\left\| \alpha _i \right\| \!\!\:_0$}.
+By Eq. (\ref{sparsity_loss}) and the proposed pruning strategy, the units with the lowest mask values can be progressively removed, thus accelerating search process.
+
+Based on the above analysis, the regularization items for the bi-mask can be summarized as, {\small $\mathcal{L} _m(\mathcal{V} ,\mathcal{S} )=\mathcal{L} _{\mathcal{V}}+\mu _3\mathcal{L} _{\mathcal{S}}=\mu _1R\left( p \right) +\mu _2\left\| g\left( \mathcal{V} \right) -\tau \right\| \!\!\:_2+\mu _3\| \mathcal{S} \| \!\!\:_1$},
+where $\mu_3$ denotes the weight coefficient of $\mathcal{L}_\mathcal{S}$. Consequently, the objective in Eq. (\ref{our_objective}) is transformed into the following equation:
+\begin{minipage}{\linewidth}
+\begin{algorithm}[H]
+\small
+\caption{Once for Both (OFB).}
+\label{algo}
+\renewcommand{\algorithmicensure}{\textbf{Input:}}
+\begin{algorithmic}[1]
+
+\Ensure{Pre-trained ViT $\mathcal{N}$, Decoder $\mathcal{F}_d$, Search Space $\mathcal{A}$, Dataset $\mathcal{D}$, Masking Ratio $\gamma$, Pruning Interval $\Delta\mathrm{T}$, Target Pruning Ratio $\tau$;}
+\State{Initialize Importance Score Set $\{\mathcal{S}\}$ and Architecture Parameter Set $\{\alpha\}$ according to $\mathcal{A}$;}
+\State{Compute $m$ via Eq. (\ref{prunability_score}) and insert $m$ to units in the search space as soft masks;}
+\For {each training iteration $t$}
+\State \begin{varwidth}[t]{\linewidth}
+Sample $b_t\sim\mathcal{D}$ and random mask $\gamma$ patches;
+\end{varwidth}
+\State \begin{varwidth}[t]{0.95\linewidth}
+Forward [$\mathcal{N}(W; m)$; $\mathcal{F}_d$] with masked $b_t$;
+\end{varwidth}
+\State \begin{varwidth}[t]{0.95\linewidth}
+Update $\mathcal{S}$, $\mathcal{V}, W$ by optimizing Eq. (\ref{mim_objective});
+\end{varwidth}
+\State \begin{varwidth}[t]{\linewidth}
+Linearly update $\gamma$ and $\lambda$;
+\end{varwidth}
+\State \begin{varwidth}[t]{\linewidth}
+Update $m$ via Eq. (\ref{prunability_score});
+\end{varwidth}
+\If{not $finish\,search$ and ($t$ mod $\Delta\mathrm{T}== 0$)} 
+\For {each submodule $\alpha_i$ in $\mathcal{A}$}
+\If{$\left( p_i \right) _{\min}\leqslant \eta \cdot \bar{p}_i$}
+\State{Prune the units whose $p_i \leqslant \eta \cdot \bar{p}_i$;}
+\EndIf
+\EndFor
+\EndIf
+\EndFor\\
+\Return{the pruned ViT satisfying the target sparsity.}
+\end{algorithmic}
+\end{algorithm}
+\end{minipage}
+\begin{equation}
+\footnotesize
+\label{transformed_objective}
+    \min_{\mathcal{S}, \mathcal{V} ,W} \mathcal{L} _{train}(\mathcal{S}, \mathcal{V}, W)+\mathcal{L} _m(\mathcal{V} ,\mathcal{S}).
+\end{equation}
+\begin{table*}[t]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{y{60}x{60}y{100}x{80}x{80}x{80}x{80}x{80}x{80}}
+\toprule
+ & Method & Model & \#Param (M) & FLOPs (B) & Top-1 (\%) & Top-5 (\%) & GPU Days \\ \midrule
+\multirow{22}{*}{DeiT-S} & Baseline & DeiT-S \cite{deit} & 22.1 & 4.6 & 79.8 & 95.0 & - \\ \cmidrule(){2-8} 
+ & \multirow{4}{*}{TP} & SSP-T$^\dagger$ \cite{s2vite} & 4.2 & 0.9 & 68.6 & - & - \\
+ &  & S$^2$ViTE-T$^\dagger$ \cite{s2vite} & 4.2 & 0.9 & 70.1 & - & - \\
+ &  & WDPruning-0.3-12$^\dagger$ \cite{wdpruning} & 3.8 & 0.9 & 71.1 & 90.1 & - \\
+ &  & S$^2$ViTE-S \cite{s2vite} & - & 2.1 & 74.8 & - & - \\ \cmidrule(){2-8} 
+ & \multirow{1}{*}{TAS} & ViTAS-B \cite{vitas} & - & 1.0 ($\downarrow$78\%) & 72.4 ($\downarrow$7.4)& 90.6 ($\downarrow$4.4)& 32 \\ \cmidrule(){2-8} 
+ &  \cellcolor[gray]{0.9}& \cellcolor[gray]{0.9} OFB & \cellcolor[gray]{0.9}4.4 ($\downarrow$80\%) &\cellcolor[gray]{0.9} 0.9 ($\downarrow$80\%)&\cellcolor[gray]{0.9} 75.0 ($\downarrow$4.8) &\cellcolor[gray]{0.9} 92.3 ($\downarrow$2.7)&\cellcolor[gray]{0.9} 1 \\ \cmidrule(){2-8} 
+ & \multirow{3}{*}{TAS} & AutoFormer-Ti \cite{autoformer} & 5.7 ($\downarrow$74\%)& 1.3 ($\downarrow$72\%)& 74.7 ($\downarrow$5.1)& 92.6 ($\downarrow$2.4)& 24 \\
+ &  & ViTAS-C \cite{vitas} & 5.6 ($\downarrow$75\%)& 1.3 ($\downarrow$72\%)& 74.7 ($\downarrow$5.1)& 91.6 ($\downarrow$3.4)& 32 \\
+ &  & TF-TAS-Ti \cite{tftas} & 5.9 ($\downarrow$73\%)& 1.4 ($\downarrow$70\%)& 75.3 ($\downarrow$4.5)& 92.8 ($\downarrow$2.2)& 0.5 \\ \cmidrule(){2-8} 
+ & \multirow{2}{*}{Lightweight} & DeiT-Ti \cite{deit} & 5.7 & 1.3 & 72.2 & 91.1 & - \\
+ &  & TNT-Ti \cite{tnt} & 6.1 & 1.4 & 73.9 & 91.9 & - \\ \cmidrule(){2-8} 
+ & \cellcolor[gray]{0.9} & \cellcolor[gray]{0.9}OFB &\cellcolor[gray]{0.9} 5.3 ($\downarrow$76\%)&\cellcolor[gray]{0.9} 1.1 ($\downarrow$76\%)&\cellcolor[gray]{0.9} 76.1 ($\downarrow$3.7)&\cellcolor[gray]{0.9} 92.8 ($\downarrow$2.2)&\cellcolor[gray]{0.9} 1 \\ \cmidrule(){2-8} 
+ & \multirow{5}{*}{TP} & SSP-S \cite{s2vite} & 14.6 ($\downarrow$34\%)& 3.1 ($\downarrow$33\%)& 77.7 ($\downarrow$2.1)& - & - \\
+ &  & S$^2$ViTE-T \cite{s2vite} & 14.6 ($\downarrow$34\%)& 2.7 ($\downarrow$41\%)& 78.2 ($\downarrow$1.6)& - & - \\
+ &  & ViT-Slim \cite{vit_slim} & 11.4 ($\downarrow$48\%)& 2.3 ($\downarrow$50\%)& 77.9 ($\downarrow$1.9)& 94.1 ($\downarrow$0.9)& 1.8 \\
+ &  & WDPruning-0.3-12 \cite{wdpruning} & - & 2.6 ($\downarrow$43\%)& 78.4 ($\downarrow$1.4)& - & - \\ \cmidrule(){2-8} 
+ & \multirow{2}{*}{Lightweight} & HVT \cite{hvt} & - & 2.4 & 78.0 & - & - \\
+ & & PVT-Ti \cite{pvt} & 13.2 & 1.9 & 75.1 & - & - \\ \cmidrule(){2-8} 
+ & \cellcolor[gray]{0.9} & \cellcolor[gray]{0.9}OFB & \cellcolor[gray]{0.9}8.0 ($\downarrow$64\%)& \cellcolor[gray]{0.9}1.7 ($\downarrow$63\%)&\cellcolor[gray]{0.9} 78.0 ($\downarrow$1.8)&\cellcolor[gray]{0.9} 93.9 ($\downarrow$1.1)&\cellcolor[gray]{0.9} 1 \\ \midrule
+\multirow{19}{*}{DeiT-B} & Baseline & DeiT-B \cite{deit} & 86.6 & 17.5 & 81.8 & 95.6 & - \\ \cmidrule(){2-8} 
+ & \multirow{4}{*}{TAS} & AutoFormer-S \cite{autoformer} & 22.9 ($\downarrow$74\%)& 5.1 ($\downarrow$71\%)& 81.7 ($\downarrow$0.1)& 95.7 ($\uparrow$0.1)& 24 \\
+ &  & ViTAS-F \cite{vitas} & 27.6 ($\downarrow$68\%)& 6.0 ($\downarrow$66\%)& 80.5 ($\downarrow$1.3)& 95.1 ($\downarrow$0.5)& 32 \\
+ &  & GLiT-S \cite{glit} & 24.6 ($\downarrow$72\%)& 4.4 ($\downarrow$75\%)& 80.5 ($\downarrow$1.3)& - & - \\ 
+ &  & TF-TAS-S \cite{tftas} & 22.8 ($\downarrow$74\%)& 5.0 ($\downarrow$71\%)& 81.9 ($\uparrow$0.1)& 95.8 ($\uparrow$0.2)& 0.5 \\ \cmidrule(){2-8} 
+ & \multirow{2}{*}{TP} & DynamicViT-S$^\star$ \cite{dynamicvit} & 22.0 & 4.0 & 79.8 & - & - \\
+ &  & ViT-Slim$^\star$ \cite{vit_slim} & 17.7 & 3.7 & 80.6 & 95.3 & 3 \\ \cmidrule(){2-8} 
+ & Lightweight & DeiT-S \cite{deit} & 22.1 & 4.6 & 79.8 & 95.0 & - \\\cmidrule(){2-8} 
+ & \cellcolor[gray]{0.9} & \cellcolor[gray]{0.9}OFB & \cellcolor[gray]{0.9}17.6 ($\downarrow$80\%)& \cellcolor[gray]{0.9}3.6 ($\downarrow$79\%)& \cellcolor[gray]{0.9}80.3 ($\downarrow$1.5)&\cellcolor[gray]{0.9} 95.1 ($\downarrow$0.5)&\cellcolor[gray]{0.9} 2.9 \\ \cmidrule(){2-8} 
+ & \multirow{3}{*}{TAS} & AutoFormer-B \cite{autoformer} & 54.0 ($\downarrow$38\%)& 11.0 ($\downarrow$37\%)& 82.4 ($\uparrow$0.6)& 95.7 ($\uparrow$0.1)& 24 \\
+ &  & GLiT-B \cite{glit} & 96.0 ($\uparrow$11\%)& 17.0 ($\downarrow$3\%)& 82.3 ($\uparrow$0.5)& - & - \\
+ &  & TF-TAS-S \cite{tftas} & 54.0 ($\downarrow$38\%)& 12.0 ($\downarrow$31\%)& 82.2 ($\uparrow$0.4)& 95.6 ($\downarrow$0.0)& 0.5 \\ \cmidrule(){2-8}
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

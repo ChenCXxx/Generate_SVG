@@ -1,0 +1,225 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Robust and accurate perception is a long-standing challenge in Autonomous Driving Systems (ADS). The full perception system usually relies on multiple sensor fusion including camera, LiDAR, and radar. Camera provides rich semantic cues of objects and excellent resolution, while LiDAR is capable of capturing highly accurate spatial information. However, neither camera nor LiDAR can directly measure speed or survive in adverse weather conditions, such as fog, sandstorms, and snowstorms \cite{madani2022radatron}. Although radar can overcome the aforementioned problems, even the point cloud from the latest 4D millimeter wave (mmWave) radars suffers from severe sparsity and low angular resolution, which makes it hard to discriminate objects and backgrounds solely.
+Fortunately, radar and camera are highly complementary to each other. Fusing these two types of sensors becomes a promising solution.
+Radar data are usually represented as point clouds. Technically, the radar point cloud stems from raw Analog-Digital-Converter (ADC) data received by antennas. Range, speed, and angle of arrival (AoA) information of perceivable objects can be explicitly extracted in the frequency domain by consecutively applying FFT along corresponding dimensions. %Firstly, by applying side-lobe suppression and FFT along the range and Doppler axis, objects of specific range and speed would show distinguishable peaks at corresponding bins in these first two dimensions \cite{sun2020mimo}. 
+Among these steps, side lobe suppression and constant false alarm rate (CFAR) detector \cite{richards2014fundamentals} are usually adopted to reduce the noise and false alarms.
+As a result, all the derived points are equipped with spatial coordinates, speed, and reflection intensity. Though these noise suppression operations can significantly reduce the data size and further computation costs, the resulting radar point cloud is extremely sparse, as shown in Figure \ref{pcd}. Even worse, quite a lot of useful information is lost during CFAR, which is adverse to the accurate perception of environments and subsequent fusion with other sensors \cite{lim2019radar}. %To further explore the potential of radar data, how to utilize pre-CFAR data has raised community attention but still remains a challenging problem.
+Raw data serves as a potential solution to alleviate these problems. However, how to efficiently utilize it, especially fusing with other sensors remains an open problem.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\columnwidth]{Figures/PCD.pdf}
+\caption{Illustration of sparsity and false alarms of the radar point cloud. The \textcolor[rgb]{1,0,0}{red} points and the \textcolor[rgb]{0,0,1}{blue} points correspond to data from radar and LiDAR, respectively. We visualize the predicted bounding boxes of different variants of our proposed method. \textcolor[rgb]{1,0,0}{red} denotes ground-truth, \textcolor[rgb]{1,0,1}{purple} denotes predictions from image only modality, \textcolor[rgb]{0,1,0}{green} denotes predictions from image and radar range-time data fusion, and \textcolor[rgb]{0,0,1}{blue} denotes predictions from image and radar point cloud fusion. Best viewed on screen.}
+\label{pcd}
+\end{figure}
+
+Recently, Birds-Eye-View (BEV) based methods are prevalent for driving scenario perception. It integrates features from multiple views and multiple modalities into a unified 3D representation space \cite{chen2022futr3d, li2022bevformer,liu2022bevfusion}. Among the varieties of BEV-based methods, PolarFormer \cite{jiang2022polarformer} divides the 3D space in polar coordinates, which matches the format of raw radar data better. As such, we chose PolarFormer as our baseline model. %and incorporate radar modality using a tailored attention mechanism. 
+
+In this work, we present EchoFusion, a method designated for fusing raw radar data with images. We observe that a set of 3D positions exactly corresponds to one column in the image and one row in raw radar data. Thereby we propose a novel polar-aligned attention (PAA) technique to efficiently fuse features from these two different modalities.
+With row-wise cross-attention on radar data and column-wise attention on image, PAA could precisely aggregate essential features from both modalities while maintaining simple and efficient implementation. Finally, a polar BEV decoder refines object queries for accurate bounding box predictions.
+
+The contribution of our paper is three-folds: 
+\begin{enumerate}
+    \item We are the first to fuse raw radar data with images in BEV space. Specifically, we propose a novel Polar-Aligned Attention module to guide the network effectively learn radar and image features.
+    \item We relabel the RADIal dataset \cite{rebut2022raw} with accurate 3D bounding box annotations. The new annotations is published with our codebase together.
+    \item Extensive experiments show that our method has outperformed all the existing methods and achieved promising BEV detection performance, even approaching the LiDAR-based method.
+\end{enumerate}
+
+
+Related Work
+\subsection{Deep Learning on Radar}
+\subsubsection{Radar Data Representation and Datasets}
+Traditional radar usually only outputs sparse points \cite{caesar2020nuscenes, deziel2021pixset, schumann2021radarscenes} for use. However, such points are subjective to heavy signal processing methods to reduce noisy observation and alleviate bandwidth limitation. Nevertheless, such hand-crafted pipelines make the subsequent fusion with other sensors intractable. Consequently, some attempts have been made to provide upstream data, such as range-azimuth-Doppler (RAD) tensor \cite{ouaknine2021carrada,zhang2021raddet}, range-azimuth (RA) maps \cite{sheeny2021radiate}, range-Doppler (RD) spectrums \cite{mostajabi2020high} or even raw Analog Digital Converter (ADC) 
+ data \cite{lim2021radical, mostajabi2020high}. Note that the RAD, RA, and RD tensors are generated from ADC data using several times (almost) lossless FFT. Thus we call all these four types of data "radar raw data" in the sequel.
+
+\begin{table}
+  \caption{4D Radar Datasets Comparison. Data: PC, RA, ADC denote to point cloud, range azimuth map and raw ADC data; Sensors: C, $C_s$, L, O denote to camera, stereo camera, LiDAR, and odometer; Scenarios: U, S, H denote to urban (city), suburban, highway; Annotations: 3D, BEV, T, $P_o$, M denote to 3D bounding box, BEV bounding box, track ID, object-level point and segmentation mask; Classes and Size denote the number of classes and the number of annotated frames of each dataset.}
+  \label{dataset}
+  \centering
+  \resizebox{0.99\textwidth}{!}{%
+  \begin{tabular}{lllllll}
+    \toprule
+    Dataset & Data & Other Sensors & Scenarios & Annotations & Classes & Size \\
+    \midrule
+    Astyx \cite{meyer2019automotive} & PC & CL & SH & 3D & 7 & 500 \\
+    View-of-Delft \cite{palffy2022multi} & PC & $C_s$LO & U & 3D,T & 13 & 8693 \\
+    RADIal \cite{rebut2022raw} & ADC,RA,PC & CLO & USH & $P_o$,M & 1 & 8252 \\
+    TJ4DRadSet \cite{zheng2022tj4dradset} & PC & CLO & U & 3D,T & 5 & 7757 \\
+    Radatron \cite{madani2022radatron} & ADC,RA & $C_s$ & U & BEV & 1 & 16K \\
+    KRadar \cite{paek2022k} & RA, PC & CLO & USH & 3D,T & 5 & 35K \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
+Since our motivation is to deeply fuse with other sensors, we only consider the datasets providing data beyond point cloud. Among them, both RADIal \cite{rebut2022raw}, Radatron \cite{madani2022radatron} and KRadar \cite{paek2022k} provide such data. But Radatron only covers a single scenario while lacking camera calibration, LiDAR modality, and height annotation.}. Taking the factors mentioned above into account, we carry out our experiments mainly on the RADIal dataset, and provide additional results on a subset of KRadar dataset. However, the annotations of RADIal only contain object-level points. For a more comprehensive and objective evaluation, we further annotate the bounding box size and heading of each object based on dense LiDAR points. The annotations can be found in our codebase. 
+
+\subsubsection{Object Detection on Radar Data}
+Traditional radar object detection methods that utilize point cloud face challenges of super sparsity due to the low angular resolution. Practical treatments include occupancy grid mapping \cite{zhou2022towards} and separate processing for static and dynamic objects \cite{schumann2019scene}. 4D radar technology improves the azimuth resolution and provides additional elevation resolution, which enables the combination of static and dynamic object detection in a single network, using either PointPillars \cite{palffy2022multi} or tailor-made self-attention modules \cite{bai2021radar, xu2021rpfa}.
+
+The pre-CFAR(Constant False Alarm Rate Detector) data provides rich information of both targets and backgrounds. RAD tensor is fully decoded but brings high demand of storage and computation. Hence, Zhang et al. \cite{zhang2021raddet} takes the Doppler dimension as channels and Major et al. \cite{major2019vehicle} projects RAD tensor to multiple 2D views. RTCNet \cite{palffy2020cnn} divides RAD tensor into small cubes and applies 3D CNN to reduce computation burden. Besides, \cite{rebut2022raw,zhang2020object} take complex RD spectrum as input and apply neural networks to automatically extract spatial information. Networks such as RODNet \cite{wang2021rodnet} adopt RA maps for detection, which avoid false alarms caused by extended Doppler proﬁle.
+Despite the aforementioned research works, the utilization of ADC radar data has recently gained increasing attention within the community \cite{giroux2023t, yang2023adcnet}. However, their results remain unsatisfactory.
+
+The fusion of different type of sensors provides complementary cues, leading to more robust performance. At input level, radar point clouds are usually projected as pseudo-images and concatenated with camera images \cite{chadwick2019distant,nobis2019deep}. At  Region of Interest (RoI) level, some approaches \cite{nabati2020radar,nabati2021centerfusion} consecutively refine the RoIs by radar and other modalities, while others \cite{kim2020grif, kim2023crn} unify RoIs generated independently by different sensors. At feature level, 
+\cite{wu2023mvfusion, zhang2021rvdet} integrate feature maps generated from different modalities, while \cite{kim2020low, kim2022craft} use RoIs to crop and merge features across modalities. To the best of our knowledge, we are the first to deeply fuse radar using raw data with other modalities in a unified BEV perspective. %we are not only the first method that utilizes BEV queries to extract features from different modalities, but also the first to take radar data only processed by range FFT as inputs. 
+\subsection{BEV 3D Object Detector}
+BEV object detection bursts out a rising wave of research due to its vast success in 3D perception tasks. One thread is to adopt transformations to project 2D image features to 3D BEV space for further detection, such as OFT \cite{roddick2018orthographic} and LSS \cite{philion2020lift}. Another thread applies initialized BEV queries \cite{zhou2022cross} or object queries \cite{liu2022petr, liu2022petrv2} to iteratively and automatically sample features from multi-view images. Based on these advanced techniques, BEVFusion \cite{liu2022bevfusion} explores the advantages of BEV representation in multi-sensor fusion and achieves impressive performances. Despite that, how to make full use of other information sources also attracts the interest of researchers. BEVFormer \cite{li2022bevformer} and its variant \cite{yang2022bevformer} utilize temporal information to enhance detection capability, while BEVStereo \cite{li2022bevstereo} and STS \cite{wang2022sts} explore how the estimated depth can benefit BEV-based detection. Besides, PolarFormer \cite{jiang2022polarformer} introduces the polar grid setting and proves its effectiveness in environment perception, which is closely related to our work.
+
+
+
+Preliminary
+\label{preliminary}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\columnwidth]{Figures/RadarData.pdf}
+\caption{Radar data formats used in this paper. All the axes that indicate spatial location are labeled with units. For ADC data, the vertical unit is the sampling cycle. And for ADC data, Range-Time data, the horizontal unit is the chirp cycle. We use the index number of the Doppler dimension as horizontal unit instead in Range-Doppler and CFAR result.}
+\label{data_vis}
+\end{figure}
+
+In the automotive industry, multiple-input, multiple-output (MIMO) frequency-modulated continuous-wave (FMCW) radars are adopted \cite{zhou2022towards} to balance cost, size, and performance. Each transmitting antenna (Tx) transmits a sequence of FMCW waveforms, also named chirps, which will be reflected by objects and returned to the receiving antennas (Rx). Then the echo signal will be first mixed with the corresponding emitted signal and then passed through a low pass filter, so as to obtain the intermediate frequency (IF) signal. The discretely sampled IF signal, which includes the phase difference of emitted and returned signal, is called \textbf{ADC data} \cite{sun2020mimo}. The ADC data has three dimensions, fast time, slow time, and channel, which have physical correspondence with range, speed, and angle respectively.
+
+Because of the continuous-wave nature, the IF signal of a chirp contains a frequency shift caused by the time delay of traveling between radar and objects. Then the radial distance of obstacles can be extracted by applying Fast Fourier Transform (FFT) on each chirp, i.e. fast-time dimension. This FFT operation is also called range-FFT. The resulting complex signal is denoted as \textbf{range-time (RT) data}. Next, a second FFT (Doppler FFT) along different chirps, i.e. slow-time dimension, is conducted to extract the phase shift between two chirps caused by the motion of targets. The derived data is named \textbf{range-Doppler (RD) spectrum}. We denote $N_{Tx}$ and $N_{Rx}$ respectively as the number of transmitting and receiving antennas. And each grid on the RD spectrum has $N_{Tx} \times N_{Rx}$ channels. The small distance between adjacent virtual antennas leads to phase shifts among different antennas, which is dependent on the AoA. Thus a third FFT (angle-FFT) can be applied along the channel axis to unwrap AoA. 
+The AoA can be further decoded to azimuth and elevation based on the radar antenna calibration. The final 4D tensor is referred to as the \textbf{range-elevation-azimuth-Doppler (READ) tensor}. 
+
+If point cloud is desired, the RD spectrum will be first processed by the CFAR algorithm to filter out peaks as candidate points. Then the angle-FFT will only be executed on these points. Final \textbf{radar point cloud (PCD)} consists of 3D coordinates, speed, and reflective intensity. In traditional radar signal processing, there is another data format named \textbf{range-azimuth (RA) map}, which is obtained by decoding the azimuth of a single elevation on the RD spectrum and compressing the Doppler dimension to one channel. For comprehensive analyses, we include this modality in our experiments as well. The data formats mentioned above are illustrated in Figure \ref{data_vis}, except for READ tensor because it is difficult to visualize.
+
+
+Methods
+
+In this section, we will introduce our network design. Firstly we will give a brief introduction of the whole pipeline in Section \ref{overall_structure}. Then our proposed Polar-Aligned Attention module will be elaborated in Section \ref{Column-wise Image Fusion} and Section \ref{Range-wise Radar Fusion}. Finally, the detection head and loss functions are introduced in Section \ref{head_loss}.
+
+\label{headings}
+\subsection{Overall Structure}
+\label{overall_structure}
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\columnwidth]{Figures/Pipeline.pdf}
+\caption{Overall pipeline of the proposed EchoFusion. H and W are the height and weight of the image, while R, A, and T are the bin number of range, azimuth, and Doppler dimension, respectively. The \textcolor[rgb]{1,0,0}{Coord. Mapping} in the figure is explained in section \ref{Column-wise Image Fusion}.}
+\label{pipeline}
+\end{figure}
+
+The overall architecture of our model is shown in Figure \ref{pipeline}.  First, we use separate backbones and FPNs \cite{lin2017feature} to extract multi-level features from RT radar maps and images. Then the polar queries aggregate camera features and radar features by cross-attention. Finally, the multi-scale polar BEV map will be passed through a transformer-based decoder with object queries. The final score and bounding box predictions can be obtained by decoding the output object queries. The core of our EchoFusion is how to fuse the camera and radar slow-time data. We fuse them using a novel strategy named Polar Aligned Attention (PA-Attention). In the next two subsections, we will explain this strategy in detail.
+
+\subsection{Column-wise Image Fusion}
+\label{Column-wise Image Fusion}
+After obtaining image and radar features from corresponding encoders, we first initialize the $l$-th level polar queries $\boldsymbol{Q}_{\boldsymbol{l}}\in \mathbb{R} ^{R_l\times A_l\times d}$ uniformly in polar BEV space. Here, $R_l$, $A_l$, and $d$ respectively denote the shape of range, azimuth, and channel dimensions. For brevity, we omit $l$ in the following two subsections. Given a query $q\in \mathbb{R} ^d$ located at $(r_{bev}, \phi_{bev})$, it corresponds to a pillar centered at $(r_{bev}, \phi_{bev})$ with infinite height. Taking the coordinate system defined in RADIal \cite{rebut2022raw}, $x_R$, $y_R$, and $z_R$ axes respectively points to the front, left, and upright, while subscript $R$ means radar coordinate. Similarly, the camera coordinates are denoted as $(x_C, y_C, z_C)$, which points to the right, down, and front, respectively. Thus we have correspondence in Cartesian coordinate system as follows:
+\begin{equation}
+    \label{w-polar}
+    x_R=r_{bev}\cos \left( \phi _{bev} \right), \quad y_R=r_{bev}\sin \left( \phi _{bev} \right).
+\end{equation}
+Using extrinsic matrix and intrinsic matrix, we have the following formulation:
+\begin{equation}
+    \frac{x_I-u_0}{f_x}=\frac{x_C}{z_C},\quad \left( \begin{array}{c}
+    	x_C\\
+    	y_C\\
+    	z_C\\
+    \end{array} \right) =R\left( \begin{array}{c}
+    	x_R\\
+    	y_R\\
+    	z_R\\
+    \end{array} \right) +T, T=\left( \begin{array}{c}
+    	d_1\\
+    	d_2\\
+    	d_3\\
+    \end{array} \right) ,
+\end{equation}
+where $u_0$, $f_x$ are principal point offset and focal length on $x$-axis in the intrinsic matrix, $x_I$ is the image column index that corresponds to the point $(x_R, y_R, z_R)$, while $R$ and $T$ are rotation matrix and translation vector of the calibration matrix between camera and radar, respectively. 
+Under mild distortion conditions and normally adopted sensor setting, $x_I$ is determined by pillar position and calibration parameters as follows:
+\begin{equation}
+    x_I \approx u_0+f_x\frac{-r_{bev}\sin \phi _{bev}+d_1}{r_{bev}\cos \phi _{bev}+d_3}.
+\end{equation}
+However, the height is not specified for a query, while for a pixel $(x_I, y_I)$ on the monocular image, its depth is unknown as well. Thus we cannot precisely associate a query to the image feature, but we can correspond queries of the same azimuth to the same column of images. Enlightened by this observation, we use a versatile cross-attention mechanism to flexibly aggregate required features from images. %In detail, we can first collect features of all the locations in the column corresponding with the pillar. 
+Namely, all the queries with the same azimuth form the query matrix, while all the features in the corresponding column in the image form the key and value matrix.
+Formally, these two steps can be expressed as follows:
+\begin{equation}
+    \begin{aligned}
+        F_I( x_I, \cdot) &=\mathrm{Stack}\left( [ f_I\left( x_I,y_I \right)] \right) \in \mathbb{R} ^{H_l\times d}, \quad \forall y_I \in [0,H_l-1], \\
+        \hat{q}\left( r_{bev},\phi _{bev} \right) &=\mathrm{CrossAttn}\left( q\left( r_{bev},\phi _{bev} \right) , F_I\left( x_I,\cdot \right) , F_I\left( x_I,\cdot \right) \right) ,
+    \end{aligned}
+\end{equation}
+where $f_I( x_I,y_I)$ is the image feature located at $x_I,y_I$, while details of cross attention function $\mathrm{CrossAttn}$ can be found in \cite{vaswani2017attention}.
+
+\subsection{Range-wise Radar Fusion}
+\label{Range-wise Radar Fusion}
+We denote updated BEV queries as $\hat{\boldsymbol{Q}}_{\boldsymbol{l}}\in \mathbb{R} ^{R_l\times A_l\times d}
+$. After that, it will be used to sample features from radar. Since the radar feature map shares the same range partition with the BEV queries, the updated query $\hat{q}\left( r_{bev},\phi _{bev} \right)$ matches the same range index of the radar feature, i.e. $r_R=r_{bev}$.
+To aggregate all the features from all chirps in one frame, we perform cross attention for a certain query $\hat{q}$ with the row $r_R$ in RT map as key and value. Formally,
+\begin{equation}
+    \begin{aligned}
+        F_R( r_R, \cdot ) &=\mathrm{Stack}\left( [ f_R( r_R,t_R )] \right) \in \mathbb{R} ^{R_l\times d}, \quad \forall t_R \in [0,T_l-1] ,
+        \\
+        \tilde{q}\left( r_{bev},\phi _{bev} \right) &=\mathrm{CrossAttn}\left( \hat{q}\left( r_{bev},\phi _{bev} \right) , F_R\left( r_R, \cdot \right) , F_R\left( r_R, \cdot \right) \right) ,
+    \end{aligned}
+\end{equation}
+where $R_l$ and $T_l$ are the height and width of the radar feature map, and  $f_R\left( r_R,t_R \right) \in \mathbb{R} ^d$ is the radar feature of position $(r_R, t_R)$.
+
+Note that though we don't explicitly decode AoA as in RA map, the AoA has been implicitly encoded in the phase difference of the response of different virtual antenna. Consequently, it can be learned from the features in RT map indirectly.
+\subsection{Head and Loss}
+\label{head_loss}
+We follow polar BEV decoders \cite{jiang2022polarformer} to decode multi-level BEV features and make predictions from object queries. Since we don't have velocity annotation on this dataset, we remove the corresponding branch. The regression targets include ($d_\rho$, $d_\phi$, $d_z$, $\mathrm{log}\space l$, $\mathrm{log}\space w$, $\mathrm{log}\space h$, $\mathrm{sin}(\theta_{ori}-\phi)$, $\mathrm{cos}(\theta_{ori}-\phi)$), where $d_\rho$, $d_\phi$, $d_z$ are relative offset to the reference point ($\rho$, $\phi$, $z$), $l$, $w$, $h$, $\theta_{ori}$ are length, width,  height, and orientation of bounding box. The classification and regression tasks are respectively supervised by Focal loss \cite{lin2017focal} and L1 loss.
+
+
+Experiments
+\label{exp}
+In this section, we conduct thorough experiments to validate the effectiveness of our approach. We first introduce the dataset and metrics used in our experiments, then followed by comparisons with other state-of-the-art methods. Lastly, we ablate some designs and potential input format of raw radar data in our method, and discuss some limitations.
+
+\subsection{Experimental Settings}
+\textbf{The RADIal Dataset} \cite{rebut2022raw} provides 8252 annotated frames with synchronized multi-sensor data. Training, validation, and test sets contain 6231, 986, and 1035 frames, respectively. Each object is annotated with a 3D center coordinate of the visible face of the vehicle. The size and orientation of the objects are pre-defined templates, i.e. they are the same for all objects. In the evaluation, precisions and recalls under ten thresholds are calculated. The average precision (AP), average recall (AR), and F1 score are obtained through the ten precisions and ten recalls as the evaluation metric. Range error (RE) and azimuth error (AE) are also reported to evaluate localization accuracy. The annotation method and metrics are quite different to those in common autonomous driving datasets \cite{caesar2020nuscenes,sun2020scalability}. Nonetheless, to compare with state-of-the-art methods, we still list our results using the metrics defined in RADIal \cite{rebut2022raw} as a reference.
+
+\textbf{Re-annotation and more metrics.} Based on the provided LiDAR point cloud, we have refined the cluster-center-based annotation to 3D bounding box form, which includes center position, scale, and heading in 3D space. Capitalizing on these new annotations, we are able to apply metrics that are vastly used in 3D object detection tasks. Specifically, we take AP defined in Waymo dataset \cite{sun2020scalability} as our main metrics. Since the LiDAR used in RADIal is only 16-beam, we cannot label accurate height for the objects. So we mainly utilize BEV IoU for evaluation. We use the threshold of 0.7 for normal IoU and longitudinal error-tolerant (LET) IoU computation \cite{hung2022let}. 
+Considering the spatial distribution of ground-truth, the distance evaluation is further broken down into
+two categories: 0 to 50 meters, 50 to 100 meters. For a more comprehensive evaluation, we also introduce the error metrics defined in nuScenes dataset \cite{caesar2020nuscenes}, including  ATE, ASE, and AOE for measuring errors of translation, scale, and orientation. 
+
+\textbf{The KRadar Dataset} \cite{paek2022k} is a recently published 4D radar dataset, which contains 58 sequences, i.e. 35K frames of synchronized multi-modality data. However, the full data are still not available by the camera-ready. Thus, we evaluate our method with the sub-dataset stored on Google Drive, which consists of 20 sequences. This so-called KRadar-20 dataset includes 6493 training samples and 6515 test samples, of which 50 \% are nighttime data. The training samples are named trainval split, it is further split into train split of 5190 samples and val split of 1303 samples for ablation. Metrics follow KITTI \cite{geiger2012we} protocols with 40 recall positions. Different from RADIal, it only contains radar formats of range-azimuth map (RA map) and radar point cloud. But the RA map of KRadar contains an extra height dimension, and it enables us to test 3D prediction ability with 4D radar data.
+
+\textbf{Radar Formats.} As introduced in Section \ref{preliminary}, there are multiple formats of radar raw data, such as ADC, RT, RD, READ. These formats can be converted sequentially by FFT, which is a linear operation that can be absorbed into the linear layers. So from the perspective of neural network, these formats are equivalent. However, our proposed Polar-Aligned Attention requires a range dimension for indexing key and value in cross-attention, so we choose RT as a representative in the experiments. We also conduct experiments on RA to investigate the necessity of explicit azimuth.
+
+\textbf{Implementation Details.} All our experiments are carried out on eight 3090 GPUs with the same batch size of 8. For the image backbone, we adopt ResNet-50 with pre-trained weights provided by BEVFormer \cite{li2022bevformer}. For LiDAR and radar point cloud branch, we borrow the voxel encoder from PointPillar \cite{lang2019pointpillars} and use ResNet-50 with modified strides as the backbone. Other representations of radar data share similar modified ResNet-50 as the backbone, but with an extra 1 $\times$ 1 convolution at the beginning for channel number alignment. To prevent overfitting, the image-only variant is trained for only 12 epochs while others are trained for 24 epochs. AdamW \cite{loshchilov2017decoupled} is adopted as the optimizer and a learning rate of 5e-5 is shared for all models. 
+Due to the limited size of the dataset, we find that the results are unstable across different runs. To make a fair comparison, each experiment is repeated three times. In modality ablation, we show the mean and variance of each experiment result.
+\subsection{Comparison to State-of-the-art Methods}
+\subsubsection{Results on RADIal Dataset}
+\begin{table}
+  \caption{Detection performances on RADIal Dataset test split with original protocol \cite{rebut2022raw}. C, RD, and RT respectively refer to camera, range-Doppler spectrum, and range-time data. Our method achieves the best performance in both average precision (AP), average recall (AR), and F1-score (F1). The best result of each metric is in \textbf{bold}.}
+  \label{sota}
+  \centering
+  \resizebox{0.85\textwidth}{!}{%
+  \begin{tabular}{lllllll}
+    \toprule
+    Methods & Modality & AP($\%$)$\uparrow$ & AR($\%$)$\uparrow$ & F1($\%$)$\uparrow$ & RE(m)$\downarrow$ & AE($^{\circ}$)$\downarrow$ \\
+    \midrule
+    FFTRadNet \cite{rebut2022raw} & RD & 96.84 & 82.18 & 88.91 & \textbf{0.11} & 0.17 \\
+    T-FFTRadNet \cite{giroux2023t} & ADC & 89.60 & 89.50 & 89.50 & 0.15 & 0.12 \\
+    ADCNet \cite{yang2023adcnet} & ADC & 95.00 & 89.00 & 91.90 & 0.13 & \textbf{0.11} \\
+    CMS \cite{jin2023cross} & RD\&C & 96.90 & 83.50 & 89.70 & 0.45 & n/a \\
+    EchoFusion & RT\&C & \textbf{96.95} & \textbf{93.43} & \textbf{95.16} &0.12 & 0.18 \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+\begin{table}
+  \caption{BEV detection performances on RADIal Dataset test split with refined 3D ground-truth bounding box. C, RD, and RT respectively refer to camera, range-Doppler spectrum, and range-time data. The best result of each metric is in bold. Our method exceeds FFTRadNet by a large margin.}
+  \label{sota_newlabel}
+  \centering
+  \resizebox{0.99\textwidth}{!}{%
+  \begin{tabular}{llllllll}
+    \toprule
+    & & \multicolumn{3}{c}{BEV AP@0.7($\%$)$\uparrow$}&\multicolumn{3}{c}{LET-BEV-AP@0.7($\%$)$\uparrow$}\\
+    \cmidrule(r){3-5} \cmidrule(r){6-8}
+     Methods & Modality & Overall & 0 - 50m & 50 - 100m & Overall & 0 - 50m & 50 - 100m \\
+    \midrule
+    FFTRadNet3D\cite{rebut2022raw} & RD & 57.26 & 68.66 & 52.28 & 62.81 & 75.55 & 57.98 \\
+    EchoFusion & RT\&C & \textbf{84.92} & \textbf{87.56} & \textbf{91.06} & \textbf{88.86} & \textbf{92.81} & \textbf{94.81} \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
+We first compare our method with state-of-the-art detectors on AP, AR, range error
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

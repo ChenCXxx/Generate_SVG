@@ -1,0 +1,299 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{fig/teaser.pdf}
+	\caption{
+	\textbf{Illustration of existing two-stage 3D dense captioning method (upper) and our Vote2Cap-DETR (bottom).}
+	Existing methods adopt a two-stage pipeline that heavily depends on a detector's output.
+	Therefore, we propose a transformer-based one-stage model, Vote2Cap-DETR, that frames 3D dense captioning as a set prediction problem.
+	\label{fig:teaser}
+\end{figure}
+
+3D dense captioning \cite{chen2021scan2cap,chen2021d3net,yuan2022x-trans2cap,wang2022spacap3d,jiao2022more,cai20223djcg} requires a system to localize all the objects in a 3D scene, and generate descriptive sentences for each object. 
+This problem is challenging given 
+1) the sparsity of point clouds and
+2) the cluttered distribution of objects. 
+3D dense captioning can be divided into two tasks, object detection and object caption generation.
+Scan2Cap\cite{chen2021scan2cap}, MORE\cite{jiao2022more}, and SpaCap3D\cite{wang2022spacap3d} propose well-designed relation reasoning modules to efficiently model relations among object proposals.
+\cite{zhong2022contextual3DdenseCap} introduces contextual information from two branches to improve the caption.
+3DJCG\cite{cai20223djcg} and D3Net\cite{chen2021d3net} study the correlation between 3D visual grounding and 3D dense captioning, and point out that these two tasks promote each other.
+Additionally, $\chi$-Trans2Cap\cite{yuan2022x-trans2cap} discusses how to transfer knowledge from additional 2d information to boost 3d dense captioning.
+
+Among existing methods, they all adopt a two-stage “detect-then-describe” pipeline\cite{chen2021scan2cap,jiao2022more,wang2022spacap3d,cai20223djcg,chen2021d3net,zhong2022contextual3DdenseCap} (Figure \ref{fig:teaser}).
+This pipeline first generates a set of object proposals, then decodes each object by a caption generator with an explicit reasoning procedure.
+Though these methods have achieved remarkable performance, the ``detect-then-describe'' pipeline suffers from the following issues: 
+1) Because of the serial and explicit reasoning, this task highly depends on the object detection performance, which limits the mutual promotion of detection and captioning. 
+2) The heavy reliance on hand-crafted components, e.g., radii, 3D operators, the definition of proposal neighbors, and post-processing (non-maximum suppression\cite{neubeck2006nms}) introduces additional hyper-parameters, leading to a sub-optimal performance given the sparse object surfaces and cluttered object distributions among different indoor scenes.
+This inspires us to design an one-stage 3D dense captioning system.
+
+To address the above issues, we propose Vote2Cap-DETR, a full transformer encoder-decoder architecture for one-stage 3D dense captioning.
+Unlike the traditional ``detect-then-describe'' pipeline, we directly feed the decoder's output into the localization head and caption head in parallel.
+By casting 3D dense captioning as a set-to-set problem, each target instance and its language annotation is matched with a query in an one-to-one correspondence manner, helping feature representation for proposals be more discriminative to identify each \textbf{distinctive} object in a 3D scene.
+Additionally, we also propose a novel vote query driven decoder to introduce spatial bias for better localization of objects in a cluttered 3D scene.
+With the fully attentional design, we resolve 3D dense captioning with the following innovations: 
+1) Our method treats the 3D dense captioning task as a set prediction problem. The proposed Vote2Cap-DETR directly decodes the features into object sets with their locations and corresponding captions by applying two parallel prediction heads. 
+2) We propose a novel vote decoder by reformulating the object queries in 3DETR into the format of the vote query, which is a composition of the embeddings of the seeds point and the vote transformation of the box with respect to the seeds. This indicates the connection between the vote query in Vote2Cap-DETR with the VoteNet, but with better localization and higher training efficiencies; 
+3) We develop a novel query driven caption head, which absorbs the relation and attribute modeling into the self- and cross-attention, so that it can look into both the local and global context to better describe the scene.
+Extensive experiments on two commonly used datasets, ScanRefer and Nr3D, demonstrate that our approach surpasses prior arts with many hand-crafted procedures by a large margin, which demonstrates the superiority that, full transformer architecture with sophisticated vote head and caption head can inspire many 3D vision and language tasks. 
+
+To summarize, the main contributions of this work include:
+\begin{itemize} 
+\setlength\itemsep{0em}
+    \item We propose a novel one-stage and fully attention driven architecture for 3D dense captioning as a set-to-set prediction problem, which achieves object localization and caption generation in parallel. % and narrows the gap between training and evaluation.
+
+	\item Extensive experiments show that our proposed Vote2Cap approach achieves a new state-of-the-art performance on both Nr3D\cite{achlioptas2020referit3d} (45.53\% C@0.5) and ScanRefer\cite{chen2021scan2cap} (73.77\% C@0.5).
+	
+\end{itemize} 
+
+
+Related Work
+We briefly summarize works on 3D dense captioning, and DETR-based methods for image and 3D object detection.
+Additionally, we also introduce some methods for image captioning, which are closely related to our work.
+
+\myparagraph{3D Dense Captioning.}
+3D dense captioning, a task that requires translating 3D scene information to a set of bounding boxes and natural language descriptions, is challenging and has raised great interest among scholars recent years.
+Scan2Cap\cite{chen2021scan2cap} and MORE\cite{jiao2022more} build graph on a detector's\cite{qi2019votenet,jiang2020pointgroup} box estimations with hand-crafted rules to reason complex relations among objects in a 3D scene.
+SpaCap3D\cite{wang2022spacap3d} build a spatiality-guided transformer to model spatial relations among the detector's output.
+3DJCG\cite{cai20223djcg} and D3Net\cite{chen2021d3net} study the joint promotion of 3D dense captioning and 3D visual grounding.
+$\chi$-Trans2Cap\cite{yuan2022x-trans2cap} introduces additional 2D prior to complement information for 3D dense captioning with knowledge transfer.
+Recently, \cite{zhong2022contextual3DdenseCap} shifts attention to contextual information for the perception of non-object information.
+These approaches have made great attempts to solve the 3D dense captioning problem.
+However, they all follow a ``detect-then-describe'' pipeline, which is heavily dependent on a detector's performance.
+Our proposed Vote2Cap-DETR differs from existing works in that, our method is a one-stage model that detects and generates captions in parallel, and treats 3D dense captioning as a set prediction problem.
+\myparagraph{DETR: from 2D to 3D.}
+\textbf{DE}tection \textbf{Tr}ansformer(DETR)\cite{carion2020detr} is a transformer\cite{vaswani2017attention} based architecture that treats object detection as a set prediction problem, and does not require non-maximum suppression\cite{neubeck2006nms} for post-processing.
+Though great results have been achieved, DETR suffers from slow convergence.
+Many follow-up works\cite{zhu2020deformabledetr,zhang2022detr++,gao2021fast,meng2021conditionaldetr,chen2022groupdetr,jia2022hybriddetrs} put efforts on speeding up DETR's training by introducing multi-scale features, cross attention designs, and label assignment techniques.
+Researchers also attempt to introduce transformer architectures to 3D object detection.
+GroupFree3D\cite{liu2021groupfree3d} learns proposal features from the whole point cloud through the transformer rather than grouping local points.
+3DETR\cite{misra2021-3detr} analyzes the potential of the standard transformer model, and generates proposals by uniformly sampling seed points from a 3D scene.
+In our work, we extend the DETR architecture for 3D dense captioning that makes caption generation and box localization fully interrelated with parallel decoding.
+Additionally, we propose vote query for better performance and faster convergence.
+
+\myparagraph{Image Captioning.}
+Image captioning requires a model to generate sentences describing key elements in an image, which has become a hot topic in computer vision.
+Existing image captioning works adopt an encoder-decoder architecture, where the decoder generates sentences from visual features extracted by the encoder.
+\cite{anderson2018bottom-up-top-down,cornia2020m2transformer,huang2019AinA-img-cap,pan2020x-linear-img-cap} adopt a detector to extract region features as visual clues for the decoder, while \cite{liu2021cptr,zhang2021rstnet} extract grid features directly from an image.
+Additionally, \cite{nguyen2022grit} generates captions with both region and grid visual features.
+Though these methods are effective in image captioning, they cannot be directly applied to 3D dense captioning, which requires both accurately localizing and describing a 3D object, rather than simply captioning a whole 2D scene image.
+In contrast, our proposed caption head sufficiently leverages the rich context information in 3D point cloud, receives visual clues from both the object query and its local context, and fuses them to achieve effective 3D dense captioning.
+
+
+Method
+\begin{figure*}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{fig/overall_pipeline_detailed.pdf}
+	\caption{
+	\textbf{Approach.} Vote2Cap-DETR is an one-stage transformer model that takes a 3D point cloud as its input, and generates a set of box predictions and sentences localizing and describing each object in the point cloud.
+	The scene encoder first generates encoded scene tokens $(p_{enc}, f_{enc})$ from the input point cloud.
+	Then, we generate vote query $(p_{vq}, f_{vq})$ from the encoded scene tokens, which introduce both spatial bias $p_{vq}$ and content-aware feature $f_{vq}$ to initial object queries.
+	The transformer decoder decodes each vote query with two parallel task heads for captioning and detection.
+	We optimize Vote2Cap-DETR with a set loss.
+	}
+	\label{fig:pipeline}
+\end{figure*}
+
+As shown in Fig. \ref{fig:pipeline}, given a 3D scene, our goal is to localize objects of interest and generate informative natural language descriptions for each object.
+The \textbf{input} of our model is a point cloud $PC = \left[p_{in}; f_{in}\right] \in \mathbb{R}^{N \times \left(3 + F\right)}$ representing an indoor 3D scene.
+Here, $p_{in} \in \mathbb{R}^{N\times 3}$ is the absolute locations for each point, and $f_{in} \in \mathbb{R}^{N\times F}$ is additional input feature for each point, such as \textit{color}, \textit{normal}, \textit{height}, or \textit{multiview feature} introduced by \cite{chen2021scan2cap, chen2020scanrefer}.
+The expected \textbf{output} is a set of box-caption pairs $( \hat{B}, \hat{C} ) = \{(\hat{b}_1, \hat{c}_1), \cdots, (\hat{b}_K, \hat{c}_K)\}$, representing an estimation of $K$ distinctive objects in this 3D scene.
+
+Specifically, our system adopts 3DETR\cite{misra2021-3detr} encoder as our scene encoder, and transformer decoder to capture both object-object and object-scene interactions by the attention mechanism. 
+Then, we adopt two task-specific heads for object detection and caption generation. 
+
+\subsection{3DETR Encoder}
+Inspired by DETR\cite{carion2020detr}, 3DETR\cite{misra2021-3detr} has made a successful attempt at bringing full transformer architecture to the 3D object detection task, which removes many hard-coded design decisions as the popular VoteNet and PointNet++ modules in most two-stage methods.
+
+In 3DETR encoder, the input $PC$ is first tokenized with a set-abstraction layer\cite{qi2017pointnet++}.
+Then, point tokens are fed into a masked transformer encoder with a set-abstraction layer followed by another two encoder layers.
+We denote the encoded scene tokens as $\left[p_{enc}; f_{enc}\right] \in \mathbb{R}^{1,024 \times \left(3+256\right)}$.
+
+\subsection{Vote Query}
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{fig/subparts_vote_query.pdf}
+	\caption{
+        \textbf{Vote Query Generation.} 
+        Vote query $p_{vq}$ contains spatial bias ($\Delta p_{vote}$) to initial object queries ($p_{seed}$), which are sampled from the scene with farthest point sampling (FPS) and gathered feature $f_{vq}$ from the point cloud for each query.
+	\label{fig:vote-query-generation}
+\end{figure}
+
+Though 3DETR has achieved initial success in 3D object detection, 
+it suffers from certain limitations.
+ 3DETR proposes the box estimation around the query points (aka proposal centers) sampled from the scenes, which can make these boxes far away from real objects given the sparse object surfaces, resulting in slow convergence to capture discriminative object features with further miss detections.
+
+Prior works on fast convergence DETR models\cite{meng2021conditionaldetr,chen2022conditionaldetrv2,zhang2022dino} show that by injecting more structured bias to initialize object queries, such as anchor points or content-aware queries, accelerates training.
+Therefore, we propose the vote query, which introduces both 3D spatial bias and content-related information, for faster convergence and performance improvement. 
+
+More specifically, we reformulate the object queries in 3DETR into the format of vote query, as a composition of the embedding of the reference points and vote transformation around them. This helps to build the connection between the object query in 3DETR and the vote set prediction widely studied in VoteNet. 
+
+The detailed structure is shown in Figure \ref{fig:vote-query-generation}.
+Here, vote $\Delta p_{vote}$ is predicted from encoded scene token feature $f_{enc}$ with a \textbf{F}eed \textbf{F}orward \textbf{N}etwork (FFN) $FFN_{vote}$ that learns to shift the encoded points to objects' centers spatially:
+\begin{equation}
+    p_{vote} = p_{enc} + \Delta p_{vote} = p_{enc} + FFN_{vote}\left(f_{enc}\right).
+\end{equation}
+Then, we sample 256 points $p_{seed}$ from $p_{enc}$ with farthest point sampling, and locate each point's offset estimation for $p_{vq} = p_{seed} + \Delta p_{vote}$.
+Finally, we gather features from $(p_{enc}, f_{enc})$ for $p_{vq}$ with a set-abstraction layer\cite{qi2017pointnet++}, to formulate the vote query feature $f_{vq} \in \mathbb{R}^{256\times 256}$.
+We represent vote query as $(p_{vq}, f_{vq})$.
+
+Following 3DETR\cite{misra2021-3detr}, our model adopts an eight-layer transformer decoder, and the $i$-th layer's input query feature $f^{i}_{query}$ is calculated through
+\begin{equation}
+f^{i}_{query} = Layer_{i-1}\left(f^{i-1}_{query} + FFN\left(PE\left(p_{vq}\right)\right)\right),
+\end{equation}
+where $f^{0}_{query} = f_{vq}$, and $PE(\cdot)$ is the 3D Fourier positional encoding function\cite{tancik2020fourier}.
+Experiments in later sections demonstrate that:
+1) Vote query injects additional spatial bias to object detection and boosts the detection performance.
+2) Encoding features from the point cloud as initial queries accelerates convergence.
+
+\subsection{Parallel Decoding}
+\label{sec:parrallel decoding heads}
+We adopt two task-specific heads for simultaneous object detection and caption generation.
+The two task heads are agnostic to each other's output.
+
+\myparagraph{Detection Head.}
+Detecting objects in a 3D scene requires box corner estimation $\hat{B}$ and class estimation $\hat{S}$ (containing ``no object'' class) from each object query feature.
+Following 3DETR\cite{misra2021-3detr}, box corner estimation is reformulated into offset estimation from a query point to an object's center, and box size estimation.
+All subtasks are implemented by FFNs.
+In practice, the object localization head is shared through different layers in the decoder, following all existing works on DETR\cite{carion2020detr,misra2021-3detr,meng2021conditionaldetr,chen2022conditionaldetrv2}.
+
+\myparagraph{Caption Head.}
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{fig/subparts_caption_head.pdf}
+	\caption{
+	    \textbf{Dual-Clued Captioner(DCC).}
+	    DCC is a lightweight transformer based caption head that uses vote query feature $\mathcal{V}_{q}$ as caption perfix to identify the described region, and contextual features $\mathcal{V}_{s}$ surrounding the vote query to complement with more surrounding information for more descriptive caption generation.
+	}
+\end{figure}
+3D dense captioning requires attribute details on an object and its relation with its close surroundings.
+However, the vote query itself is agnostic to box predictions for the whole scene, and fails to provide adequate attribute and spatial relations for generating informative captions.
+Therefore, the main difficulty is how to leverage sufficient surrounding contextual information without confusing the caption head.
+To address the above issues, we propose \textbf{D}ual-\textbf{C}lued \textbf{C}aptioner(DCC), a lightweight transformer decoder-based caption head, for 3D dense captioning.
+DCC consists of a stack of 2 identical transformer decoder blocks, sinusoid position embedding, and a linear classification head.
+To generate informative captions, DCC receives two streams of visual clue $\mathcal{V}=(\mathcal{V}^{q}, \mathcal{V}^{s})$.
+Here, $\mathcal{V}^{q}$ is the last decoder layer's output feature of a vote query, and $\mathcal{V}^{s}$ is contextual information surrounding the absolute location of each vote query.
+When generating a caption for a proposal, we substitute the standard \textbf{S}tart \textbf{O}f \textbf{S}eqenece(`SOS') prefix with $\mathcal{V}^{q}$ of the described query identifying the object to be described following \cite{wang2022spacap3d}.
+Since the vote query is agnostic of actual neighbor object proposals because of the parallel detection branch, we introduce the vote query's $k_{s}$ nearest local context token features as its local surroundings $\mathcal{V}^{s}$ as keys for cross attention.
+During the evaluation, we generate captions through beam search with a beam size of 5.
+\subsection{Set prediction loss for 3D Dense Captioning}
+\label{sec:set-to-set-training}
+Our proposed Vote2Cap-DETR generates a set of paired box-caption proposals $(\hat{B}, \hat{C})$ for 3D dense captioning.
+It requires supervision for vote query ($\mathcal{L}_{vq}$), detection head ($\mathcal{L}_{det}$), and caption head ($\mathcal{L}_{cap}$).
+
+\myparagraph{Vote Query Loss.}
+We borrow vote loss from VoteNet\cite{qi2019votenet} as $\mathcal{L}_{vq}$, to help the vote query generation module learn to shift points $p_{enc}$ to an object's center:
+\begin{equation}
+    \mathcal{L}_{vq} = \frac{1}{M}
+        \sum_{i = 1}^{M} \sum_{j = 1}^{N_{gt}}
+            \left\|p_{vote}^{i} - cnt_{j}\right\|_{1}
+                \cdot 
+                \mathbb{I}\left\{p_{enc}^{i} \in I_j\right\}.
+\end{equation}
+Here, $\mathbb{I}(\cdot)$ is an indicator function that equals $1$ when the condition meets and $0$ otherwise, $N_{gt}$ is the number of instances in a 3D scene, $M$ is the size of $p_{vote}$, and $cnt_{j}$ is the center of $j$th instance $I_j$.
+
+\myparagraph{Detection Loss.}
+Following 3DETR\cite{misra2021-3detr}, we use the same Hungarian algorithm to assign each proposal with a ground truth label.
+Since 3D dense captioning is closely related to the object localization ability, we apply a larger weight on the gIoU loss component for total set loss\cite{misra2021-3detr}:
+\begin{equation}
+    \mathcal{L}_{set} = 
+        \alpha_1 \mathcal{L}_{giou}
+        + \alpha_2 \mathcal{L}_{cls}
+        + \alpha_3 \mathcal{L}_{center-reg} 
+        + \alpha_4 \mathcal{L}_{size-reg},
+\end{equation}
+where $\alpha_1=10$, $\alpha_2=1$, $\alpha_3=5$, $\alpha_4=1$ are set heuristically.
+The set loss $\mathcal{L}_{set}$ is applied to all $n_{dec-layer}$ layers in the decoder for better convergence.
+
+\myparagraph{Caption Loss.}
+Following the standard practice of image captioning, we train our caption head first with standard cross-entropy loss (MLE training), and then fine-tune it with \textbf{S}elf-\textbf{C}ritical \textbf{S}equence \textbf{T}raining (SCST)\cite{rennie2017scst}. 
+During MLE training, the model is trained to predict the $\left(t+1\right)$th word $c_i^{t+1}$, given the first $t$ words $c_i^{[1:t]}$ and the visual clue $\mathcal{V}$.
+The loss function for a $T$-length sentence is defined as:
+\begin{equation}
+    \mathcal{L}_{c_i} = \sum_{i=1}^{T} \mathcal{L}_{c_i}(t) = -\sum_{i=1}^{T} \log \hat{P}\left(c_i^{t+1} \vert \mathcal{V}, c_i^{[1:t]}\right).
+\end{equation}
+After the caption head is trained under word-level supervision, we fine-tune it with SCST.
+During SCST, the model generates multiple captions $\hat{c}_{1, \cdots,k}$ with a beam size of $k$, and another $\hat{g}$ through greedy search as a baseline.
+The loss function for SCST is defined as:
+\begin{equation}
+    \mathcal{L}_{c_i} = 
+    - \sum_{i=1}^{k}
+        \left(R\left(\hat{c}_{i}\right) - R\left(\hat{g}\right)\right) 
+        \cdot
+        \frac{1}{\left|\hat{c}_i\right|}\log \hat{P}\left(\hat{c}_i\vert \mathcal{V}\right)
+        .
+\end{equation}
+Here, the reward function $R\left(\cdot\right)$ is the CIDEr metric for caption evaluation, and the log probability of caption $\hat{c}_i$ is normalized by caption length $\left|\hat{c}_i\right|$, to encourage the model to treat captions with different length equally important.
+\myparagraph{Set to Set Training for 3D Dense Captioning.}
+We propose an easy-to-implement set-to-set training strategy for 3D dense captioning.
+Given a 3D scene, we randomly sample one sentence from the corpus for each annotated instance.
+Then, we assign language annotations to the corresponding number of proposals in the corresponding scene with the same Hungarian algorithm.
+During training, we average losses for captions $\mathcal{L}_{c_i}$ on all annotated instances in a batch, to compute the caption loss $\mathcal{L}_{cap}$.
+To balance losses for different tasks, our loss function for the whole system is defined as:
+\begin{equation}
+    \mathcal{L} = \beta_1\mathcal{L}_{vq} + \beta_2 \sum_{i=1}^{n_{dec-layer}}\mathcal{L}_{set} + \beta_3 \mathcal{L}_{cap},
+\end{equation}
+where $\beta_1 = 10$, $\beta_2 = 1$, $\beta_3 = 5$ are set heuristically.
+
+
+Experiments
+\label{sec:experiments}
+We first present the datasets, metrics, and implementation details for 3D dense captioning (section \ref{subsec:datasets,metric,implementation}).
+Then, we provide comparisons with all state-of-the-art methods (section \ref{subsec:comparison with existing}).
+We also provide studies on the effectiveness of different parts in our model (section \ref{subsec:ablation}).
+Finally, we visualize several qualitative results to address the effectiveness of our method (section \ref{subsec:qualitative}).
+
+\subsection{Datasets, Metrics, and Implementation Details}
+\label{subsec:datasets,metric,implementation}
+
+\myparagraph{Datasets}.
+We report results on two commonly used datasets, ScanRefer \cite{chen2020scanrefer} and Nr3D\cite{achlioptas2020referit3d}, both of which are built on 3D scenes from ScanNet\cite{dai2017scannet}.
+ScanNet\cite{dai2017scannet} contains 1,201 indoor 3D scenes for training and 312 for validation.
+ScanRefer/Nr3D contains 36,665/32,919 free-form language annotations describing 7,875/4,664 objects from 562/511 3D scenes for training, and evaluates on 9,508/8,584 sentences for 2,068/1,214 objects from 141/130 3D scenes.
+
+\myparagraph{Evaluation Metrics}.
+Following \cite{chen2021scan2cap,cai20223djcg,jiao2022more,wang2022spacap3d}, we first apply NMS on object proposals to drop duplicate object predictions.
+Each object proposal is a box-sentence pair $(\hat{b}_i, \hat{c}_i)$, containing box corner prediction $\hat{b}_i$ and generated sentence $\hat{c}_i$.
+Then, each instance is assigned an object proposal with the largest IoU among the remaining proposals.
+Here, we use $(b_i, C_i)$ to represent an instance's label, where $b_i$ is a box corner's label and $C_i$ is the corpus containing all caption annotations for this instance.
+To jointly evaluate the model's localization and caption generation capability, we adopt the $m@kIoU$ metric\cite{chen2021scan2cap}:
+\begin{equation}
+    m@kIoU=\frac{1}{N}\sum_{i=1}^{N} m\left(\hat{c}_i, C_i\right) \cdot \mathbb{I}\left\{IoU\left(\hat{b}_i, b_i\right) \ge k\right\}.
+\label{eq:m@kIoU}
+\end{equation}
+Here, $N$ is the number of total annotated instances in the evaluation dataset, and $m$ could be any metric for natural language generation, such as CIDEr\cite{vedantam2015cider}, METEOR\cite{banerjee2005meteor}, BLEU-4\cite{papineni2002bleu}, and ROUGE-L\cite{lin2004rouge}.
+
+\myparagraph{Implementation Details}.
+We offer implementation details of different baselines. 
+``w/o additional 2D'' means the input $\mathcal{PC}\in \mathbb{R}^{40,000 \times 10}$ contains absolute location as well as \textit{color}, \textit{normal} and \textit{height} for $40,000$ points representing a 3D scene.
+``additional 2D'' means we replace color information with $128$-dimensional \textit{multiview} feature extracted by ENet\cite{chen2020hgnet} from 2D images following \cite{chen2021scan2cap}.
+
+We first pre-train the whole network without the caption head, on ScanNet\cite{dai2017scannet} detection dataset with ScanRefer\cite{chen2020scanrefer} categories for $1,080$ epochs (about 163k iterations, 34 hours), using the AdamW optimizer\cite{loshchilov2017AdamW} with a learning rate decaying from $5\times 10^{-4}$ to $10^{-6}$ by a cosine annealing scheduler, a weight decay of $0.1$, a gradient clipping of $0.1$, and a batch size of $8$ following \cite{misra2021-3detr}.
+Then, we load the pre-trained detector, and train our caption head with MLE loss for another 720 epochs (51k/46k iterations for ScanRefer/Nr3D, 11/10 hours).
+To prevent overfitting, we fix the learning rate of the detector as $10^{-6}$, and set that of the caption head decaying from $10^{-4}$ to $10^{-6}$ using another cosine annealing scheduler.
+Due to the high memory cost of SCST, we tune the caption head with a batch size of 2 and freeze the detector for 180 epochs (50k/46k iterations for ScanRefer/Nr3D, 14/11 hours) with a fixed learning rate of $10^{-6}$.
+We evaluate the model every $2,000$ iterations during training for consistency with existing works\cite{chen2021scan2cap,wang2022spacap3d}, and all experiments mentioned above are conducted on a single RTX3090 GPU.
+
+\subsection{Comparison with Existing Methods}
+\label{subsec:comparison with existing}
+\begin{table*}[htbp]
+    \centering
+    \resizebox{\linewidth}{!}{
+    \begin{tabular}{cccccccccccccccccccccc}
+    \toprule
+    \multirow{3}{*}{Method} & \multirow{3}{*}{$\mathcal{L}_{des}$} &  & \multicolumn{9}{c}{w/o additional 2D input}                                                                          &  & \multicolumn{9}{c}{w/ additional 2D input}                                                                            \\
+                            &                                      &  & \multicolumn{4}{c}{IoU = 0.25}                          &  & \multicolumn{4}{c}{IoU = 0.50}                          &  & \multicolumn{4}{c}{IoU = 0.25}                          &  & \multicolumn{4}{c}{IoU = 0.50}                          \\ \cline{4-7} \cline{9-12} \cline{14-17} \cline{19-22} 
+                            &                                      &  & C$\uparrow$ & B-4$\uparrow$ & M$\uparrow$ & R$\uparrow$ &  & C$\uparrow$ & B-4$\uparrow$ & M$\uparrow$ & R$\uparrow$ &  & C$\uparrow$ & B-4$\uparrow$ & M$\uparrow$ & R$\uparrow$ &  & C$\uparrow$ & B-4$\uparrow$ & M$\uparrow$ & R$\uparrow$ \\ \hline
+    Scan2Cap\cite{chen2021scan2cap}                & \multirow{7}{*}{MLE}                 &  & 53.73       & 34.25         & 26.14       & 54.95       &  & 35.20       & 22.36         & 21.44       & 43.57       &  & 56.82       & 34.18         & 26.29       & 55.27       &  & 39.08       & 23.32         & 21.97       & 44.78       \\
+    MORE\cite{jiao2022more}                    &                                      &  & 58.89       & 35.41         & 26.36       & 55.41       &  & 38.98       & 23.01         & 21.65       & 44.33       &  & 62.91       & 36.25         & 26.75       & 56.33       &  & 40.94       & 22.93         & 21.66       & 44.42       \\
+    SpaCap3d\cite{wang2022spacap3d}   &                                      &  & 58.06       & 35.30         & 26.16       & 55.03       &  & 42.76       & 25.38         & 22.84       & 45.66       &  & 63.30       & 36.46         & 26.71       & 55.71       &  & 44.02       & 25.26         & 22.33       & 45.36       \\
+    3DJCG\cite{cai20223djcg}                   &                                      &  & 60.86       & \textbf{39.67}         & 27.45       & 59.02       &  & 47.68       & 31.53         & 24.28       & 51.80       &  & 64.70       & \textbf{40.17}     & 27.66       & \textbf{59.23}       &  & 49.48       & 31.03         & 24.22       & 50.80       \\
+    D3Net\cite{chen2021d3net}         &                                      &  & -           & -             & -           & -           &  & -           & -             & -           & -           &  & -           & -             & -           & -           &  & 46.07       & 30.29         & 24.35       & 51.67       \\
+    Ours                    &                                      &  & \textbf{71.45}       & 39.34         & \textbf{28.25}       & \textbf{59.33}                                                 &  & \textbf{61.81}       & \textbf{34.46}         & \textbf{26.22}       & \textbf{54.40}                                                 &  & \textbf{72.79}       & 39.17         & \textbf{28.06}       & \textbf{59.23}                                                 &  &      \textbf{59.32}       & \textbf{32.42}         & \textbf{25.28}            & \t
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

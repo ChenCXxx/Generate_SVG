@@ -1,0 +1,262 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+Named Entity Recognition (NER) is a essential research area in Natural Language Understanding (NLU). Its purpose is to assign each token in a sequence with multiple entity types or non-entity type~\cite{ma2016end}. Recently, the advent of Pre-training Language Models (PLMs)~\cite{kenton2019bert} has ushered NER into a new epoch. Conventionally, NER operates within a paradigm where tokens are classified into some fixed entity types (such as Organization, Person, etc.), and the NER model undergoes a one-time learning process. 
+However, a more realistic scenario calls for the NER model to continually identify novel entity types as they emerge, without the need for a complete retraining. This paradigm, known as Continual Named Entity Recognition (CNER), has gained substantial research attention due to its promising practical applications~\cite{monaikul2021continual,zheng2022distilling}. A case in point is voice assistants like Siri and Xiao Ai, which are frequently required to extract new entity types (such as Genre, Actor) to understand new user intents (for example, GetMovie).
+
+\begin{figure}[t!]
+\centering
+  \includegraphics[width=1\linewidth]{figs/motivation.pdf} 
+    \caption{A simplified CNER example, where \textbf{FL} and \textbf{CL} denote Full ground-truth Labels and Current ground-truth Labels, respectively. Old entity types (such as \textcolor{green}{[ORG]} (\texttt{Organization}), \textcolor{red}{[PER]} (\texttt{Person})) and future entity types (such as \textcolor{gray}{[DATE]} (\texttt{Date})) are masked as \textcolor{black}{[O]} (\texttt{the non-entity type}) at the current step $t$ where \textcolor{orange}{[GPE]} (\texttt{Countries}) is the current entity type to be learned, causing the semantic shift problem of the non-entity type (the second row \textbf{CL}). 
+    }
+\label{fig:motivation}
+\end{figure}
+
+Deep learning approaches to CNER encounter two primary challenges. The first one is common to all continual learning methods, known as catastrophic forgetting~\cite{robins1995catastrophic,mccloskey1989catastrophic,goodfellow2013empirical,kirkpatrick2017overcoming}. This refers to the tendency of neural networks to forget previously acquired knowledge when learning new information. 
+Existing CNER methods~\cite{monaikul2021continual,xia2022learn,zheng2022distilling} often resort to the widely employed technique of knowledge distillation~\cite{hinton2015distilling} to tackle catastrophic forgetting. However, these methods meticulously extract the output probabilities for previous entity types from the old model and transfer them to the new model. Consequently, they tend to imbue the model with excessive stability (\emph{i.e.}, retention of old information) at the expense of plasticity (\emph{i.e.}, acquisition of new information).
+The second one is specific to CNER, involving the semantic shift of the non-entity type. In the conventional NER paradigm, tokens are marked as the non-entity type, indicating that they do not belong to any entity type. In contrast, in the CNER paradigm, tokens marked as the non-entity type imply that they do not belong to any of the current entity types. This implies that the non-entity type may encompass: the true non-entity type, previously learned old entity types, or future ones not yet encountered.
+As depicted in Figure~\ref{fig:motivation} (the second row \textbf{CL}), the old entity types \texttt{Organization} and \texttt{Person} (learned in the prior steps such as $t$-$1$, $t$-$2$, etc.) as well as the future entity type \texttt{Date} (will be learned in the future steps such as $t$+$1$, $t$+$2$, etc.) are all marked as the non-entity type at the current step $t$.
+Lacking mechanisms to differentiate tokens that pertain to previous entity types from the authentic non-entity type, this semantic shift could worsen catastrophic forgetting.
+To our knowledge,~\citeauthor{zheng2022distilling} were the first to recognize the old entity types contained within the non-entity type using the old model to distill causal effect. However, they don't sufficiently handle recognition errors by the old model.
+In this paper, we present a novel approach named CPFD, an acronym for Confidence-based pseudo-labeling and Pooled Features Distillation, which utilizes the old model in two significant ways to address the aforementioned challenges inherent in CNER.
+Firstly, we introduce a pooled features distillation loss that strikes a judicious trade-off between stability and plasticity, thus effectively alleviating catastrophic forgetting. These features are grounded in the attention weights learned by PLMs, capturing crucial linguistic knowledge necessary for the NER task, including coreference and syntax information~\cite{clark2019does}.
+Secondly, we develop a confidence-based pseudo-labeling strategy to specifically identify previous entity types within the current non-entity type for classification, mitigating the problem of semantic shift. To better reduce the recognition errors from the old model, we employ entropy as a measure of uncertainty and the median entropy as a confidence threshold, retaining only those pseudo labels where the old model exhibits sufficient confidence.
+Furthermore, we introduce an adaptive re-weighting type-balanced learning strategy to handle the biased distribution between new and old entity types that occurs post pseudo-labeling. This approach adaptively assigns different weights to the tokens of different types based on the number of tokens. Our contributions can be summarized as follows:
+\begin{itemize}
+\item We design a pooled features distillation loss to alleviate catastrophic forgetting by retaining linguistic knowledge and establishing a suitable balance between stability and plasticity.
+
+\item We develop a confidence-based pseudo-labeling strategy to better recognize previous entity types for the current non-entity type tokens and deal with the semantic shift problem.
+To cope with the imbalanced type distribution, we propose an adaptive re-weighting type-balanced learning strategy for CNER.
+\item Extensive results on ten CNER settings of three datasets indicate that our CPFD achieves remarkable improvements over the existing State-Of-The-Art (SOTA) approaches with an average gain of $6.3$\% and $8.0$\% in Micro and Macro F1 scores, respectively.
+\end{itemize}
+
+
+
+
+Related Work
+
+\paragraph{Continual Learning} learns continuous tasks without reducing performance on previous tasks~\cite{chen2018lifelong,dong2022federated,dong2023federated}. We divide existing continual learning methods into memory-based, dynamic architecture-based, and regularization-based. Memory-based methods~\cite{lopez2017gradient,rebuffi2017icarl,shin2017continual} learn a new task by integrating the saved or generated old samples into the current training samples. Dynamic architecture-based methods~\cite{mallya2018packnet,rosenfeld2018incremental,yoon2018lifelong} dynamically extend the model architecture to learn new tasks. Regularization-based methods impose constraints on network weights~\cite{aljundi2018memory,kirkpatrick2017overcoming,zenke2017continual}, intermediary features~\cite{hou2019learning}, or output probabilities~\cite{li2017learning,dong2023heterogeneous} for relieving catastrophic forgetting.
+\paragraph{CNER} Traditional NER focuses on the development of various deep learning models aimed at extracting entities from unstructured text~\cite{li2020survey}. Recently, PLMs have been widely utilized in NER and have achieved SOTA performance~\cite{kenton2019bert,liu2019roberta}. However, most existing methods are designed to recognize a fixed set of predefined entity types. In response, CNER incorporates the continual learning paradigm with traditional NER~\cite{zhang2023decomposing,ma2023learning,zhang2023rdp}. ExtendNER~\cite{monaikul2021continual} explores the application of knowledge distillation to CNER, wherein the new model learns to fit the classifier logits of the old model. L\&R~\cite{xia2022learn} offers a `learn-and-review' framework for CNER. 
+The learning stage mirrors ExtendNER, while the reviewing stage generates synthetic samples of previous entity types to enhance the current dataset. 
+CFNER~\cite{zheng2022distilling} introduces a causal framework for CNER and distills causal effects from the non-entity type.
+In spite of significant advancements, these methods strictly distill the output probabilities for previous types from the old model into the new model, resulting in excessive stability but limited plasticity in the models. Moreover, these approaches do not adequately address the semantic shift problem. CFNER employs the old model to recognize non-entity type tokens belonging to previous entity types for distilling causal effect and utilizes a curriculum learning strategy to mitigate recognition error. However, this curriculum learning strategy requires the manual pre-definition of numerous hyper-parameters, limiting its applicability and the effect of error reduction.
+
+In contrast, we propose a pooled features distillation loss. This retains crucial linguistic knowledge embedded within attention weights and strikes a suitable balance between the stability and plasticity of the model, thus more efficiently mitigating catastrophic forgetting issue. Moreover, we design a confidence-based pseudo-labeling strategy for classification. This strategy employs median entropy as the confidence threshold, eliminating the need for manually predefining any hyper-parameters, better reducing the recognition error from the old model, and dealing with the semantic shift problem.
+
+
+
+
+Preliminary
+
+CNER aims to train a model across $t=1,..., T$ steps, progressively learning an expanding set of entity types. Each step has its unique training set $\mathcal{D}_t$, comprising multiple pairs $(X^t, \bm{Y}^t)$, where $X^t$ represents an input token sequence with a length of $|X^t|$ and $\bm{Y}^t$ represents the corresponding ground truth label sequence encoded in a one-hot format. Notably, $\bm{Y}^t$ only includes labels for the current entity types $\mathcal{E}^t$, with all other labels (for example, future entity types $\mathcal{E}^{t+1:T}$ or potential old entity types $\mathcal{E}^{1:t-1}$) collapsed into the non-entity type $e_{o}$. At step $t$ ($t$>$1$), considering the old model $\mathcal{M}_{t-1}$ as well as the current training set $\mathcal{D}_t$, our objective is to update a novel model $\mathcal{M}_t$ capable of recognizing entities from all types seen thus far, represented by $\bigcup^{t}_{i=1}\mathcal{E}^i$.
+
+
+
+Method
+
+
+In the above formulation, we pinpoint two significant challenges in CNER. The first one is the issue of catastrophic forgetting~\cite{french1999catastrophic}, which implies that the neural network may entirely and abruptly forget previous entity types $\mathcal{E}^{1:t-1}$ when learning the current types $\mathcal{E}^t$. This issue is further amplified by the second challenge: semantic shift. At step $t$, tokens labeled as the non-entity type are intrinsically ambiguous, as they could include the true non-entity type, previously learned old entity types, or as-yet-unseen future entity types. To address these challenges in CNER, we propose a novel CPFD method, which takes advantage of the previous model in two ways, shown in Figure~\ref{fig:bigpicture}.
+
+ \begin{figure*}[t]
+\centering 
+  \includegraphics[width=0.95\linewidth]{figs/bigfig.pdf}
+  \caption{Our CPFD method aims to learn a NER model within a continual learning paradigm, where old entity types are collapsed into the non-entity type in the current step. 
+  We constitute a suitable balance between stability and plasticity by pooled features distillation loss to prevent catastrophic forgetting and generate high-quality pseudo-labels from old predictions by a confidence-based pseudo-labeling strategy to deal with the semantic shift problem.}
+\label{fig:bigpicture}
+\end{figure*}
+\subsection{Pooled Features Distillation}\label{pfd}
+Recent studies~\cite{clark2019does} suggest that attention weights learned by PLMs can encapsulate rich linguistic knowledge, including coreference and syntactical information, both critical to NER. In light of this, we first propose a feature distillation loss designed to encourage the transfer of linguistic knowledge contained within attention weights from the previous model to the new model, formulated as follows:
+ \begin{equation}
+    \mathcal{L}_{\text{FD}} = \sum^{{K}}_{k=1} \sum^{{|X^t|}}_{i=1}\sum^{{|X^t|}}_{j=1} \Bigg|\Bigg|\bm{A}^{t}_{\ell,k,i,j} - \bm{A}^{t-1}_{\ell,k,i,j}\Bigg|\Bigg|^2
+    \label{fd}
+ \end{equation}
+where $\bm{A}^t_{\ell}$ and $\bm{A}^{t-1}_{\ell}\in\mathbb{R}^{K\times |X^t|\times |X^t|}$ correspond to the attention weights of layer $\ell$ for $\mathcal{M}_{t-1}$ and $\mathcal{M}_{t}$ respectively, $\ell=1,...,L$, with $K$ standing for the count of attention heads.
+However, both the output probabilities distillation found in prior CNER methods~\cite{monaikul2021continual,xia2022learn,zheng2022distilling} and our feature distillation delineated in Equation (\ref{fd}) can be considered rigid losses. This approach compels $\mathcal{M}_t$ to strictly align with the output probabilities or attention weights found in $\mathcal{M}_{t-1}$. This practice often results in an overabundance of stability (\emph{i.e.}, preservation of prior knowledge), consequently impairing its plasticity (\emph{i.e.}, ability to assimilate new knowledge).
+Contemporary studies further endorse the notion that the distillation operation ought to establish a balance between stability and plasticity~\cite{DBLP:conf/eccv/DouillardCORV20,DBLP:conf/cvpr/DouillardCDC21,pelosin2022towards,kurmi2021not}. 
+To this goal, we incorporate a pooling operation into our proposed loss, thus permitting a level of plasticity by consolidating the pooled dimensions~\cite{DBLP:conf/eccv/DouillardCORV20,pelosin2022towards}. The reasoning for this approach is that the minimal possible plasticity imposes an absolute similarity between the old and new model, whereas increased plasticity relaxes this definition of similarity. Pooling can lessen this similarity, and more aggressive pooling can offer a greater degree of freedom. 
+
+By pooling the sequence dimensions, we derive a more permissive loss that preserves only the head dimension, formulated as follows:
+ \begin{equation}
+    \mathcal{L}_{\text{PFD-lax}} = \sum^{{K}}_{k=1} \Bigg|\Bigg|\sum^{{|X^t|}}_{i,j=1}\bm{A}^{t}_{\ell,k,i,j} - \sum^{{|X^t|}}_{i,j=1}\bm{A}^{t-1}_{\ell,k,i,j}\Bigg|\Bigg|^2
+    \label{lax}
+ \end{equation}
+
+Our proposed pooling-based framework facilitates the formulation of a more flexible feature distillation loss, striking an improved balance between plasticity and stability. Based on Equation (\ref{lax}), we can moderately sacrifice plasticity to enhance stability through less aggressive pooling, achieved by aggregating statistics across only one of the head and sequence dimensions:
+ \begin{equation}
+ \begin{aligned}
+    \mathcal{L}_{\text{PFD}} &= \sum^{{|X^t|}}_{i=1}\sum^{{|X^t|}}_{j=1} \Bigg|\Bigg|\sum^{{K}}_{k=1}\bm{A}^{t}_{\ell,k,i,j} - \sum^{{K}}_{k=1}\bm{A}^{t-1}_{\ell,k,i,j} \Bigg|\Bigg|^2\\
+    &+ \sum^{{K}}_{k=1}\sum^{{|X^t|}}_{j=1} \Bigg|\Bigg|\sum^{{|X^t|}}_{i=1}\bm{A}^{t}_{\ell,k,i,j} - \sum^{{|X^t|}}_{i=1}\bm{A}^{t-1}_{\ell,k,i,j} \Bigg|\Bigg|^2\\
+    & + \sum^{{K}}_{k=1}\sum^{{|X^t|}}_{i=1} \Bigg|\Bigg|\sum^{{|X^t|}}_{j=1}\bm{A}^{t}_{\ell,k,i,j} - \sum^{{|X^t|}}_{j=1}\bm{A}^{t-1}_{\ell,k,i,j} \Bigg|\Bigg|^2\\
+ \end{aligned}
+ \end{equation}
+$\mathcal{L}_{\text{PFD}}$ achieves an appropriate balance between excessive rigidity (as demonstrated by Equation (\ref{fd})) and extreme leniency (as shown in Equation (\ref{lax})).
+ 
+
+
+
+
+
+
+
+\subsection{Confidence-based Pseudo-labeling}
+
+As previously noted, tokens marked as the non-entity type at step $t$ might actually belong to the authentic non-entity type, previous entity types, or future entity types. Simply categorizing these tokens as the non-entity type could intensify catastrophic forgetting. 
+To tackle this issue of semantic shift linked to the non-entity type, we design a pseudo-labeling strategy~\cite{lee2013pseudo,DBLP:conf/cvpr/DouillardCDC21}. Specifically, we utilize the predictions of old model for non-entity type tokens as indications of their true entity types, especially whether they are related to any of the previously acquired types.
+
+Formally, we represent the cardinality of the current entity types with $E^t = \text{card}(\mathcal{E}^t)$. We denote the current model's predictions, encompassing the true non-entity type, all the old entity types, and the current ones, with $\bm{\widehat{Y}}^t\in\mathbb{R}^{|X^t|\times(1+E^1+...+E^t)}$. We define $\bm{\widetilde{Y}}^t\in\mathbb{R}^{|X^t|\times(1+E^1+...+E^t)}$ as the target at step $t$, calculated using the one-hot ground-truth label sequence $\bm{Y}^t\in\mathbb{R}^{|X^t|\times(1+E^1+...+E^t)}$ in step $t$ and pseudo-labels extracted from the predictions of the old model $\bm{\widehat{Y}}^{t-1}\in\mathbb{R}^{|X^t|\times(1+E^1+...+E^{t-1})}$. The process is described as follows:
+\begin{equation}
+\footnotesize
+\bm{\widetilde{Y}}^t_{i,e}= \mkern-5mu \left\{\begin{array}{ll}
+\mkern-10mu 1 \mkern-27mu & \ \ \ \ \text {if}\ \ \bm{Y}^{t}_{i,e_{o}}=0\ \ \&\ \ e = \argmax \limits_{e' \in \mathcal{E}^{t}}\ \bm{Y}^{t}_{i,e'} \\
+\mkern-10mu 1 \mkern-27mu & \ \ \ \ \text {if}\ \ \bm{Y}^{t}_{i,e_{o}}=1\ \ \&\ \ e = \mkern-8mu \argmax \limits_{e' \in e_o\cup\mathcal{E}^{1:t-1}} \mkern-6mu\ \ \bm{\widehat{Y}}^{t-1}_{i,e'} \\
+\mkern-10mu 0 \mkern-27mu & \ \ \ \ \text {otherwise}\\
+\end{array}\right.
+\label{eq:pseudo_bis}
+\end{equation}
+In other words, if a token is not marked as the non-entity type $e_{o}$, we replicate the ground truth label. Otherwise, we utilize the label predicted by the old model.
+This pseudo-labeling strategy enables the assignment of the actual semantic label to each token labeled as the non-entity type, provided the token belongs to any of the previous entity types.
+Nevertheless, labeling all non-entity type tokens as pseudo-labels can be unproductive, \emph{e.g.,} on uncertain tokens where the old model is likely to falter.
+Thus, this Vanilla Pseudo-Labeling (VPL) strategy inadvertently propagates errors from the previous model's incorrect predictions to the new model.
+
+
+Inspired by~\cite{saporta2020esl}, we propose a Confidence-based Pseudo-Labeling (CPL) strategy, designed to diminish the influence of label noises and effectively tackle the semantic shift problem. This strategy employs entropy as a measure of uncertainty, with the median entropy serving as the confidence threshold. Specifically, before embarking on learning step $t$, we initially input $\mathcal{D}_t$ into $\mathcal{M}_{t-1}$ for inference and calculate the entropy $u$ of the output distribution related to each non-entity type token.
+Subsequently, for each non-entity type token, we can categorize these tokens according to their predicted old type (which corresponds to the index of the largest output probability predicted by the previous model). This allows us to calculate the median entropy $\tau_e$ for old type $e\in e_o\cup\mathcal{E}^{1:t-1}$ within each group.
+Following this, we can modify Equation (\ref{eq:pseudo_bis}) as follows:
+\begin{equation}
+\footnotesize
+\bm{\widetilde{Y}}^t_{i,e}= \mkern-5mu \left\{\begin{array}{ll}
+\mkern-10mu 1 \mkern-27mu & \ \ \ \text {if}\ \ \bm{Y}^{t}_{i,e_{o}}=0\ \ \&\ \ e = \argmax \limits_{e' \in \mathcal{E}^{t}}\ \bm{Y}^{t}_{i,e'} \\
+\mkern-10mu 1 \mkern-27mu & \ \ \ \text {if}\ \ \bm{Y}^{t}_{i,e_{o}}=1\ \ \&\ \ e = \mkern-8mu \argmax \limits_{e' \in e_o\cup\mathcal{E}^{1:t-1}} \mkern-6mu\ \ \bm{\widehat{Y}}^{t-1}_{i,e'}\ \&\ u<\tau_e \\
+\mkern-10mu 0 \mkern-27mu & \ \ \ \text {otherwise}\\
+\end{array}\right.
+\label{eq:pseudo_better}
+\end{equation}
+where $u$ denotes the uncertainty of token $i$ as well as $\tau_e$ is a type-specific confidence threshold. Equation~(\ref{eq:pseudo_better}) only retains pseudo-labels where the previous model is ``\textit{confident}'' enough ($u<\tau_e$).
+Following the pseudo-labeling process, we find that the count of new-type tokens present in current sequences generally exceeds the count of pseudo-labeled old-type tokens. This type-imbalance issue typically skews the updated classifier towards new types. Inspired by~\cite{zhao2022rbc}, we introduce an Adaptive Re-weighting Type-balanced (ART) learning strategy that adaptively assigns varying weights to tokens of different types based on their quantity. Thus, the balanced pseudo-labeling cross-entropy loss can be expressed as follows:
+\begin{equation}
+    \mathcal{L}_{\text{balance-pseudo}}=- \frac{1}{|X^t|} \sum_{i}^{|X^t|} \eta_i \bm{\widetilde{Y}}^t_{i}\log \bm{\widehat{Y}}^t_{i}
+\label{eq:pseudo_loss}
+\end{equation}
+where $\eta_i$ denotes the weight of the token at the location $i$ in the sequence $X^t$, computed as follow:
+\begin{equation}
+\eta_i=\left\{
+\begin{aligned}
+&0.5 + \sigma(\frac{N^{\text{old}}}{N^{\text{new}}})\ \ \ \text{if}\ \ \bm{\widetilde{Y}}^t_{i}\in \mathcal{E}^{1:t-1} \\
+&1.0\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \text{otherwise}
+\end{aligned}
+\right.
+\end{equation}
+where $N^{\text{old}}$, $N^{\text{new}}$ and $\sigma(\cdot)$ are the number of tokens belonging to old entity types $\mathcal{E}^{1:t-1}$, the number of tokens belonging to the new entity types $\mathcal{E}^t$ and the sigmoid function, respectively.
+
+Finally, the total loss in CPFD is:
+\begin{equation}
+    \mathcal{L}(\Theta_t) = \underbrace{\strut \mathcal{L}_{\text{balance-pseudo}}}_\text{classification} + \lambda\underbrace{\strut \mathcal{L}_{\text{PFD}}}_\text{distillation}
+\label{eq:complete_loss}
+\end{equation}
+with $\lambda$ a hyper-parameter for balancing losses, and $\Theta_t$ is the set of learnable parameters for $\mathcal{M}_t$.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Experiments
+
+\subsection{Experimental Setup}
+
+\begin{table}[t]
+  \centering
+  \caption{The statistics for each dataset.}
+  \resizebox{1.0\linewidth}{!}{
+    \begin{tabular}{ccccc}
+    \toprule
+          & \multicolumn{1}{l}{\# Entity Type} & \# Sample  & \multicolumn{2}{c}{Entity Type Sequence (Alphabetical Order)} \\
+    \midrule\midrule
+    CoNLL2003 & 4     & 21k    & \multicolumn{2}{l}{\begin{tabular}[1]{l}LOCATION, MISC, ORGANISATION, PERSON\end{tabular}} \\
+    \midrule
+    I2B2  & 16    & 141k   & \multicolumn{2}{c}{\begin{tabular}[1]{l}AGE, CITY, COUNTRY, DATE, DOCTOR, HOSPITAL, \\  IDNUM, MEDICALRECORD, ORGANIZATION, \\PATIENT, PHONE, PROFESSION, STATE, STREET, \\USERNAME, ZIP\end{tabular}} \\
+    \midrule
+    OntoNotes5 & 18    & 77k   & \multicolumn{2}{c}{\begin{tabular}[1]{l}CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE,\\ LAW, LOC, MONEY, NORP, ORDINAL, ORG,\\ PERCENT, PERSON, PRODUCT, QUANTITY, TIME,\\ WORK\_OF\_ART\end{tabular}} \\
+    \bottomrule
+    \end{tabular}%
+    }
+  \label{tab:dataset_statistics}%
+\end{table}%
+
+To ensure fair comparisons with SOTA approaches, we follow the experimental setup outlined in CFNER~\cite{zheng2022distilling}.
+\paragraph{Datasets}
+
+We conduct the evaluation of CPFD using three widely adopted NER datasets: CoNLL2003~\cite{sang1837introduction}, I2B2~\cite{murphy2010serving}, and OntoNotes5~\cite{hovy2006ontonotes}. The statistics of these three datasets are specifically presented in Table~\ref{tab:dataset_statistics}.
+
+We divide the training set into disjoint slices, each corresponding to different continual learning steps, employing the same sampling algorithm as suggested in CFNER~\cite{zheng2022distilling}. Within each slice, we exclusively keep the labels belonging to the entity types under learn, while others are masked as the non-entity type.
+
+
+\begin{table*}[t]
+\centering
+\caption{Comparisons with baselines on I2B2 and OntoNotes5. The \textcolor{deepred}{\textbf{red}} denotes the highest result, and the \textcolor{blue}{\textbf{blue}} denotes the second highest result. The marker $\dagger$ refers to significant test $p$-$value < 0.05$ comparing with CFNER. $*$ represents results from re-implementation. Other baseline results are cited from CFNER~\cite{zheng2022distilling}.}
+\resizebox{0.90\linewidth}{!}{%
+\begin{tabular}{@{}cccccccccc@{}}
+\toprule
+ &  & \multicolumn{2}{c}{FG-1-PG-1} & \multicolumn{2}{c}{FG-2-PG-2} & \multicolumn{2}{c}{FG-8-PG-1} & \multicolumn{2}{c}{FG-8-PG-2} \\ \cmidrule(l){3-10} 
+\multirow{-2}{*}{Dataset} & \multirow{-2}{*}{Baseline} & Mi-F1  & Ma-F1  & Mi-F1  & Ma-F1  & Mi-F1  & Ma-F1  & Mi-F1  & Ma-F1  \\ \midrule
+ & FT & \cellcolor[HTML]{EFEFEF}17.43±0.54 & \cellcolor[HTML]{EFEFEF}13.81±1.14 &  \cellcolor[HTML]{EFEFEF}28.57±0.26 & \cellcolor[HTML]{EFEFEF}21.43±0.41 &  \cellcolor[HTML]{EFEFEF}20.83±1.78 & \cellcolor[HTML]{EFEFEF}18.11±1.66 &  \cellcolor[HTML]{EFEFEF}23.60±0.15 & \cellcolor[HTML]{EFEFEF}23.54±0.38\\
+ 
+ & PODNet & 12.31±0.35 & 17.14±1.03 & 34.67±2.65 & 24.62±1.76& 39.26±1.38 & 27.23±0.93 & 36.22±12.9 & 26.08±7.42\\
+
+ & LUCIR & \cellcolor[HTML]{EFEFEF}43.86±2.43 & \cellcolor[HTML]{EFEFEF}31.31±1.62 &  \cellcolor[HTML]{EFEFEF}64.32±0.76 & \cellcolor[HTML]{EFEFEF}43.53±0.59 &  \cellcolor[HTML]{EFEFEF}57.86±0.87 & \cellcolor[HTML]{EFEFEF}33.04±0.39 &  \cellcolor[HTML]{EFEFEF}68.54±0.27 & \cellcolor[HTML]{EFEFEF}46.94±0.63\\
+
+ & ST & 31.98±2.12 & 14.76±1.31 & 55.44±4.78 & 33.38±3.13 & 49.51±1.35 & 23.77±1.01 & 48.94±6.78 & 29.00±3.04\\
+    & $\text{ExtendNER}^{*}$ & \cellcolor[HTML]{EFEFEF}41.65±10.11 & \cellcolor[HTML]{EFEFEF}23.11±2.70 &  \cellcolor[HTML]{EFEFEF}67.60±1.15 &  \cellcolor[HTML]{EFEFEF}42.58±1.59 &  \cellcolor[HTML]{EFEFEF}45.14±2.91 &  \cellcolor[HTML]{EFEFEF}27.41±0.88 &  \cellcolor[HTML]{EFEFEF}56.48±2.41 & \cellcolor[HTML]{EFEFEF}38.88±1.38 \\
+
+ & ExtendNER & 42.85±2.86 & 24.05±1.35 & 57.01±4.14 & 35.29±3.38 & 43.95±2.01 & 23.12±1.79 & 52.25±5.36  & 30.93±2.77 \\
+
+
+  & $\text{CFNER}^{*}$ & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{64.79±0.26}} & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{37.79±0.65}} & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{72.58±0.59}} & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{51.71±0.84}} & \cellcolor[HTML]{EFEFEF}56.66±3.22 & \cellcolor[HTML]{EFEFEF}36.84±1.35 & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{69.12±0.94}} & \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{51.61±0.87}} \\
+
+ \multirow{-6}{*}{I2B2}& CFNER & 62.73±3.62 & 36.26±2.24 & 71.98±0.50 & 49.09±1.38 & \textcolor{blue}{\textbf{59.79±1.70}} & \textcolor{blue}{\textbf{37.30±1.15}} & 69.07±0.89 & 51.09±1.05 \\
+\cmidrule(l){2-10}
+
+ & \textbf{CPFD (Ours)} & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{74.19±0.95}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{48.34±1.45}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{78.19±0.58}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{56.04±1.22}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{74.75±1.35}}^{\dagger}$& \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{56.19±2.46}}^{\dagger}$& \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{81.05±0.87}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{65.04±1.13}}^{\dagger}$\\
+
+    & \textbf{Imp.} &  $\Uparrow$\textbf{9.40} &   $\Uparrow$\textbf{10.55} &   $\Uparrow$\textbf{5.61} &  $\Uparrow$\textbf{4.33} & $\Uparrow$\textbf{14.96} &   $\Uparrow$\textbf{18.89} &   $\Uparrow$\textbf{11.93} &  $\Uparrow$\textbf{13.43}\\
+
+ 
+\midrule
+
+ & FT & \cellcolor[HTML]{EFEFEF}15.27±0.26 & \cellcolor[HTML]{EFEFEF}10.85±1.11 &  \cellcolor[HTML]{EFEFEF}25.85±0.11 & \cellcolor[HTML]{EFEFEF}20.55±0.24 &  \cellcolor[HTML]{EFEFEF}17.63±0.57 & \cellcolor[HTML]{EFEFEF}12.23±1.08 &  \cellcolor[HTML]{EFEFEF}29.81±0.12 & \cellcolor[HTML]{EFEFEF}20.05±0.16\\
+ 
+ & PODNet & 9.06±0.56 & 8.36±0.57 & 19.04±1.08 & 16.93±0.85 & 29.00±0.86 & 20.54±0.91 & 37.38±0.26 & 25.85±0.29\\
+
+ & LUCIR & \cellcolor[HTML]{EFEFEF}28.18±1.15 & \cellcolor[HTML]{EFEFEF}21.11±0.84 &  \cellcolor[HTML]{EFEFEF}56.40±1.79 & \cellcolor[HTML]{EFEFEF}40.58±1.11 &  \cellcolor[HTML]{EFEFEF}66.46±0.46 & \cellcolor[HTML]{EFEFEF}46.29±0.38 &  \cellcolor[HTML]{EFEFEF}76.17±0.09 & \cellcolor[HTML]{EFEFEF}55.58±0.55\\
+
+ & ST & 50.71±0.79 & 33.24±1.06 & 68.93±1.67 & 50.63±1.66 & 73.59±0.66 & 49.41±0.77 & 77.07±0.62 & 53.32±0.63\\
+
+  & $\text{ExtendNER}^*$ & \cellcolor[HTML]{EFEFEF}51.36±0.77 & \cellcolor[HTML]{EFEFEF}33.38±0.98 & \cellcolor[HTML]{EFEFEF}63.03±9.39 & \cellcolor[HTML]{EFEFEF}47.64±5.15 & \cellcolor[HTML]{EFEFEF}73.65±0.19 & \cellcolor[HTML]{EFEFEF}50.55±0.56 & \cellcolor[HTML]{EFEFEF}77.86±0.10  & \cellcolor[HTML]{EFEFEF}55.21±0.51 \\
+  & ExtendNER & 50.53±0.86 & 32.84±0.84 & 67.61±1.53 & 49.26±1.49 & 73.12±0.93 & 49.55±0.90 & 76.85±0.77  & 54.37±0.57 \\
+  & $\text{CFNER}^*$ & \cellcolor[HTML]{EFEFEF}58.44±0.71 & \cellcolor[HTML]{EFEFEF}41.75±1.51 & 
+ \cellcolor[HTML]{EFEFEF}72.10±0.31 & 
+ \cellcolor[HTML]{EFEFEF}55.02±0.35 & 
+ \cellcolor[HTML]{EFEFEF}78.25±0.33 &
+ \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{58.64±0.42}} & 
+\cellcolor[HTML]{EFEFEF}80.09±0.37 & 
+ \cellcolor[HTML]{EFEFEF}\textcolor{blue}{\textbf{61.06±0.37}} \\
+ \multirow{-6}{*}{OntoNotes5} & CFNER & \textcolor{blue}{\textbf{58.94±0.57}} & \textcolor{blue}{\textbf{42.22±1.10}} & \textcolor{blue}{\textbf{72.59±0.48}} & \textcolor{blue}{\textbf{55.96±0.69}} & \textcolor{blue}{\textbf{78.92±0.58}} & 57.51±1.32 & \textcolor{blue}{\textbf{80.68±0.25}} & 60.52±0.84 \\
+
+\cmidrule(l){2-10}
+ & \textbf{CPFD (Ours)} & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{66.73±0.70}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{54.12±0.30}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{74.33±0.30}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{57.75±0.35}}^{\dagger}$ & \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{81.87±0.47}}^{\dagger}$& \cellcolor[HTML]{EFEFEF}$\textcolor{deepred}{\textbf{65.52±1.05}}^{\dagger}$& \cellcolor[HTML]{EFEFEF}$\textcolor{deepre
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

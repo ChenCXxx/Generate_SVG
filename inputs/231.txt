@@ -1,0 +1,332 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: On the Multi-turn Instruction Following for Conversational Web Agents
+
+% ArXiv ID: 2402.15057
+
+
+
+\maketitle
+\begin{abstract}
+Web agents powered by Large Language Models (LLMs) have demonstrated remarkable abilities in planning and executing multi-step interactions within complex web-based environments, fulfilling a wide range of web navigation tasks. Despite these advancements, the potential for LLM-powered agents to effectively engage with sequential user instructions in real-world scenarios has not been fully explored. 
+In this work, we introduce a new task of Conversational Web Navigation, which necessitates sophisticated interactions that span multiple turns with both the users and the environment, supported by a specially developed dataset named Multi-Turn Mind2Web (MT-Mind2Web).
+To tackle the limited context length of LLMs and the context-dependency issue of the conversational tasks, we further propose a novel framework, named self-reflective memory-augmented planning (Self-MAP), which employs memory utilization and self-reflection techniques. 
+Extensive experiments are conducted to benchmark the MT-Mind2Web dataset, and validate the effectiveness of the proposed method.\footnote{The dataset and code will be released via \url{https://github.com/magicgh/self-map}.}
+\end{abstract}
+
+\section{Introduction}
+A longstanding objective in artificial intelligence is to develop AI agents \cite{wooldridge1995intelligent} that can execute complex tasks, thereby minimizing human effort in routine activities. With the advent of Large Language Models (LLMs), LLM-powered agents \cite{ruc-agent-survey,fudan-agent-survey} showcase exceptional planning capabilities in performing multi-turn interactions with diverse environments, which contribute to various real-world problem-solving. As shown in Figure \ref{fig:example}(a), the web agent \cite{mind2web,webarena,webshop} is designed to interpret the states of a webpage and execute a series of actions using keyboard and mouse inputs. Its purpose is to accomplish the tasks defined in natural language, such as booking tickets, through multi-turn interactions with the web-grounded environment.
+
+
+\begin{figure}[t]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+\centering 
+\includegraphics[width=0.48\textwidth]{example.pdf}
+\caption{Illustrations of different problems.}
+\label{fig:example}
+\vspace{-0.3cm}
+\end{figure}
+
+Despite the proficiency in executing each individual instruction, the capability of interacting with multi-turn user instructions remains under-explored, which is crucial for applying LLM-powered agents onto real-world applications. 
+As the example shown in Figure \ref{fig:example}(c), during a conversational web navigation session, users tend to request follow-up or co-referencing instructions without repeating previous information. They may also  provide a succinct or brief instruction, which is similar to other conversation problems. 
+Motivated by recent efforts \cite{nips23-mtbench,llm-cis,iclr24-ppdpp} on the investigation of conversational capabilities in the interactions with human users for LLMs, we propose a novel task, named \textbf{Conversational Web Navigation}. It requires the multi-turn interaction capabilities with both users and environment. 
+In particular, we introduce a new dataset, named Multi-Turn Mind2Web (MT-Mind2Web).
+MT-Mind2Web is constructed by using the single-turn interactions from Mind2Web \cite{mind2web}, an expert-annotated web navigation dataset, as the guidance to construct conversation sessions. 
+
+In other conversational tasks, LLMs can answer conversational questions \cite{nips23-mtbench} by utilizing their inherent knowledge from pretrained data or retrieval techniques to assess external databases (Figure \ref{fig:example}(b)). Compared with these tasks, the conversation history in conversational web navigation contains both the previous user-agent and agent-environment interactions, as the instruction completion relies on the dynamic environment status. Therefore, the history context can be much longer and noisier than that in the traditional conversation problems. 
+
+
+
+In light of these challenges, we propose a novel framework, named self-reflective memory-augmented planning  (Self-MAP). This framework is designed  to maximize the utility of the limited memory space (\textit{i.e.}, input length limitation) of LLM-powered agents addressing the conversational web navigation problem. 
+Specifically, we first construct a memory bank using the conversational interaction history, where each memory snippet stores each interaction step at each conversation turn. To reduce the noise from previous interactions, we propose a multifaceted matching approach to retrieve memory snippets that are semantically relevant and have similar trajectories. 
+Furthermore, we design a reflection module to simplify the retrieved memory snippets by filtering out irrelevant information from the environment state. We then refine the retrieved memory snippets by generating reasoning rationales to enrich the memory information.  
+Finally, we plan the next action by utilizing the self-reflective memory. 
+
+To sum up, our contributions are as follows:
+
+
+\begin{itemize}[leftmargin=*]
+    \item To study the multi-turn instruction-following capability of web agents, we define the problem of conversational web navigation and introduce a novel dataset, namely MT-Mind2Web. 
+    \item We propose a self-reflective memory-augmented planning method (Self-MAP) that combines memory utilization and self-reflection for tackling the underlying challenges in the conversational web navigation task. 
+    \item We benchmark the MT-Mind2Web dataset with extensive baselines and provide comprehensive evaluations on different settings. Experimental results also validate the effectiveness of the proposed method. 
+\end{itemize}
+
+\section{Related Works}
+
+\paragraph{Web Agents}
+Evolving from web agents with simplified environment simulation \cite{icml17-webagent,iclr18-webagent,naacl21-webagent,webshop}, recent studies investigate web navigation problems under more practical and complex settings, including multi-domain \cite{mind2web}, real-time interactions \cite{webarena}, and visual UI understanding \cite{seeact}.  
+To handle these advanced web navigation problems, there has been increasing attention on building autonomous web agents powered by LLMs \cite{ruc-agent-survey,fudan-agent-survey}. 
+Various prompt-based methods have been proposed to enhance the LLM-powered web agents, such as recursive self-correction prompting \cite{nips23-rci}, code-based prompting \cite{adaplanner}, and trajectory-augmented prompting \cite{iclr24-trajectory}. 
+However, prompt-based methods typically fail to compete with fine-tuned methods \cite{webagent-htmlt5,mind2web} in advanced settings, such as Mind2Web. 
+In this work, we propose a new task, namely conversational web navigation, which requires multi-turn interaction capabilities with both users and the environment. 
+
+\begin{figure*}[t]
+\setlength{\abovecaptionskip}{2pt}   
+\setlength{\belowcaptionskip}{2pt}
+\centering 
+\includegraphics[width=\textwidth]{pipeline.pdf}
+\caption{Overall pipeline for MT-Mind2Web creation with examples. }
+\label{fig:pipeline}
+\vspace{-0.3cm}
+\end{figure*}
+
+\paragraph{Multi-turn Interactions with Environment}
+Interacting with the external environment enables LLM-powered agents to handle challenging tasks \cite{agentbench,ma2024agentboard}.  For example, agents can interact with a code-grounded environment to access databases or perform programming \cite{iclr24-Lemur,metagpt}, game-grounded environment to foster entertainment \cite{alfworld}, web-grounded environment to navigate webpages \cite{mind2web} or perform online shopping \cite{webshop}. 
+These works mainly focus on completing a standalone user instruction by planning a sequence of actions to interact with the environment. 
+Some latest studies \cite{mint,openagents} investigate the utilization of multi-turn user feedback for solving a given task. 
+In real-world applications, users may not always ask for the assistance for only a single task, while follow-up instructions and multi-turn requests are common during a conversation session. 
+
+
+
+\paragraph{Multi-turn Interactions with Users}
+Extensive studies demonstrate the exceptional capabilities of LLMs in seamless multi-turn interactions \cite{nips23-mtbench} with human users for completing various conversational tasks during a conversation session, such as  recommendation \cite{cikm23-llm-crs,recagent}, tutoring \cite{educhat,iclr24-ppdpp}, counseling \cite{chatpal}. 
+For instance, MT-Bench \cite{nips23-mtbench} is one of the most popular benchmarks for evaluating the multi-turn instruction-following ability of LLMs. It consists of 80 high-quality multi-turn questions ranging from 8 common instruction-following abilities, such as writing, roleplay, reasoning, etc. 
+However, these conversational tasks mainly rely on the inherent knowledge of LLMs or just perform a one-time request from the external environment for each turn, such as conversational information seeking \cite{llm-cis}, without the need to access the dynamic environment for multiple times. 
+
+
+
+\section{MT-Mind2Web Dataset}
+
+
+\subsection{Annotation \& Quality Control}
+Inspired by the typical construction process of existing conversation datasets, such as HybriDialogue~\cite{hybridialogue} from OTT-QA~\cite{ott-qa}, MMCoQA~\cite{mmconvqa} from MMQA~\cite{mmqa}, and PACIFIC \cite{pacific} from TAT-QA \cite{tat-qa}, we build the MT-Mind2Web dataset from the Mind2Web dataset \cite{mind2web} by using its single-turn interaction data as guidance for constructing conversation sessions. 
+In order to reuse the expert-annotated action sequences in Mind2Web for ensuring the system response quality, the conversation construction process mainly focuses on the user instructions. 
+In specific, the construction process contains three main steps: 
+
+\paragraph{1) Organize Conversation Sessions}
+Given the same context, \textit{i.e.,} the same domain and website in Mind2Web, set up a conversation session with consecutive topics from multiple individual task instructions. Two instructions that share the same entities or intents are regarded as talking about the same topic. As the example in Figure \ref{fig:pipeline}, both the original \textbf{Instruction 1} and \textbf{Instruction 2} from Mind2Web are concerning about a \textit{ticket booking} task upon the same \textit{Event} domain and the same \textit{TicketCenter} website, which can be naturally combined into a natural conversation session. 
+
+\paragraph{2) Decompose Complex Instructions}
+Some instructions in Mind2Web exhibit complex action sequences, which are not common in daily conversations. 
+On the other hand, complex instructions can serve as a good starting point for constructing follow-up instructions in multi-turn interactions. 
+To facilitate the decomposition of complex instructions, we employ human-AI collaborative annotation, since AI is more proficient in determining how long action sequences can be divided into multiple executable sub-sequences while humans can decompose the instruction into multi-turn instructions in a more natural way. 
+Specifically, we first employ ChatGPT for dividing the original instruction with complex action sequences into $N$ subtasks with corresponding action sub-sequences. Note that we set the target number of subtasks as $N=\lceil N'/4 \rceil$, where $N'$ is the number of actions in the original instruction. 
+The prompt for instructing ChatGPT to decompose action sequences is as follows:
+\begin{table}[h]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+    \centering
+    \begin{tabular}{p{0.47\textwidth}}
+    \hline
+    \footnotesize\texttt{Analyze the instruction and corresponding actions provided for <domain> website, organize these actions into <N> distinct steps.} \\
+    \hline
+    \footnotesize\texttt{\#\#\# Requirements} \\
+    \footnotesize\texttt{1. Review the instruction and related actions for completing a task on the specified website.} \\
+    \footnotesize\texttt{2. Divide actions into logical, sequential steps.} \\
+    \footnotesize\texttt{3. Format your response as a JSON array, with each object labeled as "step $i$" and containing an array of the sequential numbers of the actions that belong to each step.} \\
+    \hline
+    \footnotesize\texttt{\#\#\# Example} \\
+    \footnotesize\texttt{\{ "step 1": [1, 2, 3], "step 2": [...], ... \}} \\
+    \hline
+    \footnotesize\texttt{\#\#\# Instruction}  \\\footnotesize\texttt{<original instruction>} \\
+    \footnotesize\texttt{\#\#\# Actions} \\  \footnotesize\texttt{<original action sequences>} \\
+    \hline
+    \end{tabular}
+    \label{tab:prompt_decompose}
+\end{table}
+
+As the example in Figure \ref{fig:pipeline}, the \textbf{Action Sequence 1} is sequentially decomposed into two action sub-sequences, including \textbf{Action Sub-sequence 1-1} and \textbf{Action Sub-sequence 1-2}. 
+Then human annotators are asked to verify whether these sub-tasks are reasonable and executable. 
+If not, they can re-arrange the decomposition based on their experiences from navigating the webpages. Overall, the pass rate of ChatGPT in decomposing action sequences is 98.5\%. 
+
+\paragraph{3) Rewrite Conversational Instructions}
+We refine the original standalone instructions into conversational ones by using anaphora and ellipsis, especially when consecutive instructions within a conversation session involve the same entities or the same actions. 
+For example, \textbf{T2} uses \textit{one} to refer to the \textit{WWE ticket} mentioned in \textbf{T1}. 
+While \textbf{T3} shifts to another task with the same action of \textit{booking tickets}, the verb $book$ is omitted. 
+Similarly, the repeated content in \textbf{T3} is also omitted in \textbf{T4}. 
+
+\paragraph{Quality Verification}
+To ensure the quality of annotation in MT-Mind2Web, we conduct quality verification to validate the constructed conversations. 
+If any mistake or problem is found, \textit{e.g.}, the constructed conversation is incoherent, the annotator will be asked to fix it until the annotation passes the verification. 
+
+\subsection{Dataset Statistics}
+After the dataset creation, we obtain a total of 720 web navigation conversation sessions, which contain 3,525 corresponding instruction and action sequence pairs in total and an average of 5 turns of user-agent interactions in each conversation session. Following the evaluation settings in Mind2Web \cite{mind2web}, we also select and divide the test set into three subsets, including cross-task, cross-website, and cross-subdomain, for evaluating how well an agent can generalize across tasks, websites, and domains. In specific, we select 44 samples for cross-subdomain evaluation from "Digital" and "Hotel", 42 samples for cross-website evaluation from "redbox", "viator", "nfl", "exploretock", "rentalcars", "cabelas", "bookdepository”, and 34 samples for cross-task evaluation. 
+Then the remaining 600 samples are adopted as the training set. 
+We present the train/test split in Table \ref{tab:data}.  Compared to traditional web navigation and conversational tasks, the conversational history can be extremely longer, including both the multi-turn user-agent conversation history and the multi-turn agent-environment interaction history within each conversation turn. 
+
+
+
+\begin{table}[t]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+    \centering
+    \setlength{\tabcolsep}{1.5mm}{
+    \begin{adjustbox}{max width=0.47\textwidth}
+    \begin{tabular}{lrrrr}
+    \toprule
+    & \multirow{2}{*}{Train} & \multicolumn{3}{c}{Test (Cross-X)}  \\
+    \cmidrule(lr){3-5}
+    & & Task & Website & Subdomain \\
+    \midrule
+    \# Conversations  & 600 & 34 & 42 & 44 \\
+    \# Turns & 2,896 & 191 & 218 & 216  \\
+    Avg. \# Turn/Conv. & 4.83 & 5.62 & 5.19 & 4.91 \\
+    Avg. \# Action/Turn & 2.95 & 3.16 & 3.01 & 3.07 \\
+    Avg. \# Element/Turn & 573.8 & 626.3 & 620.6 & 759.4 \\
+    Avg. Inst. Length & 36.3 & 37.4 & 39.8 & 36.2 \\
+    Avg. HTML Length & 169K & 195K & 138K & 397K  \\
+    \bottomrule
+    \end{tabular}
+    \end{adjustbox}}
+    \caption{Statistics of the MT-Mind2Web dataset.}
+    \label{tab:data}
+    \vspace{-0.3cm}
+\end{table}
+
+\subsection{Problem Definition}
+We introduce the task of \textbf{Conversational Web Navigation}, where the agent engages in not only multi-turn interactions with the environment, but also conversational interactions with the user. 
+Given the conversational interaction history $C_t=\{q_1,A_1,...,A_{t-1},q_t\}$ where $A_i=\{a_i^1,a_i^2,...,a_i^k\}$ denotes the environment interaction history at each conversation turn, and the current environment state $E_t$ (\textit{e.g.}, HTML of the current webpage), the objective is to accurately predict the action sequence $A_t$ to accomplish the current user instruction $q_t$, which encompasses the target element for interaction and the operation. 
+
+\begin{figure}[t]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+\centering 
+\includegraphics[width=0.48\textwidth]{method.pdf}
+\caption{Overview of Self-MAP.}
+\label{fig:method}
+\vspace{-0.3cm}
+\end{figure}
+
+\section{Method}
+We introduce the Self-MAP framework, which combines memory-augmented planning with self-reflection. The overview of Self-MAP is presented in Figure \ref{fig:method}, consisting of three main components: Memory, Reflection, and Planning Modules.
+
+\subsection{Memory Module}
+The memory bank for conversational web agents is constructed by the conversational interaction history $C_t$, where each memory snippet can be represented by $M_t^k=\{q_t,A_t^{k-1},E_t^k,a_t^k\}$.  
+It requires a significant number of tokens to inject each memory snippet into the current running memory of the agent, which will be limited by the maximum input length of language models. 
+Meanwhile, some memory snippets, due to the irrelevance and inconsistency of their instructions and actions to the current environment setting, fail to provide useful guidance for the agent to predict the subsequent action. 
+As such, we introduce a multifaceted matching approach to retrieve the top-$K$ relevant snippets within the memory bank at the action level. 
+
+
+
+Formally, given an on-going conversational interaction trajectory $C_t^k = \{q_1, A_1, \ldots, q_t, A_t^{k-1}\}$, where $A_t^{k-1} = \{a_t^1, a_t^2, \ldots, a_t^{k-1}\}$ represents the trajectory of agent-environment interactions at the current conversation turn, multifaceted matching  constructs the query using both the user instruction and the present agent action sequence $(q_t, A_t^{k-1})$ to retrieve relevant memory snippets from the memory bank. In this manner, the query encodes not only the semantic relevance of the current instruction to the conversation context but also the similarity of the action trajectory to the historical interactions. 
+Specifically, we adopt OpenAI's \texttt{text-embedding-ada-002} as the embedding method to transform the query and the memory snippets into vector representations. Then we compute the cosine similarity in the embedding space for retrieving top-$K$ memory snippets. 
+
+
+
+
+\subsection{Reflection Module}
+Due to the limitation of on-going memory space (\textit{i.e.}, input length limitation) for LLM-powered agents, we design a reflection module to maximize the utility of the limited memory space, which involves two steps: 1) Memory Simplification, and 2) Memory Refinement. 
+
+\paragraph{Memory Simplification}
+In the candidate generation process in the \textsc{MindAct} framework \cite{mind2web}, a small pre-trained LM (\textit{e.g.}, DeBERTa \cite{deberta}) is adopted for ranking the top-$N$ candidate DOM elements from the environment state (\textit{i.e.}, HTML) that are related to the instruction and the current step for improving the final action prediction. 
+To simplify each memory snippet, we apply the same process to remove task-irrelevant and noisy elements from the environment state, thereby freeing up memory space for more extensive conversation history retention. 
+Afterwards, we denote the simplified environmental state $E^k_t$ in the memory snippet $M^k_t$ as $e^k_t$. 
+
+
+
+
+\paragraph{Memory Refinement}
+
+Drawing inspiration from self-reflection techniques \cite{reflexion,self-rag}, we design a specialized Memory Refinement approach for the domain of conversational web navigation. This module diverges from traditional self-reflection methods, as it does not collect incorrect trajectories for the model to analyze. This is primarily due to the constraints of a static evaluation setting and the limited context length to present the full webpage. Instead, we leverage the exceptional reasoning capability of LLMs to generate intermediate reasoning rationale as a supervised signal to enrich the memory information. For each retrieved memory snippet $(q_t, A_t^{k-1}, a_t^k)$, we prompt the LLM to generate an in-depth rationale $r_t^k$ explaining the reason for the decision-making process of the next action.  
+
+
+\begin{table*}[t]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+\centering
+\label{tab:overall}
+\setlength{\tabcolsep}{1mm}{
+    \begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lcccccccccccc}
+\toprule
+ & \multicolumn{4}{c}{Cross-Task} & \multicolumn{4}{c}{Cross-Website} & \multicolumn{4}{c}{Cross-Subdomain} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}\cmidrule(lr){10-13}
+ & Ele. Acc & Op. F1 & SSR & TSR & Ele. Acc & Op. F1 & SSR & TSR & Ele. Acc & Op. F1 & SSR & TSR \\
+\midrule
+DeBERTa \cite{deberta} & 36.8 & - & - & - & 31.7 & - & - & - & 27.7 & - & - & - \\
+\textsc{MindAct} (GPT-3.5) \cite{mind2web} & 4.3 & 27.6 & 1.9 & 1.0 & 6.7 & 22.2 & 2.1 & 1.7 & 4.0 & 22.9 & 1.5 & 1.1 \\
+\midrule
+    \textsc{MindAct} (Flan-T5$_{\text{base}}$)  \cite{mind2web}  & 43.2 & 79.1 & 36.6 & 14.2 & 38.8 & 69.4 & 29.2 & 15.2 & 41.9 & 77.2 & 35.5 & 15.7 \\
+\textsc{MindAct} + CAR  \cite{qr} & 47.8 & 78.8 & 41.4 & 16.1 & 37.0 & 67.5 & 32.2 & 9.6 & 41.2 & 75.3 & 35.4 & 13.2 \\
+\textsc{MindAct} + Fixed \cite{fixed} & 51.0 & 80.8 & 42.6 & 18.4 & 42.4 & 70.0 & 35.4 & 15.3 & 43.1 & 77.6 & 37.5 & 17.7 \\
+Synapse \cite{iclr24-trajectory} & 49.6 & 79.9 & 41.9 & 18.4 & 43.1 & 70.6 & 33.1 & 13.7 & 41.7 & 77.8 & 35.9 & 16.0 \\ 
+\textbf{Self-MAP} & \textbf{56.2} & \textbf{82.5} & \textbf{47.1} & \textbf{24.7} & \textbf{48.3} & \textbf{71.8} & \textbf{40.6} & \textbf{18.2} & \textbf{46.4} & \textbf{79.1} & \textbf{38.3} & \textbf{20.8}\\
+\midrule
+\textsc{MindAct} (Flan-T5$_{\text{large}}$)  \cite{mind2web} &  \textbf{59.0} & 80.6 & \textbf{53.2} & 26.0 & 43.6 & 67.6 & 36.5 & 12.4 & 46.8 & 74.0 & 38.9 & 21.8\\
+\textsc{MindAct} + CAR \cite{qr} & 54.5 & 79.5 & 47.8 & 19.8 & 43.2 & 69.2 & 36.1 & 12.2 & 44.5 & 75.0 & 40.2 & 15.6\\
+\textsc{MindAct} + Fixed \cite{fixed} & 58.0 & 79.7 & 51.3 & 26.4 & \textbf{46.2} & \textbf{69.7} & \textbf{37.6} & 15.2 & 47.4 & 74.9 & 38.8 & 21.4   \\
+Synapse \cite{iclr24-trajectory} & 57.5 & \textbf{82.0} & 50.0 & 23.2 & 45.1 & 69.0 & 37.1 & 13.0 & 47.4 & 74.1 & 39.3 & 19.4 \\
+\textbf{Self-MAP} & 58.1 & 80.5 & 51.7 & \textbf{26.6} & 44.8 & 68.8 & 36.8 & \textbf{15.7} & \textbf{52.0} & \textbf{77.1}  & \textbf{43.6} & \textbf{25.4} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}}
+\caption{Experimental results on MT-Mind2Web. TSR can be regarded as the main metric.}
+\label{table:overall}
+\vspace{-0.3cm}
+\end{table*}
+
+\paragraph{Self-reflective Memory}
+After the previous two steps, we obtain the self-reflective memory snippet, which not only filters out the irrelevant and noisy information from the environmental state but also integrates the additional informative rationale. We denote the self-reflective memory snippet as $\hat{M}_t^k=\{q_t,A_t^{k-1},e_t^k,a_t^k,r_t^k\}$. 
+
+\subsection{Planning with Self-reflective Memory}
+For each interaction step $k$ at the current conversation turn $t$, given the current user instruction $q_t$ and previous action sequences $A_t^{k-1}$, we first obtain the top-$K$ retrieved memory snippets with self-reflection $\mathcal{M}_t^k=\{\hat{M}\}^K$ from the reflection module, and the top-$N$ candidate elements $e^k_t$ simplified from the current environment state $E^k_t$ using the same ranker as memory simplification. 
+Then we fine-tune the LLM to plan the next action $a_t^k$ including the target element and the operation, based on the input consisting of $(q_t,A_t^{k-1},e^k_t,\mathcal{M}_t^k)$. 
+Similar to the settings in \citet{mind2web}, there are two types of planning paradigms: 1) Multi-choice Question Answering, and 2) Direct Generation. 
+
+
+\begin{table*}[t]
+\setlength{\abovecaptionskip}{5pt}   
+\setlength{\belowcaptionskip}{0pt}
+\centering
+\setlength{\tabcolsep}{1mm}{
+    \begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lcccccccccccc}
+\toprule
+ & \multicolumn{4}{c}{Cross-Task} & \multicolumn{4}{c}{Cross-Website} & \multicolumn{4}{c}{Cross-Subdomain} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}\cmidrule(lr){10-13}
+ & Ele. Acc & Op. F1 & SSR & TSR & Ele. Acc & Op. F1 & SSR & TSR & Ele. Acc & Op. F1 & SSR & TSR \\
+\midrule
+\textbf{Self-MAP} & \textbf{56.2} & \textbf{82.5} & \textbf{47.1} & \textbf{24.7} & 48.3 & \textbf{71.8} & \textbf{40.6} & \textbf{18.2} & \textbf{46.4} & 79.1 & \textbf{38.3} & \textbf{20.8}\\
+
+w/o Generation-based Planning & 51.7 & 79.4 & 43.5 & 22.2 & 43.1 & 69.5 & 34.9 & 15.5 & 44.8 & 77.2 & 37.3 & 17.7 \\
+w/o Memory Simplification & 50.5 & 80.7 & 41.0 & 20.7 & 44.9 & 69.6 & 36.9 & 16.6 & 42.3 & \textbf{79.2} & 36.4 & 15.9 \\
+w/o Memory Refinement & 52.1 & 81.3 & 43.0 & 23.2 & \textbf{48.9} & 70.8 & 39.1 & 18.1 & 46.3 & 78.7 & 37.2 & 17.8\\
+w/o Multifaceted Matching & 52.6 & 80.6 & 44.3 & 21.6 & 46.9 & 71.2 & 37.9 & 17.2 & 44.8 & 78.6 & 35.8 & 17.8 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}}
+\caption{Ablation study. "w/o Generation-based Planning" denotes that we use MCQ-based Planning, while "w/o Multifaceted Matching" denotes that we prepend the chronological conversation context without retrieval.}
+\label{tab:ablation}
+\vspace{-0.3cm}
+\end{table*}
+
+\section{Experiment}
+\subsection{Experimental Setups}
+\paragraph{Baselines}
+As conversational web navigation is a new task, we first adapt several state-of-the-art traditional web navigation methods as baselines, including DeBERTa \cite{deberta}, \textsc{MindAct} \cite{mind2web}, \textsc{MindAct} + Fixed \cite{fixed}, and Synapse \cite{iclr24-trajectory}. We further include a classic baseline for conversational tasks, \textit{i.e.}, \textsc{MindAct} + Context-Aware Rewriting (CAR) \cite{qr}. Details of these baselines are presented in Appendix \ref{app:baseline}. 
+
+
+\paragraph{Evaluation Metrics}
+Following the single-turn setting \cite{mind2web}, we adopt the following metrics for evaluation: 1) Element Accuracy (Ele. Acc) matches the selected element with all required elements. 2) Operation F1 (Op. F1) stands for the token-level F1 score for the predicted operation. 3) Step Success Rate (SSR). An interaction step is regarded as successful only if both the selected element and the predicted operation are correct. 4) Turn Success Rate (TSR). A conversation turn is regarded as successful only if all steps at this turn have succeeded. We report macro average metrics, which first calculate the average per task, and then average over all tasks.
+
+
+\paragraph{Implementation Details}
+The overall Self-MAP framework basically follows the same configuration as \textsc{MindAct} for a fair comparison. 
+Specifically, we use the base version of DeBERTa-v3 \cite{deberta} as the candidate HTML element ranker. We adopt the base and large versions of Flan-T5 \cite{flant5} as the generation model to plan the next action. All the usage of ChatGPT in the experiments is based on \texttt{gpt-3.5-turbo-1106}. Flan-T5$_\text{base}$ and Flan-T5$_\text{large}$ are trained on servers with 4 A5000 24GB GPUs. DeBERTa is trained with single A100 40GB GPU. More implementation details are presented in Appendix \ref{app:implementation}.
+
+
+
+
+
+
+
+\subsection{Overall Evaluation}\label{subsec:overall_evaluation}
+Experimental results on MT-Mind2Web are summarized in Table \ref{table:overall}. 
+Among the baselines, similar to the findings in \citet{mind2web}, DeBERTa, which only performs element selection, and \textsc{MindAct} (GPT-3.5), which relies on the in-context learning capabilities of LLMs without fine-tuning, fall short of tackling the web navigation problem. 
+For \textsc{MindAct}+CAR, we observe that its performance is worse than the vanilla \textsc{MindAct} (except for Cross-Task with Flan-T5$_\text{base}$), where GPT-3.5 fails to effectively rewrite the current conversational instruction, which further obfuscates the original instruction. 
+In contrast, both \textsc{MindAct}+Fixed and Synapse generally outperform  \textsc{MindAct}, which also validates our motivation of retrieving memory from the conversational interaction history. 
+Surprisingly, Synapse (SOTA method in Mind2Web) performs even worse than \textsc{MindAct}+Fixed which employs the fixed memory selection. This  indicates the coarse-grained $k$NN matching in Synapse fails to effectively measure the relevance between the current conversation status and the candidate memory snippets in our conversational setting. 
+In general, using a stronger base model (\textit{e.g.}, Flan-T5$_\text{large}$) improves the final performance. 
+Overall, Self-MAP consistently and substantially outperforms these baselines with a noticeable margin (\textit{e.g.}, +6.3/+2.9/+3.1 TSR scores with Flan-T5$_\text{base}$ over the strongest baselines). 
+This showcases the effectiveness of utilizing our proposed memory-augmented planning framework as well as the self-reflection strategy for enhancing memory utilization. 
+
+
+
+
+\subsection{Ablation Study}
+To validate the specific designs of the Self-MAP framework, we present the ablation study in Tabl
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

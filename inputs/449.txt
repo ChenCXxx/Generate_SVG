@@ -1,0 +1,218 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[!t]
+	\centering	\includegraphics[width=0.74\linewidth]{figures/intro.pdf}
+	\caption{
+		The Recall@1 and descriptors dimensionality comparison of different methods on Pitts30k. The GCL, NetVLAD, SFRS, and CricaVPR (Ours) all use PCA for dimensionality reduction. Our method can achieve significantly higher Recall@1 than other methods with 512-dim compact global features.
+	}
+	\label{fig:intro}
+\end{figure}
+
+Visual place recognition (VPR), also known as visual geo-localization \cite{benchmark,cosplace}, aims at getting the coarse geographical location of an input query image by retrieving the most similar place image from a geo-tagged database. VPR has wide applications in augmented reality \cite{arloc}, mobile robot localization \cite{robotloc}, and so on. However, there are three key challenges in VPR: condition (e.g., lighting, weather, and season) variations, viewpoint variations, and perceptual aliasing \cite{survey} (difficult to distinguish highly similar images taken from different places). Addressing these challenges at the same time is a hard nut to crack, especially for methods that use only global features.
+
+VPR is typically addressed as an image retrieval problem \cite{delg}. The place images are represented using global features and the similarity search is implemented in this feature space to return the matched place image. The global features are usually derived through the aggregation (pooling) of local features, employing methods such as NetVLAD \cite{netvlad} or GeM \cite{gem} pooling. Such compact features are suitable for large-scale VPR. However, they lack robustness in challenging environments and are often susceptible to perceptual aliasing. A way to improve robustness is to perform re-ranking by matching local features \cite{patchvlad,transvpr}, which incurs huge overhead in runtime and memory footprint, making it difficult to achieve large-scale VPR. One problem that has been neglected is that existing methods produce the feature of an image only using this image itself (without cross-image interaction), which does not explicitly consider cross-image variations. To address this, our method attempts to use the cross-image variations as a cue to guide the representation learning and harvest useful information from other images when producing the feature of an image, making the output feature condition-invariant, viewpoint-invariant, and capable of addressing perceptual aliasing.
+
+Moreover, the recent visual foundation models \cite{clip,florence,dinov2} have achieved powerful performance. However, due to the particularity of the VPR task, directly using the pre-trained foundation model will encounter some problems. For example, the image features produced using pre-trained models tend to ignore some discriminative backgrounds, and are susceptible to interference from dynamic foregrounds (see Fig. \ref{fig:attention} in experiments). Fine-tuning the model on VPR datasets can address this but tends to hurt the previously learned ability, i.e., catastrophic forgetting \cite{catastrophic}. A promising way is to exploit parameter-efficient transfer learning (PETL) \cite{adapter,lora}. However, the discriminative landmarks that need attention in VPR often occupy local regions of uncertain size in images, and most existing PETL methods use language-oriented adaptation modules to adapt the transformer model and lack the image-related (multi-scale) local priors for visual tasks (especially for VPR). This raises the need to develop a new adaptation method to introduce multi-scale local priors to the foundation model for VPR.
+
+In this paper, we propose a novel method to learn \textbf{Cr}oss-\textbf{i}mage \textbf{c}orrelation-\textbf{a}ware representation for VPR, abbreviated as CricaVPR. Our method first uses a backbone with a pooling module to yield initial feature representations. Then we use a cross-image encoder equipped with the attention to calculate the correlation between multiple image representations within a batch to get final features. The images in a batch can be taken in the same place under different conditions (e.g. lighting) or from different viewpoints, or even captured from different places. This process allows each feature to enhance itself with useful information from others, thus producing condition-robust, viewpoint-robust, and discriminative representations. Meanwhile, we use the visual foundation model as the backbone in our architecture, and design a multi-scale convolution-enhanced adaptation method, in which we freeze the pre-trained foundation models and insert a few trainable lightweight adapters, to introduce the multi-scale local prior knowledge and adapt the foundation model for the VPR task. 
+
+Our work brings the following \textbf{contributions}: \textbf{1)} We propose a cross-image correlation-aware representation method, which uses the attention mechanism to model the correlation between multiple image representations within a batch and make each feature more robust. \textbf{2)} We design a parameter-efficient adaptation method to adapt pre-trained models for VPR, in which the proposed multi-scale convolution adapter is used to introduce multi-scale local information to boost performance. \textbf{3)} Extensive experiments on the benchmark datasets show that our method can outperform the state-of-the-art (SOTA) methods by a large margin with less training time. The results on Pitts30k that best reflect the advantages of our method are shown in Fig. \ref{fig:intro}.
+
+
+
+Related Work
+\textbf{Visual Place Recognition:}
+The early VPR approaches typically represent place images by global features that are computed using aggregation algorithms, such as Bag of Words \cite{BoW} and Vector of Locally Aggregated Descriptors (VLAD) \cite{vlad2010,VLAD1,allVLAD,densevlad,pbVLAD}, to aggregate the hand-crafted descriptors like SURF \cite{SURF,fab08}. Then these methods perform a nearest neighbor search in the global feature space over the database to get the most similar images. With the significant success of deep learning on various computer vision tasks, most recently VPR methods \cite{sunderhaufIROS2015, netvlad, crn, SPED, landmarks2, semantic,categorization1, categorization2, landmarks3, yin2019, gcl, gsv, mixvpr,sfrs, cosplace, eigenplaces} 
+have employed a variety of deep features to represent place images for boosting performance. Likewise, the aggregation algorithm has also been changed into a differentiable module to embed neural networks for end-to-end training \cite{netvlad,DBOW,attentionVLAD}.  
+However, most of the global-retrieval-based methods lack robustness in challenging environments and are prone to perceptual aliasing.
+
+Two typical ways to alleviate this issue are to impose temporal consistency constraints and spatial consistency constraints. The former performs image sequence matching (i.e. utilize temporal continuity) \cite{seqslam,hmmpr,hmmpr2,sta-vpr,seqnet} to realize robust VPR in challenging environments. The latter is often developed as a two-stage VPR system \cite{hvpr,patchvlad,geowarp,aanet,transvpr,r2former,dhevpr,selavpr}, which searches for top-k candidate images over the database using global features, then performs spatial consistency matching using local features to re-rank candidates. Different from these methods bringing additional constraints, runtime, and memory overhead, our model learns highly robust global representation via cross-image correlation awareness for global-retrieval-based VPR.
+
+\textbf{Parameter-efficient Transfer Learning:} Some recent studies \cite{clip,florence,wang2022image,dinov2} trained the large transformer-based foundation models on huge quantities of data. These models are capable of producing well-generalized feature representation and performing admirably on some common visual tasks. A promising technique for adapting these foundation models to more diverse downstream tasks with only fine-tuning a few (extra) parameters is PETL \cite{adapter,prompttuning,lora}, which is initially proposed in natural language processing to address the catastrophic forgetting issue \cite{catastrophic} and reduce training costs. Training the inserted task-specific adapters \cite{adapter} while keeping the pre-trained foundation models frozen is one of the commonly used PETL methods, and we follow it in our work. There are multiple adapter-based methods \cite{sideadapter,convpass,adaptformer,Stadapter,contrastAlign,dualadapt,aim} have been proposed to address a wide range of visual tasks. A closely related work to ours is Convpass \cite{convpass}, which used convolutional bypasses in ViT as adaptation modules to introduce image-related local inductive biases and avoid performance degradation in downstream fine-tuning. However, our work designs a multi-scale convolution adapter to learn more proper local information to improve the performance on the VPR task.
+
+
+Methodology
+Our method involves the Vision Transformer (ViT) and the attention mechanism used in it. So we first briefly review them in this section. Then we propose the cross-image correlation-aware representation method to describe place images. Finally, we present the multi-scale convolution-enhanced adaptation method to adapt the foundation model for VPR and the training strategy for fine-tuning.
+
+\subsection{Preliminary}
+The ViT model \cite{vit} and its variants have been applied for many computer vision tasks including VPR mainly due to its superior performance in modeling long-range dependencies. To process an input image with ViT, the image is initially divided into $N$ non-overlapping patches, which are then linearly projected into $D$-dim patch embeddings $x_p\in \mathcal{R}^{N \times D}$. Meanwhile, a learnable \verb|[class]| token is prepended to $x_p$ to form $x_0=[x_{class};x_p]\in \mathcal{R}^{(N+1) \times D}$. To preserve the original positional information of each patch token, the corresponding positional embeddings are added to $x_0$ to get $z_0$, which is fed into a series of transformer encoder layers to yield the feature representation. 
+A transformer encoder layer consists of three main components: the multi-head attention (MHA) layer, the MLP layer, and the LayerNormalization (LN) layer. The forward process of input $z_{l-1}$ passing through a transformer encoder layer to yield the output $z_l$ can be formulated as
+\begin{equation}
+	\begin{aligned}
+		z^{\prime}_l&=\text{MHA}\left(\text{LN}\left(z_{l-1}\right)\right)+z_{l-1},\\
+		z_l&=\text{MLP}\left(\text{LN}\left(z^{\prime}_l\right)\right)+z^{\prime}_l.
+	\end{aligned}
+	\label{eq:encoder}
+\end{equation}
+
+The MLP layer is made up of two fully connected layers, which are mainly used for feature nonlinearization and dimension conversion. Here we briefly overview the process of calculating the correlation and attention in the MHA layer. The input sequence is first linearly transformed to produce the queries $Q$, keys $K$, and values $V$. Then the attention among $Q, K$ and $V$ is computed using the Scaled Dot-Product Attention \cite{transformer}, denoted as
+\begin{equation}
+	\mathit { Attn }(Q, K, V)=\mathit{Softmax}\left(Q K^{\top} / \sqrt{d}\right) V.
+\end{equation}
+The MHA utilizes different learnable linear projections to generate the queries, keys, and values $h$ times and performs attention for each set of projections in parallel. Specifically, we first compute the attention scores between each query and all keys, establishing the correlations between them. These scores are then multiplied with the corresponding values to model dependencies among these tokens. Finally, the outputs of $h$ attention heads are concatenated (and once again projected). All tokens/elements in the input sequence are correlated in this process. In the next section, we will also use this attention mechanism to compute the across-image correlation.
+
+There are two ways to yield global representations of places using the output of ViT. The first is to directly use the output class token as a global feature. The second is to reshape the output patch tokens as a feature map (similar to the output of CNN) to restore the spatial position, and use the aggregation/pooling method (e.g. GeM \cite{gem}) to process it as a global feature. Both the class token and GeM pooling are used to produce the place representation in our work.
+ 
+\subsection{Cross-image Correlation-aware Place Representation}
+ \begin{figure}[!t]
+	\centering
+	\includegraphics[width=0.85\linewidth]{figures/motivation.pdf}
+	\caption{
+		\textbf{The example of partial images in a batch.} (a), (b), and (c) are taken from the same place with different conditions (seasons) and viewpoints. (d), (e), and (c) are captured from different places, but (d) is similar to (c). When the model produces the features of (c), it can harvest relevant information from other images to yield a better representation.
+	}
+	\label{fig:motivation}
+\end{figure}
+
+\begin{figure*}[!t]
+	\centering	\includegraphics[width=0.92\linewidth]{figures/archit1.pdf}
+	\caption{
+		\textbf{The pipeline to produce the proposed cross-image correlation-aware representation.} The cross-image encoder is the core component for modeling correlations between different image features in a batch. Note that we are correlating the $i$-th regional features of all images in a batch, not all regional features of an image. Besides, the cross-image encoder consists of 2 stacked vanilla transformer encoder layers \cite{transformer} with the LN layer behind the MHA/MLP layer, which is different from that in ViT \cite{vit} (LN is before MHA/MLP).
+	}
+	\label{fig:archit}
+\end{figure*}
+The methods based on neural networks have dominated the VPR area over the past decade. These methods commonly produce the deep feature representation of an image with only this image itself. Such features often lack robustness in challenging environments and are incapable of addressing the perceptual aliasing issue. In this work, we present a simple and effective solution to this problem. We attempt to correlate the features of place images in a batch, so that each image representation can harvest useful information from the other image representations to enhance its own robustness. More specifically, there may be images from the same place but taken from different viewpoints or under different conditions, or images from different places that look similar (or not) in a batch, as shown in Fig. \ref{fig:motivation}. On the one hand, image representations from the same place with different perspectives and conditions can improve the viewpoint invariance and condition invariance of each other after the correlated encoding. On the other hand, image representations from different places also promote each other to produce discriminative features. As a result, our method can provide highly robust global representations to deal with viewpoint changes, condition changes, and perceptual aliasing.
+
+We design the pipeline to produce desired global features as shown in Fig. \ref{fig:archit}. The output patch tokens of a batch of images from the ViT backbone are reshaped as the $B\times W\times H\times D$-dim (i.e., $batch$ $size\times weight\times height\times token$ $dimension$) feature maps. We first use the spatial pyramid \cite{spm} to produce initial feature representations. The feature maps are split at three levels (1$\times$1, 2$\times$2, and 3$\times$3). Then we use GeM pooling to process local (patch) features within the divided regions and get a total of 14 regional features of each image. Since the first level is a global aggregation, we directly use the class token to replace the GeM feature in this level for better performance. Next is the most critical step. We treat the $i$-th regional features of all images in a batch as a sequence of embedding vectors $f_i$, that is
+\begin{equation}
+	f_i=\{f_i^1,f_i^2,...,f_i^B\}  \quad i\in\{1,2,...,14\}, 
+\end{equation}
+and feed the 14 sequences of embedding vectors into a cross-image encoder to model the correlation between the $i$-th regional features of all images in a batch. That is, we apply the cross-image encoder to process each $f_i$ to correlate images in a batch. Instead of directly using the attention (MHA) layer, the cross-image encoder is structured using two (vanilla) transformer encoder layers \cite{transformer} that also include the MLP layer, LN layer, and skip connection for stable training and better performance. The 14 output regional features of each image are sequentially concatenated (i.e., flattened) and L2-normalized as the final global representation of the image.
+
+It should be noted that the retrieval process of our method is the same as the common global-retrieval-based method. That is, it uses the global feature of a single image for retrieval. Besides, we choose the spatial pyramid to produce the initial feature in order to subsequently correlate images at different scales, and the final sequential concatenation of regional features also introduces spatial position information to the global representations. In fact, our method can also use other aggregation methods to yield initial features, and boost the performance of these methods.
+
+\subsection{Multi-scale Convolution-enhanced Adaptation}
+Our work adapts the distilled DINOv2 \cite{dinov2} as the backbone (i.e. the adapted DINOv2/ViT backbone in Fig. \ref{fig:archit}), which is based on ViT-B/14. The DINOv2 work trains the ViT model on the large-scale curated LVD-142M dataset with the self-supervised strategy, and can provide powerful visual features to achieve promising performance on some common tasks without any fine-tuning. AnyLoc \cite{anyloc} is a VPR work that uses pre-trained DINOv2 without fine-tuning. However, there exists a gap between the tasks of model pre-training and VPR due to the inherent difference in training objectives and data. Directly using such a pre-trained model in VPR cannot fully unleash its powerful capability.
+
+The adapter-based parameter-efficient transfer learning \cite{adapter} provides an effective way to adapt foundation models for downstream tasks, which freezes the pre-trained model and only fine-tunes the added lightweight adapter. The vanilla adapter is a bottleneck module consisting of a down-projection (fully connection) layer, an up-projection layer, and a non-linearity (activation) layer in the middle. The Convpass work \cite{convpass} applies convolution layers to introduce image-related local inductive biases into models. However, we found that improper local priors provided by Convpass risk reducing performance in VPR. Inspired by the inception module in GoogLeNet \cite{inception}, we design our multi-scale convolution (MulConv) adapter as shown in Fig. \ref{fig:adapter} (b).
+
+Different from the vanilla adapter, our MulConv adapter adds a MulConv module between the (ReLU) activation layer and the up-projection layer. This module consists of three parallel convolutional paths of different scales (1$\times$1, 3$\times$3, 5$\times$5). The 1$\times$1 convolution is also used before the 3$\times$3 and 5$\times$5 convolutions to reduce channel dimension. This design and the bottleneck structure of the adapter make our MulConv adapter still lightweight. The outputs of the three convolutional paths are concatenated to form the output of the MulConv module. Besides, there is a skip connection in parallel to the MulConv module. Finally, the MulConv adapter is added in parallel to the MLP layer (multiplied by a scaling factor $s$) in each transformer block (i.e. transformer encoder layer) of the ViT backbone to achieve multi-scale convolution-enhanced adaptation, which can introduce proper (multi-scale) local priors to the model and improve performance for VPR. So the computation of each adapted transformer block can be denoted as
+\begin{equation}
+	\begin{aligned}		z^{\prime}_l&=\text{MHA}\left(\text{LN}\left(z_{l-1}\right)\right)+z_{l-1},\\
+z_l&=\text{MLP}\left(\text{LN}\left(z^{\prime}_l\right)\right)+s\cdot\text{Adapter}\left(\text{LN}\left(z^{\prime}_l\right)\right)+z^{\prime}_l.
+	\end{aligned}
+	\label{eq:adapter}
+\end{equation}
+
+\begin{figure}[!t]
+	\centering
+	\includegraphics[width=0.95\linewidth]{figures/adapter.pdf}
+	\caption{
+		\textbf{Illustration of our multi-scale convolution-enhanced adaptation.} (a) is a transformer block in ViT. (b) is the MulConv adapter. We add the MulConv adapter in parallel to the MLP layer in each transformer block to achieve our adaptation as in (c).
+	}
+	\label{fig:adapter}
+\end{figure}
+
+\subsection{Training Strategy} 
+We train our model on the GSV-Cities \cite{gsv} dataset with full supervision. This dataset contains 560k images captured at 67k places with highly accurate labels. We follow the standard framework of this dataset and use the multi-similarity (MS) loss \cite{multiloss} with online hard mining strategy for training. The MS loss is computed as
+\begin{equation}
+\begin{split}
+	\label{eq:MS}
+	\mathcal{L}_{MS} = \frac{1}{B}\sum_{q=1}^B  \bigg\{\frac{1}{\alpha}  { \log \big[1 + \sum_{p  \in \mathcal{P}_q } e^{-\alpha (S_{qp} - \lambda)}}\big]  \\
+	+ \frac{1}{\beta }  { \log \big[1+ \sum_{n \in \mathcal{N}_q}
+		 e^{\beta (S_{qn} - \lambda)} \big]} \bigg\},
+\end{split}   
+\end{equation}
+where for each query (anchor) image $I_q$ in a batch, $\mathcal{P}_q$ is the set of indices $\{p\}$ that correspond to the positive samples for $I_q$, and $\mathcal{N}_q$ is the set of indices $\{n\}$ that correspond to the negative samples for $I_q$. $S_{qp}$ and $S_{qn}$ are the cosine similarities of a positive pair $\{I_q,I_p\}$ and a negative pair $\{I_q,I_n\}$.
+$\alpha$, $\beta$ and $\lambda$ are three set constants (hyperparameters).
+
+
+
+Experiments
+\subsection{Datasets and Performance Evaluation}
+\begin{table}
+  \begin{center}
+  \scalebox{0.8}{ 
+  \renewcommand{\arraystretch}{1}
+  \begin{tabular}{cccc}
+    \toprule
+    \multirow{2}{*}{Dataset} & \multicolumn{1}{c}{\multirow{2}{*}{Description}} & \multicolumn{2}{c}{Number}  \\ \cline{3-4} 
+     \multicolumn{1}{c}{}& & Database & Queries \\ 
+     \midrule
+    Pitts30k & urban, panorama & 10,000 & 6,816  \\ \hline
+    MSLS-val &  urban, suburban & 18,871 & 740  \\
+    MSLS-challenge & long-term & 38,770 & 27,092  \\ \hline
+    Tokyo24/7 & urban, day/night & 75,984 &  315 \\ \hline
+    Nordland & natural, seasonal & 27,592 &  27,592 \\\hline
+    SVOX & cross-domain & 17,166 &  4,356 \\ \hline
+    AmsterTime & very long-term & 1,231 &  1,231 \\
+    \bottomrule
+  \end{tabular}}
+\end{center}
+\caption{Summary of the test datasets in experiments.}
+\label{tab:datasets}
+\end{table}
+
+The experiments are conducted on several VPR benchmark datasets. These datasets exhibit viewpoint changes, condition changes, and the perceptual aliasing issue. Table \ref{tab:datasets} summarizes the key information of them. \textbf{Pitts30k} \cite{pitts} mainly shows large viewpoint changes. \textbf{MSLS} \cite{msls} consists of images captured in urban, suburban, and natural scenes over 7 years, and covers various visual changes. \textbf{Tokyo24/7} \cite{densevlad} exhibits severe illumination (day/night) changes. We also use three challenging datasets: \textbf{Nordland} (with seasonal changes) \cite{eigenplaces}, \textbf{SVOX} (cross-domain dataset) \cite{SVOX}, and \textbf{AmsterTime} (with very long-term changes) \cite{amstertime}. More details are in Supplementary (Suppl.) Material.
+
+The Recall@N (R@N) metric is used in our experiments to evaluate recognition performance. It is the percentage of queries for which at least one of the N retrieved database images is taken within a threshold of ground truth. We set the threshold to 25 meters and 40$^{\circ}$ for MSLS, 25 meters for Pitts30k, Tokyo24/7, and SVOX, $\pm 10$ frames for Nordland, unique counterpart for AmsterTime, following common evaluation procedures \cite{msls,pitts,densevlad}.
+
+\begin{table*}
+  \centering
+  \setlength{\tabcolsep}{1.2mm}{
+  \begin{tabular}{@{}l|c||ccc||ccc||ccc||ccc}
+  \toprule
+\multirow{2}{*}{Method} & \multirow{2}{*}{Dim} & \multicolumn{3}{c||}{Pitts30k} & \multicolumn{3}{c||}{Tokyo24/7} & \multicolumn{3}{c||}{MSLS-val} & \multicolumn{3}{c}{MSLS-challenge} \\
+\cline{3-14}
+& & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & R@1 & R@5 & R@10  & R@1 & R@5 & R@10 \\
+\hline
+NetVLAD \cite{netvlad} &32768 & 81.9 &91.2 &93.7 & 60.6 & 68.9 & 74.6 & 53.1 &66.5 &71.1 &35.1 & 47.4 & 51.7  \\
+SFRS \cite{sfrs} &4096 & 89.4 & 94.7 & 95.9 & 81.0 & 88.3 & 92.4 & 69.2 & 80.3 & 83.1 & 41.6 & 52.0 &56.3  \\
+Patch-NetVLAD \cite{patchvlad} &/ & 88.7 & 94.5 & 95.9 & \underline{86.0} & 88.6 & 90.5 & 79.5 & 86.2 & 87.7 & 48.1 &57.6 & 60.5  \\
+TransVPR \cite{transvpr} &/ &  89.0 &  94.9 &  96.2 & 79.0 &  82.2 & 85.1 & 86.8 & 91.2 & 92.4 & 63.9 & 74.0  & 77.5   \\
+CosPlace \cite{cosplace} &512 & 88.4 & 94.5 & 95.7 & 81.9 & 90.2 & 92.7 & 82.8 & 89.7 & 92.0  & 61.4 & 72.0 & 76.6 \\
+GCL \cite{gcl} &2048  &80.7 &91.5 &93.9 &69.5 &81.0 &85.1  &79.5 &88.1 &90.1 &57.9 &70.7 &75.7 \\
+MixVPR \cite{mixvpr} &4096 & 91.5 & 95.5 & 96.3 & 85.1 & 91.7 & 94.3 & 88.0 & 92.7 & 94.6 & 64.0 & 75.9 & 80.6 \\
+EigenPlaces \cite{eigenplaces} &2048 &\underline{92.5} &\underline{96.8} &\underline{97.6} &\textbf{93.0} &\underline{96.2} &\underline{97.5} &\underline{89.1} &\underline{93.8} &\underline{95.0}  &\underline{67.4} &\underline{77.1} &\underline{81.7}  \\
+\hline
+CricaVPR (ours) &4096 & \textbf{94.9} & \textbf{97.3} & \textbf{98.2} & \textbf{93.0} & \textbf{97.5} & \textbf{98.1} &  \textbf{90.0} &  \textbf{95.4} & \textbf{96.4} &  \textbf{69.0} &  \textbf{82.1} &  \textbf{85.7}  \\
+\bottomrule
+\end{tabular}}
+\caption{\textbf{Comparison to state-of-the-art methods on benchmark datasets.} The best is highlighted in \textbf{bold} and the second is \underline{underlined}.}
+\label{tab:compare_SOTA}
+\end{table*}
+
+\begin{figure*}[!t]
+	\centering
+	\includegraphics[width=0.86\linewidth]{figures/resultfig.pdf}
+	\caption{
+		\textbf{Qualitative results.} These four challenging examples show severe viewpoint changes and condition changes. The proposed CricaVPR successfully yields the right results, while other methods return incorrect images. In each example, there are methods to return similar images from different places (i.e., incorrect) due to perceptual aliasing. In the second example, the query image is taken at night, causing all the other methods to return night images but from different places (i.e. wrong). However, our method returns an image taken during the day at the same place (i.e. correct).
+	}
+	\label{fig:result}
+\end{figure*}
+
+\begin{table}
+  \centering
+  \setlength{\tabcolsep}{1.5mm}{
+  \renewcommand{\arraystretch}{0.98}
+  \begin{tabular}{@{}c|cccc}
+  \toprule
+\multirow{2}{*}{Method}   & \multirow{2}{*}{Nordland} & Amster & SVOX & SVOX 
+\\
+& & Time & -Night & -Rain \\
+\hline
+SFRS \cite{sfrs} & 16.0 & 29.7  & 28.6 & 69.7 \\
+CosPlace \cite{cosplace} & 58.5 & 38.7  & 44.8 & 85.2 \\
+MixVPR \cite{mixvpr} & \underline{76.2} & 40.2  & \underline{64.4} & \underline{91.5} \\
+EigenPlaces \cite{eigenplaces} & 71.2 & \underline{48.9} & 58.9 & 90.0 \\
+\hline
+CricaVPR (ours)  & \textbf{90.7} & \textbf{64.7} & \textbf{85.1} & \textbf{95.0} \\
+\bottomrule
+\end{tabular}}
+\caption{\textbf{Comparison (R@1) to SOTA methods on more challenging datasets.} More results are in Suppl. Material.}
+\label{tab:compare_SOTA2}
+\end{table}
+
+\subsection{Implementation Details}
+We fine-tune our model on two NVIDIA GeForce RTX 3090 GPUs using PyTorch. The resolution of the input image is 224×224 and the token dimension of the backbone (ViT-B/14) is 768. Our model outputs the 14×768-dim original global features, and we use PCA for dimensionality reduction. The bottleneck ratio of our adapters is set to 0.5, so the input dimension of the three convolutional paths is 384. The 1×1 convolution before the 3×3 and 5×5 convolution reduces the channels to 24. The output dimensions of the three convolutional paths are 192, 96, and 96. The scaling factor $s$ in Eq. \ref{eq:adapter} is set to 0.2. We set the hyperparameters $\alpha=1, \beta=50, \lambda=0$ in Eq. \ref{eq:MS} and margin = 0.1 in online mining, as in GSV-Cities \cite{gsv}. We fine-tune the model using the Adam optimizer with the initial learning rate set as 0.0001 and multiplied by 0.5 after every 3 epochs. A training batch contains 72 places with 4 images each (i.e. 288 images). Training is implemented until the R@5 on Pitts30k does not improve for 3 epochs. An inference batch contains 8 images for Pitts30k and 16 images for others.
+
+\subsection{Comparison with State-of-the-Art Methods}
+In this section, we compare our CricaVPR with several SOTA VPR methods, mainly including six global-retrieval-based methods: NetVLAD \citep{netvlad}, SFRS \citep{sfrs}, CosPlace \citep{cosplace}, GCL \cite{gcl}, MixVPR \citep{mixvpr} and EigenPlaces \cite{eigenplaces}. Note that our work uses the same training dataset as MixVPR, i.e., GSV-Cities. Meanwhile, CosPlace and EigenPlaces are trained on individually constructed extra large-scale datasets, i.e., SF-XL. Both MixVPR and EigenPlaces are the latest works and represent the SOTA performance of the VPR methods based on global feature retrieval. Additionally, we also compare our approach with two excellent two-stage VPR methods (Patch-NetVLAD \cite{patchvlad} and TransVPR \cite{transvpr}), which require time-consuming re-ranking using local features. The details of these methods are in Suppl. Material. Table \ref{tab:compare_SOTA} shows the quantitative results on Pitts30k, Tokyo24/7, and MSLS. Our CricaVPR uses PCA to reduce the feature dimensionality to 4096-dim (in this subsection), and achieves the best R@1/R@5/R@10 on all datasets.
+
+MixVPR, EigenPlaces, and our CricaVPR all achieve excellent performance on these datasets. Especially on Pitts30k, which shows significant viewpoint changes but no drastic condition changes, EigenPlaces achieves 92.5\% R@1. This indicates that the challenge posed by viewpoint changes has been effectively addr
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

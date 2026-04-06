@@ -1,0 +1,215 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Autonomous driving cars rely on multiple sensors, such as LiDAR and cameras, to perceive the surrounding environment. LiDAR sensors provide accurate 3D scene occupancy information through point clouds with points in the xyz coordinate space, and cameras provide rich semantic information through images with pixels in the RGB color space. However, there are often significant discrepancies between representations of the same physical scene acquired by the two sensors, as LiDAR sensors capture point clouds using 360-degree rotation while cameras capture images from a perspective view without a sense of depth. This impedes an effective and efficient fusion of the LiDAR and camera modalities. To tackle this challenge, multi-sensor fusion algorithms were proposed to \textit{find correspondences between multi-modality data to transform and fuse them into a unified scene representation space.}
+
+
+\begin{figure}[tb!]
+    \centering
+    \begin{subfigure}{0.48\linewidth}
+        \includegraphics[width=\linewidth]{figures/FPS_mAP.pdf}
+        \caption{mAP \textit{vs.} FPS}
+        \label{fig:trade-off}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\linewidth}
+        \includegraphics[width=\linewidth, trim={0 -0.6cm 0 0}]{figures/dense.pdf}
+        \caption{Dense-to-dense fusion.}
+        \label{fig:dense_representation}
+    \end{subfigure}
+    \par\medskip
+    \begin{subfigure}{\linewidth}
+        \includegraphics[width=\linewidth]{figures/teaser.pdf}
+        \caption{Overview of our sparse fusion strategy. We extract instance-level features from the LiDAR and camera modalities separately, and fuse them in a unified 3D space to perform detection.}
+        \label{fig:teaser}
+    \end{subfigure}
+    \caption{Compared to existing fusion algorithms, SparseFusion achieves state-of-the-art performance as well as the fastest inference speed on nuScenes \textit{test set}. $\dag:$ Official code of \cite{chen2022autoalignv2} uses flip as test-time augmentation. $\ddag:$ We use BEVFusion-base results in the official repository of \cite{liu2022bevfusion} to match the input resolutions of other methods. $\S:$ Swin-T~\cite{liu2021swin,liang2022cbnet} is adopted as image backbone.}
+\end{figure}
+
+\begin{table*}[tb!]
+    \centering
+    \caption{
+For each LiDAR-camera fusion method, we identify the \textit{LiDAR candidates} and \textit{camera candidates} that are used, the \textit{transformation} process used to fuse these candidates into a unified space, and the \textit{fusion outputs} generated to represent 3D scenes using information from both modalities. Based on these components, we categorize the methods into the following categories: \textbf{Dense+Sparse$\rightarrow$Dense} approaches relate the sparse region proposals in images to a dense frustum point cloud and fuse them into a dense point space. \textbf{Dense+Dense$\rightarrow$Dense} approaches align each point feature in the point cloud to the corresponding pixel feature in the image and represent the 3D scenes using dense features such as point/BEV features. \textbf{Sparse+Dense$\rightarrow$Sparse} approaches generate sparse queries by detecting instance features in the point cloud and then applying cross-attention with dense image features. \textbf{Dense+Dense$\rightarrow$Sparse} approaches predict objects using queries that combine dense features from each modality. \textbf{Sparse+Sparse$\rightarrow$Sparse (ours)} extracts sparse instance features from each modality and directly fuses them to obtain the final sparse instance features used for detection.
+}
+    \label{tab:correspondence}
+
+    \resizebox{0.95\linewidth}{!}{
+    \begin{tabular}{cccccc}
+       \toprule
+       \textbf{Category} & \textbf{Method} & \textbf{LiDAR Candidate} & \textbf{Camera Candidate} & \textbf{Transformation} & \textbf{Fusion Outputs} \\
+       \midrule
+         Dense+Sparse$\rightarrow$Dense & Frustum PointNets~\cite{qi2018frustum} & point features & region proposals & proj. \& concat. & point features\\
+       \midrule
+         \multirow{5}{*}{Dense+Dense$\rightarrow$Dense} & PointPainting~\cite{vora2020pointpainting} & point features & segm. output & proj. \& concat. & point features\\
+         & PointAugmenting~\cite{wang2021pointaugmenting} & point features & image features & proj. \& concat. & point features\\
+         & PAI3D~\cite{liu2023pai3d} & point features & segm. output & proj. \& concat. & point features\\
+         & BEVFusion~\cite{liu2022bevfusion} & BEV features & image features &  depth. est. \& proj. \& concat. & BEV features\\
+         & AutoAlignV2~\cite{chen2022autoalignv2} & voxel features & image features & proj. \& attn.  & voxel features\\
+        \midrule
+        Sparse+Dense$\rightarrow$Sparse & TransFusion~\cite{bai2022transfusion} & instance features & image features & proj. \& attn. & instance features\\
+        \midrule
+         \multirow{4}{*}{Dense+Dense$\rightarrow$Sparse} & FUTR3D~\cite{chen2022futr3d} & voxel features & image features & attn. & instance features\\
+         & UVTR~\cite{li2022unifying} & voxel features & image features & depth. est. \& proj. \& attn. & instance features\\
+         & DeepInteraction~\cite{yang2022deepinteraction} & BEV features & image features & proj. \& attn. & instance features\\
+         & CMT~\cite{yan2023cross} & BEV features & image features & attn. & instance features\\
+        \midrule
+          Sparse+Sparse$\rightarrow$Sparse & SparseFusion (\textbf{Ours}) & instance features & instance features & proj. \& attn. & instance features\\
+       \bottomrule
+    \end{tabular}
+    }
+\end{table*}
+Dense representations, such as bird-eye-view (BEV), volumetric, and point representations, are commonly used to represent 3D scenes \cite{liu2022bevfusion,chen2022autoalignv2,vora2020pointpainting,liu2023pai3d,wang2021pointaugmenting,jiao2022msmdfusion}. Most previous works fuse different modalities by aligning low-level data or high-level features to yield dense features that describe the entire 3D scene, \textit{e.g.}, as shown in Fig~\ref{fig:dense_representation}. However, for the task of 3D object detection, such dense representations are superfluous since we are only interested in instances/objects, which only occupy a small part of the 3D space. Furthermore, noisy backgrounds can be detrimental to object detection performance, and aligning different modalities into the same space is a time-consuming process. For example, generating BEV features from multi-view images takes 500ms on an RTX 3090 GPU \cite{liu2022bevfusion}. 
+In contrast, sparse representations are more efficient, and methods based on them have achieved state-of-the-art performance in multi-sensor 3D detection \cite{bai2022transfusion,chen2022futr3d,li2022unifying,yang2022deepinteraction}. These methods use object queries to represent instances/objects in the scene and interact with the original image and point cloud features. However, most previous works do not take into account the significant domain gap between features from different modalities \cite{xu2022image2point}. The queries may gather information from one modality that has a large distribution shift with respect to another modality, making iterative interaction between modalities with large gaps sub-optimal. Recent work \cite{yang2022deepinteraction} mitigates this issue by incorporating modality interaction, \textit{i.e.} performing cross-attention between features from two different modalities. However, the number of computations performed in this method increases quadratically with the dimensions of features and is thus inefficient. We categorize previous works into four groups by identifying four key components, which are outlined in Table~\ref{tab:correspondence}. Further discussion of the methods in these groups is presented in Sec. \ref{related_work}. 
+
+
+
+In this paper, we propose SparseFusion, a novel method (Fig.~\ref{fig:teaser}) that simultaneously utilizes sparse candidates and yields sparse representations, enabling efficient and effective 3D object detection. SparseFusion is the first LiDAR-camera fusion method, to our knowledge, to perform 3D detection using exclusively sparse candidates and sparse fusion outputs.
+We highlight a key common ground between the two modalities: an image and a point cloud that represent the same 3D scene will contain mostly the same instances/objects. To leverage this commonality, we perform 3D object detection on the inputs from each modality in two parallel branches. Then, the instance features from each branch are projected into a unified 3D space. Since the instance-level features are sparse representations of the same objects in the same scene, we are able to fuse them with a lightweight attention module~\cite{vaswani2017attention} in a \textit{soft} manner. This parallel detection strategy allows the LiDAR and camera branches to take advantage of the unique strengths of the point cloud and image representations, respectively.
+Nevertheless, the drawbacks of each single-modality detector may result in negative transfer during the fusion phase. For example, the point cloud detector may struggle to distinguish between a standing person and a tree trunk due to a lack of detailed semantic information, while the image detector is hard to localize objects in the 3D space due to a lack of accurate depth information. To mitigate the issue of negative transfer, we introduce a novel cross-modality information transfer method designed to compensate for the deficiencies of each modality. This method is applied to the inputs from both modalities prior to the parallel detection branches.
+SparseFusion achieves state-of-the-art results on the competitive nuScenes benchmark~\cite{caesar2020nuscenes}. Our instance-level sparse fusion strategy allows for a lighter network and much higher efficiency in comparison with prior work. With the same backbone, SparseFusion outperforms the current state-of-the-art model~\cite{yang2022deepinteraction} with 1.8x acceleration. Our contributions are summarized as follows:
+\begin{itemize}
+    \item We revisit prior LiDAR-camera fusion works and identify four important components that allow us to categorize existing methods into four groups. We propose an entirely new category of methods that exclusively uses sparse candidates and representations. 
+    \item We propose SparseFusion, a novel method for LiDAR-camera 3D object detection that leverages instance-level sparse feature fusion and cross-modality information transfer to take advantage of the strengths of each modality while mitigating their weaknesses.
+    \item We demonstrate that our method achieves state-of-the-art performance in 3D object detection with a lightweight architecture that provides the fastest inference speed. 
+\end{itemize}
+
+
+
+
+Related Work
+\label{related_work}
+\noindent\textbf{LiDAR-based 3D Object Detection.} LiDAR sensors are commonly used for single-modality 3D object detection due to the accurate geometric information provided by point clouds. For detection in outdoor scenes, most existing methods transform unordered point clouds into more structured data formats such as pillars~\cite{lang2019pointpillars}, voxels~\cite{yan2018second,deng2021voxel}, or range views~\cite{fan2021rangedet,liang2020rangercnn}. Features are extracted by standard 2D or 3D convolutional networks, based on which a detection head is used to recognize objects and regress 3D bounding boxes. Mainstream detection heads apply anchor-based~\cite{zhou2018voxelnet,lang2019pointpillars} or center-based~\cite{zhou2019objects} structures. Inspired by the promising performance of transformer-based methods in 2D detection, some recent works explore transformers as feature extractors~\cite{mao2021voxel,sheng2021improving} or as detection heads~\cite{bai2022transfusion,misra2021end}. Our method is agnostic to the LiDAR-based detector used in the LiDAR branch, and the default setting uses TransFusion-L~\cite{bai2022transfusion}.
+
+\noindent\textbf{Camera-based 3D Object Detection.} Camera-based 3D detection methods are also being studied increasingly. Early work performs monocular 3D object detection by attaching extra 3D bounding box regression heads~\cite{yin2021center,wang2021fcos3d} to 2D detectors. In practice, scenes are often perceived by multiple cameras from different perspective views. Following LSS~\cite{philion2020lift}, methods like BEVDet~\cite{huang2021bevdet} and BEVDepth~\cite{li2022bevdepth} extract 2D features from multi-view images and project them into the BEV space. Other methods including DETR3D~\cite{wang2022detr3d} and PETR~\cite{liu2022petr} adapt techniques from transformer-based 2D object detection methods~\cite{zhu2020deformable,carion2020end} to learn correspondences between different perspective views through cross-attention using 3D queries. However, as revealed in~\cite{huang2022obmo}, there inevitably exists some ambiguity when recovering 3D geometry from 2D images. In response, recent works~\cite{huang2022bevdet4d,li2022bevformer,park2022time} also explore the positive effects of temporal cues in camera-based 3D detection. In our proposed SparseFusion, we extend deformable-DETR~\cite{zhu2020deformable} to monocular 3D object detection and explicitly transform the regressed bounding boxes to the LiDAR coordinate space.
+
+\noindent\textbf{Multi-Modality 3D Object Detection.} LiDAR and cameras provide complementary information about the surrounding environment, so it is appealing to fuse the multi-modality inputs for 3D object detection tasks. As analyzed in Tab.~\ref{tab:correspondence}, existing fusion methods can be classified into four categories. Early works tend to fuse multi-modality information into a unified dense representation. Frustum PointNets~\cite{qi2018frustum} utilizes a \textbf{Dense+Sparse$\rightarrow$Dense} approach that filters dense point clouds with sparse 2D regions of interest. Subsequent works explore \textbf{Dense+Dense$\rightarrow$Dense} approaches by working directly with the dense LiDAR modality and camera modality features instead. Methods such as \cite{vora2020pointpainting,wang2021pointaugmenting} project point clouds into image perspective views and concatenate the dense image features with point features. BEVFusion~\cite{liu2022bevfusion,liang2022bevfusion} significantly improves the performance of this line of methods by projecting dense image features into the LiDAR coordinate space using estimated per-pixel depths. AutoAlignV2~\cite{chen2022autoalignv2} also considers the soft correspondence through cross-modality attention to increase the robustness. However, we point out that dense representations are altogether undesirable for 3D object detection as they are noisy and inefficient. 
+
+Recent works have begun to utilize object-centric sparse scene representations. TransFusion~\cite{bai2022transfusion} adopts a \textbf{Sparse+Dense$\rightarrow$Sparse} strategy by extracting sparse instance-level features from the LiDAR modality and refining them using dense image features. Other works~\cite{chen2022futr3d,li2022unifying,yang2022deepinteraction,yan2023cross} utilize a \textbf{Dense+Dense$\rightarrow$Sparse} approach where queries are used to extract a sparse instance-level representation from dense BEV and image features. However, it is hard to extract information from multi-modality features with an attention operation given the large cross-modal distribution shift. To this end, UVTR~\cite{li2022unifying} projects image features into the LiDAR coordinate space, CMT~\cite{yan2023cross} encodes modality-specific positional information to its queries, and DeepInteraction~\cite{yang2022deepinteraction} proposes cross-modality interaction. However, these methods still need to resolve the large multi-modal domain gap by stacking many transformer layers to construct a heavy decoder.
+
+In contrast to the above methods, our method adopts the previously unexplored \textbf{Sparse+Sparse$\rightarrow$ Sparse} approach. SparseFusion extracts sparse representations of both modalities and fuses them to generate a more accurate and semantically rich sparse representation that yields great performance while also achieving great efficiency.
+\begin{figure*}
+    \centering
+    \includegraphics[width=0.85\linewidth]{figures/framework.pdf}
+    \caption{Overall framework of SparseFusion. It fuses sparse candidates from LiDAR and camera modalities to obtain a multi-modality instance-level representation in the unified LiDAR space.}
+    \label{fig:arch}
+\end{figure*}
+
+
+Methodology
+We present SparseFusion, an effective and efficient framework for 3D object detection via LiDAR and camera inputs. The overall architecture is illustrated in Fig.~\ref{fig:arch}. We acquire sparse candidates from each modality using modality-specific object detection in the LiDAR and camera branches. The instance-level features generated by the camera branch are transformed into the LiDAR space of the instance-level features generated by the LiDAR branch. They are then fused with a simple self-attention module (Sec.~\ref{sec:fuse}). To mitigate the negative transfer between modalities, we apply a geometric transfer module and a semantic transfer module prior to the parallel detection branches (Sec.~\ref{sec:transfer}). Furthermore, we design custom loss functions for each module to ensure stable optimization (Sec.~\ref{sec:loss}). 
+
+
+\subsection{Sparse Representation Fusion}
+\label{sec:parallel}
+
+\noindent\textbf{Acquiring candidates in two modalities.}
+\label{sec:lidar_detection}
+\textit{LiDAR candidates.} We follow TransFusion-L~\cite{bai2022transfusion} and use only one decoder layer for LiDAR modality detection. The LiDAR backbone extracts a BEV feature map from the point cloud inputs. We initialize $N_L$ object queries $\mathbf{Q}_L^{0}=\{\mathbf{q}^{0}_{L,i}\}_{i=1}^{N_L}, \mathbf{q}^{0}_{L,i}\in\mathbb{R}^C$ as well as their corresponding reference points $\mathbf{p}_L^{0}=\{\mathbf{p}^{0}_{L,i}\}_{i=1}^{N_L}, \mathbf{p}^{0}_{L,i}\in\mathbb{R}^2$ in the BEV plane. These queries interact with the BEV features through a cross-attention layer to generate the updated object queries $\mathbf{Q}_L=\{\mathbf{q}_{L,i}\}_{i=1}^{N_L},\mathbf{q}_{L,i}\in\mathbb{R}^C$. These updated queries $\mathbf{Q}_L$ represent the instance-level features of objects in the LiDAR modality, and we use them as the LiDAR candidates in the subsequent multi-modal fusion module. Furthermore, we apply a prediction head to each query to classify the object and regress the bounding box in LiDAR coordinate space.
+
+\noindent\textit{Camera candidates.}
+\label{sec:camera_detection}
+To generate the camera candidates, we utilize a camera-only 3D detector with images from different perspective views as inputs. Specifically, we extend deformable-DETR~\cite{zhu2020deformable} with 3D box regression heads.
+We also initialize $N_C$ object queries $\mathbf{Q}_C^{0}=\{\mathbf{q}^{0}_{C,i}\}_{i=1}^{N_C},\mathbf{q}^{0}_{C,i}\in\mathbb{R}^C$ along with their corresponding reference points $\mathbf{p}_C^{0}=\{\mathbf{p}^{0}_{C,i}\}_{i=1}^{N_C},\mathbf{p}^{0}_{C,i}\in\mathbb{R}^2$ on the image. For each perspective view $v$, queries on its image interact with the corresponding image features using a deformable attention layer~\cite{zhu2020deformable}. The outputs of all perspective views comprise 
+the updated queries $\mathbf{Q}_C^{P}=\{\mathbf{q}^{P}_{C,i}\}_{i=1}^{N_C},\mathbf{q}^{P}_{C,i}\in\mathbb{R}^C$. We use these queries as the camera candidates in the subsequent multi-modal fusion module. We provide further details of our architecture, the initialization method, and the prediction heads for the two modalities in our supplementary materials.
+
+
+\noindent\textbf{Transformation}
+\label{sec:transform}
+After acquiring the candidates from each modality, we aim to transform the candidates from the camera modality to the space of the candidates from the LiDAR modality. 
+ Since the candidates from the camera modality are high-dimensional latent features that are distributed differently than the candidates from the LiDAR modality, a naive coordinate transformation between modalities is inapplicable here. To address this issue, we disentangle the representations of the camera candidates. Intrinsically, a camera candidate is an instance feature that is a representation of a specific object's class and 3D bounding box. While an object's class is view-invariant, its 3D bounding box is view-dependent. This motivates us to focus on transforming high-dimensional bounding box representations. 
+
+We first input the candidate instance features into the prediction head of the camera branch. We label the outputted bounding boxes as $\mathbf{b}^P$.  Given the extrinsic matrix $[\mathbf{R}_v|\mathbf{t}_v]$ and intrinsic matrix $\mathbf{K}_v$ of the corresponding $v$-th camera, the bounding boxes can be easily projected into the LiDAR coordinate system. We denote the project bounding boxes as $\mathbf{b}^L$. We encode the projected bounding boxes with a multi-layer perceptron (MLP) $g(\cdot)$, yielding a high-dimensional box embedding. We also encode the flattened camera parameter with another MLP $m(\cdot)$ to obtain a camera embedding. The camera embedding is multiplied with the original instance features as done in \cite{li2022bevdepth}, which are then added to the box embedding, given by \begin{equation}
+    \mathbf{q}_{C,i}^L=g(\mathbf{b}^L_i) + h(\mathbf{q}_{C,i}^P\cdot m(\mathbf{R}_v,\mathbf{t}_v,\mathbf{K}_v)),
+    \label{eq:view}
+\end{equation}
+where $h(\cdot)$ is an extra MLP to encode the query features in the perspective view. $h(\cdot)$ aims to preserve view-agnostic information while discarding view-specific information. Afterward, $\mathbf{Q}_C^{L}=\{\mathbf{q}_{C,i}^L\}$ is passed through a self-attention layer to aggregate information from multiple cameras to get the updated queries $\mathbf{Q}_C$ which represent the image modality instance features in the LiDAR space.
+
+
+\noindent\textbf{Sparse candidate fusion.}
+\label{sec:fuse}
+Our parallel modality-specific object detection provides sparse instance candidates $\mathbf{Q}_L=\{\mathbf{q}_{L,i}\}_{i=1}^{N_L}$ and $\mathbf{Q}_C=\{\mathbf{q}_{C,i}\}_{i=1}^{N_C}$ from the LiDAR and camera modalities respectively. After the above transformation of the camera candidates into LiDAR space, candidates from both modalities represent bounding boxes in the same LiDAR coordinate space, as well as the view-invariant categories. We now concatenate the candidates together:
+\begin{equation}
+\resizebox{0.9\linewidth}{!}{
+    $\mathbf{Q}_{LC}=\{\mathbf{q}_{LC,i}\}_{i=1}^{N_L+N_C}=\{f_L(\mathbf{q}_{L,i})\}_{i=1}^{N_L}\cup \{f_C(\mathbf{q}_{C,i})\}_{i=1}^{N_C}
+$}
+\end{equation}
+where $f_L(\cdot),f_C(\cdot)$ are learnable projectors. Afterward, we make novel use of a self-attention module to fuse the two modalities. Despite the simplicity of self-attention, the inherent intuition is novel: the modality-specific detectors encode the advantageous aspects of their respective inputs, and the self-attention module is able to aggregate and preserve the information from both modalities in an efficient manner. The output of the self-attention module is used for final classification and regression of the bounding boxes.
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/transfer.pdf}
+    \caption{Cross-modality information transfer. We transfer geometric information from LiDAR to camera modality, and semantic information from camera to LiDAR modality.}
+    \label{fig:transfer}
+\end{figure}
+\subsection{Cross-Modality Information Transfer}
+\label{sec:transfer}
+Although we aim to utilize the advantages of both modalities, we must address that the modalities also have their own disadvantages that can result in negative transfer between modalities. For example, the LiDAR detector struggles to capture rich semantic information, while the camera detector struggles to capture accurate geometric and depth information. To mitigate negative transfer, we propose novel geometric and semantic information transfer modules, as illustrated in Fig.~\ref{fig:transfer}, that we apply prior to the modality-specific detectors.
+\noindent\textbf{Geometric transfer from LiDAR to camera.}
+\label{sec:geometric}
+We project each point in the LiDAR point cloud input to multi-view images to generate sparse multi-view depth maps. These multi-view depth maps are inputted into a shared encoder to obtain depth features, which are then concatenated with the image features to form depth-aware image features that compensate for the lack of geometric information in camera inputs. The depth-aware image features are used as the input to the camera branch.
+
+\noindent\textbf{Semantic transfer from camera to LiDAR.}
+\label{sec:semantic}
+We project the points in the LiDAR point cloud input to the image inputs, which yields sparse points on the image features. We perform max-pooling to aggregate the resulting multi-scale features, and we combine them with the BEV feature through addition. The concatenated features serve as the queries and interact with the multi-scale image features through deformable-attention~\cite{zhu2020deformable}. The updated queries replace the original queries in the BEV features, which results in the semantic-aware BEV features, which are used for query initialization.
+\subsection{Objective Function}
+\label{sec:loss}
+We apply the Gaussian focal loss~\cite{lin2017focal} to the initialized queries of both modalities, given by
+\begin{equation}
+    \mathcal{L}_{init}=\mathcal{L}_{GFocal}(\mathbf{\hat{Y}}_{L},\mathbf{Y}_L)+\mathcal{L}_{GFocal}(\mathbf{\hat{Y}}_{C},\mathbf{Y}_C),
+\end{equation}
+where $\mathbf{\hat{Y}}_{L},\mathbf{\hat{Y}}_{C}$ are the dense predictions of category-wise heatmaps of the LiDAR and camera modalities, respectively, and $\mathbf{Y}_{L},\mathbf{Y}_{C}$ are the corresponding ground-truths.
+
+Then, we apply the loss function for the detectors of the LiDAR and camera modalities, as well as the view transformation of the camera candidates and the candidate fusion stage. Firstly, the predictions of each modality-specific detector are independently matched with the ground-truth using the Hungary algorithm~\cite{kuhn1955hungarian}. The object classification is optimized with focal loss~\cite{lin2017focal} and the 3D bounding box regression is optimized with L1 loss. For the camera modality detector, the ground-truth bounding boxes are in separate camera coordinates. For all other detectors, ground-truth bounding boxes are in LiDAR coordinates. The detection loss can be represented as
+\begin{equation}
+\mathcal{L}_{detect}=\gamma\mathcal{L}_{detect}^{camera}+\mathcal{L}_{detect}^{trans}+\mathcal{L}_{detect}^{LiDAR}+\mathcal{L}_{detect}^{fusion}.
+\end{equation}
+Our entire network is optimized using $\mathcal{L}=\alpha\mathcal{L}_{init}+\beta\mathcal{L}_{detect}$. In our implementation, we empirically set $\gamma=1, \alpha=0.1$, and $\beta=1$ to balance different terms.
+
+\begin{table*}[htb!]
+    \centering
+    \caption{Comparison with existing methods on nuScenes \textit{validation set} and \textit{test set}.}
+    \label{tab:comparison}
+    \begin{tabular}{c|c|cc|cc|cc}
+    \toprule
+        \multirow{2}{*}{Methods} & \multirow{2}{*}{Modality} & \multirow{2}{*}{LiDAR Backbone} & \multirow{2}{*}{Camera Backbone} & \multicolumn{2}{c|}{\textit{validation set}} & \multicolumn{2}{c}{\textit{test set}}\\
+        & & & & NDS & mAP & NDS & mAP\\
+        \midrule
+        FCOS3D~\cite{wang2021fcos3d} & Camera & - & ResNet-101~\cite{he2016deep} & 41.5 & 34.3 &  42.8 & 35.8\\
+        PETR~\cite{liu2022petr} & Camera & - & ResNet-101~\cite{he2016deep} & 44.2 & 37.0 & 45.5 & 39.1\\
+        \midrule
+        CenterPoint~\cite{yin2021center} & LiDAR & VoxelNet~\cite{zhou2018voxelnet} & - &  66.8 & 59.6 & 67.3 & 60.3\\
+        TransFusion-L~\cite{bai2022transfusion}& LiDAR & VoxelNet~\cite{zhou2018voxelnet} & - & 70.1 & 65.1 & 70.2 & 65.5\\ 
+        \midrule
+        PointAugmenting~\cite{vora2020pointpainting} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & DLA34~\cite{yu2018deep} & - & - & 71.0 & 66.8\\
+
+        FUTR3D~\cite{chen2022futr3d} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-101~\cite{he2016deep} & 68.3 & 64.5 & - & -\\
+        UVTR~\cite{li2022unifying} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-101~\cite{he2016deep} & 70.2 & 65.4 & 71.1 & 67.1\\
+        TransFusion~\cite{bai2022transfusion} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-50~\cite{he2016deep} & 71.3 & 67.5 & 71.6 & 68.9\\
+        AutoAlignV2~\cite{chen2022autoalignv2} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & CSPNet~\cite{wang2020cspnet} & 71.2 & 67.1 & 72.4 & 68.4\\
+        BEVFusion~\cite{liang2022bevfusion} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & Dual-Swin-T~\cite{liang2022cbnet} & 72.1 & 69.6 & 73.3 & 71.3\\
+        BEVFusion~\cite{liu2022bevfusion} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & Swin-T~\cite{liu2021swin} & 71.4 & 68.5 & 72.9 & 70.2\\
+        DeepInteraction~\cite{yang2022deepinteraction} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-50~\cite{he2016deep} & 72.6 & 69.9 & 73.4 & 70.8\\
+        CMT~\cite{yan2023cross} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-50~\cite{he2016deep} & 70.8 & 67.9 & - & -\\
+        \midrule
+        \textbf{SparseFusion (ours)} & LiDAR+Camera & VoxelNet~\cite{zhou2018voxelnet} & ResNet-50~\cite{he2016deep} & \textbf{72.8} & \textbf{70.4} & \textbf{73.8} & \textbf{72.0}\\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/visualization.pdf}
+    \caption{Qualitative results of SparseFusion on nuScenes \textit{validation set}.}
+    \label{fig:visualize}
+\end{figure*}
+
+
+
+Experiments
+\subsection{Dataset and metrics}
+We follow previous work~\cite{yang2022deepinteraction,yan2023cross,liang20
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

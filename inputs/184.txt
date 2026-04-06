@@ -1,0 +1,251 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+The AI community is currently witnessing the bloom of vision-language models \cite{kiros2014unifying, karpathy2014deep, antol2015vqa, vinyals2015show, yang2016stacked, huang2017instance, radford2021learning, wang2022unifying, li2022blip, li-etal-2023-lavis}, with Transformer-based models such as CLIP \cite{radford2021learning}, BLIP/BLIP2 \cite{li2022blip, li2023blip}, and GPT-4V \cite{openai2023gpt4vision} emerging as prominent in recent research.
+These models are capable of tackling a broad range of vision-language tasks, such as Image-Text Retrieval \cite{https://doi.org/10.48550/arxiv.1509.04942}, Vision Reasoning \cite{suhr2018corpus}, Image Captioning \cite{lin2014microsoft}, and Visual Question Answering \cite{antol2015vqa}. 
+Nevertheless, the notable improvement is at the expense of significantly increased computational cost, making it less accessible for consumers with limited resources.
+
+The computational cost of Transformers increases monotonically with the input tokens. Token reduction, which reduces the number of tokens processed during forward, is an effective strategy to mitigate high computational costs for both vision Transformers \cite{rao2021dynamicvit, liang2022not, bolya2022tome} and language Transformers \cite{goyal2020power, wang2021spatten, kim2022learned}. Although studied on the acceleration of unimodal models, a non-negligible research gap persists in multimodal contexts. 
+
+In vision-language transformers, a straightforward idea involves leveraging cross-modal information to guide token reduction. This concept can be intuitively applicable in modality-independent frameworks, such as CLIP~\cite{radford2021learning}. However, recent popular vision-language Transformers like BLIP/BLIP2 \cite{li2022blip, li2023blip} and LLaVA \cite{liu2023visual, liu2023improved} are modality-dependent, with the vision encoder processing first. While vision features can guide token reduction in the following networks, incorporating language priors to guide token reduction in the vision encoder poses a challenge. The issue of facilitating bidirectional guidance, which would allow the preceding modality to benefit from information in the succeeding modality for token reduction, remains an open question.
+
+\begin{figure*}[tb]
+    \centering
+    \captionsetup{font={small}}
+    \includegraphics[width=0.8\linewidth]{figures/overview.pdf}
+    \caption{\textbf{Overview of \textit{CrossGET}.} \textbf{\ding{172}} \textit{CrossGET} is a general multimodal token reduction framework that applies to both modality-independent and modality-dependent models. \textbf{\ding{173}} \textit{CrossGET} jointly considers the token similarity derived from intra-modal complete-graph soft matching and the token importance indicated by cross-modal guidance to determine which tokens should be combined. The cross-modal importance is subsequently utilized to weight tokens within each stack and output their ensembles. \textbf{\ding{174}}  Compared with the original models, \textit{CrossGET} achieves considerable computation saving and acceleration with negligible performance degradation.}
+    \label{figure overview}
+\end{figure*}
+
+This paper introduces \textit{CrossGET}, a general acceleration framework designed to efficiently reduce the number of tokens for both  \textit{modality-independent} and \textit{modality-dependent} vision-language Transformers with bidirectional guidance. \textit{CrossGET} features two primary innovations: \textit{cross-guided matching and ensemble} and \textit{complete-graph soft matching}. 
+
+Firstly, \textit{CrossGET} utilizes \textit{cross-guided matching and ensemble} to identify and ensemble redundant tokens, which applies to both modality-independent and modality-dependent models. \textit{CrossGET} incorporates cross tokens into both vision and language branches to facilitate learning of cross-modal importance and to guide the selection of redundant tokens.\footnote{A naive solution is to calculate the similarity between vision and language tokens directly. However, in modality-dependent models, different modality branches are aligned crosswise or sequentially, rendering cross-modal similarity inaccessible to preceding branches. \textit{CrossGET} enables cross tokens within each modality to act as proxies for other modalities, allowing the preceding modality to leverage information from the succeeding modality without being constrained by the order of calculations.} Secondly, for the underlying mechanism of token matching, \textit{CrossGET} formulates it as a discrete optimization problem and proposes an approximate algorithm \textit{complete-graph soft matching} to secure reliable matching results while maintaining parallelizability for high efficiency. The contributions of this paper are summarized as follows:
+
+\begin{figure*}[tb]
+    \centering
+    \captionsetup{font={small}}
+    \includegraphics[width=1.0\linewidth]{figures/cross.pdf}
+    \caption{\textbf{Diagram of introducing and leveraging cross-model guidance for vision-language Transformers.} \textbf{\ding{172}} Cross tokens learn cross-modal information by closing the after-projection distance between cross tokens of different modalities. The switches indicate that it is free to choose whether to reduce tokens in different modalities and layers. \textbf{\ding{173}} Cross tokens provide cross-modal importance as a metric to guide token matching. \textbf{\ding{174}} The metric also guides the weighted summation of the stacked tokens to produce token ensemble results.}
+    \label{figure cross}
+\end{figure*}
+
+\begin{itemize}
+\item It is one of the pioneering efforts in token ensemble framework for vision-language Transformers, achieving general applicability across both modality-independent and modality-dependent models. The approach is also validated in zero-shot scenarios.
+
+\item It introduces \textit{cross-guided matching and ensemble}, a novel approach for effectively leveraging cross-modal information. It also proposes a \textit{complete-graph soft matching} algorithm for reliable token-matching results while maintaining parallelizability.
+
+\item Its versatility has been validated across a broad range of vision-language tasks, datasets, and model architectures. This is also the \textit{first} application of token ensemble approaches to the modality-dependent pipeline of BLIP2~\cite{li2023blip}, which is a widely adopted paradigm among recent large vision-language Transformers, \eg, LLaVA~\cite{liu2023visual}, MiniGPT-4~\cite{zhu2023minigpt}, and mPLUG-Owl~\cite{ye2023mplug}.
+\end{itemize}
+
+
+Related Work
+
+\textbf{Vision-Language Transformers} \ According to the dependency on calculation order across different modalities, existing vision-language Transformers can be classified into two main categories: 1) Modality-independent models \cite{li2020oscar, li2021align, radford2021learning, kim2021vilt, singh2022flava}. For example, CLIP \cite{radford2021learning} is a representative model. These models allow for both the visual and language branches to be calculated simultaneously. 2) Modality-dependent models \cite{li2021align, yu2022coca, li2022blip, alayrac2022flamingo}, exemplified by BLIP-based models \cite{li2022blip} and BLIP2/LLaVA-based \cite{li2023blip, zhu2023minigpt, dai2023instructblip, liu2023visual, gao2023llama} multimodal LLMs. In these models, calculation must commence with the visual branch, as the language branch relies on outputs from the visual branch as part of its inputs. \textit{CrossGET} applies to both modality-independent and modality-dependent scenarios. 
+
+\textbf{Model Acceleration Techniques} Numerous model acceleration techniques exist, for example, knowledge distillation \cite{hinton2015distilling, zhang2019your, jiao2019tinybert, wang2020minilm, touvron2021training, yang2022masked}, model pruning \cite{han2015deep, he2017channel, fan2019reducing, zhu2021vision, chavan2022vision, tao2023structured}, and quantization \cite{xiao2022smoothquant, tao2022compression, frantar2022optimal, yuan2023rptq, frantar2023gptq} \textit{CrossGET} is orthogonal to these techniques and does not seek to quantitatively surpass them. Instead, being orthogonal indicates that these techniques can be used together with \textit{CrossGET} to further enhance their acceleration effect. Besides, \textit{CrossGET} offers distinct advantages, including 1) Unlike knowledge distillation that necessitates tuning, \textit{CrossGET} offers the flexibility to be utilized both with and without tuning. This is particularly beneficial when tuning large models is costly or when data are publicly unavailable. 2) The effectiveness of model pruning is heavily dependent on granularity. Unstructured and semi-structured pruning hardly delivers practical speedup without special hardware support, which is unnecessary for \textit{CrossGET}. 3) Low-bit quantization may result in unstable training and necessitate custom CUDA kernel implementations, which are unnecessary for \textit{CrossGET}. Furthermore, a recent advance, TRIPS \cite{jiang2022trips}, employs text feature extracted from the Bert~\cite{devlin2018bert} encoder to unidirectionally guide the token reduction in image encoder, which is limited to modality-independent models. In contrast, \textit{CrossGET} is not only applicable to both modality-independent and modality-dependent scenarios, but also executes the modality-dependent token reduction in a more effective bidirectional manner.
+
+
+
+Methodology
+
+Figure \ref{figure overview} demonstrates that \textit{CrossGET} accelerates vision-language Transformers by ensembling tokens. It is inserted into the middle of Self-Attention and FFN layers in both the vision and language branches. To effectively leverage cross-modal information, \textit{CrossGET} proposes \textit{cross-guided matching and ensemble} (Section \ref{Cross-guided matching}). To achieve reliable token-matching results, \textit{CrossGET} utilizes a parallelizable \textit{complete-graph soft matching} algorithm (Section \ref{Complete-graph soft matching}). 
+
+\begin{figure*}[tb]
+    \centering
+    \captionsetup{font={small}}
+    \includegraphics[width=1.0\linewidth]{figures/match.pdf}
+    \caption{\textbf{Illustration of complete-graph soft matching on two examples.} Case2 is an inverted version of case1 in which the similarity between token pairs in case2 equals ($1 - $ similarity of corresponding pairs in case1).}
+    \label{figure match}
+\end{figure*}
+
+\subsection{Cross-Guided Matching and Ensemble}
+\label{Cross-guided matching}
+
+\paragraph{Dependencies of Calculation Order} \ For multimodal models, in addition to utilizing intra-modal similarity as guidance, token-matching results can further benefit from cross-modal guidance. However, effectively introducing cross-modal guidance is challenging, particularly when dependencies exist on the calculation order of modalities. 
+
+For example, if modality $\mathbb{A}$ requires guidance from modality $\mathbb{B}$, then $\mathbb{B}$ should perform inference, output features as cross-modal guidance, and send these to $\mathbb{A}$. However, if a calculation dependency exists (\eg, the output of $\mathbb{A}$ is a necessary input for $\mathbb{B}$), $\mathbb{B}$ cannot initiate inference before $\mathbb{A}$ completes its inference process. Therefore, $\mathbb{A}$ cannot leverage the cross-modal guidance provided by $\mathbb{B}$.
+
+\paragraph{Breaking Dependencies} \ To allow $\mathbb{A}$ to leverage information from the succeeding modality $\mathbb{B}$ without being constrained by order of calculations, \textit{CrossGET} decouples the capability to guide preceding modalities from the inference process on succeeding modalities, \ie, $\mathbb{B}$ can offer guidance to $\mathbb{A}$ before $\mathbb{B}$'s inference. As illustrated in Figure \ref{figure cross}, this is achieved by injecting learnable cross tokens into each modality, driving them to learn cross-modal information from each other. When conducting inference within a modality, cross tokens act as proxies for other modalities, offering cross-modal guidance on behalf of other modalities.
+
+\paragraph{Cross-Guided Matching} \ Cross tokens provide cross-modal importance $\bm{I}$ as a metric to guide \textit{complete-graph soft matching}. $\bm{I}$ is calculated as the cosine similarity between the query of the cross-token $\bm{T}_c \in \mathbb{R}^{1 \times d}$ where $d$ is the embedding size and the key of other tokens $\bm{T}_i \in \mathbb{R}^{1 \times d} , \, i \neq c$:
+\begin{equation}
+\label{cross-modal importance}
+    \bm{I}_i = \frac{(\bm{T}_c\bm{W}^q)(\bm{T}_i\bm{W}^k)^\top}{\Vert \bm{T}_c\bm{W}^q \Vert_2 \Vert \bm{T}_i\bm{W}^k \Vert_2},
+\end{equation}
+where $\bm{W}^q, \bm{W}^k \in \mathbb{R}^{d \times d}$ are weights of query and key layers, respectively. $\Vert\cdot\Vert_2$ denotes L2-norm. 
+
+\paragraph{Cross-Guided Ensemble} \ \textit{CrossGET} can be further enhanced by incorporating cross-modal guidance into the ensemble process. More specifically, employing the softmax value of cross-modal importance to produce a weighted summation of the stacked tokens as the ensemble results:
+\begin{equation}
+    \bm{T}_i = \sum\nolimits_{\bm{T}_j \in \bm{S}_i} \operatorname{softmax}(\bm{I})_j \bm{T}_j,
+\end{equation}
+where $\bm{S}_i$ represents the set of the stacked tokens, and $\bm{T}_i$ signifies the corresponding ensembled token.
+
+\paragraph{Loss Function} \ JS divergence $\mathcal{L}_\mathcal{JS}$ (\ie, a symmetrized KL divergence $\mathcal{L}_\mathcal{KL}$) between after-projection cross tokens $T^i_{cv}$ from vision and $T^i_{cl}$ from language in layer $i$ is \footnote{For modalities with different number of layers, order-preserving mappings between layer indices can be employed.}:
+\begin{gather}
+    \mathcal{L}^i_\mathcal{JS} = \mathcal{L}_\mathcal{JS}[(\bm{T}^i_{cv}\tilde{\bm{W}}^{v})||(\bm{T}^i_{cl}\tilde{\bm{W}}^{l})] \\
+    = \frac{1}{2}\left[\mathcal{L}_\mathcal{KL}[(\bm{T}^i_{cv}\tilde{\bm{W}}^{v})||\bm{T}^i_m] + \mathcal{L}_\mathcal{KL}[(\bm{T}^i_{cl}\tilde{\bm{W}}^{l})||\bm{T}^i_m]\right], \\
+    \bm{T}^i_m = \frac{1}{2}(\bm{T}^i_{cv}\tilde{\bm{W}}^{v} + \bm{T}^i_{cl}\tilde{\bm{W}}^{l}),
+\end{gather}
+where $\tilde{\bm{W}}^{v}$ and $\tilde{\bm{W}}^{l}$ represent the detached weights of the existing projection layers used for alignment in vision modality and language modality, respectively. Being detached implies that $\mathcal{L}^i_\mathcal{JS}$ produce gradients solely with respect to cross tokens $\bm{T}^i_{cv}$ and $\bm{T}^i_{cl}$, not affecting the projection layers. The weight of projection layers $\bm{W}^v$ and $\bm{W}^l$ are updated exclusively based on the gradients from the original loss. $\mathcal{L}^i_\mathcal{JS}$ is introduced to encourage cross tokens to learn cross-modal information from different modalities:
+\begin{equation}
+ \mathcal{L} = \mathcal{L_{O}} + \alpha \sum\nolimits_{i=0}^{L-1}\mathcal{L}^i_\mathcal{JS},
+\end{equation}
+where $\mathcal{L_{O}}$ denotes the original loss for learning a multimodal model, $\alpha$ is a hyperparameter to align the loss items closely in order of magnitude, and $L$ is the number of model layers, which means cross tokens are inserted into each layer of the model and $\mathcal{L_{JS}}$ should be calculated for each layer.
+
+\begin{table*}[t]
+  \setlength{\tabcolsep}{0.132cm}
+  \captionsetup{font={small}}
+  \small
+  \centering
+  \caption{\textbf{Accelerate CLIP on the Flickr30K dataset of the Image-Text Retrieval task.} R: Recall. R@1, R@5 and R@10 are the higher the better. Experimental results are reported \textit{after training for all approaches}. CrossGET\textsuperscript{\tri} only uses \textit{complete-graph soft matching} (CGSM) (Section \ref{Complete-graph soft matching}), CrossGET\textsuperscript{\dia} adds \textit{cross-guided matching} (CGM) (Section \ref{Cross-guided matching}) on \textsuperscript{\tri}, and CrossGET\textsuperscript{\hollowstar} further adds \textit{cross-guided ensemble} (CGE) (Section \ref{Cross-guided matching}) on \textsuperscript{\dia}. Here \textit{UPop} uses a larger CLIP as its original model, and therefore GFLOPs is higher.}
+  \begin{tabular}{ l @{\hspace{2\tabcolsep}} l l l l l l l l l}
+    \toprule
+    \multirow{2}{*}[-3pt]{Approach} & \multicolumn{3}{c}{Image $\rightarrow$ Text} & \multicolumn{3}{c}{Text $\rightarrow$ Image} & \multicolumn{1}{c}{Avg.} &\multirow{2}{*}[-3pt]{\makecell{GFLOPs \\ $\downarrow$}} & \multirow{2}{*}[-3pt]{\makecell{Throughput \\ $\uparrow$}} \\ 
+    \cmidrule(r){2-4} \cmidrule(lr){5-7} \cmidrule(r){8-8}
+    & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & $\overline{\textbf{R@1}}$ \\
+    \cmidrule{1-10}
+    CLIP \cite{radford2021learning} & 92.1 & \fade{99.1} & \fade{99.7} & 79.3 & \fade{95.7} & \fade{98.0} & 85.7 & 20.6 & 255.2 \\
+    \cmidrule{1-10}
+    TRIPS \cite{jiang2022trips} & 90.4 & \fade{98.9} & \fade{99.5} & 76.8 & \fade{94.4} & \fade{97.2} & 83.6 & 16.4 & 316.9 \\
+    UPop \cite{pmlr-v202-shi23e}  & 82.9 & \fade{95.7} & \fade{97.8} & 67.3 & \fade{89.5} & \fade{93.5} & 75.1 & 51.3 & - \\
+    \cmidrule{1-10}
+    Hourglass \cite{liang2022expediting} & 90.5 & \fade{99.0} & \fade{99.7} & 77.9 & \fade{94.8} & \fade{97.3} & 84.2 & 15.0 & 342.3 \\
+    DynamicViT \cite{rao2021dynamicvit} & 89.4 & \fade{98.8} & \fade{99.3} & 75.7 & \fade{94.2} & \fade{97.0} & 82.6 & 12.2 & 422.1 \\
+    EViT \cite{liang2022not} & 89.9 & \fade{98.6} & \fade{99.4} & 76.7 & \fade{94.5} & \fade{97.4} & 83.3 & 12.4 & 413.2 \\
+    ToMe \cite{bolya2022tome}  & 90.8$_{\color{red}\downarrow 1.3}$ & \fade{99.2}$_{\color{ForestGreen}\uparrow 0.1}$ & \fade{99.5}$_{\color{red}\downarrow 0.2}$ & 78.1$_{\color{red}\downarrow 1.2}$ & \fade{95.3}$_{\color{red}\downarrow 0.4}$ & \fade{97.7}$_{\color{red}\downarrow 0.3}$ & 84.5$_{\color{red}\downarrow 1.2}$ & 11.8  & 417.4 \\
+    ToMe+Extra Token & 90.8$_{\color{red}\downarrow 1.3}$ & \fade{98.7}$_{\color{red}\downarrow 0.4}$ & \fade{99.6}$_{\color{red}\downarrow 0.1}$ & 78.8$_{\color{red}\downarrow 0.5}$ & \fade{95.1}$_{\color{red}\downarrow 0.6}$ & \fade{97.6}$_{\color{red}\downarrow 0.4}$ & 84.8$_{\color{red}\downarrow 0.9}$ & 11.9 & 412.9 \\
+    ToMe+CGM$\&$CGE & 91.5$_{\color{red}\downarrow 0.6}$ & \fade{99.0}$_{\color{red}\downarrow 0.1}$ & \fade{99.6}$_{\color{red}\downarrow 0.1}$ & 78.6$_{\color{red}\downarrow 0.7}$ & \fade{95.4}$_{\color{red}\downarrow 0.3}$ & \fade{97.8}$_{\color{red}\downarrow 0.2}$ & 85.1$_{\color{red}\downarrow 0.6}$ & 11.9 & 409.9 \\
+    \cmidrule{1-10}
+    \rowcolor{gray!10}CrossGET\textsuperscript{\tri} (CGSM) & 90.9$_{\color{red}\downarrow 1.2}$ & \fade{99.2}$_{\color{ForestGreen}\uparrow 0.1}$ & \textbf{\fade{99.9}}$_{\color{ForestGreen}\uparrow 0.2}$ & 79.1$_{\color{red}\downarrow 0.2}$ & \fade{95.1}$_{\color{red}\downarrow 0.6}$ & \fade{97.6}$_{\color{red}\downarrow 0.4}$ & 85.0$_{\color{red}\downarrow 0.7}$ & 11.9 & 408.9 \\
+    \rowcolor{gray!25}CrossGET\textsuperscript{\dia} (CGSM+CGM) & \textbf{92.1}$_{\color{ForestGreen}\uparrow 0.0}$ & \fade{99.3}$_{\color{ForestGreen}\uparrow 0.2}$ & \fade{99.7}$_{\color{ForestGreen}\uparrow 0.0}$ & 79.5$_{\color{ForestGreen}\uparrow 0.2}$ & \fade{95.3}$_{\color{red}\downarrow 0.4}$ & \fade{97.7}$_{\color{red}\downarrow 0.3}$ & 85.8$_{\color{ForestGreen}\uparrow 0.1}$ & 12.0 & 402.1 \\
+    \rowcolor{gray!35}CrossGET\textsuperscript{\hollowstar} (CGSM+CGM$\&$CGE) & \textbf{92.1}$_{\color{ForestGreen}\uparrow 0.0}$ & \textbf{\fade{99.7}}$_{\color{ForestGreen}\uparrow 0.6}$ & \fade{99.8}$_{\color{ForestGreen}\uparrow 0.1}$ & \textbf{79.6}$_{\color{ForestGreen}\uparrow 0.3}$ & \textbf{\fade{95.7}}$_{\color{ForestGreen}\uparrow 0.0}$ & \textbf{\fade{98.0}}$_{\color{ForestGreen}\uparrow 0.0}$ & \textbf{85.9}$_{\color{ForestGreen}\uparrow 0.2}$ & 12.0$_{\color{ForestGreen}\downarrow 42\%}$ & 401.8$_{\color{ForestGreen}\uparrow 57\%}$\\
+    \bottomrule
+  \end{tabular}
+  \label{table CLIP Retrieval}
+\end{table*}
+
+\subsection{Complete-Graph Soft Matching}
+\label{Complete-graph soft matching}
+\paragraph{Problem Formulation for Token Matching} Token matching is aimed at determining which tokens should be combined. Suppose there are $N \in \mathbb{N}^{+}$ tokens in total, and $r \in \mathbb{N}^{+} $ ($r < N$) tokens among them should be eliminated (\ie, combined together with other tokens), then the token matching problem can be formulated as a discrete optimization problem that is to find a set of feasible token pairs: 
+\begin{equation}
+    \bm{P} = \{(\bm{T}_i, \bm{T}_j) \, | \, 0 \leq i,j \leq N, i \neq j\}, \quad |\bm{P}| = r,
+\end{equation}
+where $\bm{T}_i$ denotes tokens $i$, and $|\cdot|$ denotes the size of the set, to maximize the objective function
+\begin{equation}
+    S = \sum\nolimits_{(\bm{T}_i, \bm{T}_j) \in P} \mathcal{D}(\bm{T}_i, \bm{T}_j),
+\end{equation} 
+where $\mathcal{D}$ is a function (\eg, cosine similarity) that calculates the similarity between the key of the token $\bm{T}_i$ and $\bm{T}_j$.
+
+\paragraph{Parallelizability} While iterative clustering can be utilized for token matching, it cannot be parallelized and is time-consuming. To facilitate the parallelizability, an additional constraint $\bm{T}^S \cap \bm{T}^D = \phi,$ should be met.
+\ie, the source set $\bm{T}^S$ and destination set $\bm{T}^D$ should be disjointed, where
+\begin{align}
+    \bm{T}^S & = \{\bm{T}_i \, | \, (\bm{T}_i, \bm{T}_j) \in P\}, \quad |\bm{T}^S| = r, \\
+    \bm{T}^D & = \{\bm{T}_j \, | \, (\bm{T}_i, \bm{T}_j) \in P\}, \quad |\bm{T}^D| \leq r.
+\end{align}
+\paragraph{Algorithm Procedure} \textit{Complete-Graph Soft Matching} is designed as a non-iterative, approximate algorithm to ensure parallelizability and high efficiency
+\begin{itemize}
+\item \textbf{Step 1}: Calculate the cosine similarities $\frac{\bm{K}\bm{K}^{\top}}{\Vert \bm{K} \Vert_2^2}$ between the keys $\bm{K}$ of every two tokens to generate the similarity matrix $\bm{D} \in \mathbb{R}^{N \times N}$ (Diagonal self-similarities are ignored). 
+
+\item \textbf{Step 2}: Sort the rows and columns of the similarity matrix in descending order based on their maximum similarity $\max \limits_{1 \leq j \leq N}\bm{D}_{ij}$ and $\max \limits_{1 \leq i \leq N}\bm{D}_{ij}$ to other tokens.
+
+\item \textbf{Step 3}: Upon the sorted similarity matrix $\bm{D}^{\star}$, a lower triangle dependency mask $\bm{M}_{ij}= \begin{cases}-\infty & \text { for } i \geq j \\ 0 & \text { for } i < j\end{cases}$ is applied to disjoint the sets $\bm{T}^S$ and $\bm{T}^D$. It explicitly prioritizes the matching among tokens based on similarity values, ensuring source tokens with higher priority do not become targets for those with lower priority.
+
+\item \textbf{Step 4}: Select $r$ rows with the highest similarity $\max \limits_{1 \leq j \leq N}\bm{D}^{\star}_{ij}$ to other tokens as the source set $\bm{T}^S$. For every token in $\bm{T}^S$, select tokens from $\bm{T} \backslash \bm{T}^S$ that exhibit the highest similarity as the destination set $\bm{T}^D$. 
+
+\item \textbf{Step 5}: The matching among tokens leads to multiple connected components (\ie, stacks), and tokens in each stack are ensembled by averaging. 
+\end{itemize}
+
+This procedure is non-iterative and parallelizable. As depicted in Figure \ref{figure match}, \textit{complete-graph soft matching} achieves optimal solutions in both case1 and case2. 
+
+$\bullet$ \textbf{Step 4}: Select $r$ rows via metric $\max \limits_{1 \leq j \leq N}\bm{D}^{\star}_{ij} - \bm{I}$ (\ie, highest similarity to other tokens - cross-modal importance) instead of  $\max \limits_{1 \leq j \leq N}\bm{D}^{\star}_{ij}$.
+
+$\bullet$ \textbf{Step 5}: Instead of averaging, ensembling tokens via weighted summation based on $\operatorname{softmax}(\bm{I})$. 
+
+\begin{table}[t]
+\captionsetup{font={small}}
+\setlength{\tabcolsep}{0.1mm}
+\captionsetup{font={small}}
+\small
+\centering
+\caption{\textbf{Accelerate BLIP on the NLVR2 dataset of the Vision Reasoning task.} BLIP is the original model for all approaches.}
+    \begin{tabular}{l l l l l}
+    \toprule
+    Approach  & Dev Acc & Test Acc & GFLOPs & Throughput \\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule{4-5}
+    BLIP \cite{li2022blip} & \fade{82.3} & 83.4 & 132.5 & 39.8 \\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule{4-5}
+    UPop \cite{pmlr-v202-shi23e} & \fade{80.3}$_{\color{red}\downarrow 2.0}$ & 81.1$_{\color{red}\downarrow 2.3}$ & 89.4 & - \\
+    ToMe \cite{bolya2022tome} & \fade{81.7}$_{\color{red}\downarrow 0.6}$ & 82.2$_{\color{red}\downarrow 1.2}$ & 59.0 & 81.9 \\
+    \rowcolor{gray!10}CrossGET\textsuperscript{\tri} (CGSM) & \textbf{\fade{82.2}}$_{\color{red}\downarrow 0.1}$ & 
+    82.6$_{\color{red}\downarrow 0.8}$ & 60.8 & 77.7 \\
+    \rowcolor{gray!25}CrossGET\textsuperscript{\hollowstar} (Ours) & \fade{82.1}$_{\color{red}\downarrow 0.2}$ & \textbf{83.2}$_{\color{red}\downarrow 0.2}$ & 61.1$_{\color{ForestGreen}\downarrow 57\%}$ & 76.8$_{\color{ForestGreen}\uparrow 93\%}$ \\
+    \bottomrule
+  \end{tabular}
+\label{table nlvr}
+\end{table} 
+
+\begin{table*}[t]
+  \setlength{\tabcolsep}{2mm}
+  \captionsetup{font={small}}
+  \small
+  \centering
+  \caption{\textbf{Accelerate BLIP on the COCO Caption dataset of the Image Caption task.} The suffix -F denotes GFLOPs and throughput for the forward, while -G denotes GFLOPs and throughput for the generation.}
+  \begin{tabular}{l l l l l l l}
+    \toprule
+    Approach  & CIDEr & SPICE & GFLOPs-F & Throughput-F & GFLOPs-G & Throughput-G\\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule(r){4-5} \cmidrule{6-7}
+    BLIP \cite{li2022blip} & 133.3 & 23.8 & 65.7 & 106.4 & 330.7 & 17.2 \\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule(r){4-5} \cmidrule{6-7}
+    UPop \cite{pmlr-v202-shi23e} & 128.9$_{\color{red}\downarrow 4.4}$ & 23.3$_{\color{red}\downarrow 0.5}$ & 39.8 & - & - & - \\
+    ToMe \cite{bolya2022tome} & 130.3$_{\color{red}\downarrow 3.0}$ & 23.3$_{\color{red}\downarrow 0.5}$ & 29.2 & 209.3 & 43.8 & 77.7 \\
+    \rowcolor{gray!10}CrossGET (Ours) & \textbf{131.6}$_{\color{red}\downarrow 1.7}$ & \textbf{23.8}$_{\color{ForestGreen}\uparrow 0.0}$ & 30.1$_{\color{ForestGreen}\downarrow 54\%}$ & 183.5$_{\color{ForestGreen}\uparrow 72\%}$ & 46.7$_{\color{ForestGreen}\downarrow 86\%}$ & 73.9$_{\color{ForestGreen}\uparrow 330\%}$ \\
+    \bottomrule
+  \end{tabular}
+  \label{table caption coco}
+\end{table*}
+
+\begin{figure*}[t]
+    \captionsetup{font={small}}
+    \centering
+    \includegraphics[width=0.85\linewidth]{figures/curves.pdf}
+    \caption{\textbf{Performance-Cost tradeoffs in three situations:} 1) The left subfigure illustrates the tradeoff for BLIP on the NVLR2 dataset of the Visual Reasoning task without training. 2) The upper-right subfigure illustrates the tradeoff for BLIP on the NVLR2 dataset of the Visual Reasoning task with training. 3) The lower-right subfigure illustrates the tradeoff for CLIP on the Flickr30K dataset of the Image-Text Retrieval task are trained with $50\%$ token reduced and then re-evaluated under other token reduction ratios without training.}
+    \label{figure curves}
+\end{figure*}
+
+\begin{table*}[!h]
+ \setlength{\tabcolsep}{1.8mm}
+  \captionsetup{font={small}}
+  \small
+  \centering
+  \caption{\textbf{Accelerate BLIP on the NoCaps dataset of the Novel Object Caption task.} All metrics are the higher the better, and the evaluation uses the same model finetuned on the COCO Caption dataset as in Table \ref{table caption coco}, and therefore the GFLOPs and throughput of models are the same as in Table \ref{table caption coco}.}
+  \begin{tabular}{ l l l l l l l l l }
+    \toprule
+    \multirow{2}{*}[-2pt]{Approach} & \multicolumn{2}{c}{in-domain} & \multicolumn{2}{c}{near-domain} & \multicolumn{2}{c}{out-domain} & \multicolumn{2}{c}{\textbf{entire}} \\ 
+    \cmidrule(r){2-3} \cmidrule(r){4-5} \cmidrule(r){6-7} \cmidrule{8-9}
+    & CIDEr & SPICE & CIDEr & SPICE & CIDEr & SPICE & CIDEr & SPICE  \\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule(r){4-5} \cmidrule(r){6-7} \cmidrule{8-9}
+    BLIP \cite{li2022blip} & \fade{111.9} & \fade{14.9} & \fade{108.8} & \fade{14.8} & \fade{112.1} & \fade{14.2} & 109.9 & 14.7 \\
+    \cmidrule(r){1-1} \cmidrule(r){2-3} \cmidrule(r){4-5} \cmidrule(r){6-7} \cmidrule{8-9}
+    ToMe \cite{bolya2022tome} & \fade{107.9}$_{\color{red}\downarrow 4.0}$ & \fade{14.8}$_{\color{red}\downarrow 0.1}$ & \fade{105.1}$_{\color{red}\downarrow 3.7}$ & \fade{14.4}$_{\color{red}\downarrow 0.4}$ & \fade{106.4}$_{\color{red}\downarrow 5.7}$ & \textbf{\fade{14.1}}$_{\color{red}\downarrow 0.1}$ & 105.7$_{\color{red}\downarrow 4.2}$ & 14.4$_{\color{red}\downarrow 0.3}$ \\
+    \rowcolor{gray!10}CrossGET (Ours) & \textbf{\fade{113.2}}$_{\color{ForestGreen}\uparrow 1.3}$ & \textbf{\fade{15.1}}$_{\color{ForestGreen}\uparrow 0.2}$ & \textbf{\fade{107.2}}$_{\color{red}\downarrow 1.6}$ & \textbf{\fade{14.6}}$_{\color{red}\downarrow 0.2}$ & \textbf{\fade{107.4}}$_{\color{red}\downarrow 4.7}$ & \textbf{\fade{14.1}}$_{\color{red}\downarrow 0.1}$ & \textbf{108.1}$_{\color{red}\downarrow 1.8}$ & \textbf{14.6}$_{\color{red}\downarrow 0.1}$ \\
+    \bottomrule
+  \end{tabular}
+  \label{table caption Nocaps }
+\end{table*}
+
+\begin{table*}[t]
+  \setlength{\tabcolsep}{1.8mm}
+  \captionsetup{font={small}}
+  \small
+  \centering
+  \caption{\textbf{Accelerate BLIP on the VQA2.0 dataset of the Visual Question Answer task.} "yes/no", "number", "other", and "overall" denote accuracy on the corresponding types of questions. These four metrics are the higher the better. The suffix -F denotes GFLOPs and throughput for the forward that a single image may be accompanied by multiple questions and answers during training, while -T denotes GFLOPs and throughput for the test that a single image is accompanied by only one question and answer.}
+  \begin{tabular}{l l l l l l l l l }
+    \toprule
+    Approach  & yes/no & number & other & \textbf{overall} & GFLOPs-F & Throughput-F & GFLOPs-T & Throughput-T \\
+    \cmidrule(r){1-1} \cmidrule(r){2-4} \cmidrule(r){5-5} \cmidrule(r){6-7} \cmidrule{8-9}
+    BLIP \cite{li2022blip} & \fade{92.6} & \fade{
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

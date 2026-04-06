@@ -1,0 +1,243 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{iccv}
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{colortbl}
+\usepackage{enumitem}
+
+% Include other packages here, before hyperref.
+
+% If you comment hyperref and then uncomment it, you should delete
+% egpaper.aux before re-running latex.  (Or just hit 'q' on the first latex
+% run, let it finish, and you should be clear).
+\usepackage[breaklinks=true,bookmarks=false]{hyperref}
+
+\iccvfinalcopy % *** Uncomment this line for the final submission
+
+\def\iccvPaperID{****} % *** Enter the ICCV Paper ID here
+\def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
+
+% Pages are numbered in submission mode, and unnumbered in camera-ready
+\ificcvfinal\pagestyle{empty}\fi
+
+\begin{document}
+
+%%%%%%%%% TITLE
+\title{Cyclic-Bootstrap Labeling for Weakly Supervised Object Detection}
+
+% \author{Yufei Yin\\
+% Institution1\\
+% Institution1 address\\
+% {\tt\small firstauthor@i1.org}
+% % For a paper whose authors are all at the same institution,
+% % omit the following lines up until the closing ``}''.
+% % Additional authors and addresses can be added with ``\and'',
+% % just like the second author.
+% % To save space, use either the email address or home page, not both
+% \and
+% Second Author\\
+% Institution2\\
+% First line of institution2 address\\
+% {\tt\small secondauthor@i2.org}
+% }
+\author{Yufei~Yin$^{1}$~~~~~Jiajun~Deng$^{2}$~~~~~Wengang~Zhou$^{1,3,}$\thanks{Corresponding authors: Wengang Zhou and Houqiang Li}~~~~~Li~Li$^{1}$~~~~~Houqiang~Li$^{1,3,}$\footnotemark[1] \\
+	{\normalsize $^{1}$ CAS Key Laboratory of Technology in GIPAS, EEIS Department, University of Science and Technology of China} \\
+        {\normalsize $^{2}$ The University of Sydney} \\
+	{\normalsize $^{3}$ Institute of Artificial Intelligence, Hefei Comprehensive National Science Center} \\
+	{\tt\small yinyufei@mail.ustc.edu.cn, jiajun.deng@sydney.edu.au, \{zhwg,lil1,lihq\}@ustc.edu.cn}
+}
+
+\maketitle
+% Remove page # from the first page of camera-ready.
+\ificcvfinal\thispagestyle{empty}\fi
+
+%%%%%%%%% ABSTRACT
+\begin{abstract}
+Recent progress in weakly supervised object detection is featured by a combination of multiple instance detection networks (MIDN) and ordinal online refinement. However, with only image-level annotation, MIDN inevitably assigns high scores to some unexpected region proposals when generating pseudo labels. These inaccurate high-scoring region proposals will mislead the training of subsequent refinement modules and thus hamper the detection performance. In this work, we explore how to ameliorate the quality of pseudo-labeling in MIDN. Formally, we devise Cyclic-Bootstrap Labeling (CBL), a novel weakly supervised object detection pipeline, which optimizes MIDN with rank information from a reliable teacher network. Specifically, we obtain this teacher network by introducing a weighted exponential moving average strategy to take advantage of various refinement modules.  A novel class-specific ranking distillation algorithm is proposed to leverage the output of weighted ensembled teacher network for distilling MIDN with rank information.  As a result, MIDN is guided to assign higher scores to accurate proposals among their neighboring ones, thus benefiting the subsequent pseudo labeling. Extensive experiments on the prevalent PASCAL VOC 2007 \& 2012 and COCO datasets demonstrate the superior performance of our CBL framework. Code will be available at \url{https://github.com/Yinyf0804/WSOD-CBL/}.
+\end{abstract}
+
+\begin{figure}[t!]
+	\centering
+    \includegraphics[scale = 0.28]{pics/wsod-brief.pdf} \\
+	\caption{Comparison between the basic WSOD pipeline and our proposed CBL framework (feature extractor is omitted for simplicity). In the CBL framework, the subsequent refinement modules of MIDN are finally utilized to distill MIDN in turn, forming a cyclic-bootstrap procedure.} 
+        \vspace{-0.2in}
+	\label{wsod}
+\end{figure}
+
+%%%%%%%%% BODY TEXT
+\section{Introduction}
+With the rapid advancements in deep neural networks, object detection has experienced significant progress. Nevertheless, state-of-the-art object detection methods are contingent upon accurate instance-level annotations obtained through fully-supervised learning settings. The process of collecting such annotations is both arduous and costly. Such facts motivate the exploration of weakly supervised object detection (WSOD) \cite{WSDDN, OICR, Yang_2019_ICCV, C-midn, WSOD2, MIST}, which achieves the object detection task using only image-level labels.
+
+Most existing WSOD approaches in the literature  \cite{OICR, Yang_2019_ICCV} generally follow the training pipeline of Fig.~\ref{wsod}(a). First, a multiple instance detection network (MIDN)~\cite{WSDDN} is obtained by leveraging multiple instance learning scheme for optimization, which converts WSOD into a multi-class classification problem over bottom-up generated region proposals \cite{SS}. The region proposals with high scores out of MIDN are then exploited to generate pseudo ground-truth boxes, which are used for the training of refinement modules, \textit{e.g.}, online instance classifiers (OICs), and regressors (R-CNN head). By introducing MIL to the training process, MIDN obtains the capability of estimating whether an object exists in the corresponding region. However, many high-scoring region proposals from MIDN only cover the discriminative part of an instance (\textit{e.g.}, the head of a bird), or contain some background regions~\cite{OICR, WSOD2}. The improper scoring assignment of MIDN leads to the generation of inaccurate pseudo ground-truth boxes, which further hinder the training of subsequent refinement modules.
+
+This problem has been recognized by the community, and several approaches have been proposed to address it. In the literature, C-MIDN~\cite{C-midn} and P-MIDN~\cite{PMIDN} design complementary MIDN modules to find the remained discriminative parts other than the top-scoring ones.  IM-CFB \cite{IMCFB} develops a class feature bank to collect intra-class diversity information, and devises an FGIM algorithm to ameliorate the region proposal selection.  These approaches primarily concentrate on the issue that the high-scoring proposals cover  only the most discriminative parts, while struggling to address other inaccurate scoring-assignment issues.  Besides, most of these attempts involve an auxiliary model, without offering assistance in the training of MIDN.
+
+To this end, in this paper, we propose the Cyclic-Bootstrap Labeling (CBL) framework, which advances WSOD from the one-way pipeline (see Fig.~\ref{wsod} (a)) to a cyclic-bootstrap procedure (see Fig.~\ref{wsod} (b)). As shown in Figure, the subsequent modules of MIDN are eventually utilized to enhance itself.  In comparison to the prior approaches, CBL exerts an additional rank-based supervision on MIDN, which is capable of handling a broader  set of inaccurate scoring-assignment cases.
+
+Specifically, following the common practice of WSOD, we first employ MIDN to generate pseudo labels, which serve as the initial supervision for subsequent refinement modules. To obtain more accurate classification results, we construct a weighted ensemble teacher (WET) model, inspired by the success of mean teacher methods \cite{tarvainen2017mean, liu2021unbiased}. The WET model is updated through the weighted exponential moving average (W-EMA) strategy, which takes advantage of multiple student candidates in the refinement modules. Subsequently, leveraging the WET results, we propose a class-specific ranking distillation (CRD) algorithm to supervise MIDN with rank-based labels in a distillation manner. This additional rank-based supervision allows MIDN to achieve an improved scoring (ranking) assignment, where accurate proposals will be assigned higher scores among their neighboring ones. Moreover, we observe that the WET model can also act as a reliable teacher for the  R-CNN head in the basic WSOD pipeline \cite{Yang_2019_ICCV}. To this end, we propose a multi-seed R-CNN (MSR) algorithm to mine multiple positive seeds according to the WET results, calculate their confidence scores, and utilize them to generate pseudo labels for the supervision of the  R-CNN head.
+
+Our main contributions are summarized as follows:
+\begin{itemize} [noitemsep,nolistsep]
+    \item We propose a novel cyclic-bootstrap labeling (CBL) framework for weakly supervised object detection. The proposed  CBL contains a weighted ensemble teacher model to generate reliable detection results, a class-specific ranking distillation algorithm to distill the MIDN module with rank information, and a multi-seed R-CNN algorithm to mine accurate positive seeds for the training of the  R-CNN head.
+    \item We provide a new perspective that the subsequent modules of MIDN are finally utilized to distill MIDN in turn, forming a cyclic-bootstrap procedure, which is rarely explored in previous WSOD works.
+    \item Extensive experiments on the prevalent PASCAL VOC 2007 \& 2012 and COCO datasets demonstrate the superior performance of our CBL framework.
+
+\end{itemize}
+
+
+
+\section{Related Work}
+In this section, we briefly review the related methods including Weakly supervised object detection (WSOD) and Knowledge distillation.
+\subsection{Weakly Supervised Object Detection}
+Weakly supervised object detection (WSOD) \cite{WSDDN, ContextLocNet, OICR, PCL, C-WSL, WS-JDS, Zigzag, ts2c, WSCCN, SDCN, Selftaught, WSRPN, MELM, PredNet, C-midn, c-mil, Yang_2019_ICCV, WSOD2, gao2019utilizing, OIM, MIST, SLV, objectness, IMCFB, PMIDN, zhang2021weakly, cheng2020high, zhang2020weakly, feng2020tcanet, shen2020enabling, yin2022fi, CASD, seo2022object, liao2022end, huang2022w2n, SoS} has attracted much attention in recent years. Most recent works utilize Multiple Instance Learning (MIL) strategy to convert WSOD into a multi-class classification task, and adopt WSDDN \cite{WSDDN} as the basic multiple instance detection network (MIDN) in their frameworks.  WSDDN adopts MIL into a CNN network with a two-stream structure  (\textit{i.e.}, classification stream and detection stream), and combines the scores obtained from these two streams to generate instance-level scores. To improve the detection capability,  on one hand, some works add several modules based on WSDDN for online refinement. OICR \cite{OICR} first adds several cascaded online instance classifiers to refine the classification results, and adopts a top-scoring strategy to obtain pseudo seeds for training these classifiers. To obtain more accurate seeds, WSOD$^2$ \cite{WSOD2} adopts bottom-up object evidence to update the original classification score during selection, \cite{ts2c} and \cite{objectness} utilize results from the other tasks for assistance and MIST \cite{MIST} proposes a multiple instance self-training algorithm. Furthermore, Yang \cite{Yang_2019_ICCV} constructs a multi-task rcnn-head to adjust the positions and shapes of proposals.
+
+On the other hand, some works propose to improve the basic MIDN. C-MIDN and P-MIDN \cite{C-midn, PMIDN} design a (several) complementary MIDN module(s) to find the remained object parts other than the top-scoring one, WS-JDS \cite{WS-JDS} introduces the segmentation task for assistance, and IM-CFB \cite{IMCFB} constructs a class feature bank to collect intra-class diversity information for amelioration. This work also aims to improve MIDN, but different from them, we propose to re-adjust the rank distribution of MIDN among neighboring positive instances, thus helping to generate more high-quality pseudo labels for subsequent refinement.
+
+\subsection{Knowledge Distillation}
+Knowledge distillation is firstly proposed in \cite{hinton2015distilling} to transfer knowledge from complicated teacher models to distilled student models, which makes the students achieve similar performance to that of teachers. Knowledge distillation has been explored by a series of works in different tasks \cite{chen2017learning, wang2019distilling, guo2021distilling, li2022knowledge, xu2022vitpose, wang2023biased}. \cite{chen2017learning} propose two new losses for better knowledge distillation on the classification and regression task, and combine hint learning to help the training process. \cite{wang2019distilling} employ the inter-location discrepancy of teacher's feature response on near object anchor locations for knowledge distillation. \cite{guo2021distilling} use KL divergence loss to distill the classification head while processing proposals and negative proposals separately. \cite{li2022knowledge} apply a similar  rank distillation strategy with our CRD algorithm, while their main difference is that our work focuses on the WSOD task which does not have instance-level labels. To address this problem, we generate a reliable positive proposal set based on the more accurate WET results and propose a weighted KL divergence loss to alleviate the negative effects brought by noisy labels.
+
+Previous WSOD work SoS \cite{SoS} also adopts the knowledge distillation strategy. 
+However, the usage in \cite{SoS} simply follows the semi-supervised object detection paradigm and  will not ameliorate the original WSOD network. In contrast, our method adopts data distillation in the WSOD training procedure to improve the rank distribution of MIDN, thus benefitting the whole WSOD network. 
+
+\begin{figure*}[t!]
+	\centering
+    \includegraphics[width=1.0\textwidth,height=0.61\textwidth]{pics/framework.pdf}
+	\vspace{-8pt}
+    \vspace{-0.05in}
+	\caption{An overview of our CBL framework. Proposal features are first fed into the MIDN module to produce instance-level scores. 
+    Meanwhile, the image and corresponding proposals are sent to the weighted ensemble teacher (WET) model, which is gradually updated by the basic WSOD module via a W-EMA strategy.
+    After that, the WET results are utilized to distill the MIDN module with rank information through the class-specific ranking distillation (CRD) algorithm.
+    Furthermore, WET also acts as a teacher to supervise the  R-CNN head with the multi-seed R-CNN (MSR) algorithm.} 
+	\label{framework}
+        \vspace{-0.25in}
+\end{figure*}
+
+
+\section{Our Method}
+The overall architecture of the proposed framework is shown in Fig.~\ref{framework}. An input image and a set of region proposals are first fed into the basic WSOD module. The proposal features are obtained through a CNN backbone and an RoI Pooling layer followed by two FC layers. Then, these features are fed into the MIDN module to produce instance-level scores. Meanwhile, the image and corresponding proposals are sent to the weighted ensemble teacher (WET) model, which is gradually updated by the basic WSOD module via a W-EMA strategy. After that, the WET results are utilized to distill the MIDN module with rank information through the class-specific ranking distillation (CRD) algorithm. Furthermore, WET acts a teacher to supervise the  R-CNN head with the multi-seed R-CNN (MSR) algorithm.
+
+\subsection{Basic WSOD Module}
+\label{sec_wsod}
+Due to the lack of instance-level annotations in the WSOD settings, many existing works combine Multiple Instance Learning (MIL) with a CNN model, denoted as Multiple Instance Detection Network (MIDN), to accomplish the detection task. Following previous works \cite{OICR, PCL}, we utilize a two-stream weakly supervised deep detection network (WSDDN) \cite{WSDDN} as our MIDN module.
+
+Given an image $I$, we denote its image-level label as $Y_{img} = [y_1, y_2, \cdots, y_C] \in \mathbb{R}^{C \times 1} $, where $y_c = 1$ or 0 indicates the presence or absence of the class $c$. The generated region proposal set for image $I$ is denoted as $R = \left\{R_1, R_2, \cdots, R_N\right\}$. We first extract proposal features through a CNN backbone and an RoI Pooling layer followed by two FC layers. Then, these proposal features are fed into two sub-branches in MIDN, \textit{i.e.}, classification branch and detection branch. For classification branch, the score matrix $x^{cls} \in\mathbb{R}^{C \times |R|}$ is produced through a FC layer, where $C$ and $|R|$ denote the number of categories and proposals, respectively. Then, a softmax operation is applied on $x^{cls}$ along the categories to produce  $\sigma_{cls}(x^{cls})$.  Similarly, the score matrix $x^{det} \in\mathbb{R}^{C \times |R|}$ is produced in the detection branch by another FC layer. A softmax operation is then applied on $x^{det}$ along proposals to produce $\sigma_{det}(x^{det})$. After that, the classification score for each proposal can be obtained by an element-wise product of these two scores: $x^{midn} = \sigma_{cls}(x^{cls}) \odot \sigma_{det}(x^{det})$. Finally, the image-level classification scores are generated through the the summation over all proposals: $x^{img}_c = \sum_{i=1}^{|R|}x^{midn}_{c, i}$. In this way, we train the MIDN module with binary cross-entropy loss: $\mathcal{L}_{midn}=-\sum_{c=1}^C\left[y_clogx^{img}_c+\left(1-y_c\right)log\left(1-x^{img}_c\right)\right]$
+
+We further follow OICR \cite{OICR} to add several cascaded online instance classifiers (OICs) to refine the classification results. Specifically, for each existing class, OICR selects the top-scoring proposal of the $i$-th classifier and its surrounding ones as positive samples to generate hard pseudo labels $Y_{ref_i} \in\mathbb{R}^{C+1 \times |R|} $. These labels are then used to train the subsequent ($i+1$)-th classifier using a weighted cross-entropy loss $\mathcal{L}_{oic}$. Particularly, pseudo labels of the first classifier OIC$_1$ are generated utilizing the MIDN scores.
+
+Moreover, we add an R-CNN head following \cite{Yang_2019_ICCV, IMCFB}, which consists of two parallel branches for the classification and regression task, respectively. The R-CNN head is supervised by the pseudo labels generated from the last online instance classifier. The weighted cross-entropy loss and smooth-L1 loss are applied for the two tasks, respectively.
+
+\subsection{Weighted Ensemble Teacher}
+\label{sec_wet}
+In this section, we construct a sibling model of the basic WSOD module, Weighted Ensemble Teacher (WET), to produce more accurate detection predictions. Similar to the former, the WET model consists of a feature extractor and a classification head. An intuitive way to update the WET model is to apply Exponential Moving Average (EMA) following the traditional mean teacher methods \cite{tarvainen2017mean, liu2021unbiased}:
+\begin{equation}
+\label{EMA}
+\theta_{t} \leftarrow \alpha\theta_{t} + (1-\alpha)\theta_{s},
+\end{equation}
+where  $\theta_{t}$  and $\theta_{s}$ represent the parameters of the same network in the teacher model and the student model, respectively, and $\alpha$ is a smoothing coefficient. Through the EMA strategy, the slowly progressing teacher model can be considered as the ensemble of the student models in different training iterations \cite{liu2021unbiased}. We treat WET and the basic WSOD module as the teacher and student models, respectively. 
+
+However, a problem arises that for the classification head in WET, many candidate networks can be treated as the \textbf{student} models, \textit{i.e.}, $K$ online instance classifiers (OICs) and classification branch (CLS branch) in R-CNN head. The most direct way is to choose CLS (or OIC$_K$) branch as the student network, considering the fact that they always have better performance among these candidates due to their relatively accurate pseudo labels after several refinements. However, this strategy overlooks the potential positive influence of the other candidate student networks.
+
+To this end, we propose to modify EMA to accommodate multiple students. To be specific, we can use the average parameters of all these candidate student networks during EMA (A-EMA) instead of selecting a single candidate:
+
+\begin{equation}
+\label{A-EMA}
+\theta_{t} \leftarrow \alpha\theta_{t} + \frac{(1-\alpha)}{S}\sum_{s=1}^{S}\theta_{s},
+\end{equation}
+where $S = K+1$ represents the number of candidates. Nevertheless, assigning the same weight to all the candidates is not the most efficient strategy due to the discrepancies in their performance. To enable the classification head to benefit more from the better candidate, we devise a weighted EMA (W-EMA) to adjust the weight of these candidates accordingly:
+
+\begin{equation}
+\label{W-EMA}
+\theta_{t} \leftarrow \alpha\theta_{t} + \frac{(1-\alpha)}{2}(\frac{1}{K}\sum_{k=1}^{K}\theta_{k} + \theta_{cls}),
+\end{equation}
+where $\theta_{k}$ and $\theta_{cls}$ represent the parameters of $k$-th OIC and CLS branch, respectively.  As a result, the weight of CLS branch is amplified to $\frac{K+1}{2}$ of its original value, while the weights of other candidates are decreased. It is noteworthy that W-EMA does not add extra hyperparameters, since it can be viewed as a two-step average of different student parameters (1st for OICs, 2nd for OIC-avg \& CLS).
+
+Overall, we employ EMA for updating feature extractor and W-EMA for updating classification head.
+In this paper, we refer to them collectively as W-EMA strategy. The WET model with W-EMA strategy has two main advantages: First, it can reduce the adverse effects of noisy pseudo labels. Second, the WET model can be regarded  as an ensemble model of different student models at different time steps. These advantages enable the WET model to generate more reliable classification results $x^{wet} \in\mathbb{R}^{(C+1) \times |R|}$.
+
+\subsection{Class-Specific Ranking Distillation}
+\label{crd}
+Given the image-level supervision, MIDN is likely to assign high scores to some erroneous region proposals, such as detecting only the most discriminative parts or containing background noises. To alleviate this problem, we propose to employ additional supervision on the MIDN module. An intuitive way is to generate \textbf{classification-based} supervision with hard pseudo labels, similar to those used for refinement modules \cite{OICR, PCL}. However, this will exceed the limits of the original MIL constraint and, more importantly, contradict our original goal of solving the inaccurate scoring assignment problem of MIDN. For further discussions please refer to Supplementary Material.
+
+To this end, instead of applying supervision for each individual proposal, we turn to distill MIDN with the \textbf{rank-based} information among associated proposals. The most straightforward approach for rank distillation is to drive MIDN to generate a rank distribution similar to that of WET for \textit{all proposals}. However, this approach has two main drawbacks: On one hand, learning the rank distribution among inaccurate samples or irrelevant samples is futile. On the other hand, without instance-level annotations, some positive samples will inevitably be assigned lower scores than some negative ones. To ameliorate  these issues, we design a Class-Specific Ranking Distillation (CRD) algorithm to guide MIDN to adjust to a more appropriate rank distribution among \textit{confident associated proposals}.
+
+Specifically, for an existing object class $c$ (\textit{i.e.}, $y_c = 1$), we first select the proposal with the highest WET score on this class $R_{i_c}$, which is the most confident positive sample. Then, we calculate the overlaps between all proposals with the top-scoring one $R_{i_c}$, and set an overlap threshold $\tau$ to construct a neighboring positive proposal set $P_c$:
+\begin{equation}
+\label{pos_proposal}
+P_c = \{R_i | IoU(R_i, R_{i_c}) > \tau, R_i \in R \}.
+\end{equation}
+Furthermore, to encourage MIDN to focus on the rank distribution under different views, we continuously increase the overlap threshold $\tau$ with a linear growth strategy:
+\begin{equation}
+\label{tau}
+\tau = \tau_0 + (\tau_1 - \tau_0)\frac{iter_{cur}}{iter_{max}}, \quad \tau\in[\tau_0, \tau_1],
+\end{equation}
+where $iter_{cur}$ represents the current iteration, and $iter_{max}$ represents the total training iteration using CRD algorithm. $\tau_0$ and $\tau_1$ are set to 0.5 and 1.0 naturally following the common evaluation metrics for selecting positive proposals.
+
+\begin{figure}[t!]
+	\centering
+	\includegraphics[width=0.47\textwidth, height=0.20\textwidth]{pics/mil.pdf} \\
+	\caption{Comparison of the top-scoring proposals of the MIDN module in different frameworks at 20$k$ iteration. The proposals from basic WSOD framework are in red and proposals from our CBL framework are in yellow. } 
+    \vspace{-0.22in}
+	\label{mil}
+\end{figure}
+
+After obtaining the positive proposal set $P_c$ for class $c$, we use their predicted scores to represent the rank distribution, since a higher score implies that the corresponding proposal will receive a higher rank in a particular class. We opt for the soft score instead of a hard ranking number since the soft supervision target in distillation is more effective in preserving detailed rank information. Then, a softmax operation is applied on their $c$-th scores for normalization to represent the rank distribution for class $c$:
+\begin{equation}
+\label{softmax}
+s'_{c,j} = \frac{e^{x^{midn}_{cj}}}{\sum_{k=1}^{|P_c|}e^{x^{midn}_{ck}}}, \ t'_{c,j} = \frac{e^{x^{wet}_{cj}}}{\sum_{k=1}^{|P_c|}e^{x^{wet}_{ck}}}, \quad  R_{j}, R_{k} \in P_c,
+\end{equation}
+where $s'_c$ and $t'_c$ represent the rank distribution of MIDN (student) and WET (teacher) for class $c$.
+
+Finally, we utilize a weighted KL divergence loss to distill the MIDN with rank distributions from WET:
+\begin{equation}
+\label{kl_loss}
+\mathcal{L}_{crd}= -\sum_{c}{\mathbb{I}(y_c =1)\frac{w_c}{|P_c|}\sum_{j=1}^{|P_c|}{t'_{c,j}log(\frac{s'_{c,j}}{t'_{c,j}})}},
+\end{equation}
+where $w_c$ represents the loss weight of class $c$. 
+We apply the highest WET score on this class ($x^{wet}_{ci_c}$) as $w_c$ to represent the confidence of the selected proposal set of this class ($P_c$).
+
+By utilizing  the CRD algorithm, MIDN is encouraged  to adjust higher ranks to more accurate proposals compared with that in the original framework, as shown in Fig.~\ref{mil}.
+
+\subsection{Multi-Seed R-CNN}
+\label{msrcnn}
+Due to its  good performance, WET model can serve as a reliable teacher to other networks in the basic WSOD module apart from MIDN. In this section, we propose to employ WET for the supervision of the R-CNN head.
+
+The pseudo label generation for R-CNN head in the original WSOD module can be divided into two steps: First, the top-scoring proposal (scores are from the last online instance classifier OIC$_K$) for an existing class is selected as the positive seed for this class. Then, pseudo labels of all proposals are generated according to the overlaps with the positive seed. This procedure guarantees  the quality of the selected seeds, yet overlooks the potential advantages from other possible seeds in the same image.
+
+To this end, we propose a simple Multi-Seed R-CNN (MSR) algorithm to generate more credible seeds by leveraging the reliable WET results.
+First, we use the ensemble of the WET results with the results from the original teacher OIC$_K$: $x^{msr} = (x^{wet} + x^{OIC_K}) / 2$.
+Next, we propose to narrow the search range of positive seeds. Taking into account the fluctuating distribution of scores during the training stage, we set a soft threshold to accomplish this. To be specific, for each existing class $c$, the threshold $\sigma^{s}_c$ is denoted as the highest $x^{msr}$ of this class multiplied with a factor $\mu^{s}$. To avoid leaving too many proposals, we further set a threshold $\sigma^{n}$ to limit the number of remaining proposals. $\sigma^{n}$ is denoted as the number of whole proposals multiplied with a factor $\mu^{n}$:
+\begin{equation}
+\label{rcnn_tau}
+\sigma^{s}_c = \mu^{s} \max x^{msr}_c, \quad \sigma^{n} = \mu^{n} |R|.
+\end{equation}
+We first select the top-$\sigma^{n}$ proposals and then filter out the proposals with scores lower than $\sigma^{s}_c$. Then, we apply the Non-Maximum Suppression (NMS) algorithm to the remained proposals and regard the kept ones as positive seeds. 
+
+To further reduce the impact of noisy seeds, we apply the original results (\textit{i.e.}, OIC$_K$ and WET scores) as references to assess their confidence. Specifically, according to each result, we first remove negative proposals using Eq. \ref{rcnn_tau}.  Then, for each seed $i$, we identify if there is one that is very close to it in the remaining proposals. After that, we calculate the proportion  $p_{i,c}$ of such case for seed $i$ according to  all the results. A high proportion indicates that the seed is recognized  as ``positive" by multiple classifiers, thus making it more confident. Finally, the confidence of a seed is obtained as follows:
+\begin{equation}
+ \label{weight}
+w_i = x^{msr}_{i,c} \cdot (1+p_{i,c}^\gamma).
+\end{equation}
+
+We generate corresponding pseudo labels according to these positive seeds for the classification branch and regression branch in R-CNN head. We apply weighted cross-entropy loss and weighted smooth-L1 loss to train these two branches, respectively. The confidence $w_i$ is used as the weight and the loss for the R-CNN head $\mathcal{L}_{rcnn}$ is obtained by combining these two losses. For more details, please refer to Supplementary Material.
+\subsection{Training Objectives}
+\label{tf}
+The overall training objective is the combination of MIDN, online instance classifiers (OICs), and R-CNN head, which is elaborated as follows: 
+\begin{equation}
+\label{total_loss}
+\mathcal{L}_{total} = \lambda \mathcal{L}_{midn} + (1-\lambda) \mathcal{L}_{crd} + \sum^{K}_{k=1}{\mathcal{L}_{oic}} + \mathcal{L}_{rcnn},
+\end{equation}
+where $\lambda$ controls the weight of image-level supervision $\mathcal{L}_{midn}$ and ranking distillation $\mathcal{L}_{crd}$. At the start of training process, MIDN needs to focus on the basic MIL learning for better multi-class classification, while gradually transitioning its focus to adjusting the rank distribution as th
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

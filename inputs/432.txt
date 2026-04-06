@@ -1,0 +1,318 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+There is growing interest in multi-modal methods that connect language and vision, tackling tasks such as image captioning, visual question answering, text-to-image retrieval, and generation. One fundamental task is visual grounding where natural language text queries are linked to regions of an image or 3D scene.
+While the problem of visual grounding has been well studied in 2D images, there are fewer datasets and methods studying the problem in 3D scenes.
+Being able to indicate the object that the text ``the first of four stools'' references in a 3D scene is useful for applications in robotics, AR/VR, and online 3D environments where we have access to not just a static image, but a 3D scene.
+Work on 3D datasets for visual grounding~\cite{chen2020scanrefer,achlioptas2020referit_3d} has spurred the development of methods for 3D visual grounding~\cite{luo20223d,zhao20213dvg,yuan2021instancerefer, huang2022multi,huang2021text,abdelreheem20223dreftransformer,yang2021sat,chen2020scanrefer} and the inverse task of 3D captioning~\cite{chen2020scanrefer}, as well as unified methods that tackle both~\cite{chen2022d3net, cai20223djcg, chen2022unit3d}. 
+
+However, existing datasets and tasks \cite{chen2020scanrefer, achlioptas2020referit_3d} are designed with the assumption that there is a unique target object when performing visual grounding in a 3D scene. This assumption makes ambiguous descriptions that may refer to multiple objects problematic (see \Cref{fig:intro_comparison}). Furthermore, this explicitly discourages visual grounding methods from demonstrating generalization to similar object instances on the basis of common features of the objects (e.g., similar size, color, texture) and spatial relations between objects (e.g., first in a row left-to-right or right-to-left).
+
+\begin{figure}[t]
+  \includegraphics[width=\linewidth]{figtab/intro_comparison.pdf}
+  \caption{We introduce \PROJECTNAME, a dataset and task where there are potentially multiple target objects for a given description.  
+  In ScanRefer~\cite{chen2020scanrefer} (left), the description corresponds to exactly one object (blue box), while in \PROJECTNAME (right), there are multiple target objects.
+  }
+  \label{fig:intro_comparison}
+\end{figure}
+
+We address these shortcomings with an enhanced dataset and task that we call \PROJECTNAME where a flexible number of target objects (zero, single or multiple) in a 3D scene are localized given language descriptions. We modify and enhance language data from ScanRefer~\cite{chen2020scanrefer} and propose evaluation metrics to benchmark prior work and a CLIP-based~\cite{radford2021learning} method that we propose on the flexible number visual grounding task. In summary, we make the following contributions:
+1) generalize 3D visual grounding to a flexible number of target objects given natural language descriptions.
+2) create an enhanced dataset based on ScanRefer~\cite{chen2020scanrefer} with augmentations from ChatGPT\footnote{\url{https://openai.
+3) benchmark three prior 3D visual grounding approaches adapted to \PROJECTNAME
+4) design an end-to-end approach leveraging CLIP~\cite{radford2021learning} embeddings and online rendering of object proposals with contrastive learning.
+
+
+
+Related work
+In this paper, we focus on description localization where a single description may describe one or more objects in a 3D scene.
+Below, we review work in grounding in 2D and 3D, as well as recent work leveraging pre-trained vision-language models for 3D scene understanding.
+
+\xhdr{Visual grounding in 2D.}
+A variety of datasets and methods have been proposed to investigate visual grounding tasks such as referring expressions~\cite{kazemzadeh2014referitgame,mao2016generation,hu2016natural} and phrase localization~\cite{plummer2015flickr30k,plummer2017phrase} in 2D images.
+These datasets have enabled developing various visual-language grounding models~\cite{yu2018mattnet,zhang2018grounding,yang2019fast,lu2019vilbert,deng2021transvg,li2021referring,zhu2022seqtr}. Typically, in these datasets and tasks each phrase refers to exactly one object. A notable exception is the VGPhraseCut~\cite{wu2020phrasecut} dataset, based on Visual Genome~\cite{krishna2017visual} using templated phrases where each phrase is grounded to potentially multiple instance segments.
+
+Recent work in language and vision has started to tackle more flexible grounding. 
+\citet{kim2022flexible} noted that not all queries can be visually grounded (i.e. it is possible to have no targets) and constructed a dataset to study grounding performance when there are unanswerable queries. \citet{kuo2022findit} proposed a single model for referring expression comprehension, object detection, and phrase localization. While their model can handle multiple objects, the queries for multiple objects are typically short and category-based. Recent work~\cite{kamath2021mdetr,li2022grounded} reframed the problem of object detection as phrase grounding by introducing losses to align words to regions. These methods are flexible and have been used to improve both detection and visual grounding. In our work, we construct a dataset for flexible grounding in 3D.
+
+\xhdr{Visual grounding in 3D.}
+Early work studied selecting the correct 3D shapes based on a text description in reference game setups~\cite{achlioptas2019shapeglot,thomason2022language,koo2022partglot}, as well as learning joint language-3D embeddings for 3D text-to-shape retrieval~\cite{chen2018text2shape,ruan2022tricolo}.
+These works focused on descriptions of single objects in isolation. Moving beyond single 3D objects, researchers also studied grounding of language to objects in 3D scenes.
+At the scene level, ScanRefer~\cite{chen2020scanrefer} and ReferIt3D~\cite{achlioptas2020referit_3d} introduce two datasets consisting of language descriptions of 3D objects from the real-world dataset ScanNet~\cite{dai2017scannet}.
+In detail, ReferIt3D~\cite{achlioptas2020referit_3d} contains both template-based descriptions generated based on spatial relations between objects (Sr3D) and human-annotated fine-grained descriptions (Nr3D).
+They also propose two different grounding tasks, both localizing a unique target object referred by a description.
+ScanRefer~\cite{chen2020scanrefer} requires both object detection and grounding, while ReferIt3D~\cite{achlioptas2020referit_3d} focuses on discriminating a target object from multiple objects of that semantic class given ground-truth object bounding boxes.
+
+Different approaches~\cite{chen2020scanrefer,achlioptas2020referit_3d} have been proposed to tackle the two tasks, with models focusing on graph representations~\cite{huang2021text,yuan2021instancerefer,feng2021free}, improved handling of relations~\cite{zhao20213dvg,chen2022language}, neurosymbolic reasoning~\cite{hsu2023ns3d}, leveraging multi-view images and 2D semantics~\cite{yang2021sat,jain2021looking,huang2022multi,bakr2022look}, to unified models that can address both grounding and captioning~\cite{cai20223djcg,chen2022d3net,huang2022unified,chen2022unit3d}.  Recently, \citet{abdelreheem2022scanents3d,wu2023eda} showed that including training on dense annotations can improve performance.
+\citet{jain2022bottom} proposed to tackle object detection and visual grounding in a unified way by aligning features for text tokens with object proposals.
+In this work, we compare the performance of three recent models on our task \PROJECTNAME with a new CLIP-based~\cite{radford2021learning} model.
+
+\xhdr{3D understanding using vision-language models.}
+Large pre-trained text-vision models such as CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling} enabled work leveraging these models for 3D scene understanding.
+Recent work learn joint embeddings with text-image-3D representations~\cite{xue2022ulip,zhang2022pointclip}, used for disambiguating referring expressions~\cite{thomason2022language} or text-to-shape retrieval~\cite{ruan2022tricolo}.
+Incorporating pre-trained 2D visual features also enabled expansion of 3D detection and instance segmentation to a larger number of categories~\cite{rozenberszki2022language}, as well as tackling open vocabulary 3D detection~\cite{lu2022open,shafiullah2022clip}, and building of 3D semantic maps~\cite{jatavallabhula2023conceptfusion}.
+In our work, we show that we can leverage CLIP~\cite{radford2021learning} for improved visual grounding.
+
+\begin{figure}  
+  \includegraphics[width=\linewidth]{figtab/dataset_demo.pdf}
+  \caption{Example description-scene pairs in the \PROJECTNAME dataset with zero, single, or multiple target objects. Blue boxes indicate ground truth target objects.}
+  \label{fig:dataset_demo}
+\end{figure}
+
+
+
+\PROJECTNAME dataset
+To study our task, we build the \PROJECTNAME dataset, a superset of the existing ScanRefer dataset~\cite{chen2020scanrefer} with language descriptions of varying granularities.
+We augment ScanRefer to create a dataset with 3 types of description-scene pairs: a) Zero Target; b) Single Target; and c) Multiple Targets, indicating zero, single, or multiple target objects in the scene match the description (see \Cref{fig:dataset_demo}).
+In addition, we use ChatGPT to augment the descriptions so they are more natural and diverse (see \Cref{fig:dataset_construction} for the overall data construction pipeline).
+To ensure the dataset is of high quality we manually verify all generated samples.
+We obtain a dataset with \NUMTOTAL descriptions in total (see \Cref{tab:datasets_comparison,tab:data_attribute_breakdown} for statistics).
+
+\input{figtab/dataset_comparison.tex}
+
+\begin{figure}
+  \centering  \includegraphics[width=0.9\linewidth]{figtab/data_cons_pipeline.pdf}
+  \caption{
+  \PROJECTNAME data construction pipeline showing the generation process of Zero Target (red), Single Target (blue) and Multiple Target (orange) data.
+  We use ChatGPT to add diversity to the description.
+  All scene-description pairs are manually verified and modified if needed.
+  }
+  \label{fig:dataset_construction}
+\end{figure}
+
+\subsection{Adapting text for multiple targets}
+We start with scene-description pairs from ScanRefer and augment the data to create samples that refer to zero or more targets.
+For Single Target descriptions (type b), we take the released ScanRefer dataset which consists of description-scene pairs that have been initially verified to refer to unique objects.
+We double-checked whether these descriptions indeed refer to unique objects and we found 9324 descriptions that are ambiguous.
+We use these ambiguous descriptions as an initial set of type (c) descriptions that can refer to multiple objects.
+For additional type (c) descriptions, we obtain from the ScanRefer authors $7741$ ambiguous descriptions that can refer to multiple objects and annotate those descriptions with matching objects.
+To collect type (a) description (no target object) as well as more type (c) descriptions, we develop an efficient data collection pipeline consisting of two stages: 1) automated description generation; and 2) verification and modification.
+This pipeline maximizes the use of the existing ScanRefer dataset and reduces manual annotation.
+Below, we describe how we generate and verify additional data samples.
+\xhdr{Zero Target.}
+To obtain descriptions with no target objects, we establish negative pairs of scenes with existing descriptions selected randomly from other scenes.
+We then manually verify that descriptions do not match any objects in the new scene.
+To reduce the number of description-scene pairs that need to be verified, we automatically check whether the semantic class of the target object for the description appears in the scene.
+Only if the semantic class appears in the scene does it need to be manually verified.
+Out of 6688 samples, we manually verify 5630 with 1058 automatically checked to have no matching objects.
+For pairs that need verification, human annotators are shown the description along with an interactive view of the scene to check that there are no matching objects.
+\xhdr{Multiple Targets.} 
+To generate descriptions with multiple targets, we start with the original description-scene pairs in the ScanRefer dataset.
+We then randomly select descriptions and trim the text to the first punctuation to obtain shorter, more ambiguous descriptions (e.g., \textit{``The cabinet is white and in the back of the room. It is the one on the left."} $\rightarrow$ \textit{``The cabinet is white and in the back of the room."}). Note that descriptions in which the semantic class of the target object only has a unique object in the scene are skipped.
+The trimmed text and scene pairs are sent to the annotation interface.
+This time, annotators are asked to select all eligible objects of a description in a 3D interactive scene mesh.
+Annotators are also asked to modify trimmed descriptions to fix errors and increase diversity (see \Cref{fig:mt_demo} for examples).
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.88\linewidth]{figtab/scanrefer_multi3drefer_comp.pdf}
+  \caption{Examples of generated revised descriptions of multiple targets for the \PROJECTNAME dataset where we trim (T) to create more ambiguous descriptions, modify (M) by human, and reword (R) using ChatGPT.
+  All descriptions are verified by annotators (see bounding boxes for target objects).
+  Note that the reworded (R) descriptions provide more variation in sentence structure.
+  }
+  \label{fig:mt_demo}
+\end{figure}
+
+\subsection{Rephrasing using ChatGPT}
+To increase description diversity we use the ChatGPT model \emph{text-davinci-002-render} for sentence rephrasing.
+We provide ChatGPT with the following prompts:
+
+\begin{compactenum}\denselist
+{\footnotesize
+\item I will give you a sentence describing an object, please help me polish it and keep its meaning.
+\item Help me reword a sentence to a different format but keep its meaning.
+\item Help me reword a sentence to make it more natural.
+\item Help me reword a sentence describing an object, you should describe the colors and the spatial information in a different way.
+\item Help me reword a sentence to an interesting format, you should keep its meaning.
+}
+\end{compactenum}
+
+\input{figtab/data_statistic_for_multi3drefer_original_and_reworded}
+
+\Cref{tab:data_statistic_for_multi3drefer_original_and_reworded} shows statistics comparing the descriptions before and after rephrasing.
+We see a richer vocabulary but shorter descriptions after ChatGPT rephrasing.
+Below we provide examples of the original (O) and reworded (R) text:
+\begin{compactdesc}\denselist
+{\footnotesize
+\item \textbf{O}: \textit{The table is a round table. It is located between two chairs to the right, and two chairs to the left of it.}
+\item \textbf{R}: \textit{The round table is situated between two chairs to its right and two chairs to its left.}
+\item \textbf{O}: \textit{This is a table on the wall in the room. It is next to the window and a few lined-up chairs.}
+\item \textbf{R}: \textit{A wall-mounted table resides cozily beside a window in the room, accompanied by a row of orderly chairs.}
+\item \textbf{O}: \textit{A sink on the vanity. It is to the right of the vacuum 
+cleaners.}
+\item \textbf{R}: \textit{The sink is located on the vanity to the right of the vacuum cleaners.}
+\item \textbf{O}: \textit{This is a white kitchen cabinet located near the over and stove unit.}
+\item \textbf{R}: \textit{A white kitchen cabinet is situated near the oven and stove unit}
+}
+\end{compactdesc}
+The rephrased text preserves the original meaning while being more natural.
+In addition, ChatGPT automatically corrects typos (e.g., \textit{over} to \textit{oven} in the last example).
+
+\input{figtab/data_statistic_for_datasets}
+
+\subsection{Verification}
+After we obtain a set of ChatGPT reworded descriptions, we manually verify the descriptions are well-written and that the object(s) matched in the scene are accurate.
+We create a web interface for verifiers to check whether the description matches the identified target objects (see \Cref{sec:supp:web} for details).
+The web interface shows the description together with an interactive 3D view of the scene and the target objects.
+The verifiers check if the description matches the target objects and only the target objects, or modify the list of target objects (by selecting appropriate objects), or improve the description to fix typos and ambiguities.
+The verification was performed by 5 students over a period of one month.
+\subsection{Dataset statistics}
+In total, our dataset consists of \NUMTOTAL language descriptions, with 51583 directly obtained from ScanRefer, of which $6688$ descriptions match zero-targets and $13178$ match multiple.
+For Multiple Targets, the scenes are typically offices or meeting rooms with many chairs and tables. 
+See \Cref{tab:datasets_comparison} for a comparison of our final dataset against prior datasets.
+We also provide annotations for each description as to whether it refers to spatial, color, texture, or shape attributes (see \Cref{tab:data_attribute_breakdown}).  We provide additional statistics and examples from our dataset in \Cref{sec:supp:data}.
+
+\input{figtab/fig_model_arch}
+
+
+
+Task
+
+In the \PROJECTNAME task, we are given as input a 3D real-world scene represented as a point cloud $P \in \mathbb{R}^{N \times (3+C)}$ and a free-form language description with a variable number $M \in \mathbb{N}$ of referred objects, where $N$, $C$ are the number of points and the number of point feature channels, respectively.
+The goal is to predict axis-aligned bounding boxes for all $M$ objects that match the description.
+Compared to prior work, the difficulty of our task is that the number of referred objects is flexible, i.e., a description can refer to not only one or multiple target objects but also no objects.
+Predicting too many or too few target objects are both penalized by our evaluation metrics.
+
+\xhdr{Evaluation metrics.}
+To evaluate grounding for a flexible number of target objects, we measure the F1 score at the intersection over union (IoU) thresholds of $\iouevalth=0.25$ and 0.5 (F1@0.25 and F1@0.5).
+To investigate model performance for different scenarios, we consider the following 5 cases: a) zero target w/o distractors of the same semantic class; b) zero target w/ distractors; c) single target w/o distractors; d) single target w/ distractors; and e) multiple targets.
+Note that c) and d) correspond to the ``unique'' and ``multiple'' cases in ScanRefer~\cite{chen2020scanrefer}.
+In addition, a) and c) are easier cases where there are zero or a unique target object of its semantic class in a scene, while b) and d) are more difficult cases containing one or multiple target objects of the same semantic class in a scene.
+We also report the micro-average of the 5 cases as an overall score.
+
+During evaluations, we first calculate per-pair IoUs between ground truth and predicted bounding boxes in a scene, and then apply the Hungarian algorithm~\cite{kuhn1955hungarian} to get an optimal one-to-one matching between predicted and GT bounding boxes.
+To get the maximum matched IoU, we use the following cost function:
+\begin{equation*}
+\Cost(i,j) = -\IoU(i,j) \text{ for } {i,j} \in \{1 \ldots N\}
+\end{equation*}
+where $N=\max(\#\textit{Predictions}, \#\textit{GTs})$.
+After obtaining the optimal match, we take pairs with IoUs higher than \iouevalth to be True Positives (TP).
+We treat the Zero Target (ZT) case as a special case where recall is always set to $1$, and precision is set to $1$ if there is no prediction or $0$ otherwise.
+
+
+
+Method
+
+We propose \OURMETHODCLIP, a CLIP-based~\cite{radford2021learning} approach and compare to three recent approaches: 3DVG-Transformer~\cite{zhao20213dvg}, 3DJCG~\cite{cai20223djcg} and D3Net~\cite{chen2022d3net}. 
+We selected these methods as they were among the top performers on the ScanRefer~\cite{chen2020scanrefer} benchmark\footnote{\href{https://kaldir.vc.in.tum.de/scanrefer_benchmark/}{kaldir.vc.in.tum.de/scanrefer\_benchmark}} with available open-source code.
+Note that 3DJCG and D3Net are unified models, which can do both grounding and captioning tasks.
+All four models are two-stage approaches, where a 3D object detector first identifies a set of bounding box candidates, and a disambiguation module then selects the target bounding box.
+In the original ScanRefer setting, the models are trained using a cross-entropy loss $L_\text{ref}$ where the predicted bounding box has the highest IoU ($>\ioutrainth$) with the GT bounding box as the target bounding box to calculate the loss. 
+For our task, we use a binary cross-entropy loss for $L_\text{ref}$ as our problem is a multi-label task (vs classification). 
+\subsection{\OURMETHODCLIP}
+
+\OURMETHODCLIP follows the two-stage architecture with PointGroup~\cite{jiang2020pointgroup} as the detector, CLIP~\cite{radford2021learning} as the text encoder and a transformer-based fusion module (see \Cref{fig:model_arch}).
+We use PointGroup to obtain object proposals along with their 3D features $\mathbf{F}^\text{3d} \in R^{32}$.
+The output object proposals are fed into an online object renderer, which renders multi-view 2D images for each object proposal.
+We use CLIP to encode the images and use an MLP to project the average of the output 2D image features to obtain $\mathbf{F}^\text{2d} \in \R^{128}$.
+The 2D and 3D features are concatenated to form and passed through a 1D convolution (that projects the combined 160-dim features down to 128-dim) to obtain the final visual features $\mathbf{F}^\text{obj} \in \R^{128}$ for an object proposal:
+\begin{equation*}
+\mathbf{F}^\text{obj} = \conv_\text{1d}([\mathbf{F}^\text{3d}; \mathbf{F}^\text{2d}]),\quad
+\mathbf{F}^\text{2d} = \frac{\MLP(\sum_{i=1}^{N}\mathbf{F}_{i}^\text{2d})}{N}
+\end{equation*}
+We use the CLIP text encoder with an MLP to obtain both 128-dim token-level and sentence embeddings.
+We use a transformer-based fusion module to combine object features and token-level embeddings and output confidence scores for each proposal.
+To improve the training, we apply a contrastive loss between sentence and object features.
+
+\subsection{Loss function}
+
+We train the network end-to-end with the total loss $L = L_\text{det} + L_{c} + L_\text{ref}$ consisting of the detection loss $L_\text{det}$, contrastive loss $L_\text{c}$, and the reference loss $L_\text{ref}$.
+The detection loss $L_\text{det}$ is introduced in PointGroup and consists of four parts: 1) cross-entropy loss for supervising per-point semantic class prediction; 2) $L_1$ loss for supervising per-point offset vector towards object centers; 3) directional loss formed as a mean of minus cosine similarities for further constraining the direction of per-point offset vectors; 4) binary cross-entropy loss for supervising per-point objectness confidence score.
+To help learn better multi-modal embeddings, we introduce a symmetric contrastive loss $L_{c}$, 
+which can handle a flexible number of target objects:
+\begin{equation*}
+L_\text{c}^{O\rightarrow S} = -\log\frac{\exp(\cos(\bar{O}_i,S_i)/\tau)}{\sum_{i=1}^{n}\exp(\cos(\bar{O}_i,S_j)/\tau)}
+\end{equation*}
+\begin{equation*}
+L_\text{c}^{S\rightarrow O} = -\log\frac{\exp(\cos(S_i,\bar{O}_i)/\tau)}{\sum_{i=1}^{n}\exp(\cos(S_i,\bar{O}_j)/\tau)}
+\end{equation*}
+where $S$ is sentence features, $\bar{O}$ is the mean of object features of all target objects paired with a description, and $\tau$ is a temperature parameter.
+Finally, the reference loss $L_\text{ref}$ supervises the matching module to select objects satisfying the description.
+We use the multi-class cross-entropy loss as $L_\text{ref}$ for experiments on ScanRefer, Nr3D~\cite{achlioptas2020referit_3d} and \PROJECTNAME (ST) where each description only refers to a single target object.
+For experiments on \PROJECTNAME, $L_\text{ref}$ is a sum of binary cross-entropy losses over detected objects.
+
+\xhdr{Training.}
+To set up positive (i.e. valid target bounding boxes) and negative instances between the GT bounding boxes and proposed bounding boxes, we use two strategies (see \Cref{sec:supp:analysis} for detailed comparisons):
+
+\xhdr{\textit{All}}
+All predicted bounding boxes with IoU higher than the threshold \ioutrainth with GT bounding boxes are considered target bounding boxes.
+
+\xhdr{\textit{Hungarian}}
+We apply the Hungarian algorithm~\cite{kuhn1955hungarian} to do bipartite matching, which ensures an optimal solution.
+We use the same IoU threshold \ioutrainth to filter prediction-GT bounding box pairs.
+\xhdr{Inference.}
+At inference time, we take all bounding boxes with predicted scores above the threshold \predth as positives (predicted target bounding boxes for the description).
+See \Cref{sec:supp:analysis} for comparisons of different \predth.
+
+
+Experiments
+
+\input{figtab/dataset_breakdown.tex}
+
+We conduct experiments on both ScanRefer~\cite{chen2020scanrefer} and \PROJECTNAME datasets and consider two setups: grounding objects with GT and predicted bounding boxes.
+
+\xhdr{GT bounding boxes.}
+For \OURMETHODCLIP and D3Net~\cite{chen2022d3net}, we input the complete scene and apply GT point masks for each object to get GT bounding boxes and masked features from the pre-trained detector (PointGroup for both D3Net and our \OURMETHODCLIP). %
+For 3DVG-Trans~\cite{zhao20213dvg} and 3DJCG~\cite{cai20223djcg}, we use their original GT setting following the method proposed by ReferIt3D~\cite{achlioptas2020referit_3d}.
+Single input objects are first extracted from the scene using the GT masks and PointNet++~\cite{qi2017pointnet++} is used for obtaining the object features.
+For all methods, we disable the $L_{det}$ loss when using GT boxes.
+
+\xhdr{Predicted bounding boxes.}
+We use the original detector design of each method to predict bounding boxes and extract features.
+
+\input{figtab/scanrefer_comp}
+
+\subsection{Implementation details}
+We implement \OURMETHODCLIP using PyTorch Lightning\footnote{\href{https://www.pytorchlightning.ai/}{www.pytorchlightning.ai}} and  PyTorch3D~\cite{ravi2020pytorch3d}.
+We train the model end-to-end on a single NVIDIA RTX A5000 with a batch size of 4, using the AdamW optimizer~\cite{loshchilov2017decoupled} with a learning rate of $5e^{-4}$.
+
+Following D3Net, we pretrain our PointGroup module on all ScanNet v2 training scans with the 18 ScanRefer categories.
+We take point coordinates, point normals and per-point multi-view features $P \in \mathbb{R}^{N \times (3+3+128)}$ as the input.
+For data augmentation, we randomly apply coordinate jitter, x-axis flipping and rotation around the z-axis.
+We freeze a pre-trained CLIP with ViT-B/32~\cite{radford2021learning} and only train additional MLPs.
+For encoding the text with CLIP, we follow CLIP and tokenize with a lower-cased BPE, and \texttt{[SOS]} and \texttt{[EOS]} tokens added (the output corresponding to \texttt{[EOS]} is used as the sentence representation).
+
+\xhdr{Object renderer.}
+For each object proposal, we render $3$ views horizontally spaced 120 degrees apart, at a distance of $1\text{m}$, with elevation angle of $45^\circ$.
+We crop coordinates and colors from the input scene point cloud using predicted bounding boxes and set point radius to $2.5\text{cm}$ and image size to $224^{2}$.
+We use CUDA to batch index scene point clouds and crop in parallel, and render the batches sparsely to avoid padding overhead.
+Rendering is implemented with PyTorch3D and executed on the GPU. The computational overhead of our method with the online renderer ranges from $10-20\%$ 
+(see \Cref{sec:supp:compute} for details).
+
+\input{figtab/scan_nr3d_comp}
+\subsection{Results}
+
+\subsubsection{Performance of \OURMETHODCLIP}
+
+\input{figtab/scan_multi3d_comp}
+
+\input{figtab/multi3drefer_comp}
+We first validate the performance of \OURMETHODCLIP on ScanRefer (see \Cref{tab:scanrefer_comp}) and Nr3D~\cite{achlioptas2020referit_3d} (see \Cref{tab:scan_nr3d_comp}) datasets and compare it against recent models.
+On ScanRefer, our method outperforms all prior works including those joint models leveraging extra input data by a large margin on both val set and test set (online benchmarking).
+In our ablation study, we find that the use of the CLIP text encoder is a key factor to the strong performance of our model on ScanRefer.
+Another key factor is the use of a strong 3D object instance segmentation network (PointGroup) as our object detector.
+For instance, the PointGroup-based methods~\cite{chen2022d3net,chen2022unit3d} readily outperform VoteNet-based methods~\cite{zhao20213dvg,cai20223djcg} on the unique subset of ScanRefer.
+
+For Nr3D, we achieve comparable but less competitive results because of our weaker ground-truth box encoder.
+Note that SAT~\cite{yang2021sat} and MVT~\cite{huang2022multi} also leverage 2D images but render them offline.
+Overall, using additional 2D image information is helpful for two-stage methods.
+
+\input{figtab/eval_multi_scanrefer}
+
+\subsubsection{\PROJECTNAME}
+
+We split the \PROJECTNAME data into train/val/test by scene following the ScanRefer split, resulting in a rough split ratio of 7:2:1 for the scene-description pairs.
+See \Cref{tab:datasets_breakdown} for statistics, including the number of descriptions with zero, single, or multiple targets.
+
+\xhdr{Usefulness of \PROJECTNAME dataset.}
+To study the usefulness of the \PROJECTNAME dataset, we compare the performance of training \OURMETHODCLIP with the original ScanRefer data and with our \PROJECTNAME data for the Single Target (ST) case.
+We evaluate on both ScanRefer and \PROJECTNAME (ST), using GT bounding boxes.
+\Cref{tab:scan_multi3d_comp} shows that our reworded data can improve performance on ScanRefer.
+Prior work has also shown that incorporating additional labelled data can help, but they typically used either a captioning model~\cite{chen2022d3net,chen2022unit3d}, mixed additional annotated data~\cite{yang2021sat}, or used dense annotations~\cite{abdelreheem2022scanents3d}.
+We show that simple rewordings (without accessing th
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

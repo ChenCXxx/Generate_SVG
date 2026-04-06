@@ -1,0 +1,193 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: MRN: Multiplexed Routing Network \\for Incremental Multilingual Text Recognition
+
+% ArXiv ID: 2305.14758
+
+
+
+
+\title{MRN: Multiplexed Routing Network \\for Incremental Multilingual Text Recognition}
+
+\author{
+Tianlun Zheng$^{1,2}$,  Zhineng Chen$^{1,2}$\thanks{Corresponding Author.},  Bingchen Huang$^{1,2}$,  Wei Zhang$^3$ and Yu-Gang Jiang$^{1,2}$\\
+$^1$School of Computer Science, Fudan University, China\\
+$^2$Shanghai Collaborative Innovation Center of Intelligent Visual Computing, China\\
+$^3$Gaoding AI, China\\
+{\tt\small\{tlzheng21, bchuang21\}@m.fudan.edu.cn,
+\{zhinchen, ygj\}@fudan.edu.cn,
+wzhang.cu@gmail.com}
+}
+
+\maketitle
+\ificcvfinal\thispagestyle{empty}\fi
+
+
+\maketitle
+
+\begin{abstract}
+Multilingual text recognition (MLTR) systems typically focus on a fixed set of languages, which makes it difficult to handle newly added languages or adapt to ever-changing data distribution. In this paper, we propose the Incremental MLTR (IMLTR) task in the context of incremental learning (IL), where different languages are introduced in batches. IMLTR is particularly challenging due to rehearsal-imbalance, which refers to the uneven distribution of sample characters in the rehearsal set, used to retain a small amount of old data as past memories. To address this issue, we propose a Multiplexed Routing Network (MRN). MRN trains a recognizer for each language that is currently seen. Subsequently, a language domain predictor is learned based on the rehearsal set to weigh the recognizers. Since the recognizers are derived from the original data, MRN effectively reduces the reliance on older data and better fights against catastrophic forgetting, the core issue in IL. We extensively evaluate MRN on MLT17 and MLT19 datasets. It outperforms existing general-purpose IL methods by large margins, with average accuracy improvements ranging from 10.3\% to 35.8\% under different settings. Code is available at \url{https://github.com/simplify23/MRN}.
+
+\end{abstract}
+
+\section{Introduction}
+Scene text recognition (STR) is a task aiming to read text in natural scenes. Recent advances in deep learning have significantly improved the accuracy of STR, allowing it to recognize text in the presence of font variations, distortions, and noise interference \cite{ShiBY17crnn,shi2018aster,wang2021visionlan,sheng2019nrtr,fang2022abinet++,zheng2023tps++}. As countries and cultures are more interconnected, the task of simultaneously recognizing multiple languages, i.e., multilingual text recognition (MLTR), has also become more important.
+Existing methods typically address this challenge by training on mixed multilingual data \cite{buvsta2018e2emlt,baek2020crafts,nayef2019mlt2019} or designing independent language blocks \cite{huang2021multiocr,fujii2017seqscript,gomez2017improving}. However, when each time a new language is added, the above methods need retraining on a dataset mixing the old and new languages. This increases the training cost \cite{Rebuffi2017icarl,Yan2021DER} and also may lead to an imbalance \cite{belouadah2019IL2M,delange2022clsurvey} between old and new data.
+
+\begin{figure}[]
+\centering
+\includegraphics[width=0.45\textwidth]{motivation.pdf} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{
+Incremental multilingual text recognition (IMLTR) focuses on the practical scenario where different languages are introduced sequentially. The goal is to accurately recognize the newly introduced language while maintaining high recognition accuracy for previously seen languages.
+IMLTR introduces a task focusing on text recognition that faces rehearsal-imbalance challenges.
+}
+\label{fig1:motivation}
+\end{figure}
+
+Incremental learning (IL) is designed for scenarios where new data is continuously learned and typically, the old samples are maintained by a small ratio. The collection of old samples is referred to as the rehearsal set \cite{zhang2022rcil,hu2021distilling}, which serves as limited past memories. IL aims to learn the new data well while minimizing forgetting the past learned knowledge. Most existing studies \cite{Rebuffi2017icarl, belouadah2019IL2M, zhao2020wa,huang2023resolving} conduct experiments on balanced datasets and maintain a constant number of classes at each learning step. 
+However, in real-world scenarios, the number of classes and samples may differ across steps, leading to imbalanced datasets. To address these issues, IL2M \cite{belouadah2019IL2M} alleviated class-imbalance by storing statistics of old classes rather than samples. Delange et al. De Lange et al. \cite{delange2022clsurvey} surveyed typical IL methods on datasets and solutions with different data imbalances. Despite progress made, research on data and class imbalance is still in its infancy stage. Moreover, as illustrated in Fig.~\ref{fig1:motivation}, there is currently no research introducing IL to STR.
+
+
+
+We rewrite MLTR in the context of IL. Languages are treated as tasks and characters are their classes. During training, the model only observes the newly arrived language data and a small amount of data from old languages. The recognition model is expected to maintain the ability to recognize characters of all languages that it has encountered before, regardless of whether their data are still available or discarded. We term this problem incremental multilingual text recognition (IMLTR).
+
+
+
+IMLTR poses significant challenges to IL approaches due to its unbalanced features. 1) At the dataset level, it is difficult to collect sufficient training data for minority languages such as Bangla compared to popular languages such as English and Chinese, which affects the quality of recognition models. 2) At the language level, the size of character sets varies from tens to thousands across different languages, which leads to data imbalance. 3) At the character level, the occurrence frequency of characters follows a long-tailed distribution, leading to class imbalance. In addition, IMLTR faces the problem of variable length recognition, where text instances are the recognizing unit instead of character classes. Therefore, IL methods cannot sample characters as evenly as required in the context of IMLTR, resulting in a significant fraction of characters not being included in the rehearsal data, as shown in Fig.~\ref{fig2:rehearsal-imbalance}. This phenomenon is summarized as rehearsal-imbalance in Fig.~\ref{fig1:motivation}. Rehearsal-imbalance leads to catastrophic forgetting, where forgotten characters cannot be recognized. Therefore, there is an urgent need to develop new methods to overcome it.
+
+Although the rehearsal set does not ensure full coverage of all interlingual character classes, it is still adequate for training a language domain predictor to identify the languages. Motivated by this observation, we propose a novel Multiplexed Routing Network (MRN) for IMLTR. MRN involves training a new text recognition model at each learning step and utilizing it and previously trained models for parallel feature extraction. A domain MLP router is designed to receive these features and predict the probability over the languages. Meanwhile, these features are used for character recognition in their own domain by feeding them to the multi-lingual modeling module. Finally, we fuse the results obtained at both the language domain and character levels to decode the recognized character sequence.
+
+Our contributions can be summarized as follows. First, we introduce the IMLTR task, the first effort to adapt IL to text recognition. It contributes to the exploration of other practical scenarios for text recognition. Second, we develop MRN to address the rehearsal-imbalance problem in ILMTR. It is a dynamic and scalable architecture that is compatible with various IL methods and recognition models. Third, experiments on two benchmarks show that MRN significantly outperforms existing general-purpose IL methods, achieving accuracy improvements ranging from 10.3\% to 27.4\% under different settings.
+
+\begin{figure}[]
+\centering
+\includegraphics[width=0.48\textwidth]{class_analysis.pdf} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{The showcase of rehearsal-imbalance. Data-imbalance (top) and class-imbalance (bottom) are severely aggravated from the full dataset to the rehearsal set, while the character classes to be read remain the same, making IMLTR particularly challenging.}
+\label{fig2:rehearsal-imbalance}
+\end{figure}
+
+\begin{figure*}[]
+\centering
+\includegraphics[width=1\textwidth]{overview.pdf} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{An overview of MRN. In stage-I, text recognizers are trained language-by-language. While in stage-II, these recognizers are frozen for feature extraction. The Domain MLP Router, which is trained based on the rehearsal set, is proposed to predict the likelihood distribution over the languages. Meanwhile, a padded classification layer is constructed, where the parallel predicted text sequences and likelihood distributions are merged to generate the decoded character sequence.}
+\label{fig:overview}
+\end{figure*}
+\section{Related Work}
+\subsection{Incremental Learning (IL)}
+IL has received intensive research attention over the past few years. Typically, the problem is investigated in the context of image classification, where addressing catastrophic forgetting effectively and efficiently is its core issue. 
+We can broadly classify existing efforts into three categories: regularization~\cite{kirkpatrick2017ewc, Zenke2017CLTSI, Dhar2019LWM}, rehearsal~\cite{Parisi2019CLreview, Castro2018e2e, Aljundi2018MAS} and dynamic expansion~\cite{Aljundi2017expert_gate, Yan2021DER, Douillard2022Dytox, huang2023resolving}. Regularization methods emphasize constraining weight changes, e.g., allowing only small magnitude changes from the previous weights. It suffers from the problem that the changes do not adequately describe the complex pattern shifts caused by new task learning. Rehearsal methods keep a small amount of old data when training a new task, thus retaining some prior knowledge. Studies in this category focus on the selection of old data and the way it is used. For example, iCaRL was developed to learn an exemplar-based data representation~\cite{Rebuffi2017icarl}. Alternatively, dynamic expansion methods dynamically create feature extraction sub-networks each associated with one specific task~\cite{Golkar2019CLNR, Collier2020RNCCL, Wen2020Batchensemble, huang2023resolving}. Early methods required a task identifier to select the correct sub-network at test time. Unfortunately, the assumption is unrealistic as new samples would not come with their task identifiers. Recently, DER~\cite{Yan2021DER} proposed a dynamically expandable representation by discarding the task identifier, where the classifier was finetuned on a balanced exemplar subset to mitigate the task-tendency bias. It attained impressive results. Some recent works \cite{belouadah2019IL2M,delange2022clsurvey} studied IL in inhomogeneous or uneven datasets. However, the datasets they adopted are still ideal and cannot sufficiently describe challenges in real-world problems. Moreover, there were also some studies proposed for object detection \cite{feng2022overcoming, chen2019new, yang2022multi, yang2023one}, semantic segmentation \cite{yang2022uncertainty,douillard2021plop,zhang2022rcil} and object retrieval \cite{liu2023balanced}. Text recognition has not been studied in IL so far.
+
+\subsection{Scene Text Recognition (STR)}
+Text recognition is a longstanding research topic in computer vision and pattern recognition. Recent efforts mainly focused on recognizing text in natural scenes, i.e., STR. The task exhibits variations like text distortion, occlusion, blurring, etc., making the recognition challenging. With the advances in deep learning, especially CNN \cite{bai2014chinese,ShiBY17crnn,hu2020gtc,shi2018aster} and Transformers \cite{sheng2019nrtr,ABInet21CVPR,zheng2021cdistnet,wang2021visionlan,du2022@svtr,wang2022petr}, STR methods have been pushed forward significantly. 
+
+
+Multilingual text recognition (MLTR) is an important sub-field of STR. The most popular solution for MLTR was data-joint training \cite{nayef2017mlt2017,buvsta2018e2emlt,nayef2019mlt2019,baek2020crafts}, where all data was gathered to train a model capable of recognizing all character classes. However, in addition to computational intensive, the approach also had the drawback of being biased toward data-rich languages, while performing poorly in minority languages where training data was scarce. As alternatives, multi-task or ensemble architectures were developed to allow data-rich languages to transfer knowledge to data-poor ones \cite{bai2014image,cui2017multilingual}. They alleviated the data scarcity issue to some extent. In addition, Some studies \cite{fujii2017seqscript,gomez2017improving,shi2015automatic,huang2021multiocr} added a script identification step to text recognition. They first identified the language domain and then selected the corresponding recognizer. Although similar to ours in the pipeline, they did not explore dependencies between languages. Moreover, none of them discussed the task within the IL framework.
+
+\section{Methodology}
+\subsection{Incremental Multilingual Text Recognition}
+Our goal is to develop a unified model that can recognize text instances in different languages, with the model trained incrementally language-by-language. Mathematically, assume there are $I$ kinds of languages $\left\{\mathcal{D}_{1}, \cdots, \mathcal{D}_{I}\right\}$, with $\mathcal{D}_{i}=\left\{\left(\mathbf{x}_{i,1}, y_{i,1}\right), \cdots,\left(\mathbf{x}_{i,N(i)}, y_{i,N(i)}\right)\right\}$ as the training data at step $i$ (i.e., task $i$), where ${x}_{i,j}$ is the $j$-th input image and $y_{i, j} \in \mathcal{C}_{i}$ is its label within the label set $\mathcal{C}_{i}$, $N(i)$ is the number of samples in set $\mathcal{D}_{i}$. At the $i$-th learning step, samples of the $i$-th language will be added to the training set. Therefore, the goal can be formulated as to learn new knowledge from the set $\mathcal{D}_{i}$, while retaining the previous knowledge learned from old data $\left\{\mathcal{D}_{1}, \cdots, \mathcal{D}_{i-1}\right\}$. The label space of the model is all seen categories $\tilde{\mathcal{C}}_{i}=\cup_{k=1}^{i} \mathcal{C}_{k}$ and the model is expected to predict well on all classes in $\tilde{\mathcal{C}}_{i}$. Note that there may be a small overlap between label sets, i.e., $\mathcal{C}_{k} \cap \mathcal{C}_{j} \neq\emptyset$ for some $k$ and $j$. To better fight against catastrophic forgetting, we discuss IMLTR in the rehearsal setting. That is, a small and fix-sized rehearsal set $\mathcal{M}_i$ with a portion of samples from $\left\{\mathcal{D}_{1}, \cdots, \mathcal{D}_{i-1}\right\}$ is accessible at incremental step $i$. 
+
+
+\subsection{Challenge and Solution Statement}
+
+To build a recognition model to correctly recognize text instances from all currently seen languages and their character classes, let $x_{n}$ be the text instance to be recognized. $y_{n}^{t} \in \tilde{\mathcal{C}}_{i}$ denotes the $t$-th character label corresponding to $x_{n}$. $T(n)$ gives the total number of characters in this instance. 
+IMLTR differs significantly from existing IL settings. For example compared to incremental image classification, standard IL usually has $|\tilde{\mathcal{C}}_{i}| \leq 100$ and $T(n)=1$ regardless of the value $n$. While the size of rehearsal set $\mathcal{M}_i$ is a constant (e.g., 2,000). However, in IMLTR $\mathcal{C}_{i}$ ranges from dozens of to thousands of character classes for different languages, and $T(n)$ belongs to (1, 25), assuming 25 as the maximized length of a character sequence.
+Consequently, rehearsal-imbalance becomes a prominent challenge. Due to the limited size of the rehearsal set, it is not rare that a character class appears in the full dataset but is absent from the rehearsal set, as shown in Fig.~\ref{fig2:rehearsal-imbalance}. Thus, the incrementally trained models are likely to forget the absent character classes, despite having learned them previously, which can ultimately hurt the recognition accuracy.
+
+
+Although the rehearsal set may not be enough to train a multilingual text recognizer to identify thousands of character classes, it is still sufficient to train a language classifier to recognize the language domains present in the text instance, whose classes are a much smaller number. Once the language domains are identified, we can choose an alternative scheme that involves aggregating the results from corresponding language recognizers to perform the recognition task, thereby bypassing the rehearsal-imbalance issue.
+
+Motivated by this, we define $\mathcal{H}_{i}$ and $\varphi_{i}$ the skeleton network (all except classifier) and classifier trained at the $i$-th incremental step. Note that $\mathcal{H}_{i}$ is trained on $\mathcal{D}_{i}$, therefore can only recognize character classes of the $i$-th language in principle. Meanwhile, $\varphi_{i}$ is set to have $\tilde{\mathcal{C}}_{i}$ nodes to be compatible with typical IL settings, despite not being taught to recognize character classes of other languages. Then, we can adopt an aggregating-like scheme to implement IMLTR. The learning function can be written as:
+
+\begin{equation}
+\sum_{k=1}^{i}\prod_{t=1}^{T(n)}\left(P\left(y_{n}^{t} | x_{n} ; \mathcal{H}_{k}, \varphi_{k}\right) * S\left(d_{n}^{k} \right)\right),
+\label{equ:equ2}
+\end{equation}
+where $d_{n}^{k}$ is the domain score indicating $x_{n}$ being classified as the \emph{k}-th language. $S(\cdot)$ is the score quantization function, which can be a one-hot vector (hard-voting) or a likelihood distribution (soft-voting). Eq.~\ref{equ:equ2} treats IMLTR as a weighted ensemble of recognition models trained based on different languages. By doing so, it successfully overcomes the rehearsal-imbalance issue within the IL framework. 
+
+\subsection{Method Overview}
+We propose a Multiplexed Routing Network (MRN) to implement this idea. As illustrated by Fig.~\ref{fig:overview}, it contains two stages, i.e., individual language modeling (stage-I) and multi-lingual modeling (stage-II). In stage-I, given $\mathcal{D}_{i}$ for the \emph{i}-th language, we train its recognizer using a popular text recognition model, which can recognize the character classes seen in $\mathcal{D}_{i}$. The model is represented as $\mathcal{H}_{i}$ and $\mathcal\varphi_{i}$. For character classes in $\tilde{\mathcal{C}}_{i}$ but not in $\mathcal{C}_{i}$, we simply truncate gradient propagation from these nodes thus the learned model still focuses on recognizing the $i$-th language.
+
+Stage-II aims at building a multilingual routing network for IMLTR. Given a text instance $x_{n} \in \mathcal{D}_{i}\cup \mathcal{M}_i$, we feed it into all the learned \emph{i} skeleton networks in parallel, while keeping the parameters of the networks frozen for targeted feature extraction. It extracts \emph{i} sets of features, each associated with a certain language. The features are further fed into a Domain MLP Router (DM-Router) module, which is designed for domain score estimation, i.e., estimating the likelihood that the text instance belongs to the languages. Meanwhile, the \emph{i} sets of features are fed to their respective classifiers, where the corresponding recognition character sequences are obtained. To merge their recognition, we pad the classification nodes with zeros to $|\tilde{\mathcal{C}}_{i}|$, ensuring that all classifiers are aligned to the same dimension. As a result, their recognized characters can be merged using weighted element-wise addition, where the weights are the domain scores estimated using DM-Router. Finally, the recognition is conducted by applying a CTC- or attention-based decoding. Since DM-Router plays a critical role in the proposed method, we provide a detailed illustration below.
+
+\subsection{Domain MLP Router}
+
+\begin{figure}[]
+\centering
+\includegraphics[width=0.48\textwidth]{router.pdf} % Reduce the figure size so that it is slightly narrower than the column.
+\caption{Detail structure of Domain MLP Router (DM-Router). Spatial-domain and Channel-domain dependencies are explored and fused to generate the language domain score distribution. }
+\label{fig1:router}
+\end{figure}
+
+DM-Router uses features that are biased towards different language domains to discriminate the language domain of text instances. It accomplishes this by leveraging both the rehearsal set and the language data that arrives at the $i$-th step. While training a separate single-network classifier, which takes an image as input and outputs the language domain scores, can identify the language domains, we believe that this approach overlooks inter-domain dependencies that could be explored for better identification. For instance, different languages may have distinct appearance patterns, such as strokes, which differ significantly between Eastern Asian languages and Latin. Additionally, their features exhibit different frequency distributions, which can also aid language identification.
+
+
+To achieve this goal, DM-Router accepts all \emph{i} sets of features extracted previously as input and mines the spatial-domain and channel-domain dependencies for better language identification. The detailed structure of DM-Router is shown in Fig.~\ref{fig1:router}. Features from different skeleton networks are concatenated, generating a feature cubic with size $P\times D \times C$, where $P$, $D$, and $C$ stand for the number of reshaped spatial patches, language domains, and feature channels, respectively. Then, a linear projection is applied along the channel dimension (C Proj), followed by reshaping the cubic from the patch-domain dimension. Next, a gated-mechanism is followed to generate the attention scores between the patch and domain. This is achieved by applying linear projection along the patch-domain dimension, followed by a layer norm and a feature dot product. We reshape the generated feature back to a feature cubic of the same size and merge it with the original cubic. The operations above explore the spatial-domain dependency. A similar operation is then applied to the merged feature cubic to explore the channel-domain dependence. In the following, the explored feature cubic gradually shrinks to a $D$-dimensional score vector that indicates the probability over the languages. It represents the likelihood of each language domain for the input text instance.   
+
+DM-Router is an MLP-based attention network that targets language domain weighting. Note that there are a few similar solutions in the literature. Expert Gate (E-Gate) \cite{Aljundi2017expert_gate} developed an expert gating network that identified which model could be employed based on image reconstruction loss. However, it might not effectively discriminate IMLTR due to some languages exhibiting character class overlapping, which can cause classification confusion. On the other hand, multilingual OCR \cite{huang2021multiocr} determines the languages by script recognition and selected the corresponding model for recognition. Unlike these hard-voting methods, MRN employs soft-voting, which allows for the use of knowledge from other languages. For instance, Japanese has the ability to correct Chinese to some extent, given that they share some common words and similar strokes.
+
+\subsection{Training Loss}
+MRN has two loss terms. One for multilingual text recognition while the other for language domain prediction. The total loss function is written as:
+\begin{equation}
+\mathcal{L}_{\mathrm{total}}= \mathcal{L}_{\mathrm{clf}}+\alpha \mathcal{L}_{\mathrm{domain}},
+\label{e5}
+\end{equation}
+where $\alpha$ is an empirical hyperparameter to balance the two.
+
+MRN shows two advantages in dealing with rehearsal-imbalance. First, it ensures fair use of language. As previously mentioned, data distribution is uneven across different languages, and if not addressed during model training, it may lead to bias in the resulting model. By adopting language-by-language training and parameter freezing, data-rich and data-poor languages are treated equally, and class-imbalance is also alleviated. Second, MRN makes use of inter-lingual dependency in two ways: through the DM-Router described earlier, and through recognition score merging. When a character is recognized by more than one language, it receives confidence scores from each of them, allowing for the utilization of inter-lingual dependencies. 
+
+
+\begin{table}[]
+\begin{center}
+\resizebox{1.0\linewidth}{!}{
+\begin{tabular}{c|c|cccccc}
+\hline
+\multirow{2}{*}{Dataset} & \multirow{2}{*}{categories} & Task1   & Task2 & Task3    & Task4  & Task5  & Task6  \\ \cline{3-8} 
+                         &                       & Chinese & Latin & Japanese & Korean & Arabic & Bangla \\ \hline
+\multirow{3}{*}{MLT17\cite{nayef2017mlt2017}} & train instance          & 2687 & 47411 & 4609 & 5631 & 3711 & 3237   \\
+                         & test instance           & 529  & 11073 & 1350 & 1230 & 983  & 713    \\
+                         & train class         & 1895 & 325   & 1620 & 1124 & 73   & 112    \\ \hline
+\multirow{3}{*}{MLT19\cite{nayef2019mlt2019}} & train instance          & 2897 & 52921 & 5324 & 6107 & 4230 & 3542   \\
+                         & test instance           & 322  & 5882  & 590  & 679  & 470  & 393    \\
+                         & train class        & 2086 & 220   & 1728 & 1160 & 73   & 102    \\ \hline
+\end{tabular}
+}   
+\end{center}
+\caption{MLT17 and MLT19 statistics in our experiments.}
+\label{table:mlt_datasets}
+\end{table}
+
+
+\section{Experiments}
+\subsection{Datasets and Implementation Details} \label{DID}
+
+\noindent\textbf{ICDAR 2017 MLT (MLT17) \cite{nayef2017mlt2017}}
+has 68,613 training instances and 16,255 validation instances, which are from 6 scripts and 9 languages: Chinese, Japanese, Korean, Bangla, Arabic, Italian, English, French, and German. The last four use Latin script. The samples are from natural scenes with challenges like blur, occlusion, and distortion. We use the validation set for test due to the unavailability of test data. Tasks are split by scripts and modeled sequentially. Special symbols are discarded at the preprocessing step as with no linguistic meaning.
+
+
+
+\begin{table*}[]
+\begin{center}
+\resizebox{0.95\linewidth}{!}{
+\begin{tabular}{ccccccccccccccc}
+
+\hline
+\multicolumn{1}{l|}{}         & \multicolumn{7}{c|}{MLT17}                                                                                        & \multicolumn{7}{c}{MLT19}                                                                    \\ \hline
+\multicolumn{10}{l}{Model : CRNN (TPAMI'17) \cite{ShiBY17crnn}}                                                                                                                  \\ \hline
+\multicolumn{1}{c|}{ }     & T1   & T2            & T3            & T4            & T5            & T6            & \multicolumn{1}{c|}{AVG}           & T1   & T2            & T3            & T4            & T5            & T6            & AVG           \\ \hline
+\multicolumn{1}{c|}{Bound}    & -    & -             & -             & -             & -             & -             & \multicolumn{1}{c|}{92.1}          & -    & -             & -             & -             & -             & -             & 84.9          \\
+\multicolumn{1}{c|}{Baseline} & 91.1 & 51.7          & 51.0          & 37.2          & 29.3          & 22.3          & \multicolumn{1}{c|}{47.1}          & 85.1 & 49.6          & 46.5          & 35.5          & 27.6          & 20.7          & 44.2          \\ \hline
+\multicolumn{1}{c|}{LwF (TPAMI'17)\cite{Li2017LWF}}      & 91.1 & 53.7          & 53.4          & 38.2          & 29.7          & 23.7          & \multicolumn{1}{c|}{48.3}          & 85.1 & 51.6          & 49.2          & 36.5          & 27.7          & 22.0          & 45.3          \\
+\multicolumn{1}{c|}{EWC (PNAS'17)\cite{kirkpatrick2017ewc}}      & 91.1 & 56.5          & 50.4          & 37.2          & 30.5          & 21.5          & \multicolumn{1}{c|}{47.9}          & 85.1 & 55.5          & 46.3          & 35.8          & 28.8          & 19.9          & 45.2          \\
+\multicolumn{1}{c|}{WA  (CVPR'20) \cite{zhao2020wa}}       & 91.1 & 54.6          & 48.7          & 38.2          & 28.5          & 23.1          & \multicolumn{1}{c|}{47.4}          & 85.1 & 52.2          & 44.3          & 36.7          & 26.8          & 21.6          & 44.4          \\
+\multicolumn{1}{c|}{DER (CVPR'21)\cite{Yan2021DER}}      & 91.1 & 76.3          & 55.8          & 46.4          & 39.3          & 35.8          & \multicolumn{1}{c|}{57.5}          & 85.1 & 75.2          & 40.4          & 45.1          & 36.6          & 34.2          & 52.8          \\ \hline
+\multicolumn{1}{c|}{MRN}     & 91.1 & \textbf{88.6} & \textbf{77.2} & \textbf{73.7} & \textbf{69.8} & \textbf{69.8} & \multicolumn{1}{c|}{\textbf{78.4}} & 85.1 & \textbf{85.1} & \textbf{73.2} & \textbf{68.3} & \textbf{65.3} & \textbf{65.5} & \textbf{73.7} \\ \hline
+\hline
+\multicolumn{15}{l}{Model : TRBA (ICCV'19) \cite{Baekwhats_wrong_19ICCV} }                                                                                      \\ \hline
+\multicolumn{1}{c|}{}         & T1   & T2            & T3            & T4            & T5            & T6            & \multicolumn{1}{c|}{AVG}           & T1   & T2            & T3            & T4            & T5            & T6            & AVG           \\ \hline
+\multicolumn{1}{c|}{Bound}    & -    & -             & -             & -             & -             & -             & \multicolumn{1}{c|}{94.9}          & -    & -             & -             & -             & -             & -             & 90.5          \\
+\multicolumn{1}{c|}{Baseline} & 91.3 & 49.6          & 47.3          & 36.1     
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

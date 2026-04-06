@@ -1,0 +1,356 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+\begin{wrapfigure}{R}{0.4\linewidth}
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/teaser.pdf}
+    \caption{
+    \iffalse
+    In light of the similarities among different segmentation tasks, as well as to leverage data from multiple sources to boost segmentation performance, \textbf{we propose to train a universal segmentation model, \modelname{}, on multiple datasets to perform multiple segmentation tasks.}
+    \fi
+    Considering the similarities across various segmentation tasks, and recognizing the potential for enhancing segmentation performance by harnessing data from multiple sources, \textbf{we propose to train a universal segmentation model, \modelname{}, on multiple datasets to perform multiple segmentation tasks.}
+    }
+\label{fig:teaser}
+\end{wrapfigure}
+
+Image segmentation is a core computer vision task with wide applications in photo editing, medical imaging, autonomous driving, and beyond.
+To suit different needs, various forms of segmentation tasks have arisen,
+the most popular ones being panoptic~\cite{coco_pan}, semantic~\cite{he2004multiscale}, and instance~\cite{hariharan2014simultaneous} segmentation.
+Prior works generally use specific model architectures tailored to each individual task~\cite{kirillov2019panoptic, long2014fully, chen2017deeplab, he2017mask}.
+However, these segmentation tasks are closely related, as they can all be regarded as grouping pixels and assigning a semantic label to each group~\cite{maxdeeplab}. 
+In this paper, we address the following question: \textit{Can we leverage a diverse collection of segmentation datasets to co-train a single model for all segmentation tasks?}
+A successful solution to this problem would leverage
+knowledge transfer among datasets,
+ boosting model performance across the board
+especially on smaller datasets.
+
+\iffalse
+There are some recent explorations in this direction.
+Various methods have been proposed to use a single model to handle multiple segmentation tasks~\cite{maskformer,mask2former,zhang2021k,jain2023oneformer}.
+However, they require training a \textit{separate} set of model weights for each dataset.
+There are other works~\cite{kim2022learning, lambert2020mseg, zhou2023lmseg} that train a single model on a combination of segmentation datasets.
+But, these works are conducted on a \textit{single} segmentation task.
+By contrast, in this work, we aim to train a \textit{single} segmentation model on \textit{multiple} datasets for \textit{multiple} tasks.
+\fi
+Existing works on unified segmentation models either focus on a single architecture to handle multiple tasks~\cite{maskformer,mask2former,zhang2021k,jain2023oneformer}, but with separate weights for different datasets;
+or a single set of weights for multiple datasets~\cite{kim2022learning, lambert2020mseg, zhou2023lmseg}, but on the same task.
+By contrast, in this work, we aim to train a \textit{single} model on \textit{multiple} datasets for \textit{multiple} tasks.
+\iffalse
+In light of the task similarities, we unify different segmentation tasks with a universal segmentation representation: a set of mask proposals (\ie, ``grouping'' of pixels) with one class prediction for each mask proposal~\cite{maxdeeplab, maskformer}.
+Since each segmentation task emphasizes a different aspect of image segmentation, we accordingly apply a variety of merge and postprocessing operations on the mask proposals. 
+With this representation, we also exploit weak supervision losses and show benefits from training on detection data (with bounding boxes only), which is much cheaper to acquire than mask-level annotations. 
+\fi
+Our key idea of unifying these segmentation tasks is to use a universal intermediate mask representation: a set of mask proposals (\ie, grouped pixels) with class labels~\cite{maxdeeplab, maskformer}.
+Different segmentation tasks can be realized by applying different merge and post-processing operations on this unified representation.
+This allows us to train our network on the same output space for different tasks.
+Furthermore, using this representation, we can exploit weak bounding box supervision for segmentation, which are far cheaper to collect
+than mask annotations.
+
+To encourage knowledge sharing and transfer among the multiple segmentation sources, our network architecture shares the same set of weights across all datasets and tasks. In addition, we utilize text embeddings as the class classifier, which map class labels from different datasets into a \textit{shared} semantic embedding space.
+This design further enhances knowledge sharing among categories with similar meanings in different datasets, \eg, `windowpane' and `window-other'.
+Our approach can be contrasted with an alternative of using
+dataset-specific model components --- we show
+in our experiments that our simpler, unified approach leads to
+improved performance and enables open-vocabulary segmentation via simply switching the text embedding classifier. 
+
+
+Putting these techniques together, we propose \textbf{\modelname{}}, a universal segmentation model, together with a cotraining recipe for the multi-task and multi-dataset setting. 
+We train \modelname{} on the ADE20k semantic~\cite{ade_sem}, COCO panoptic~\cite{coco_pan}, and Objects365 detection~\cite{obj365} datasets. 
+We show that \modelname{} improves performance on all datasets comparing with training separately, and significantly benefits relatively small-scale datasets (ADE20k semantic), outperforming a model trained only on ADE20k semantic by \textbf{+6.1} and \textbf{+5.1} mIoU with ResNet50~\cite{he2016deep} and ViTDet-B~\cite{vitdet} backbones.
+The multi-dataset multi-task setting also allows us to 
+\textit{seamlessly} perform weakly-supervised segmentation by transferring knowledge
+from other fully supervised source datasets, which we demonstrate on ADE20k panoptic and
+Objects365 instance segmentation.
+\modelname{} also directly transfers to other datasets not seen during training.
+It outperforms open-vocabulary panoptic methods on Cityscapes panoptic dataset~\cite{cityscapes} and performs comparably with open-vocabulary segmentation works on Pascal Context semantic dataset~\cite{pascal_context} .
+
+To summarize our contributions, we present \modelname{}, a single unified framework for multi-dataset multi-task segmentation.
+\modelname{} leverages knowledge from multiple sources to boost performance on all datasets.  It seamlessly enables weakly-supervised segmentation, directly transfers to other datasets and is capable of open-vocabulary segmentation.
+As an additional contribution, we have annotated
+a subset of the Objects365 validation set with groundtruth instance masks and will release them as an evaluation benchmark for instance segmentation.
+
+
+
+
+
+
+
+
+
+
+
+
+Related Work
+
+\paragraph{Muti-dataset training:}
+Training on multiple datasets has become popular for developing robust computer vision models~\cite{wang2019towards,zhou2021simple,lambert2020mseg,meng2022detection,uijlings2022missing,xu2020universal}.
+For object detection,
+Wang~\etal~\cite{wang2019towards} train an object detector on 11 datasets in different domains and show improved robustness.
+UniDet~\cite{zhou2021simple} trains a unified detector on 4 large-scale detection datasets with an automatic label merging algorithm.
+DetectionHub~\cite{meng2022detection} employs text embeddings to accommodate different vocabularies from multiple datasets, and features dataset-specific designs.
+For segmentation,
+MSeg~\cite{lambert2020mseg} manually merges the vocabularies of 7 semantic segmentation datasets, and trains a unified model on all of them; however, the manual efforts are expensive and hard to scale. 
+LMSeg~\cite{zhou2023lmseg} dynamically aligns segment queries with category embeddings.
+UniSeg~\cite{kim2022learning} explores the label relation and conflicts between multiple datasets in a learned way.
+Most of these works merge datasets using a unified vocabulary on a single task, while our work focuses on a more challenging problem:
+we merge datasets with different vocabularies \textit{and} different tasks.
+
+\paragraph{Unified segmentation model:}
+Panoptic segmentation~\cite{coco_pan} unifies semantic and instance segmentation.
+Prior works~\cite{kirillov2019panoptic,xiong2019upsnet,yang2019deeperlab,cheng2019panoptic,qiao2021detectors} exploit separate modules for semantic segmentation~\cite{long2014fully,chen2017deeplab} and instance segmentation~\cite{hariharan2014simultaneous,he2017mask}, followed by another fusion module.
+Recently, 
+the mask transformer framework proposed by MaX-DeepLab~\cite{maxdeeplab} directly predicts class-labeled masks, allowing end-to-end panoptic segmentation.
+MaskFormer~\cite{maskformer} and K-Net~\cite{zhang2021k} adopt a single transformer-based model for different segmentation tasks.
+Mask2Former~\cite{mask2former} improves upon MaskFormer by proposing masked attention, while kMaX-DeepLab~\cite{kmeans_deeplab} develops k-means cross-attention.
+OneFormer~\cite{jain2023oneformer} extends Mask2Former with a multi-task train-once design.
+All these works still train separate weights on \textit{different} datasets.
+By contrast, we aim at a single unified model that can perform well across all segmentation tasks and datasets.
+\paragraph{Weakly-supervised segmentation:}
+Facing the issue of expensive segmentation annotations, many works have proposed to learn segmentation masks from cheaper forms of supervision~\cite{papandreou2015weakly,dai2015boxsup,lin2016scribblesup}.
+In particular, box-supervised approaches are most related to our work, including BoxInst~\cite{tian2021boxinst} and Cut-and-Paste~\cite{remez2018learning} for instance segmentation, Box2Seg~\cite{kulharia2020box2seg} and BCM~\cite{song2019box} for semantic segmentation, and DiscoBox~\cite{lan2021discobox} and SimpleDoesIt~\cite{khoreva2017simple} for both semantic and instance segmentation.
+Despite the popularity of box-driven semantic and instance segmentation, 
+fewer attempts have been made at weakly-supervised panoptic segmentation. Li~\etal~\cite{li2018weakly} employ a pretrained model to generate pseudo-ground-truth in advance, in addition to weak supervision from bounding boxes and image level labels. Shen~\etal~\cite{shen2021toward} add a handcrafted branch on top of semantic and instance segmentation models to generate panoptic proposals.
+Unlike these methods that require customized components, our approach can realize knowledge sharing among datasets with different forms of annotations in a more systematic and data-centric fashion, and seamlessly enable weakly-supervised segmentation. 
+
+
+
+
+Method
+
+
+
+\subsection{A universal segmentation representation}
+\label{subsec:universal_repre}
+\iffalse
+One of our primary goals is to train with multiple variants of segmentation, including semantic, instance and panoptic segmentation.  In order to do this, we propose to use a universal segmentation representation for all three tasks.  
+Specifically, we rely on a natural representation of segmentation as \textit{a set of binary mask proposals, where each mask proposal is associated with a class prediction}. 
+We use these mask proposals for their versatility --- proposals are allowed to overlap, and one mask proposal can represent a single instance, any number of instances, a region or the whole area for a ``stuff'' category, and even a part of an object.  Thus they are well suited for the different flavors of segmentation considered in this paper.
+We note that similar representations are adopted in \cite{maxdeeplab,maskformer,mask2former,kmeans_deeplab} to tackle a specific segmentation task on a single segmentation dataset. We show that it can be used for multi-task multi-dataset segmentation. 
+
+The next question is how should we handle the separation between ``thing'' and ``stuff'' categories (\eg, in the context of panoptic segmentation)?  While  ``thing'' categories (\eg, `baseball') associate one mask for each instance, 
+``stuff'' categories (\eg, `sky') only associate one mask to each category.
+A straightforward approach would be separating the handling of thing and stuff categories, using one thing proposal for each thing instance and one stuff proposal for all pixels belonging to each stuff category. 
+However, the multi-dataset training setting introduces new challenges, as different datasets can have inconsistent definitions for whether a category is considered to be thing \vs stuff. For example, `table' is a thing category in the ADE20k panoptic dataset, but there is a `table-merged' stuff category in COCO panoptic. 
+Therefore, we propose to not differentiate thing from stuff proposals, but simply consider the segmentation of a stuff category to be \textit{the union of all mask proposals with the same stuff category prediction}. 
+Thus, thing and stuff categories are represented in the same way, though they undergo different treatments at the loss function and post-processing phases, as we discuss next.
+\fi
+
+Segmentation aims to group pixels of the same concept together.
+We propose to use an intermediate and universal representation, namely mask proposals, 
+for all segmentation tasks.
+A mask proposal is a binary foreground mask with a class prediction.
+We use this representation for its versatility:
+one mask proposal can represent a single instance, any number of instances, a region, or even a part of an object.
+They can overlap and can be combined to form higher-level segmentation outputs --- an instance (thing) or a region of the same semantic class (stuff).
+Thus they are well suited for the different flavors of segmentation considered in this paper.
+We note that a similar concept has been used in existing works~\cite{maxdeeplab,maskformer,mask2former,kmeans_deeplab}, for specific segmentation tasks on a single dataset.
+We show this representation is especially beneficial in our multi-dataset setting, as different datasets define things and stuff differently.
+For example, `table' is a thing category in the ADE20k panoptic dataset, but there is a `table-merged' stuff category in COCO panoptic.
+In our framework, both thing and stuff categories are represented in this same representation, and we treat them differently in the next step.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/different_segmentation_tasks.pdf}
+    \caption{
+    \textbf{Universal representation, \texttt{MERGE} operations, and losses for different segmentation tasks.}
+    We use a universal representation for all tasks: a set of mask proposals with class predictions.
+    Then we adopt distinct \texttt{MERGE} operations based on the segmentation task.
+    For panoptic segmentation, we merge proposals predicting the same ``stuff'' category.
+    For semantic segmentation, both ``thing'' and ``stuff'' categories undergo merging.
+    In instance segmentation, we do not perform \texttt{MERGE} and there are no ``stuff'' categories.
+    During training, we use Hungarian matching, and apply different losses based on the supervision types.
+    }
+\label{fig:seg_tasks}
+\end{figure*}
+
+\subsection{Merging predictions for specific tasks}
+\label{subsec:obtain_diff_results}
+\iffalse
+Given the predictions in the universal representation format, we next face the problem of the discrepancy among different segmentation tasks. We propose to adopt different \texttt{MERGE} operations for different tasks.
+\fi
+
+
+\paragraph{Notations:} Let $(\hat{z}_j, \widehat{M}_j)$ denote the $j$-th mask proposal with its class prediction, where
+$\widehat{M}_j\in \mathbb{R}^{H\times W}$ denotes (pre-sigmoid) logits for the mask proposal  and $\hat{z}_{j, c_k} \in \mathbb{R}$ denotes the logit for class $c_k$. 
+We assume a fixed set of $N$ mask proposals. 
+$\mathbb{C}_{d,thing}$ and $\mathbb{C}_{d,stuff}$ are the set of thing and stuff categories in dataset $d$.
+
+\paragraph{Merge operation (\texttt{MERGE}):} Given the varying formats of groundtruth annotations for different segmentation tasks, we propose a \texttt{MERGE} operation to merge the mask proposals predicting the same category $c_k$. 
+We adopt a simple element-wise max operation to merge the mask proposal logits.
+
+{\footnotesize
+\begin{equation}
+\end{equation}
+}
+
+We choose element-wise max so that applying \texttt{MERGE} on raw mask logits is equivalent to applying \texttt{MERGE} on the soft mask predictions post-sigmoid.
+We also choose to merge at the level of raw logits for numerical stability.
+If no proposal predicts class $c_k$, then the corresponding merged mask $\mathcal{M}(c_k)_{p,q}$ is set to -100 to ensure it is close to 0 after sigmoid.
+
+
+{\footnotesize
+\begin{equation}
+\end{equation}
+}
+
+\noindent where $\epsilon$ is a small number to prevent division by zero.
+
+How we apply the above merge operations depends on the task, as we now describe:
+\paragraph{Panoptic segmentation:} 
+To make the predicted mask proposals have the same format as the groundtruth, we apply \texttt{MERGE} to all stuff categories $c_k \in \mathbb{C}_{d, stuff}$. 
+
+\paragraph{Semantic segmentation:} In contrast with panoptic segmentation, the semantic segmentation groundtruth for each thing category is also a single mask (\ie, thing categories are treated equivalently as stuff categories).
+We thus apply \texttt{MERGE} to all predicted mask proposals to cover all thing and stuff categories $\mathbb{C}_{d, stuff} \cup \mathbb{C}_{d, thing}$.
+
+\paragraph{Instance segmentation:} 
+\texttt{MERGE} is not needed in this task, since the desired outputs are separate masks for separate instances.
+There are no stuff categories in the vocabulary ($\mathbb{C}_{d, stuff}=\emptyset$), and therefore no stuff proposals. %there are no mask proposals predict to any non-existing stuff category. Since we have groundtruth for each instance, 
+\paragraph{Training:}
+\iffalse
+At training time, after applying appropriate \texttt{MERGE} operations to predicted mask proposals, 
+we then use one-to-one Hungarian matching~\cite{kuhn1955hungarian} to match the (merged) mask proposals with the groundtruth segments. And calculate the loss function between the matched pairs.
+\fi
+During training, we apply the corresponding \texttt{MERGE} operations based on the segmentation task.
+We then use one-to-one Hungarian matching~\cite{kuhn1955hungarian} to match the merged outputs with the groundtruth, and calculate the training losses.
+Detailed training losses are provided in Sec.~\ref{subsec:cotraining}.
+
+\paragraph{Inference:}
+At inference time, we apply the same \texttt{MERGE} operations to predicted mask proposals based on the given task. We post-process the mask proposals to obtain non-overlapping outputs for panoptic and semantic segmentation. 
+For instance segmentation, we simply take the top mask proposals as final outputs, since overlaps are allowed.
+Please refer to supplementary for more details.
+We illustrate how the \texttt{MERGE} operation works for different segmentation tasks in Fig.~\ref{fig:seg_tasks}.
+
+\subsection{Weakly-supervised instance segmentation}\label{subsec:weak_instance_seg}
+Bounding boxes are much cheaper to annotate than instance masks, and thus detection datasets can have a larger scale than instance segmentation datasets.
+In order to train on larger detection datasets with only bounding box annotations, as well as to demonstrate the versatility of our framework to handle various tasks, 
+we propose to perform weak-bounding-box-supervised instance segmentation.
+
+We adopt a simple projection loss $\mathcal{L}_{proj}$ from~\cite{boxinst}, which measures consistency of vertical and horizontal projections of predicted masks $\widehat{M}_j$ against groundtruth boxes:
+\begin{equation}\label{eqn:box_consistency}
+    \mathcal{L}_{proj}(\widehat{M}_j, b_j) = \mathcal{L}_{dice}(\text{Proj}_x(S(\widehat{M}_j)), \text{Proj}_x(b_j)) + \mathcal{L}_{dice}(\text{Proj}_y(S(\widehat{M}_j)), \text{Proj}_y(b_j)),
+\end{equation}
+where $\mathcal{L}_{dice}$ is the dice loss~\cite{milletari2016v}; $b_j$ is the groundtruth bounding box matched to $j$-th mask proposal prediction; $\text{Proj}_{x/y}$ denotes the projection operation along the $x$ or $y$ axis, which can be implemented by a max operation along the axis; and $S(\cdot)$ denotes the sigmoid function. 
+
+By itself, a box consistency loss such as Eqn.~\ref{eqn:box_consistency} is insufficient as a supervision
+signal for segmentation (e.g., Eqn.~\ref{eqn:box_consistency}
+is equally satisfied by 
+predicting the bounding box of an object instead of its mask).  
+Thus other works have resorted to additional, 
+often more complex, loss terms
+(such as the pairwise affinity loss from~\cite{boxinst}).
+However, by training on multiple datasets and multiple 
+segmentation tasks, 
+these handcrafted losses are not necessary,
+as our model can transfer knowledge from other fully-supervised tasks on other datasets.
+
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.85\linewidth]{neurips_figures/updated_neurips_architecture_0516.pdf}
+    \caption{\textbf{Overview of our universal multi-dataset multi-task segmentation model (\modelname{})}.
+    We feed $N$ learnable segment queries into a transformer decoder, which cross-attends to multi-scale image features from the pixel decoder.
+    The outputs serve as the universal representation for all tasks: $N$ mask proposals accompanied by $N$ class predictions.
+    To promote knowledge sharing, we \textcolor{bluegray}{share} all network parameters across different datasets and tasks.
+    The only \textcolor{orange}{dataset-specific} design is a classifier consisting of frozen text embeddings of categories specific to each dataset.
+    Additionally, we employ a \textcolor{bluegray}{shared} learnable background classifier.
+    }
+\label{fig:overview}
+\end{figure*}
+
+\subsection{Network architecture with knowledge sharing}
+\label{subsec:network_arch}
+\paragraph{Network architecture:} We now describe the network architecture (similar to \cite{mask2former}) that predicts mask proposal and class prediction pairs $(\hat{z}_j, \widehat{M}_j)$.
+The input image first goes through a \textit{backbone}, and we use a \textit{pixel decoder} to 1) output multi-scale image features $\mathcal{I}_{multi}$, and 2) output a high-resolution feature map $\mathcal{F}$ that fuses information from the multi-scale image features. $N$ mask proposal pairs are then generated from $N$ learnable \textit{segment queries} $\mathcal{Q}_s$: The segment queries are fed into a \textit{transformer decoder}, which cross attends to multi-scale image features $\mathcal{I}_{multi}$ from the pixel decoder. The $N$ decoder outputs are then passed to class embedding and mask embedding heads (both MLPs) to obtain $N$ (mask embedding, class embedding) pairs.
+To extract final mask proposals and class predictions, we apply a dot product between the high-resolution feature map $\mathcal{F}$ and the mask embeddings to obtain $N$ mask proposal logits $\widehat{M}_j$.
+And to obtain class predictions, we compute dot products of the class embeddings against a per-category classifier $w_k$ for each category $c_k$.
+Fig.~\ref{fig:overview} shows an overview.
+
+\paragraph{Knowledge sharing:} We bake knowledge sharing into our model in two ways.  First, \textit{all network parameters are shared} across all datasets, allowing knowledge sharing among different datasets and knowledge transfer among different tasks.
+Additionally, to share knowledge gathered from training samples of similar categories in multiple datasets, \eg, `windowpane' in ADE20k and `window-other' in COCO, we propose to \textit{map all category names into a shared semantic embedding space}. We feed the category names into a frozen pre-trained text encoder to set the per-category classifier $w_k$.
+\ie, we let the fixed text embeddings serve as classifiers. This is similar to open-vocabulary segmentation~\cite{openseg}, but with a different purpose: 
+our focus here is on knowledge sharing among different datasets.
+This automatic approach scales better than manually unifying label spaces in different datasets~\cite{lambert2020mseg}. 
+
+
+ 
+
+
+
+\subsection{Co-training strategy}
+\label{subsec:cotraining}
+We adopt a simple co-training strategy: at each iteration, we randomly sample \textit{one} dataset, then sample an entire batch for that iteration from the selected dataset.  
+This can be contrasted with sampling from multiple datasets at each iteration.  
+The main advantage for our strategy is that it is simple to implement, and allows for more freedom to use different settings for different datasets, as well as to apply distinct losses to various tasks.
+To account for different dataset sizes, we use per-dataset sampling ratios,
+similar to~\cite{likhosherstov2021polyvit}. 
+
+For fully-supervised tasks, we employ direct \textit{mask supervision}, which can be obtained from panoptic/semantic/instance segmentation groundtruth. To calculate the Hungarian matching cost and the training loss, we use a combination of focal binary cross-entropy loss $\mathcal{L}_{focal}$~\cite{lin2017focal} and dice loss $\mathcal{L}_{dice}$~\cite{milletari2016v}, following~\cite{maskformer}. 
+Regarding weak \textit{bounding box supervision}, we adopt the projection loss $\mathcal{L}_{proj}$ introduced in Sec.~\ref{subsec:weak_instance_seg} for the matching cost and training loss. 
+In both cases of supervision, we use the negative of the class prediction probability $p$ as the classification matching cost~\cite{carion2020end}, and use cross-entropy loss $\mathcal{L}_{ce}$ for training. 
+The total training loss is:
+\begin{equation}
+\end{equation}
+\begin{equation}
+\end{equation}
+
+Here, $\lambda_{*, d}$ and $\mu_{*, d}$ are the weights for dataset $d$.
+
+
+Experiments
+
+\paragraph{Datasets and metrics:}
+We train and evaluate \modelname{} on COCO panoptic~\cite{coco_pan} and ADE20k semantic~\cite{ade_sem} using mask supervision, as well as Objects365-v2~\cite{obj365} detection datasets using bounding box weak supervision.
+\textbf{COCO panoptic} is the most popular panoptic segmentation benchmark with 118,287 training images and 5,000 validation images. COCO has 80 thing categories and 53 stuff categories.
+\textbf{ADE20k semantic} is one of the most widely used semantic segmentation benchmarks with 150 categories, 20,210 training images, and 2,000 validation images.
+
+For evaluation, besides the training datasets, we also evaluate on \textbf{ADE20k panoptic}, which uses the same validation images as ADE20k semantic but with panoptic annotations.
+The original 150 categories are divided into 100 thing categories and 50 stuff categories.
+Finally, we train on the \textbf{Objects365-v2 detection} (bounding boxes only) dataset, which has
+365 categories and 1,662,292 training images.
+To evaluate the weakly-supervised instance segmentation results, we manually label a subset of 1,000 %randomly sampled 
+images from the Objects365 validation set.
+Our annotation pipeline involves 20 well-trained human annotators, following the protocol in \cite{openimagesv5}, without using any automatic assistant tools.
+We will release this \textbf{Objects365 instance segmentation validation set} as a public benchmark.
+
+To compare \modelname{} with the state-of-the-art methods, we in addition evaluate on popular open-vocabulary segmentation benchmarks.
+Following OpenSeg~\cite{openseg}, we evaluate on \textbf{PASCAL Context} datasets~\cite{pascal_context} with 5k val images.
+We use its two versions: 59 classes (\textbf{PC-59}) and 459 classes (\textbf{PC-459}).
+We also evaluate on the 500-image val set of \textbf{Cityscapes} panoptic dataset~\cite{cityscapes}, which focuses on urban street scenes with 11 stuff categories and 8 thing categories.
+
+We report results in standard evaluation metrics: panoptic quality (\textbf{PQ}), mean intersection-over-union (\textbf{mIoU}), and mean average precision (\textbf{AP}) for panoptic, semantic, and instance segmentation, respectively.
+
+\paragraph{Implementation details:} 
+We experiment with ResNet~\cite{he2016deep} or ViTDet~\cite{vitdet} backbones.
+For ResNet, we use an ImageNet-1K~\cite{russakovsky2015imagenet} pretrained checkpoint, with a backbone learning rate multiplier of 0.1~\cite{carion2020end};
+the pixel decoder consists of a transformer encoder~\cite{transformer} and a modified FPN~\cite{fpn} following~\cite{maskformer}, except that we use Layer Norm~\cite{layer_norm} and GeLU~\cite{gelu} activation for training stability.
+For ViTDet, we use the ImageNet-1K MAE pretrained checkpoint~\cite{he2022masked} with the layerwise lr decay~\cite{vitdet};
+the pixel decoder is the simple feature pyramid inside ViTDet, whose outputs are upsampled and added together to get the high resolution feature map $\mathcal{F}$.
+The mask embedding head is a 3-layer MLP. The class embedding head contains a linear layer followed by ReLU.
+We use CLIP-L/14~\cite{clip} as the pretrained text encoder.
+We use 100 segment queries $\mathcal{Q}_s$, unless otherwise stated. See supplementary for more details.
+
+\begin{table*}
+\footnotesize
+\centering
+\begin{tabular}{cccccc}
+\toprule
+& & \multicolumn{2}{c}{Fully-Supervised} & \multicolumn{2}{c}{Weakly-Supervised Transfer}\\
+\cmidrule(r){3-4}
+\cmidrule(r){5-6}
+\multirow{3}{*}{Backbone} & \multirow{3}{*}{Model} & \multicolumn{1}{c}{ADE}  & \multicolumn{1}{c}{COCO}  & \multicolumn{1}{c}{ADE} & \multicolumn{1}{c}{\OBJ{}} \\
+& & \multicolumn{1}{c}{semantic} & \multicolumn{1}{c}{panoptic} & \multicolumn{1}{c}{semantic $\to$ panoptic} & \multicolumn{1}{c}{box $\to$ instance} \\
+                          &    & \multicolumn{1}{c}{mIoU}    & \multicolumn{1}{c}{PQ}    & \multicolumn{1}{c}{PQ}     & \multicolumn{1}{c}{mask AP}  \\
+\cmidrule(r){1-2}
+\cmidrule(r){3-4}
+\cmidrule(r){5-6}
+\multirow{2}{*}{ResNet50} & Separate         & 42.0   & 48.2 & 26.9	& 12.3        \\
+                          & \modelname{}     & 48.1\gain{+6.1}   & 49.0\gain{+0.8} & 29.8\gain{+2.9} & 14.3\gain{+2.0}         \\
+\cmidrule(r){1-2}
+\cmidrule(r)
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

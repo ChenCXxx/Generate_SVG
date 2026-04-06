@@ -1,0 +1,226 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Ordinal classification aims to predict labels that are related in a natural or implied order, which can be considered as a special case of ordinal regression after label discretization, i.e. discretize the continuous labels and each bin is then treated as a class. Common examples of such tasks are facial age estimation (e.g., estimating the facial age from 1 to 100), historical color image classification (e.g., assigning a time period to color photographs, ranging from the 1930s to the 1970s), and aesthetics assessment(e.g., rating image quality on a scale from "unacceptable" to "exceptional").
+
+Compared with common classification, ordinal property of labels need to be additionally considered in ordinal classification. 
+Many algorithms~\cite{chen2017using, liu2019probabilistic, geng2013facial} employ the ordinal classification framework, which trains a set of classifiers or integrates probabilistic priors to directly predict rank labels. However, these methods exhibit suboptimal performance as a result of insufficiently harnessing the ordering properties. 
+Order learning algorithms~\cite{shin2022moving, pan2018mean, li2022unimodal, geng2013facial} demonstrate competitive performance by effectively capturing relative ordering relationships. These approaches determine the target order of a novel instance by contrasting it with well-defined reference instances. Nonetheless, the algorithm's performance can be substantially compromised by inadequate indexing quality of the reference instances.
+
+Furthermore, many metric learning techniques~\cite{castagnos-etal-2022-simple, polat2022class, gong2022ranksim, 9564133} have been developed to construct an ordinal embedding space in which the distances between diverse features effectively represent the differences in their respective ranks. 
+However, all these methods learn ranking concepts depending solely on training data, which renders them vulnerable to overfitting\cite{li2022ordinalclip}.
+
+\begin{figure}[htbp]
+  \label{comparision}
+  \begin{center}
+  \includegraphics[width=1.0\linewidth]{imgs/visio_loss.jpg}
+  \end{center}
+  \caption{Comparison with CoOp(a) and OrdinalCLIP(b), where $v$ represents the image features and $R,r$ represents the rank templates in word embedding space and CLIP feature space, respectively. (a) CoOp aligns each rank template with its corresponding images via contrastive loss but vanilla CLIP fails to ensure ordering alignment. (b) OrdinalCLIP considers additional interpolation to explicitly maintain ordering alignment. However, the interpolation term can not preserve semantic alignment in CLIP feature space. (c) Our method enhance the ordering relation of vanilla rank templates while ensuring the semantic alignment of CLIP space. }
+\end{figure}
+
+Fortunately, recent developments in large pre-trained vision-language models offer new insights for various visual tasks~\cite{lin2023multimodality, li2022clip, li2022ordinalclip, li2023pluralistic, zhou2021lafite}. Compared with visual content, human language contains highly abstract concepts and rich semantic knowledge~\cite{li2022ordinalclip,lin2023multimodality}. Motivated by it, we attempt to borrow knowledge from language domain by two major observations. Firstly, rank templates inherently contains ordinal information, e.g. \textit{"a sixty years old face"} $\succ$ \textit{"a ten years old face"}, which is also demonstrated in Figure 3(a). Secondly, inspired by~\cite{li2023pluralistic,zhou2021lafite}, rank features encapsulate the average information of numerous image features within a well-aligned cross-modal feature space, which can be considered as a robust prior for cross-modal metric learning. 
+Hence, we propose L2RCLIP to boost learning-to-rank of CLIP-based models for ordinal classification. Specifically, we first introduce a complementary prompt tuning method, termed RankFormer, to enhance the ordering relation of original rank templates. Specifically, RankFormer employs a token-wise attention layer and performs residual-style prompt blending with the original templates for prompt tuning. 
+Moreover, inspired by pairwise metric learning~\cite{boudiaf2020unifying}, we propose cross-modal ordinal pairwise loss to ensure both semantic and ordering alignment in the CLIP feature space. Concretely, we revisit the approximate bound optimization of conventional cross-entropy loss and reformulate it in the cross-modal embedding space with ordinal language priors.
+OrdinalCLIP~\cite{li2022ordinalclip} also incorporates language priors to model ordering alignment, demonstrating impressive performance. 
+However, our method distinguishes itself from previous works, as depicted in Figure  \ref{comparision}. 
+CoOp achieves semantic alignment through contrastive loss but fails to maintain ordering alignment. OrdinalCLIP addresses ordering alignment at the cost of weakened semantic alignment. Conversely, by leveraging RankFormer and cross-modal ordinal pairwise loss, our approach simultaneously considers both semantic alignment and ordering alignment.
+
+The contributions of this paper can be summarized as follows:
+(1) We incorporate learning-to-rank into vision-language pre-training model for ordinal classification, in which we present RankFormer to enhance the ordering relation of vanilla language prompts.  
+(2) We explicitly utilize the language priors and further propose cross-modal ordinal pairwise loss to refine CLIP embedding space, in which image features and text features maintain both semantic and ordering alignment.
+(3) Extensive experiments demonstrate the competitive performance of L2RCLIP on age estimation, aesthetics assessment and historical image dating, as well as improvements in few-shot and distribution shift experiments.
+
+
+
+Related Work
+
+\paragraph{Ordinal Classification}
+ Ordinal classification attempts to solve classification problems in which \textit{not all wrong classes are equally wrong}. Early techniques~\cite{chen2017using, 7406390} adopted the classification framework and train a set of classifiers to directly estimate the rank labels. These methods got degraded performance due to ignoring the ordering relation. By incorporating probabilistic priors, Geng \textit{et al.}~\cite{geng2013facial} firstly proposed label distribution learning and assigned a Gaussian or Triangle distribution for an instance. The mean-variance loss was introduced in~\cite{pan2018mean} for learnable label distribution and penalizes the learned variance of estimated distribution to ensure a sharp distribution. Probabilistic embedding~\cite{li2021learning} was developed to model the data uncertainty for ordinal regression. Liu \textit{et al.}~\cite{liu2019counting} proposed predicting the ordinal targets that fall within a certain interval with high confidence. These methods learn better rank concepts and significantly reduce the model's overconfidence toward incorrect predictions. In contrast to them, our L2RCLIP only focuses on enhancing vision-language alignment without complicated probabilistic distribution assumption.
+ 
+ Furthermore, many techniques~\cite{castagnos-etal-2022-simple, polat2022class, gong2022ranksim, 9564133, li2020deep, li2020hierarchical, li2019global} solve the ordinal classification task from the perspective of metric learning. These methods exploit the pairwise ordering relation in embedding space, where the distance between different features reflects ordinal information. For example, Ordinal log-loss (OLL) was presented in ~\cite{castagnos-etal-2022-simple} with an additional distance-aware weighting term for ordinal classification. RankSim~\cite{gong2022ranksim} proposed a regularization loss to ensure the ordinal consistency between label and feature. Suárez \textit{et al.}~\cite{9564133} ranked the embedding distances between pairwise rank differences of features. 
+ Another way for ordinal classification is order learning~\cite{lim2020order,shin2022moving, lee2021deep}, which learns ordering relation by comparison between instances. It usually show more promising results as learning relative ordering relation is much easier than learning absolute ordering relation. Lim \textit{et al.} \cite{lim2020order} firstly proposed this concept and determined the ordinal information of an unseen instance by compared to some known reference instances. Lee\&Kim \textit{et al.}~\cite{lee2021deep} improved the quality of indexing to boost the performance. MWR~\cite{shin2022moving} further proposed to learn a continuous regression score from reference instance. 
+However, these methods often depend solely on training data to learn rank concepts, potentially leading to overfitting. To mitigate these issues, we leverage rich priors in human language to learn language-driven rank concepts.  
+
+\paragraph{Vision-language Learning}
+Vision-language pre-training(VLP) has significantly improved the performance on many downstream tasks by text and image matching, including segmentation~\cite{rao2022denseclip, dong2022maskclip}, object detection~\cite{gu2021open}, image retrieval~\cite{ma2022ei, baldrati2022effective}, generation tasks~\cite{kwon2022clipstyler, patashnik2021styleclip, li2023pluralistic, cui2023i2edit} and ordinal regression~\cite{li2022ordinalclip}.
+CLIP~\cite{radford2021learning} and ALIGN~\cite{jia2021scaling} proposed to embed images and texts into the same representation space with two separate encoders in a contrastive-based approach. The experimental results show that the impressive "zero-shot" performance on downstream tasks, which show the power of language prior. Inspired by the recent advances in NLP, prompts and adapter-based tuning becomes prevalent in improving ability of CLIP. CLIP-Adapter~\cite{gao2021clip} adds a light-weight module on top of image and text encoder. 
+CoOp~\cite{zhou2022learning} proposes to learn context prompts for image classification. Due to lack of ordinal property, these methods lead to degraded performance in ordinal classification. Considering the great potential of language prior, we propose to incorporate learning-to-rank into CLIP for ordinal classification.
+
+
+Proposed Approach
+
+\subsection{Problem Formulation}
+
+Ordinal classification is a unique case of image classification where labels possess ordinal properties. Mathematically, let $x_i \in \mathcal{X}$ denote the $i$-th input instance with $i = 1, 2, ..., N$, $y_i \in \{r_1,r_2,...,r_M\}$ with ordered ranks $r_M \succ r_{M-1} \succ \cdots \succ r_1$ denote the ground truth value and $\hat{y}_i$ represent the predicted rank by the network, where $N$ represents the total number of instances, $M$ represents the number of ranks, and $\succ$ indicates the ordering between different ranks. Analogous to normal classification, ordinal classification aims to recover $y_i$ by encoding the image to feature $z_i = \Phi(x_i)$ with encoder $\Phi$ and then using a classifier $f_\omega(\cdot)$ to compute probability $p_i$. The predicted label $\hat{y}_i$ is the result with the highest probability $p_{y_i}$. The classification probability can be calculated by:
+
+\begin{equation}
+    \label{cls}
+    p_i = \frac{exp(\omega_{i}^\top z_i)}{\sum_{j=1}^{M}exp(\omega_j^\top z_i)}.
+\end{equation}
+
+To exploit ordinal information in language, ordinal classification can be transformed into a vision-language alignment task. Specifically, we use a pre-trained CLIP image feature extractor $Image(\cdot)$ to extract features from input images: $v_i = z_i = Image(x_i)$. For text features, we first construct hard rank templates $R = \{R_1, R_2, ..., R_M\}$ for a given ordinal classification task. For each template, we convert it into fixed-length tokens and then map them into 512-dimensional word embeddings. The language feature extractor $Text(\cdot)$ encodes the embeddings as a classifier weight $r_i$. The process can be formulated as: $r_i = w_i = Text(Tokenizer(R_i))$. Finally, we can calculate the prediction probability $p_i$ for rank $i$ with Eq.(\ref{cls}).
+
+\subsection{Proposed Method}
+\begin{figure}
+    \begin{center}
+        \includegraphics[width=1\linewidth]{imgs/arch02.png}
+    \end{center}
+    \caption{An overview of the proposed L2RCLIP. We incorporate learning-to-rank into CLIP from two perspectives. 
+    First, RankFormer performs a token-level attention mechanism to enhance the ordering relation of vanilla rank prompts. Then, refined rank-specific prompts and randomly initialized context prompts are concatenated in the word embedding space and are sent to a text encoder to extract the corresponding text features.
+    Moreover, we present two types of losses to refine CLIP feature space by attraction and repulsion, respectively. Attraction refers to an asymmetrical contrastive loss and a tightness term to attract paired images and text features while repulsion refers to a reweighting diversity term to ensure the ordering alignment.} 
+    \label{fig:framework}
+\end{figure}
+
+Our objective is to integrate learning-to-rank into CLIP and learn language-driven rank concepts for ordering alignment while preserving original semantic alignment. Inspired by~\cite{kang2020decoupling, li2022clip}, we firstly learn rank concepts in the word embedding space and subsequently refine the CLIP feature space to maintain both semantic and ordering alignment. Specifically, we introduce RankFormer to enhance the ordering relation of the original language prompts. RankFormer employs a token-wise attention layer for rank prompt tuning. To better utilize language prior, we reformulate the approximate bound optimization within cross-modal embedding space. Furthermore, we propose a cross-modal ordinal pairwise loss to ensure ordering alignment. Moreover, randomly initialized global context prompts and an asymmetrical contrastive loss are adopted to ensure semantic alignment. The overall framework is illustrated in Figure ~\ref{fig:framework}.
+
+\paragraph{Rank-specific Prompts.}
+As shown in Figure 3(a), rank templates in the vanilla CLIP contain some degree of ordinal information. However, a substantial proportion, nearly half of the pairs, lack clear ordinality. One intuitive approach to enhance this ordinal information is to further fine-tune these rank templates. However, implementing such a strategy introduces two primary challenges. First, the performance of different ranks for ordinal classification varies significantly driven by the imbalanced training data, and certain ranks cannot even be trained due to insufficient training data in extreme cases. Second, the contrastive loss introduces difficulties in enhancing the ordering relation during the training~\cite{zhang2023improving}. To address the first challenge, OrdinalCLIP~\cite{li2022ordinalclip} trains only a small number of base rank templates and generates other rank templates through explicit interpolation, which confines the ordinal information of vanilla rank templates. In this paper, we train a RankFormer with token-wise attention to enhance the ordinal information of the fixed rank templates. Specifically, we denote tokenized rank templates as $R \in \mathbf{R^{M\times n\times D}}$, where $M$ and $D$ represent the number of templates and word embedding channels, respectively. 
+Note that we only consider the ranking tokens with length of $n$. 
+Subsequently, we perform token-wise attention for prompt tuning and apply residual-style prompt blending with the original prompts. The process can be formulated as: $R^{'} = (1-\alpha) \cdot R + \alpha \cdot f_{FFN}(f_{MSA}(f_{LN}(R)))$, where $\alpha$ represents the residual ratio.
+\paragraph{Cross-modal Ordinal Pairwise Loss.}
+Since cross-entropy loss ignored the ordinal information during training~\cite{zhang2023improving}, we turn to a solution that recovers the ordering relation while maintaining semantic alignment. Inspired by the pairwise metric learning, we firstly revisit the vanilla cross-entropy loss from the perspective of approximate bound optimization. Boudiaf \textit{et al.} ~\cite{boudiaf2020unifying} proved that minimizing the cross-entropy loss accomplishes by approximating a lower bound pairwise cross-entropy loss $L_{PCE}$. 
+$L_{PCE}$ contains a tightness term and a diversity term, as follows:
+\begin{equation}
+\label{pce}
+    L_{PCE} = \underbrace{-\frac{1}{2\lambda N^2}  \sum\limits_{i=1}^N\sum\limits_{j:y_j=y_i}z_i^\top z_j}_{TIGHTNESS} + \underbrace{\frac{1}{N}
+    \sum\limits_{i}^N log\sum\limits_{k=1}^{K}exp\left(\frac{\sum_{j=1}^N p_{jk}z_i^\top z_j}{\lambda N}\right) - \frac{1}{2\lambda}\sum\limits_{k=1}^{K}||c_k||}_{DIVERSITY},
+\end{equation}
+where $z_i$ represents the image feature in the embedding space, $p_{ij}$ represents the softmax probability of point $z_i$ belonging to class $j$, $c_k=\sum_{i=1}^N p_{ik}z_i$ represents the soft mean of class $k$ and $\lambda\in \mathcal{R}$ is to make sure $L_{CE}$ is a convex function with respect to encoder $\Phi_w$. 
+
+By incorporating the language priors, we turn Eq.(\ref{pce}) to a cross-modal pairwise cross-entropy loss. Specifically, as human language contains rich prior knowledge, text features can be considered as both hard mean $r_k=\frac{1}{N_k}\sum_{i=1}^{N_k}v_k$ and soft mean $r_k=\frac{1}{N}\sum_{i=1}^N p_{ik}v_i$ of image features at class $k$, where $N_k$ represents the sample number of class $k$ and $N$ represents the total sample number.
+Then, we reformulate the original pairwise cross-entropy loss $L_{PCE}$ as cross-modal pairwise cross-entropy loss $L_{CPCE}$:
+\begin{equation}
+\label{cpce}
+    L_{CPCE} = \underbrace{-\frac{1}{2\lambda N}  \sum\limits_{i=1}^N v_i^\top r_{y_i}}_{TIGHTNESS} + \underbrace{\frac{1}{N}
+    \sum\limits_{i}^N log\sum\limits_{k=1}^{K}exp\left(\frac{v_i^\top r_k}{\lambda}\right) - \frac{1}{2\lambda}\sum\limits_{k=1}^{K}||r_k||}_{DIVERSITY},
+\end{equation}
+Inspired by ~\cite{zhang2023improving}, we use meanNN entropy estimator ~\cite{NIPS2008_3dc4876f} to estimate the diversity term in Eq.(\ref{cpce}). The process is formulated as:
+
+\begin{equation}
+    L^{diversity}_{CPCE}\propto \frac{D}{N(N-1)}\sum\limits_{i=1}^N \sum\limits_{j\neq i}^N log (v_i^\top r_j + r_i^\top r_j),
+\end{equation}
+\begin{equation}
+    L^{tightness}_{CPCE}\propto -\frac{1}{N}\sum\limits_{i=1}^Nv_i^\top r_{y_i},
+\end{equation}
+where $D$ represents the feature dimensions.
+ To recover ordering relation, we propose an additional weighting term. Intuitively, each rank template will have a high similarity score with images of a close rank and a low similarity score with images of a distant rank. As such, we opt to weight the cross-modal features with $w_{ij}$ , where $w_{ij}$ are the distances in the label space. The final cross-modal ordinal pairwise loss is defined as follows:
+\begin{equation}
+L_{cop}(y_i) = \frac{1}{(B-1)}\sum\limits_{j\neq i}^{B} w_{y_ij}\cdot (v_{y_i}+\gamma r_{y_i})^\top r_j - v_{y_i}^\top r_{y_i},
+\end{equation}
+where $\gamma$ controls the strength of the rank within rank templates and $B$ represents the batchsize.
+To further refining the CLIP feature space, we also propose a simplified cross-modal ordinal pairwise loss $L_{scop}$ with language-related parameters frozen(i.e. $\gamma=0$). 
+\paragraph{Global Context Prompts.}
+Given that global context prompts significantly surpass manually designed discrete prompts in vision tasks~\cite{zhou2022learning, li2022clip, zhou2022conditional}, we integrate them with our complementary rank-specific prompts in RankFormer to enhance semantic alignment. Specifically, we randomly initialize $L$ global context prompts, denoted as $G=\{G_1, G_2,...,G_L\}$, and concatenate them with rank-specific prompts in the word embedding space of CLIP.
+
+\paragraph{Asymmetrical Contrastive Loss.}
+In vanilla CLIP~\cite{radford2021learning}, models are optimized using the standard contrastive loss, including a text-image contrastive loss $L_{t2i}$ and an image-text contrastive loss $L_{i2t}$.
+In this work, we replace the original contrastive loss with an asymmetrical contrastive loss due to many-to-many image-text mappings within a batch. In other words, different images in a batch may have the same rank, and the same rank may have the same description. Therefore, we replace $t_i$ with $t_{y_i}$ in both text-image contrastive loss $L_{t2i}$ and image-text contrastive loss $L_{i2t}$. Specifically, our improved asymmetrical contrastive loss is defined as follows:   
+ \begin{equation}
+     L_{t2i}(y_i)=\frac{1}{\left| Z(y_i)\right|} \sum\limits_{z\in Z(y_i)}log{\frac{exp(v_{z}^\top r_{y_i} / \tau)}{\sum_{j=1}^B{exp(v_{j}^\top r_{y_i}/ \tau)}}}, 
+ \end{equation}
+ where $\tau$ is the temperature parameter and $Z(y_i)=\{z\in 1...B:y_z=y_i\}$. 
+
+\subsection{Loss functions}
+We employ a two-stage training scheme to refine our approach following \cite{li2022clip}. In the first stage, our focus is to enhance the ordinal information of the vanilla rank templates. We utilize cross-modal ordinal pairwise loss $L_{cop}$ and the asymmetrical contrastive losses $L_{t2i}$ and $L_{i2t}$. In the second stage, our objective is to simultaneously improve both semantic alignment and ordering alignment within the CLIP latent space. We use the simplified cross-modal ordinal pairwise loss $L_{scop}$ and the cross-entropy loss $L_{ce}$.
+More detail can be found in Sec. \ref{exp_detail}
+.
+
+
+Experiments
+
+\subsection{Implementation details}
+\label{exp_detail}
+We adopt the ViT-B/16 visual encoder and the text encoder from CLIP~\cite{radford2021learning} as the backbone for our image and text feature extractor. 
+All training data is resized to 224 × 224 and subjected to random horizontal flipping. For all experiments, we employ the Adam~\cite{kingma2014adam} optimizer with default settings. The learning rates for the RankFormer and the visual backbone are $3.5\times 10^{-4}$ and $1\times 10^{-5}$, respectively. The model is trained for 20 epochs in the first stage and 40 epochs in the second stage, with the learning rate decayed by a factor of 0.1 in epoch 30.  We set $L=5$ in most of our experiments. For MORPH and CLAP2015, we set $L_{t2i}$, $L_{i2t}$, and $L_{cop}$ with weights of 0.03, 0.03, and 3 for the first stage, and $L_{ce}$ and $L_{scop}$ with weights of 1 and 1 for the second stage. For other datasets, we set $L_{t2i}$, $L_{i2t}$, and $L_{cop}$ with weights of 0.1, 0.1, and 3 for the first stage, and $L_{ce}$ and $L_{scop}$ with weights of 1 and 1 for the second stage. All experiments are conducted on a single NVIDIA 3090 GPU.
+\subsection{Age Estimation}
+\begin{table}[h]
+\begin{minipage}{\textwidth}
+ \begin{minipage}[t]{0.48\textwidth}
+     \makeatletter\def\@captype{table}\makeatother
+     \centering
+     \small
+     \caption{Results on MORPH II and CLAP2015.}
+     
+          \begin{tabular}{lcc}
+            \toprule
+            \multirow{2}{*}{Methods}     & Morph    & CLAP2015  \\\cmidrule(r){2-3}
+                                        & MAE($\downarrow$)      &  MAE($\downarrow$)      \\
+            \midrule
+            AGEn~\cite{tan2017efficient}        & 2.52    &2.94      \\
+            BridgeNet~\cite{li2019bridgenet}    & 2.38     &2.87       \\
+            AVDL~\cite{wen2020adaptive}         & 2.37     &-   \\
+            POE~\cite{li2021learning}           & 2.35    &-  \\
+            DRC-ORID~\cite{lee2021deep}         & 2.26   &-   \\
+            PML~\cite{deng2021pml}              &2.15     &2.91  \\
+            MWR~\cite{shin2022moving}           & 2.13    &2.77  \\
+            \midrule
+            Vanilla CLIP~\cite{radford2021learning}   & 6.91     &4.66    \\
+            CoOp~\cite{zhou2022learning}              & 2.39      &2.75     \\
+            OridinalCLIP~\cite{li2022ordinalclip}     & 2.32      &$-$     \\
+            L2RCLIP(Ours)                             & \textbf{2.13}   &\textbf{2.62}  \\
+            \bottomrule
+      \end{tabular}
+  \end{minipage}
+  \begin{minipage}[t]{0.48\textwidth}
+   \centering
+   \small
+    \makeatletter\def\@captype{table}\makeatother
+    \caption{Results on Adience dataset.}
+     \begin{tabular}{lcc}
+        \toprule
+        \multirow{2}{*}{Methods}   &  \multicolumn{2}{c}{Adience}    \\ \cmidrule(r){2-3}
+                                        & Accuracy$(\%,\uparrow)$     &  MAE($\downarrow$)      \\
+            \midrule
+            OR-CNN~\cite{7780901}                   & \underline{56.7}    & \underline{0.54}    \\
+            CNNPOR~\cite{liu2018constrained}        & 57.4 $\pm$ 5.8      & 0.55 $\pm$ 0.08     \\
+            GP-DNNOR~\cite{liu2019probabilistic}    & 57.4 $\pm$ 5.5      & 0.54 $\pm$ 0.07      \\
+            SORD~\cite{diaz2019soft}                & 59.6 $\pm$ 3.6     & 0.49 $\pm$ 0.05  \\
+            POE~\cite{li2021learning}               & 60.5 $\pm$ 4.4      & 0.47 $\pm$ 0.06 \\
+            MWR~\cite{shin2022moving}               & \underline{62.6}      & \underline{0.45} \\
+            GOL~\cite{NEURIPS2022_00358de3}         & \underline{62.5}      & \underline{0.43} \\
+            \midrule
+            Vanilla CLIP~\cite{radford2021learning}   & 43.3 $\pm$ 3.6  & 0.80 $\pm$ 0.02 \\
+            CoOp~\cite{zhou2022learning}              & 60.6 $\pm$ 5.5            & 0.50 $\pm$ 0.08 \\
+            OridinalCLIP~\cite{li2022ordinalclip}     & 61.2 $\pm$ 4.2            & 0.47 $\pm$ 0.06 \\
+            L2RCLIP(Ours)                             & \textbf{66.2 $\pm$ 4.4	}   & \textbf{0.36 $\pm$ 0.05} \\
+            \bottomrule
+      \end{tabular}
+   \end{minipage}
+\end{minipage}
+\end{table}
+
+\paragraph{Datasets.}
+Age estimation aims to predict the age of a given facial image. We train and evaluate our method on the widely-used MORPH II~\cite{ricanek2006morph} dataset, CLAP2015~\cite{escalera2015chalearn} dataset, and Adience~\cite{7301352} dataset. 
+MORPH II~\cite{ricanek2006morph} is one of the largest and most commonly used longitudinal face databases and we follow the widely adopted training and evaluation following~\cite{7406390,li2021learning,shin2022moving,shen2018deep}.
+CLAP2015~\cite{escalera2015chalearn} is used for apparent age estimation, where each image is rated by at least 10 annotators, and the mean rating is set as the ground truth. Following~\cite{shin2022moving}, we split it into 2,476 for training, 1,136 for validation, and 1,079 for testing. 
+Adience~\cite{7301352} contains discrete labels annotated with eight age groups. We adopt the same five-fold cross-validation protocol used in~\cite{7301352}. For evaluation metric, we use the mean average error (MAE) to measure the absolute differences between the ground truth labels and the predicted ones. Classification accuracy is additionally adopted for Adience. For detailed experimental settings, please refer to the supplementary material.
+
+\paragraph{Comparison with State-of-the-art Methods.}
+In Table 1, our L2RCLIP outperforms both conventional algorithms and language-powered algorithms in all tests. For results on the Morph II, compared with conventional algorithms, L2RCLIP achieves state-of-the-art performance on MAE at 2.13, verifying the significance of leveraging rich priors in human language. 
+Furthermore, compared to methods utilizing language priors, our L2RCLIP exhibits substantial performance improvements. CoOp significantly enhances the vanilla CLIP's performance by learning global context prompts for semantic alignment. Subsequently, OrdinalCLIP further reduces MAE by 0.07 through fixed interpolation for ordering alignment. Nonetheless, a considerable margin remains compared to our methods, which validates the effectiveness of our approach.
+
+Table 1 also compares the results on CLAP2015. Due to the great challenge, many previous methods adopt additional boosting schemes~\cite{li2019bridgenet, tan2017efficient}. 
+However, without using such schemes, L2RCLIP outperforms all conventional algorithms. 
+Compared with language-guided models, our L2RCLIP also shows much better results on MAE, specifically a significant MAE margin of 0.15 evaluated on the test set.
+Table 2 shows the comparison results on Adience~\cite{7301352} using the metrics of MAE and Accuracy. Compared with Morph II and CLAP2015, Adience is used for age group estimation. The underline indicates the mean value reported in the original paper. Our method outperforms the state-of-the-art algorithms by significant gaps of 5.7\% in accuracy and 0.07 in MAE.
+
+\begin{figure}[h]
+  \begin{center}
+  \includegraphics[width=0.9\textwidth]{imgs/visio_sub.jpg}
+  \end{center}
+  \caption{The similarity matrices of rank templates in different methods. The redder,
+the more similar the pair of rank templates. The percentages of templates pairs that obey the
+ordinality are: 55.36\%, 59.92\%, 65.94\%, and \textbf{71.87\%}, respectively.}
+  \label{ordinalmap}
+\end{figure}
+
+\paragraph{Ordinality of Learned Rank Templates.}
+Following~\cite{li2022ordinalclip}, we report the ordinality score by measuring the cosine similarity between rank templates. The ordinality score\footnote{i.e., $OS(\%) = \sum_{i=1}^M\sum_{j=i}^{M-1}\mathbb{I}\{s_{i,j}>s_{i,j+1}\} / (M\times(M-1)/2)$, where $M$ is the number of templates and $s_{i,j}$ represents the cosine similarity of each pair of templates.} is the percentage of rank template pairs that obey the ordinal property. 
+Figure~\ref{ordinalmap} reports the ordinality scores in different methods. Vanilla CLIP in Figure 3(a) contains a certain degree of ordering relations, where more than half of the rank template pairs show correct ordering relation. 
+Moreover, CoOp in Figure 3(b) introduces additional global context prompts and improves the ordinality score by 4.56\%. OrdinalCLIP in Figure 3(c) adopts an explicit interpolation strategy and further improves the ordinality by 6.02\%. However, there is a noticeable "red stripe" in the upper right corner, indicating that this section of rank template pairs significantly violates ordinality. We believe that explicit interpolation effectively ensures local ordinal properties, but may fail to preserve global ordinal properties.
+Our methods greatly alleviate 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

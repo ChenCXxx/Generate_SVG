@@ -1,0 +1,322 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Multimodal Sentiment Analysis (MSA) focuses on recognizing the sentiment attitude of humans from various types of data, such as video, audio, and language. It plays a central role in several applications, such as healthcare and human-computer interaction \citep{JIANG2020209, DBLP:journals/inffus/QianZMYP19}. Compared with unimodal methods, MSA methods are generally more robust by exploiting and exploring the relationships between different modalities, showing significant advantages in improving the understanding of human sentiment.
+
+\begin{figure}[!htp]
+\begin{center}
+	\includegraphics[width=1.0\linewidth]{fig/motivation.pdf}
+\end{center}
+	\caption{In multimodal sentiment analysis, language modality usually is a dominant modality in all modalities, while audio and visual modalities not contributing as much to performance as language modality.}
+\label{fig: motivation}
+\end{figure}
+Most recent MSA methods can be grouped into two categories: representation learning-centered methods \citep{DBLP:conf/mm/HazarikaZP20, DBLP:conf/mm/YangHKDZ22, DBLP:conf/aaai/YuXYW21, han-etal-2021-improving, 10.1145/3503161.3548137} and multimodal fusion-centered methods \citep{zadeh-etal-2017-tensor, liu-etal-2018-efficient-low, tsai-etal-2019-multimodal, DBLP:conf/icassp/HuangTLLN20}. The representation learning-centered methods mainly focus on learning refined modality semantics that contains rich and varied human sentiment clues, which can further improve the efficiency of multimodal fusion for relationship modelling. 
+On the other hand, the multimodal fusion-centered methods mainly focus on directly designing sophisticated fusion mechanisms to obtain a joint representation of multimodal data. 
+In addition, some works and corresponding ablation studies \citep{DBLP:conf/mm/HazarikaZP20, rahman2020integrating, 10.1145/3503161.3548137} further imply that various modalities contribute differently to recognition, where language modality stands out as the dominant one.
+We note, however, information from different modalities may be ambiguous and conflicting due to sentiment-irrelevance, especially from non-dominating modalities (e.g., lighting and head pose in video and background noise in audio). Such disruptive information can greatly limit the performance of MSA methods. We have observed this phenomenon in several datasets (see Section \ref{sec: Effects of Different Modalities}) and an illustration is in Figure \ref{fig: motivation}. To the best of our knowledge, there has never been prior work explicitly and actively taking this factor into account.
+
+Motivated by the above observation, we propose a novel Adaptive Language-guided Multimodal Transformer (ALMT) to improve the performance of MSA by addressing the adverse effects of disruptive information in visual and audio modalities. In ALMT, each modality is first transformed into a unified form by using a Transformer with initialized tokens. This operation not only suppresses the redundant information across modalities, but also compresses the length of long sequences to facilitate efficient model computation.
+Then, we introduce an Adaptive Hyper-modality Learning (AHL) module that uses different scales of language features with dominance to guide the visual and audio modalities to produce the intermediate hyper-modality token, which contains less sentiment-irrelevant information.
+Finally, we apply a cross-modality fusion Transformer with language features serving as query and hyper-modality features serving as key and value. In this sense, the complementary relations between language and visual and audio modalities are implicitly reasoned, achieving robust and accurate sentiment predictions. In summary, the major contributions of our work can be summarized as: 
+\begin{itemize} 
+    \item We present a novel multimodal sentiment analysis method, namely Adaptive Language-guided Multimodal Transformer (ALMT), which for the first time explicitly tackles the adverse effects of redundant and conflicting information in auxiliary modalities (\textit{i.e.}, visual and audio modalities), achieving a more robust sentiment understanding performance.
+    \item We devise a novel Adaptive Hyper-modality Learning (AHL) module for representation learning. The AHL uses different scales of language features to guide the visual and audio modalities to form a hyper modality that complements the language modality.
+    \item ALMT achieves state-of-the-art performance in several public and widely adopted datasets. We further provide in-depth analysis with rich empirical results to demonstrate the validity and necessity of the proposed approach.
+\end{itemize}
+
+\begin{figure*}[ht]
+\begin{center}
+    \includegraphics[width=0.88\linewidth]{fig/pipeline.pdf}
+\end{center}
+    \caption{Processing pipeline of the proposed ALMT for multimodal sentiment analysis (MSA). With the multimodal input, we first apply three Transformer layers to embed modality features with low redundancy. Then, we employ a Hyper-modality Learning (AHL) module to learn a hyper-modality representation from visual and audio modalities under the guidance of language features at different scales. Finally, a Cross-modality Fusion Transformer is applied to incorporate hyper-modality features based on their relations to the language features, thus obtaining a complementary and joint representation for MSA.}
+\label{fig:overview}
+\end{figure*}
+
+\begin{figure*}[htpb]
+\begin{center}
+	\includegraphics[width=0.85\linewidth]{fig/AHL.pdf}
+\end{center}
+	\caption{An example of the Adaptive Hyper-modality Learning (AHL) Layer.}
+\label{fig: AHLL}
+\end{figure*}
+
+
+
+Related Work
+In this part, we briefly review previous work from two perspectives: multimodal sentiment analysis and Transformers.
+
+\subsection{Multimodal Sentiment Analysis}
+As mentioned in the section above, most previous MSA methods are mainly classified into two categories: representation learning-centered methods and multimodal fusion-centered methods.
+
+For representation learning-centered methods, \citet{DBLP:conf/mm/HazarikaZP20} and \citet{DBLP:conf/mm/YangHKDZ22} argued representation learning of multiple modalities as a domain adaptation task. They respectively used metric learning and adversarial learning to learn the modality-invariant and modality-specific subspaces for multimodal fusion, achieving advanced performance in several popular datasets. \citet{han-etal-2021-improving} proposed a framework named MMIM that improves multimodal fusion with hierarchical mutual information maximization. \citet{rahman2020integrating} and \citet{10.1145/3503161.3548137} devised different architectures to enhance language representation by incorporating multimodal interactions between language and non-verbal behavior information.
+However, these methods do not pay enough attention to sentiment-irrelevant redundant information that is more likely to be present in visual and audio modalities, which limits the performance of MSA.
+
+For multimodal fusion-centered methods, \citet{zadeh-etal-2017-tensor} proposed a fusion method (TFN) using a tensor fusion network to model the relationships between different modalities by computing the cartesian product. 
+\citet{tsai-etal-2019-multimodal} and \citet{DBLP:conf/icassp/HuangTLLN20} introduced a multimodal Transformer to align the sequences and model long-range dependencies between elements across modalities.
+However, these methods directly fuse information from uni-modalities, which is more accessible to the introduction of sentiment-irrelevant information, thus obtaining sub-optimal results.
+
+\subsection{Transformer}
+Transformer is an attention-based building block for machine translation introduced by \citet{DBLP:conf/nips/VaswaniSPUJGKP17}. 
+It learns the relationships between tokens by aggregating data from the entire sequence, showing an excellent modeling ability in various tasks, such as natural language processing, speech processing, and computer vision, etc.~\cite{devlin2019bert, DBLP:conf/eccv/CarionMSUKZ20, DBLP:conf/interspeech/ChenXXPD22, DBLP:journals/pr/LiuWFZCZ23}. In MSA, this technique has been widely used for feature extraction, representation learning, and multimodal fusion ~\cite{tsai-etal-2019-multimodal, DBLP:conf/icassp/HuangTLLN20, liu2023noise, DBLP:conf/mm/YuanLXY21}.
+
+
+
+Method
+\subsection{Overview}
+The overall processing pipeline of the proposed Adaptive Language-guided Multimodal Transformer (ALMT) for robust multimodal sentiment analysis is in Figure \ref{fig:overview}. As shown, ALMT first extracts unified modality features from the input. Then, Adaptive Hyper-Modality Learning (AHL) module is employed to learn the adaptive hyper-modality representation with the guidance of language features at different scales. Finally, we apply a Cross-modality Fusion Transformer to synthesize the hyper-modality features with language features as anchors, thus obtaining a language-guided hyper-modality network for MSA.
+
+\subsection{Multimodal Input}
+Regarding the multimodal input, each sample consists of language ($l$), audio ($a$), and visual ($v$) sources. Referring to previous works, we first obtain pre-computed sequences calculated by BERT \citep{devlin2019bert}, Librosa \citep{DBLP:conf/scipy/McFeeRLEMBN15}, and OpenFace \citep{DBLP:conf/fgr/BaltrusaitisZLM18}, respectively. Then, we denote these sequence inputs as $U_m \in \mathbb{R}^{T_m \times d_m}$, where $m \in \{l, v, a\}$, $T_m$ is the sequence length and $d_m$ is the vector dimension of each modality. In practice, $T_m$ and $d_m$ are different on different datasets. For example, on the MOSI dataset, $T_v$, $T_a$, $T_l$, $d_a$, $d_v$ and $d_l$ are 50, 50, 50, 5, 20, and 768, respectively.
+
+\subsection{Modality Embedding}
+With %a {\wy the}
+multimodal input $U_m$, we introduce three Transformer layers to unify features of each modality, respectively. More specifically, we randomly initialize a low-dimensional token $H^{0}_m \in \mathbb{R}^{T \times d_m}$ for each modality and use the Transformer to embed the essential modality information to these tokens
+:
+\begin{equation}
+    H^1_m = \operatorname{E^0_m}(\operatorname{concat}(H^{0}_m, U_m), \theta_{E^0_m}) \in \mathbb{R}^{T \times d}
+    \label{eq: modality_feature_extraction}
+\end{equation}
+where $H^1_m$ is the unified feature of each modality $m$ with a size of $T \times d$, $\operatorname{E^0_m}$ and $\theta_{E^0_m}$ respectively represent the modality feature extractor and corresponding parameters, $\operatorname{concat}(\cdot)$ represent the concatenation operation. 
+
+In practice, $T$ and $d$ are set to 8 and 128, respectively. The structure of the transformer layer is designed as the same as the Vision Transformer (VIT) \citep{DBLP:conf/iclr/DosovitskiyB0WZ21} with a depth setting of 1. Moreover, it is worth noting that transferring the essential modality information to initialized low-dimensional tokens is beneficial to decrease the redundant information that is irrelevant to human sentiment, thus achieving higher efficiency with lesser parameters.
+
+\subsection{Adaptive Hyper-modality Learning}
+After modality embedding, we further employ an Adaptive Hyper-modality Learning (AHL) module to learn a refined hyper-modality representation that contains relevance/conflict-suppressing information and highly complements language features. The AHL module consists of two Transformer layers and three AHL layers, which aim to learn language features at different scales and adaptively learn a hyper-modality feature from visual and audio modalities under the guidance of language features. 
+In practice, we found that the language features significantly impact the modeling of hyper-modality (with more details in section \ref{sec: effects_of_guidance}).
+
+\subsubsection{Construction of Two-scale Language Features} 
+We define the feature $H^1_l$ as low-scale language feature. With the feature, we introduce two Transformer layers to learn language features at middle-scale and high-scale (\textit{i.e.} $H^{2}_l$ and $H^{3}_l$). Different from the Transformer layer in the modality embedding stage that transfers essential information to an initialized token, layers in this stage directly model the language features:
+\begin{equation}
+    H^{i}_l = \operatorname{E}^{i}_l(H^{i-1}_{l}, \theta_{E_l^{i}}) \in \mathbb{R}^{T \times d}
+    \label{eq: Language_Features_of_Different_Levels}
+\end{equation}
+where $i \in \{2, 3\}$, $H^{i}_l$ is language features at different scales with a size of $T \times d$, $\operatorname{E}^{i}_l$ and $\theta_{E_l^{i}}$ represents the $i$-th Transformer layer for language features learning and corresponding parameters.
+In practice, we used 8-head attention to model the information of each modality.
+
+\subsubsection{Adaptive Hyper-modality Learning Layer}
+With the language features of different scales $H^{i}_l$, we first initialize a hyper-modality feature $H^{0}_{hyper} \in \mathbb{R}^{T \times d}$, then update $H^{0}_{hyper}$ by calculating the relationship between obtained language features and two remaining modalities using multi-head attention \citep{DBLP:conf/nips/VaswaniSPUJGKP17}. As shown in Figure \ref{fig: AHLL}, using the extracted $H^i_l$ as query and $H^1_a$ as key, we can obtain the similarity matrix $\alpha$ between language features and audio features
+:
+\begin{equation}
+\begin{aligned}
+\alpha & =\operatorname{softmax}(\frac{Q_l K_a^T}{\sqrt{d_k}}) \\ 
+& =\operatorname{softmax}(\frac{H^i_l W_{Q_l} W_{K_a}^T H_a^{1T}}{\sqrt{d_k}}) \in \mathbb{R}^{T \times T}
+\end{aligned}
+\end{equation}
+where $\operatorname{softmax}$ represents weight normalization operation, $W_{Q_l} \in \mathbb{R}^{d \times d_k}$ and $W_{K_a} \in \mathbb{R}^{d \times d_k}$ are learnable parameters, $d_k$ is the dimension of each attention head. In practice, we used 8-head attention and set $d_k$ to 16.
+
+Similar to $\alpha$, $\beta$ represents the similarity matrix between language modality and visual modality:
+\begin{equation}
+\begin{aligned}
+\beta & =\operatorname{softmax}(\frac{Q_l K_v^T}{\sqrt{d_k}}) \\ 
+& =\operatorname{softmax}(\frac{H^i_l W_{Q_l} W_{K_v}^T H_v^{1T}}{\sqrt{d_k}}) \in \mathbb{R}^{T \times T}
+\end{aligned}
+\end{equation}
+where $W_{K_v} \in \mathbb{R}^{d \times d_k}$ is learnable.
+
+Then the hyper-modality features $H^j_{hyper}$ can be updated by weighted audio features and weighted visual features as:
+\begin{equation}
+\begin{aligned}
+H^{j}_{hyper} & = H^{j-1}_{hyper} + \alpha V_{a} + \beta V_{v} \\
+& = H^{j-1}_{hyper} + \alpha H^1_a  W_{V_a} + \beta H^1_v W_{V_v} \\
+\end{aligned}
+\end{equation}
+where $j \in \{1, 2, 3 \}$ and $H^{j}_{hyper} \in \mathbb{R}^{T \times d}$ respectively represent the $j$-th AHL layer and corresponding output hyper-modality features, $W_{V_a} \in \mathbb{R}^{d \times d_k} $ and $W_{V_v} \in \mathbb{R}^{d \times d_k}$ are learnable parameters. 
+
+\subsection{Multimodal Fusion and Output}
+
+In the Multimodal Fusion, we first obtain a new language feature $H_l$ and $H_{hyper}$ and a new hyper-modality feature by respectively concatenating initialized a token $H_0 \in \mathbb{R}^{1 \times d}$ with $H^3_{hyper}$ and $H^3_{l}$. Then we apply Cross-modality Fusion Transformer to transfer the essential joint and complementary information to these tokens. In practice, the Cross-modality Fusion Transformer fuse the language features $H_l$ (serving as the query) and hyper-modality features $H_{hyper}$ (serving as the key and value), thus obtaining a joint multimodal representation $H \in \mathbb{R}^{1 \times d}$ for final sentiment analysis. We denote the Cross-modality Fusion Transformer as $\operatorname{CrossTrans}$, so the fusion process can be written as:
+\begin{equation}
+H_l = \operatorname{Concat}(H_{0}, H^3_{l}) \in \mathbb{R}^{(T+1) \times d}
+\end{equation}
+\begin{equation}
+H_{hyper} = \operatorname{Concat}(H_{0}, H^3_{hyper}) \in \mathbb{R}^{(T+1) \times d}
+\end{equation}
+\begin{equation}
+H = \operatorname{CrossTrans}(H_{l}, H_{hyper}) \in \mathbb{R}^{1 \times d}
+\end{equation}
+
+After the multimodal fusion, we obtain the final sentiment analysis output $\hat{y}$ by applying a classifier on the outputs of Cross-modality Fusion Transformer $H$. In practice, we also used 8-head attention to model the relationships between language modality and hyper-modality. For more details of the Cross-modality Fusion Transformer, we refer readers to \citet{tsai-etal-2019-multimodal}.
+
+\subsection{Overall Learning Objectives}
+To summarize, our method only involves one learning objective, \textit{i.e.,} the sentiment analysis learning loss $\mathcal{L}$, which is: 
+\begin{equation}
+\mathcal{L} = \frac{1}{N_b} \sum_{n=0}^{N_b}\left\|y^n-\hat{y}^n\right\|_2^2
+\end{equation}
+where $N_b$ is the number of samples in the training set, $y^n$ is the sentiment label of the $n$-th sample. $\hat{y}^n$ is the prediction of our ALMT.
+
+In addition, thanks to our simple optimization goal, compared with advanced methods \cite{DBLP:conf/mm/HazarikaZP20, DBLP:conf/aaai/YuXYW21} with multiple optimization goals, ALMT is much easier to train without tuning extra hyper-parameters. More details are shown in section \ref{sec: Convergence Performance}.
+
+\begin{table*}[!htp]
+    \caption{Comparison on MOSI and MOSEI.}
+    \label{tab: Results_Compare_MOSI_MOSEI}
+    \small
+    \resizebox{1.0\linewidth}{!}
+    {
+        \begin{tabular}{lcccccccccccc}
+            \toprule
+            \multirow{2}{*}{Method} & \multicolumn{6}{c}{MOSI} & \multicolumn{6}{c}{MOSEI} \\
+            & Acc-7 & Acc-5 & Acc-2 & F1 & MAE & Corr & Acc-7 & Acc-5 & Acc-2 & F1 & MAE & Corr \\
+            \midrule
+            TFN$^*$ & 34.9 & - & -/ 80.8 & - / 80.7 & 0.901 & 0.698
+            & 50.2 & - & - / 82.5 & - / 82.1 & 0.593 & 0.700 \\
+            LMF$^*$ & 33.2 & - & - / 82.5 & - / 82.4 & 0.917 & 0.695
+            & 48.0 & - & - / 82.0 & - / 82.1 & 0.623 & 0.677 \\
+            MFM$^*$ & 35.4 & - & - / 81.7 & - / 81.6 & 0.877 & 0.706
+            & 51.3 & - & - / 84.4 & - / 84.3 & 0.568 & 0.717 \\
+            MulT & 40.0 & - & - / 83.0 & - / 82.8 & 0.871 & 0.698
+            & 51.8 & - & - / 82.5 & - / 82.3 & 0.580 & 0.703 \\
+            MISA & 42.3 & - & 81.8 / 83.4 & 81.7 / 83.6 & 0.783 & 0.761
+            & 52.2 & - & 83.6 / 85.5 & 83.8 / 85.3 & 0.555 & 0.756 \\
+            PMR & 40.6 & - & - / 83.6 & - / 83.4 & - & -
+            & 52.5 & - & - / 83.3 & - / 82.6 & - & - \\
+            MAG-BERT & 43.62 & - & 82.37 / 84.43 & 82.50 / 84.61 & 0.727 & 0.781
+            & 52.67 & - & 82.51 / 84.82 & 82.77 / 84.71 & 0.543 & 0.755 \\
+            Self-MM & 45.79 & - & 82.54 / 84.77 & 83.68 / 84.91 & 0.712 & 0.795
+            & 53.46 & - & 82.68 / 84.96 & 82.95 / 84.93 & 0.529 & 0.767 \\
+            MMIM & 46.65 & - & 84.14 / 86.06 & 84.00 / 85.98 & 0.700 & 0.800
+            & 54.24 & - & 82.24 / 85.97 & 82.66 / 85.94 & 0.526 & 0.772 \\
+            FDMER & 44.1 & - & - / 84.6 & - / 84.7 & 0.724 & 0.788
+            & 54.1 & - & - / 86.1 & - / 85.8 & 0.536 & 0.773 \\
+            CHFN & 48.6 & - & 84.3 / 86.4 & 84.2 / 86.2 & 0.689 & \textbf{0.809}
+            & \textbf{54.3} & - & 83.7 / 86.2 & 83.9 / 86.1 & \textbf{0.525} & 0.778 \\
+            MulT$^\dagger$ & - & 42.68 & - / - & - / - & - & -
+            & - & 54.18 & - / - & - / - & - & - \\
+            MISA$^\dagger$ & - & 47.08 & - / - & - / - & - & -
+            & - & 53.63 & - / - & - / - & - & - \\
+            Self-MM$^\dagger$ & - & 53.47 & - / - & - / - & - & -
+            & - & 55.53 & - / - & - / - & - & - \\
+            \midrule
+            \textbf{ALMT} & \textbf{49.42} & \textbf{56.41} & \textbf{84.55} / \textbf{86.43} & \textbf{84.57} /  \textbf{86.47} & \textbf{0.683} & 0.805 & \textbf{54.28} & \textbf{55.96} & \textbf{84.78} / \textbf{86.79} & \textbf{85.19} / \textbf{86.86} & 0.526 & \textbf{0.779} \\
+            \bottomrule
+        \end{tabular}
+    }
+\end{table*}
+
+\begin{table}[!htp]
+    \caption{Comparison results on CH-SIMS.
+    }
+    \label{tab: Results_Compare_SIMS}
+    \resizebox{0.48\textwidth}{!}{
+        \begin{tabular}{lcccccc}
+            \toprule
+            Method & Acc-5 & Acc-3 & Acc-2 & F1 & MAE & Corr\\
+            \midrule
+            TFN$^\dagger$ & 39.30 & 65.12 & 78.38 & 78.62 & 0.432 & 0.591 \\
+            LMF$^\dagger$ & 40.53 & 64.68 & 77.77 & 77.88 & 0.441 & 0.576 \\
+            MFM$^\dagger$ & - & - & 75.06 & 75.58 & 0.477 & 0.525 \\
+            MuLT$^\dagger$ & 37.94 & 64.77 & 78.56 & 79.66 & 0.453 & 0.564 \\
+            MISA$^\dagger$ & - & - & 76.54 & 76.59 & 0.447 & 0.563 \\
+            MAG-BERT$^\dagger$ & - & - & 74.44 & 71.75 & 0.492 & 0.399 \\
+            Self-MM$^\dagger$ & 41.53 & 65.47 & 80.04 & 80.44 & 0.425 & 0.595 \\
+            \midrule
+            \textbf{ALMT} & \textbf{45.73} & \textbf{68.93} & \textbf{81.19} & \textbf{81.57} & \textbf{0.404} & \textbf{0.619} \\
+            \bottomrule
+        \end{tabular}
+        }
+\end{table}
+
+
+
+Experiments
+\subsection{Datasets}
+We conducted extensive experiments on three popular trimodal datasets (\textit{i.e.}, MOSI~\cite{DBLP:journals/expert/ZadehZPM16}, MOSEI~\citep{DBLP:conf/acl/MorencyCPLZ18}, and CH-SIMS~\citep{DBLP:conf/acl/YuXMZMWZY20}). 
+
+\textbf{MOSI}.
+{\zhy The dataset comprises 2,199 multimodal samples encompassing visual, audio, and language modalities. Specifically, the training set consists of 1,284 samples, the validation set contains 229 samples, and the test set encompasses 686 samples. Each individual sample is assigned a sentiment score ranging from -3 (indicating strongly negative) to 3 (indicating strongly positive).}
+    
+\textbf{MOSEI}.
+{\zhy The dataset comprises 22,856 video clips collected from YouTube with a diverse factors (e.g., spontaneous expressions, head poses, occlusions, illuminations). This dataset has been categorized into 16,326 training instances, 1,871 validation instances, and 4,659 test instances. Each instance is meticulously labeled with a sentiment score ranging from -3 to 3. And the sentiment scores from -3 to 3 indicate most negative to most positive.}
+     
+\textbf{CH-SIMS}.
+It is a Chinese multimodal sentiment dataset that comprises 2,281 video clips collected from variuous sources, such as different movies and TV serials with spontaneous expressions, various head poses, etc. It is divided into 1,368 training samples, 456 validation samples, and 457 test samples. Each sample is manually annotated with a sentiment score from -1 (strongly negative) to 1 (strongly positive). 
+
+md} \label{footnote1}}
+\subsection{Evaluation Criteria}
+Following prior works \citep{DBLP:conf/acl/YuXMZMWZY20}, we used several evaluation metrics, \textit{i.e.}, binary classification accuracy (Acc-2), F1, three classification accuracy (Acc-3), five classification accuracy (Acc-5), seven classification accuracy (Acc-7), mean absolute error (MAE), and the correlation of the model’s prediction with human (Corr). Moreover, on MOSI and MOSEI, agreeing with prior works~\citep{DBLP:conf/mm/HazarikaZP20}, we calculated Acc-2 and F1 in two ways: negative/non-negative and negative/positive on MOSI and MOSEI datasets, respectively.
+
+\subsection{Baselines}
+To comprehensively validate the performance of our ALMT, we make a fair comparison with the several advanced and state-of-the-art methods, \textit{i.e.}, TFN \cite{zadeh-etal-2017-tensor}, LMF \cite{liu-etal-2018-efficient-low}, MFM \cite{DBLP:conf/iclr/TsaiLZMS19}, MuLT \cite{tsai-etal-2019-multimodal}, MISA \cite{DBLP:conf/mm/HazarikaZP20}, PMR \cite{DBLP:conf/cvpr/LvCHDL21}, MAG-BERT \cite{rahman2020integrating}, Self-MM \cite{DBLP:conf/aaai/YuXYW21}, MMIM \cite{han-etal-2021-improving}, FDMER \cite{DBLP:conf/mm/YangHKDZ22} and CHFN \cite{10.1145/3503161.3548137}.
+
+\subsection{Performance Comparison}
+Table \ref{tab: Results_Compare_MOSI_MOSEI} and Table \ref{tab: Results_Compare_SIMS} list the comparison results of our proposed method and state-of-the-art methods on the MOSI, MOSEI, and CH-SIMS, respectively. 
+
+As shown in the Table \ref{tab: Results_Compare_MOSI_MOSEI}, the proposed ALMT obtained state-of-the-art performance in almost all metrics. On the task of more difficult and fine-grained sentiment classification (Acc-7), our model achieves remarkable improvements. For example, on the MOSI dataset, ALMT achieved a relative improvement of 1.69\% compared to the second-best result obtained by CHFN. It demonstrates that eliminating the redundancy of auxiliary modalities is essential for effective MSA.
+
+Moreover, it is worth noting that the scenarios in SIMS are more complex than MOSI and MOSEI. Therefore, it is more challenging to model the multimodal data. However, as shown in the Table \ref{tab: Results_Compare_SIMS}, ALMT achieved state-of-the-art performance in all metrics compared to the sub-optimal approach. For example, compared to Self-MM, it achieved relative improvements with 1.44\% on Acc-2 and 1.40\% on the corresponding F1, respectively. Achieving
+such superior performance on SIMS with more complex scenarios demonstrates ALMT's ability to extract effective sentiment information from various scenarios.
+
+\subsection{Ablation Study and Analysis}
+\subsubsection{Effects of Different Modalities}
+\label{sec: Effects of Different Modalities}
+To better understand the influence of each modality in the proposed ALMT, Table~\ref{tab: Effects of Different Modalities} reports the ablation results of the subtraction of each modality to the ALMT on the MOSI and CH-SIMS datasets, respectively. It is shown that, if the AHL is removed based on the subtraction of each modality, the performance decreases significantly in all metrics. This phenomenon demonstrates that AHL is beneficial in reducing the sentiment-irrelevant redundancy of visual and audio modalities, thus improving the robustness of MSA.
+
+In addition, we note that after removing the video and audio inputs, the performance of ALMT remains relatively high. Therefore, in the MSA task, we argue that eliminating the sentiment-irrelevant information that appears in auxiliary modalities (\textit{i.e.,} visual and audio modalities) and improving the contribution of auxiliary modalities in performance should be paid more attention to. 
+\begin{table}[htpb]
+\small
+\caption{Effects of different modalities.  Note: the best result is highlighted in bold.}
+\label{tab: Effects of Different Modalities}
+    \resizebox{0.48\textwidth}{!}{
+    \begin{tabular}{lcccc}
+        \toprule
+        \multirow{2}{*}{Method} & \multicolumn{2}{c}{MOSI} & \multicolumn{2}{c}{CH-SIMS} \\
+        & Acc-7 & MAE & Acc-5 & MAE \\ 
+        \midrule
+        \textbf{ALMT} &\textbf{49.42}&\textbf{0.683} & \textbf{45.73} & 0.404\\ 
+        w/o Audio & 48.69 & 0.705 & 45.08 & 0.416 \\
+        w/o Video & 47.96 & 0.704 & 44.64 & \textbf{0.403} \\
+        w/o Audio \& AHL & 46.91 & 0.724 & 43.54 & 0.407 \\
+        w/o Video \& AHL & 47.08 & 0.726 & 43.76 & 0.406 \\
+        w/o Video \& Audio & 46.79 & 0.752 & 40.26 & 0.405 \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+\subsubsection{Effects of Different Components}
+To verify the effectiveness of each component of our ALMT, in Table \ref{tab: Effects of Different Components}, we present the ablation result of the subtraction of each component on the MOSI and CH-SIMS datasets, respectively. We observe that deactivating the AHL (replaced with feature concatenation) greatly decreases the performance, demonstrating the language-guided hyper-modality representation learning strategy is effective. Moreover, after the removal of the fusion Transformer and Modality Embedding, the performance drops again, also supporting that the fusion Transformer and Modality embedding can effectively improve the ALMT's ability to explore the sentiment information in each modality. 
+\begin{table}[htpb]
+\small
+\caption{Effects of different components. Note: the best result is highlighted in bold.}
+\label{tab: Effects of Different Components}
+    \resizebox{0.48\textwidth}{!}{
+    \begin{tabular}{lcccc}
+        \toprule
+        \multirow{2}{*}{Method} & \multicolumn{2}{c}{MOSI} & \multicolumn{2}{c}{CH-SIMS} \\
+        & Acc-7 & MAE & Acc-5 & MAE \\ 
+        \midrule
+        \textbf{ALMT} & \textbf{49.42}&\textbf{0.683} & \textbf{45.73} & \textbf{0.404}\\ 
+        w/o AHL & 34.40 & 0.952 & 38.29 & 0.444 \\
+        w/o Fusion Transformer & 48.69 & 0.703 & 43.76 & 0.410 \\
+        w/o Modality Embedding & 47.96 & 0.701 & 43.11 & 0.429 \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+\subsubsection{Effects of Different Query, Key, and Value Settings in Fusion Transformer}
+Table \ref{tab: Effects of different Query, Key, and Value Setting} presents the experimental results of different query, key, and value settings in Transformer on the MOSI and MOSEI datasets, respectively. We observed that ALMT can obtain better performance when aligning hyper-modality features to language features (\textit{i.e.,} using $H^3_l$ as query and using $H_{hyper}^3$ as key and value). We attribute this phenomenon to the fact that language information is relatively clean and can provide more sentiment-relevant information for effective MSA.
+\begin{table}[htbp]
+\caption{Effect of different Query, Key, and Value settings in Fusion Transformer.
+\label{tab: Effects of different Query, Key, and Value Setting}}
+    \resizebox{0.48\textwidth}{!}{
+        \begin{tabular}{cccccc}
+            \toprule
+            \multirow{2}{*}{Q} & \multirow{2}{*}{K \& V} & \multicolumn{2}{c}{MOSI} & \multicolumn{2}{c}{CH-SIMS} \\
+            & & Acc-7 & MAE & Acc-5 & MAE \\ 
+            \midrule
+            $H_{hyper}^3$ & $H_l^3$ & 48.10 & 0.707 & 44.64 & 0.410\\
+            \specialrule{0em}{1pt}{1pt}
+            $H_l^3$ & $H_{hyper}^3$ & \textbf{49.42}&\textbf{0.683} & \textbf{45.73} & \textbf{0.404}   \\
+            \bottomrule
+        \end{tabular}
+    }
+\end{table}
+
+\subsubsection{Effects of the Guidance of Different Language Features in AHL} \label{sec: effects_of_guidance}
+To discuss the effect of the guidance of different language features in A
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

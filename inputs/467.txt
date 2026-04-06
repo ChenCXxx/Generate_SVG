@@ -1,0 +1,326 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{intro}
+
+Transformer~\cite{vaswani2017attention} has made significant progress across various challenging vision tasks since pioneering efforts such as DETR~\cite{carion20}, Vision Transformer (ViT)~\cite{dosovitskiy2020image}, and Swin Transformer~\cite{liu2021swinv1}.
+By removing the local inductive bias~\cite{d2021convit} from convolutional neural networks~\cite{He2016ResNet,szegedy2015going,simonyan2014very}, vision transformers armed with global self-attention show superiority in scalability for large-scale models and billion-scale dataset~\cite{dosovitskiy2020image,zhai2022lscalevit,singh2022revisiting}, self-supervised learning~\cite{he2021masked,xie2021simmim,bao2021beit}, connecting vision and language~\cite{radford2021learning,jia2021scaling}, etc.
+We can find from recent developments of SOTA approaches that vision transformers have dominated various leader-boards, including but not limited to
+image classification~\cite{wortsman2022model,dai2021coatnet,ding2022davit,zhai2022lscalevit}, object detection~\cite{zhang2022dino,liu2021swinv2,li2021grounded}, semantic segmentation~\cite{jain2021semask,cheng2021mask2former,bousselham2021efficient}, pose estimation~\cite{xu2022vitpose}, image generation~\cite{zhang2021styleswin}, and depth estimation~\cite{li2022depthformer}.
+Although vision transformers have achieved more accurate predictions in many vision tasks, large-scale vision transformers are still burdened with heavy computational overhead, particularly when processing high-resolution inputs~\cite{el2021xcit,liu2021swinv2}, thus limiting their broader application to more resource-constrained applications and attracting efforts on re-designing light-weight vision transformer architectures~\cite{chen2021mobile,mehta2021mobilevit,zhang2022edgeformer}.
+In addition to this, several recent efforts have investigated how to decrease the model complexity and accelerate vision transformers, especially for image classification, and introduced various advanced approaches to accelerate vision transformers.
+Dynamic ViT~\cite{rao2021dynamicvit} and EViT~\cite{liang2021evit}, for example, propose two different dynamic token sparsification frameworks to reduce the redundant tokens progressively and select the most informative tokens according to the scores predicted with an extra trained prediction module or their relevance with the [\texttt{class}] token.
+TokenLearner~\cite{ryoo2021tokenlearner} learns to spatially attend over a subset of tokens and generates a set of clustered tokens adaptive to the input for video understanding tasks.
+Most of these token reduction approaches are carefully designed for image classification tasks and 
+require fine-tuning or retraining. These approaches might not be suitable to tackle more challenging dense prediction tasks that need to process high-resolution input images, e.g., $1024\times1024$, thus, resulting in heavy computation and GPU memory cost brought.
+We also demonstrate in the supplemental material the superiority of our method over several representative methods on dense prediction tasks.
+Rather than proposing a new lightweight architecture for dense prediction or token reduction scheme for only image classification, we focus on how to expedite well-trained large-scale vision transformers and use them for various dense prediction tasks without fine-tuning or re-training.
+Motivated by these two key observations including (i) the intermediate token representations of a well-trained vision transformer carry a heavy amount of local spatial redundancy and (ii) dense prediction tasks require high-resolution representations,
+we propose a simple yet effective scheme to convert the ``high-resolution'' path of the vision transformer to a ``high-to-low-to-high resolution'' path via two non-parametric layers including a token clustering layer and a token reconstruction layer.
+Our method can produce a wide range of more efficient models without requiring further fine-tuning or re-training.
+We apply our approach to expedite two main-stream vision transformer architectures, e.g., ViTs and Swin Transformers, for five challenging dense prediction tasks, including object detection, semantic segmentation, panoptic segmentation, instance segmentation, and depth estimation.
+We have achieved encouraging results across several evaluated benchmarks
+and Figure~\ref{fig:intro_results} illustrates some representative results on both semantic segmentation and depth estimation tasks.
+
+
+
+Related work
+\label{relatework}
+
+\paragraph{Pruning Convolutional Neural Networks.} Convolutional neural network pruning~\cite{blalock2020state,hoefler2021sparsity,wang2021accelerate} is a task that involves removing the redundant parameters to reduce the model complexity without a significant performance drop.
+Pruning methods typically entail three steps: (i) training a large, over-parameterized model to convergence, (ii) pruning the trained large model according to a certain criterion, and (iii) fine-tuning the pruned model to regain the lost performance~\cite{liu2018rethinking}.
+The key idea is to design an importance score function that is capable of pruning the less informative parameters.
+We follow~\cite{chen2021chasing} to categorize the existing methods into two main paths: (i) unstructured pruning (also named weight pruning) and (ii) structured pruning. Unstructured pruning methods explore the absolute value of each weight or the product of each weight and its gradient to estimate the importance scores. Structured pruning methods, such as layer-level pruning~\cite{wang2019dbp}, filter-level pruning\cite{liu2017learning,yu2018slimmable}, and image-level pruning~\cite{han2020model,tan2019efficientnet}, removes the model sub-structures. Recent studies~\cite{chavan2022vision,chen2021autoformer,hou2021multi} further extend these pruning methods to vision transformer.
+Unlike the previous pruning methods, we explore how to expedite vision transformers for dense prediction tasks by carefully reducing \& increasing the number of tokens without removing or modifying the parameters.
+
+\begin{figure*}[t]
+\begin{minipage}[t]{1\linewidth}
+\centering
+\hspace{-5mm}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/performance_segmenter.pdf}}
+\caption{\small{mIoU@Segmenter}}
+\end{subfigure}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/fps_segmenter.pdf}}
+\caption{\small{FPS@Segmenter}}
+\end{subfigure}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/gflops_segmenter.pdf}}
+\caption{\small{GFLOPs@Segmenter}}
+\end{subfigure}\\
+\hspace{-5mm}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/performance_dpt.pdf}}
+\caption{\small{RMSE@DPT}}
+\end{subfigure}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/fps_dpt.pdf}}
+\caption{\small{FPS@DPT}}
+\end{subfigure}
+\begin{subfigure}[b]{0.33\textwidth}
+{\includegraphics[width=\textwidth,height=25mm]{img/gflops_dpt.pdf}}
+\caption{\small{GFLOPs@DPT}}
+\end{subfigure}
+\caption{Illustrating the improvements of our approach: we report the results of applying our approach to Segmenter~\cite{Segmenter} for semantic segmentation and DPT~\cite{ranftl2021vision} for depth estimation on the $1$-st and $2$-ed row respectively. Without any fine-tuning, our proposed method reduces the GFLOPs and accelerates the FPS significantly with a slight performance drop on both dense prediction tasks. $\uparrow$ and $\downarrow$ represent higher is better and lower is better respectively. Refer to Section~\ref{sec:experiment} for more details.}
+\label{fig:intro_results}
+\end{minipage}
+\end{figure*}
+\paragraph{Efficient Vision Transformer.}
+The success of vision transformers has incentivised many recent efforts~\cite{ryoo2021tokenlearner,song2021dynamic,marin2021token,heo2021rethinking,wang2021not,rao2021dynamicvit,kong2021spvit,guibas2021efficient,wang2021pnp,chen2021auto,kahatapitiya2021swat,liang2021evit,roy2021efficient} to exploit the spatial redundancies of intermediate token representations.
+For example,
+TokenLearner~\cite{ryoo2021tokenlearner} learns to attend over a subset of tokens and generates a set of clustered tokens adaptive to the input.
+They empirically show that very few clustered tokens are sufficient for video understanding tasks.
+Token Pooling~\cite{marin2021token} exploits a nonuniform data-aware down-sampling operator based on K-Means or K-medoids to cluster similar tokens together to reduce the number of tokens while minimizing the reconstruction error.
+Dynamic ViT~\cite{rao2021dynamicvit} observes that the accurate image recognition with vision transformers mainly depends on a subset of the most informative tokens,
+and hence it develops a dynamic token sparsification framework for pruning the redundant tokens dynamically based on the input.
+EViT (expediting vision transformers)~\cite{liang2021evit} proposes to calculate
+the attentiveness of the [\texttt{class}] token with respect to each token and identify the top-$k$ attentive tokens according to the attentiveness score.
+Patch Merger~\cite{renggli2022learning} uses a learnable attention matrix to merge and combine together the redundant tokens, therefore creating a much more practical and cheaper model with only a slight performance drop.
+Refer to~\cite{tay2020efficient} for more details on efficient transformer architecture designs,
+such as Performer~\cite{choromanski2020rethinking} and Reformer~\cite{kitaev2020reformer}.
+In contrast to these methods that require either retraining or fine-tuning the modified transformer architectures from scratch or the pre-trained weights, our approach can reuse the once-trained weights for free and produce lightweight models with a modest performance drop.
+\paragraph{Vision Transformer for Dense Prediction.}
+In the wake of success of the representative pyramid vision transformers~\cite{liu2021swinv1,wang2021pyramid} for object detection and semantic segmentation, more and more efforts have explored different advanced vision transformer architecture designs~\cite{li2022exploring,chen2021simple,li2021improved,li2021benchmarking,fan2021multiscale,yuan2021hrformer,yang2021focal,zhang2021multi,gu2021hrvit,liang2021swinir,xie2021segformer,yuan2020object,dingVLT,yuan2020segfix,yuan2018ocnet,he2022mlseg} suitable for various dense prediction tasks.
+For example, MViT~\cite{li2021improved} focuses more on multi-scale representation learning, while HRFormer~\cite{yuan2021hrformer} examines the benefits of combining multi-scale representation learning and high-resolution representation learning.
+Instead of designing a novel vision transformer architecture for dense prediction,
+we focus on how to accelerate a well-trained vision transformer while maintaining the prediction performance as much as possible.
+\paragraph{Our approach.}
+The contribution of our work lies in two main aspects:
+(i) we are the first to study how to accelerate state-of-the-art large-scale vision transformers for dense prediction tasks without fine-tuning (e.g., "Mask2Former + Swin-L" and "SwinV2-L + HTC++"). Besides, our approach also achieves much better accuracy and speedup trade-off when compared to the very recent ACT [1] which is based on a clustering attention scheme;
+(ii) our token clustering and reconstruction layers are capable of maintaining the semantic information encoded in the original high-resolution representations. This is the very most important factor to avoid fine-tuning.
+We design an effective combination of a token clustering function and a token reconstruction function to maximize the cosine similarity between the reconstructed high-resolution feature maps and the original ones without fine-tuning.
+The design of our token reconstruction layer is the key and not straightforward essentially. We also show that our token reconstruction layer can be used to adapt the very recent EViT~\cite{liang2021evit} and DynamicViT~\cite{rao2021dynamicvit} for dense prediction tasks in the supplementary.
+
+
+
+Our Approach
+\label{approach}
+
+\begin{figure*}[t]
+\definecolor{myyellow}{RGB}{255, 204, 153}
+\definecolor{myblue}{RGB}{204,229,255}
+\hspace{5mm}
+\begin{subfigure}[b]{0.39\linewidth}
+\centering
+\includegraphics[width=0.99\linewidth]{img/FreeFormer_Train_V2.pdf}
+\caption{\small{}}
+\end{subfigure}
+\begin{subfigure}[b]{0.6\linewidth}
+\centering
+\hspace{5mm}
+\includegraphics[width=0.98\linewidth]{img/FreeFormer_Test.pdf}
+\caption{}
+\end{subfigure}
+\begin{subfigure}[b]{1\textwidth}
+\hspace{-2mm}
+\includegraphics[width=1\textwidth]{img/FreeFormerV5.pdf}
+\caption{}
+\end{subfigure}
+\caption{(a) Plain high-resolution vision transformer with $\mathsf{L}$ layers. (b) U-shape High-to-low-to-high-resolution vision transformer with $\alpha$, $\beta$, and $\gamma$ layers respectively ($\mathsf{L}=\alpha+\beta+\gamma$). (c) Illustrating the details of using our approach to plain ViTs:
+we insert a token clustering layer and a token reconstruction layer into a trained vision transformer in order to decrease and then increase the spatial resolution, respectively.
+The weights of modules marked with \sqboxblack{myyellow}
+are trained once based on the configuration of (a).
+The token clustering layer and token reconstruction layer are marked with \sqboxblack{myblue}
+are non-parametric,
+thus do not require any fine-tuning and can be included directly during evaluation.
+}
+\label{fig:freeformer}
+\end{figure*}
+\noindent\textbf{Preliminary.}
+The conventional Vision Transformer~\cite{dosovitskiy2020image} first reshapes the input image $\mathbf{X} \in \mathbb{R}^{\mathsf{H}\times \mathsf{W}\times \mathsf{3}}$ into a sequence of flatten patches $\mathbf{X}_p \in \mathbb{R}^{\mathsf{N}\times (\mathsf{P}^2 \mathsf{3})}$,
+where $(\mathsf{P}, \mathsf{P})$ represents the resolution of each patch,
+$(\mathsf{H}, \mathsf{W})$ represents the resolution of the input image,
+$\mathsf{N}=(\mathsf{H}\times \mathsf{W})/{\mathsf{P}^2}$ represents the number of resulting patches or tokens, \ie, the input sequence length.
+The Vision Transformer consists of alternating layers of multi-head self-attention ($\operatorname{MHSA}$)
+and feed-forward network ($\operatorname{FFN}$) accompanied with layer norm ($\operatorname{LN}$) and residual connections:
+\begin{equation}
+\begin{aligned} {\mathbf{Z}_{l}^{'}}&=\operatorname{MHSA}\left(\mathrm{L N}\left(\mathbf{Z}_{l-1}\right)\right)+\mathbf{Z}_{l-1}, \\ {\mathbf{Z}_{l}} &=\operatorname{FFN}\left(\mathrm{LN}\left({\mathbf{Z}_{l}^{'}}\right)\right)+{\mathbf{Z}_{l}^{'}}, 
+\end{aligned}
+\end{equation}
+where $l \in \{1,\dots, \mathsf{L}\}$ represents the layer index,
+$\mathbf{Z}_{l}\in \mathbb{R}^{\mathsf{N}\times\mathsf{C}}$, and $\mathbf{Z}_{0}$ is based on $\mathbf{X}_p$. The computation cost $\mathcal{O}(\mathsf{L}\mathsf{N}\mathsf{C}(\mathsf{N}+\mathsf{C}))$ mainly depends on the number of layers $\mathsf{L}$, the number of tokens $\mathsf{N}$,
+and the channel dimension $\mathsf{C}$.
+Despite the great success of transformer, its computation cost increases significantly when handling high-resolution representations, which are critical for dense prediction tasks.
+This paper attempts to resolve this issue by reducing the computation complexity during the inference stage,
+and presents a very simple solution for generating a large number of efficient vision transformer models directly from a single trained vision transformer, requiring no further training or fine-tuning.
+
+We demonstrate how our approach could be applied to the existing standard Vision Transformer in \figurename~\ref{fig:freeformer}. The original Vision Transformer is modified using two non-parametric operations, namely a token clustering layer and a token reconstruction layer.
+The proposed token clustering layer is utilized to convert the high-resolution representations to low-resolution representations by clustering the locally semantically similar tokens. Then, we apply the following transformer layers on the low-resolution representations, which greatly accelerates the inference speed and saves computation resources. Last, a token reconstruction layer is proposed to reconstruct the feature representations back to high-resolution.
+
+\noindent\textbf{Token Clustering Layer.}
+We construct the token clustering layer following the improved SLIC scheme~\cite{jampani2018superpixel}, which performs local k-means clustering as follows:
+
+\noindent-\emph{Initial superpixel center}:
+We apply adaptive average pooling ($\operatorname{AAP}$) over the high-resolution representations from the $\alpha$-th layer to compute
+the $\mathsf{h}\times \mathsf{w}$ initial cluster center representations:
+\begin{equation}
+\mathbf{S}_{\alpha} = \operatorname{AAP}(\mathbf{Z}_{\alpha}, (\mathsf{h}\times \mathsf{w})),\label{eq:pooling}
+\end{equation}
+where $\mathbf{S}_{\alpha}\in \mathbb{R}^{\mathsf{h w}\times\mathsf{C}}$,
+$\mathbf{Z}_{\alpha}\in \mathbb{R}^{\mathsf{N}\times\mathsf{C}}$, and $\mathsf{h w}\ll \mathsf{N}$.
+\noindent-\emph{Iterative local clustering}:
+(i) Expectation step: compute the normalized similarity between each pixel $p$ and the surrounding superpixel $i$ (we only consider the neighboring $\lambda$ positions),
+(ii) Maximization step: compute the new superpixel centers:
+\begin{equation}
+\begin{aligned}
+{\mathbf{Q}_{p,i}} = \frac{\rm{exp}\Big(\minus ||\mathbf{Z}_{\alpha,p} - \mathbf{S}_{\alpha,i}||^2 /{\tau} \Big)}{\sum_{j=1}^{\lambda} \rm{exp}\Big(\minus||\mathbf{Z}_{\alpha,p} - \mathbf{S}_{\alpha,j}||^2 /{\tau}\Big)},\quad
+\mathbf{S}_{\alpha,i} = \sum_{p=1}^\mathsf{N} \mathbf{Q}_{p,i} \mathbf{Z}_{\alpha,p},\label{eq:token_cluster}
+\end{aligned}
+\end{equation}
+where we iterate the above Expectation step and Maximization step for $\kappa$ times, $\tau$ is a temperature hyper-parameter, and $i\in\{1,2,\cdots,\lambda\}$.
+We apply the following $\beta$ transformer layers on $\mathbf{S}_{\alpha}$ instead of $\mathbf{Z}_{\alpha}$,
+thus results in $\mathbf{S}_{\alpha+\beta}$ and decreases the computation cost significantly.
+\noindent\textbf{Token Reconstruction Layer.}
+We implement the token reconstruction layer by exploiting the relations between the high-resolution representations
+and the low-resolution clustered representations:
+\begin{equation}
+\begin{aligned}
+\mathbf{Z}_{\alpha+\beta,p} = \sum_{\mathbf{S}_{\alpha,i} \in \textrm{k-NN}(\mathbf{Z}_{\alpha,p})} \frac{\textrm{exp}\big(\minus{||\mathbf{Z}_{\alpha,p} - \mathbf{S}_{\alpha,i}||^2}/{\tau}\big)}{\sum_{\mathbf{S}_{\alpha,j} \in \textrm{k-NN}(\mathbf{Z}_{\alpha,p})}\textrm{exp}\big(\minus||\mathbf{Z}_{\alpha,p} - \mathbf{S}_{\alpha,j}||^2/{\tau}\big)} \mathbf{S}_{\alpha+\beta,i},
+\end{aligned}\label{eq:token_reconstruct}
+\end{equation}
+where $\tau$ is the same temperature hyper-parameter as in Equation~\ref{eq:token_cluster}. \begin{math} \textrm{k-NN}(\mathbf{Z}_{\alpha,p})\end{math} represents
+a set of the $\textrm{k}$ nearest, a.k.a, most similar, superpixel representations for $\mathbf{Z}_{\alpha,i}$.
+We empirically find that choosing the same neighboring positions as in Equation~\ref{eq:token_cluster}
+achieves close performance as the $\textrm{{k}-NN}$ scheme while being more
+easy to implementation.
+
+In summary, we estimate
+their semantic relations based on the representations before refinement with the following $\beta$ transformer layers and then reconstruct the high-resolution representations from 
+the refined low-resolution clustered representations accordingly. 
+
+Finally, we apply the remained $\gamma$ transformer layers to the reconstructed high-resolution features and the task-specific head on the refined high-resolution features to predict the target results such as semantic segmentation maps or monocular depth maps.
+\noindent\textbf{Extension to Swin Transformer.}
+We further introduce the \emph{window token clustering layer} and \emph{window token reconstruction layer}, which are suitable for Swin Transformer~\cite{liu2021swinv2,liu2021swinv1}.
+Figure~\ref{fig:swin_cluster_recons} illustrates an example usage of the proposed window token clustering layer and window token reconstruction layer. We first cluster the $\mathsf{K}\times \mathsf{K}$ window tokens into $\mathsf{k}\times \mathsf{k}$ window tokens and then reconstruct $\mathsf{K}\times \mathsf{K}$ window tokens according to the refined $\mathsf{k}\times \mathsf{k}$ window tokens.
+We apply the swin transformer layer equipped with smaller window size $\mathsf{k}\times \mathsf{k}$ on the clustered representations,
+where we need to bi-linear interpolate the pre-trained weights of relative position embedding table from $(2\mathsf{K}-1)$$\times$$(2\mathsf{K}-1)$ to $(2\mathsf{k}-1)$$\times$$(2\mathsf{k}-1)$ when processing the clustered representations.
+In summary, we can improve the efficiency of Swin Transformer by injecting the window token clustering layer and the window token reconstruction layer into the backbones seamlessly without fine-tuning the model weights.
+\noindent\textbf{Why our approach can avoid fine-tuning?}
+The reasons include the following two aspects:
+(i) our token clustering/reconstruction layers are non-parametric, thus avoiding retraining any additional parameters,
+(ii) the reconstructed high-resolution representations maintain high semantic similarity with the original high-resolution representations.
+We take Segmenter+ViT-L/$16$ (on ADEK, $\alpha$=$10$) as an example and analyze the semantic similarity between the reconstructed high-resolution feature  (with our approach) and the original high-resolution feature (with the original ViT-L/$16$) in Table~\ref{tab:cos_sim}. Accordingly, we can see that the cosine similarities are consistently high across different transformer layers between the reconstructed high-resolution feature (with our approach) and the original high-resolution feature. In other words, our approach well maintains the semantic information carried in the original high-resolution feature maps and thus is capable of avoiding fine-tuning.
+\begin{figure*}[t]
+\definecolor{mybox1}{RGB}{213,232,212}
+\definecolor{mybox2}{RGB}{255,230,204}
+\definecolor{mybox3}{RGB}{248,206,204}
+\definecolor{mybox4}{RGB}{225,213,231}
+\begin{subfigure}[b]{1\textwidth}
+\hspace{-5mm}
+\includegraphics[width=1.1\textwidth]{img/FreeFormerWinV2.pdf}
+\end{subfigure}
+\caption{Illustrating the details of using our approach for Swin Transformer~\cite{liu2021swinv2,liu2021swinv1}:
+we apply four groups of token clustering layer and token reconstruction layer within the four non-overlapped windows marked with \sqbox{mybox1}, \sqbox{mybox2}, \sqbox{mybox3}, and \sqbox{mybox4} respectively, in the example referred to as \emph{window token clustering layer} and \emph{window token reconstruction layer}.
+We apply the intermediate swin transformer layers equipped with window size $\mathsf{k}\times \mathsf{k}$) on the clustered window tokens.
+Window sizes before and after token clustering layer are $\mathsf{K}\times \mathsf{K}$ and $\mathsf{k}\times \mathsf{k}$, and vice versa, for the token reconstruction layer.
+}
+\label{fig:swin_cluster_recons}
+\end{figure*}
+\begin{table}[t]
+\begin{minipage}[t]{1\linewidth}
+\centering
+\setlength{\tabcolsep}{12.75pt}
+\small
+\caption{\small{Ablation of the cosine similarity between the reconstructed high-resolution feature maps and the original high-resolution feature maps, where $\mathbf{Z}_{\alpha+\beta}^{\rm{original}}$ and $\mathbf{Z}_{\alpha+\beta}$ represents the original and reconstructed high-resolution feature maps, respectively.}}
+{
+\begin{tabular}{ l | c | c | c |  c | c | c | c  }\shline
+$\alpha$+$\beta$ & $12$ & $14$ & $16$ & $18$ & $20$ & $22$ & $24$ \\\hline
+cos($\mathbf{Z}_{\alpha+\beta}$, $\mathbf{Z}_{\alpha+\beta}^{\rm{original}}$) & $0.94$ & $0.95$ & $0.96$ & $0.96$ & $0.96$ & $0.96$ & $0.96$   \\\hline
+\end{tabular}
+}
+\label{tab:cos_sim}
+\end{minipage}
+\end{table}
+
+
+Experiment
+\label{sec:experiment}
+
+We verify the effectiveness of our method across five challenging dense prediction tasks, including object detection, semantic segmentation, instance segmentation, panoptic segmentation, and monocular depth estimation.
+We carefully choose the advanced SOTA methods that build the framework based on either the plain ViTs~\cite{dosovitskiy2020image} or the Swin Transformers~\cite{liu2021swinv2,liu2021swinv1}.
+We can integrate the proposed token clustering layer and token reconstruction layer seamlessly with the provided official trained checkpoints with no further fine-tuning required.
+More experimental details are illustrated as follows.
+\subsection{Datasets}
+
+\noindent\textbf{COCO}~\cite{lin2014microsoft}. This dataset consists of $123$K images with $896$K annotated bounding boxes belonging to $80$ thing classes and $53$ stuff classes, where the \texttt{train} set contains $118$K images and the \texttt{val} set contains $5$K images. We report the object detection performance of SwinV2 + HTC++~\cite{liu2021swinv2} and the instance/panoptic segmentation performance of Mask$2$Former~\cite{cheng2021mask2former} on the \texttt{val} set.
+
+\noindent\textbf{ADE$20$K}~\cite{ade20k}. This dataset contains challenging scenes
+with fine-grained labels and is one of the most challenging semantic
+segmentation datasets. The \texttt{train} set contains $20,210$ images with $150$ semantic classes. The \texttt{val} set contains $2,000$ images.
+We report the segmentation results with Segmenter~\cite{Segmenter} on the \texttt{val} set.
+
+\noindent\textbf{PASCAL-Context} \cite{pascal_context}. This dataset consists of $59$ semantic classes plus a background class, where the \texttt{train} set contains $4,996$ images with and the \texttt{val} set contains $5,104$ images. We report the segmentation results with Segmenter~\cite{Segmenter} on the \texttt{val} set.
+
+\noindent\textbf{Cityscapes} \cite{cityscapes}. This dataset is an urban scene understanding dataset with $30$ classes while only $19$ classes are used for parsing evaluation. The \texttt{train} set and \texttt{val} set contains $2,975$ and $500$ images respectively.
+We report the segmentation results with Segmenter~\cite{Segmenter} on the \texttt{val} set.
+
+\noindent\textbf{KITTI}~\cite{geiger2012we}. 
+This dataset provides stereo, optical flow, visual odometry (SLAM), and 3D object detection of outdoor scenes captured by equipment mounted on a moving vehicle.
+We choose DPT~\cite{ranftl2021vision} as our baseline to conduct experiments on the monocular depth prediction tasks, which consists of around $26$K images for \texttt{train} set and $698$ images for \texttt{val} set, where only $653$ images have the ground-truth depth maps and the image resolution is of $1,241\times376$. 
+
+\noindent\textbf{NYUv$2$}~\cite{silberman2012indoor}.
+This dataset consists of $1,449$ RGBD images with resolution of $640\times480$, which captures $464$ diverse indoor scenes and contains rich detailed dense annotations such as surface normals, segmentation maps, depth, 3D planes, and so on. We report the depth prediction results of DPT~\cite{ranftl2021vision} evaluated on $655$ \texttt{val} images.
+
+\subsection{Evaluation Metrics}
+We report the numbers of AP (average precision), mask AP (mask average precision), PQ (panoptic quality), mIoU (mean intersection-over-union), and RMSE (root mean squared error) across object detection, instance segmentation, panoptic segmentation, semantic segmentation, and depth estimation tasks respectively.
+Since the dense prediction tasks care less about the throughput used in image classification tasks \cite{liang2021evit}, we report FPS to measure the latency and the number of GFLOPs to measure the model complexity during evaluation. FPS is tested on a single V100 GPU with Pytorch 1.10 and CUDA 10.2 by default. More details are provided in the supplementary material.
+
+\begin{table}[t]
+\begin{minipage}[t]{1\linewidth}
+\centering
+\setlength{\tabcolsep}{2pt}
+\small
+\caption{\small{Influence of the hyper-parameters of token clustering/reconstruction layer.}}
+{
+\begin{tabular}{ l | c | c | c |  c | c | c | c | c | c | c | c | c | c | c }\shline
+\multirow{2}{*}{Parameter} & \multicolumn{3}{c|}{$\lambda$} & \multicolumn{4}{c|}{$\kappa$} & \multicolumn{4}{c|}{$\tau$} & \multicolumn{3}{c}{$\mathrm{k}$} \\
+\cline{2-15}
+&  $3\times3$ & $5\times5$ & $7\times7$ & $5$  & $10$ & $15$ & $20$ & $10$ & $25$ & $50$ & $75$ & $10$ & $20$ & $50$ \\\hline
+GFLOPs & $438.6$ & $438.9$ & $439.6$ & $438.9$  & $439.6$ & $440.2$ & $440.8$ & \multicolumn{4}{c|}{$438.9$} & $438.9$ & $438.9$ & $439.0$ \\\hline
+mIoU & $51.46$ & $51.56$ & $51.55$ & $51.56$ & $51.59$  & $51.62$ & $51.62$ & $51.18$ & $51.35$ & $51.56$ & $51.07$ & $51.34$ & $51.56$ & $51.56$ \\\shline
+\end{tabular}
+}
+\label{tab:ablation_hyperparam}
+\end{minipage}
+\begin{minipage}[t]{1\linewidth}
+\centering
+\setlength{\tabcolsep}{7pt}
+\small
+\caption{\small{Influence of the cluster size $\mathsf{h}\times\mathsf{w}$.}}
+{
+\begin{tabular}{ l | c | c | c |  c | c | c | c}\shline
+{Cluster size}  & $8\times8$ & $12\times12$ & $16\times16$ & $20\times20$ & $24\times24$ & $28\times28$  & $40\times40$ (baseline)\\\hline
+GFLOPs &  $274.0$ & $290.9$ &  $315.1$ & $347.2$  & $388.2$ &  $438.9$ & $659.0$ \\\hline
+mIoU & $32.13$ & $44.01$ & $48.21$ &  $50.17$ & $51.32$ & $51.56$ & $51.82$ \\\shline
+\end{tabular}
+}
+\label{tab:ablation_cluster_size}
+\end{minipage}
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{1pt}
+\caption{\small{Comparison with adaptive average pooling(AAP).}}
+\resizebox{\linewidth}{!}
+{
+\begin{tabular}{ l | c | c }
+\shline
+\pbox{22mm}{Cluster size}   &  $20\times20$   &  $28\times28$  \\ \hline
+AAP           &  $46.45$ &   $46.54$   \\
+\rowcolor{cyan!10}Ours          & $50.17$  &   $51.56$   \\\shline
+\end{tabular}}
+\label{tab:ablation_adative_pool}
+\end{minipage}
+\begin{minipage}[t]{0.3\linewidth}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{1pt}
+\renewcommand{\arraystretch}{1}
+\caption{\small{Compari
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,224 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Natural language video localization (NLVL) aims to retrieve a temporal moment from an untrimmed video that semantically corresponds to a given language query, see Fig.~\ref{fig:example} for an example. This task is also known as temporal sentence grounding in video, and video moment retrieval. 
+As a fundamental video-language task, it has a wide range of applications, such as video question answering~\cite{DBLP:conf/cvpr/FanZZW0H19,DBLP:conf/eccv/YuKK18,DBLP:conf/aaai/LiSGLH0G19}, video retrieval~\cite{DBLP:conf/eccv/Gabeur0AS20,DBLP:conf/bmvc/LiuANZ19,DBLP:conf/cvpr/ChenZJW20}, and video grounded dialogue~\cite{DBLP:conf/acl/LeSCH19, DBLP:conf/aaai/KimYKY21}. 
+
+Generally speaking, in NLVL models, a video is first split to a sequence of many small fixed-length segments. Video features are then extracted from these segments to interact with the text query. Conceptually, each video segment can be viewed as a form of ``video token''.
+There are mainly two genres of approaches to NLVL. 
+\textit{Proposal-free methods} directly model the interaction between video tokens and text, and aim to identify start/end boundaries along the video token sequence. 
+\textit{Proposal-based methods} generate candidate moments as proposals and then select the best matching proposal\footnote{We use the terms \textit{proposal} and \textit{candidate moment} interchangeably, or even simply \textit{moment} when the context is clear.} as the answer. Each proposal is a continuous span of video tokens. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figs/example.pdf}
+    \caption{\small An NLVL example with query and ground truth video moment. Two moment candidates with similar video features are also highlighted in light and dark green colors. 
+    }
+    \label{fig:example}
+\end{figure}
+
+To generate proposals, some methods enumerate all possible moment candidates via pre-defined anchors. Anchors are reference start/end positions along the video.  Fig.~\ref{fig:strategy} shows three 2D-Map examples.  Each cell in a 2D-Map corresponds to a candidate moment defined by its start/end time along the two axes. Some other methods produce moment candidates with a proposal generator guided by text query and then refine them independently. The interaction between text and video is mainly modeled between text and video moments; each moment is characterized by the video segments that compose it. Very few studies have considered moment-moment interaction. Consequently, it is challenging to discriminate among moments if there are multiple moments that all demonstrate high level of semantic matching with the text query.
+For instance, the two candidate moments in Fig.~\ref{fig:example} have very similar video content and share similar semantic correspondence with the query. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\columnwidth]{figs/strategy.pdf}
+    \caption{\small Illustration of three strategies of moment-level interactions. Each cell represents a moment with start time $i$ and end time $j$ indicated on the two axes; only the upper triangular area is valid as $i\leq j$.
+    }
+    \label{fig:strategy}
+\end{figure}
+In this paper, we adopt the proposal-based approach for its capability of cross-modal interaction at both segment level and moment level. We propose \modelname to facilitate effective \textit{text-moment alignment} and efficient \textit{moment-moment interaction}. 
+For text-moment alignment, we devise a multi-scale vision-language transformer backbone to conduct segment-word and segment-segment interactions at different segment scales. For moment-moment interaction, our main focus is on which moments should be sampled for interaction, due to the large number of possible pairs. Recall that a moment is a span of segments. Let $\mathcal{O}(N)$ be the magnitude of segment space; the magnitude of moments is $\mathcal{O}(N^2)$. Then moment-moment interaction has a space of $\mathcal{O}(N^4)$.
+In practice, not every pair of moments are relevant to each other, and are needed to be discriminated for a given query. Existing methods~\cite{zhangLearning2DTemporal2020,zhangMultiScale2DTemporal2021,wangStructuredMultiLevelInteraction2021} mainly rely on a strong assumption that only the overlapping or adjacent moments are more likely to be relevant, \ie moment locality. An example of moment locality is shown in Fig.~\ref{fig:example}, where two adjacent candidate moments share high level of visual similarity. The local interaction strategy is illustrated in Fig.~\ref{fig:strategy}, where the reference moment only interacts with the surrounding moments in the 2D-Map. 
+However, not all relevant moments are overlapping or located close to each other. Following the example in Fig.~\ref{fig:example}, if the person plays saxophone again in the later part of the video (not showing for the sake of space), and the query becomes ``He plays saxophone \textit{again}'', then there will be at least two highly relevant moments for playing saxophone, separated by his action of talking in between. To correctly locate the answer, the model needs to understand that ``\textit{again}'' refers to the second moment of playing saxophone. This calls for a better way of sampling moments for efficient moment-moment interaction, to avoid the full global interaction as shown in Fig.~\ref{fig:strategy}.
+
+The proposed \modelname samples moments for interaction using learnable templates and anchors, illustrated in the third 2D-Map in Fig.~\ref{fig:strategy}.
+We design an anchor-guided moment decoder to interact and aggregate moment features from the encoder in an adaptive and progressive manner. A fixed number of learnable templates paired with dynamic anchors are used to match the moment content and its location. Here, the templates are used to match video content in a moment, and anchors specify the reference start/end positions of the moment because multiple moments may share similar visual features. We then revise the anchors based on the predictions from the last decoder block in an iterative manner. We remark that our method has no assumption on moment locality: the moments can be scattered in diverse locations of the video.
+
+Our key contributions are threefold. First,  we propose a novel multi-scale visual-linguistic encoder  (Section~\ref{ssec:mscaleEncoder}) to align textual and video features as well as to aggregate language-enhanced semantics of video frames, in a hierarchical manner. Second, we introduce a new anchor-guided moment decoder (Section~\ref{ssec:momentDecoder}) to decode learnable templates into moment candidates, in which we propose an anchor highlight mechanism to guide the decoding. 
+Third, we conduct extensive experiments (Section~\ref{sec:exp}) on three benchmark datasets: ActivityNet Captions, TACoS, and Charades-STA. Our results demonstrate the effectiveness of the proposed \modelname. 
+
+
+Related Work
+\label{sec:related}
+We first briefly review existing NLVL approaches and highlight the differences between our work and other proposal-based solutions. Next, we briefly introduce object detection to provide background for the concept of learnable templates. 
+
+\paragraph{Natural Language Video Localization.} NLVL was first introduced in~\citet{DBLP:conf/iccv/HendricksWSSDR17}, and since then a good number of solutions have been proposed~\cite{zhangElementsTemporalSentence2022}.  As aforementioned, existing  methods can be largely grouped into proposal-based and proposal-free methods. 
+Proposals, or candidate moments, can be either predefined~\cite{gaoTALLTemporalActivity2017,DBLP:conf/iccv/HendricksWSSDR17} or computed by proposal generator ~\cite{xiaoNaturalLanguageVideo2021,xiaoBoundaryProposalNetwork2021,liuAdaptiveProposalGeneration2021}.
+Proposal-free methods output time span~\cite{zhangSpanbasedLocalizingNetwork2020,DBLP:journals/pami/ZhangSJZZG22,zhangParallelAttentionNetwork2021,liuContextawareBiaffineLocalizing2021} or timestamps \cite{yuanFindWhereYou2019, DBLP:conf/naacl/GhoshAPH19,liProposalfreeVideoGrounding2021,zhouEmbracingUncertaintyDecoupling2021} directly on top of video tokens, without considering the notion of candidate moments. 
+Most proposal-based methods conduct multi-modal interaction between video segments and text, then  encode moments from the segment features. Typically there is no further interactions among moments. 2D-TAN~\cite{zhangLearning2DTemporal2020} is the first to demonstrate the effectiveness of moment-level interaction. However, 2D-TAN assumes moment locality and only enables local interactions among moments as shown in Fig.~\ref{fig:strategy}. However, similar moments requiring careful discrimination may be scattered all over the video. This motivates us to go beyond the moment locality assumption and propose moment sampling for interaction, which is a key difference and also a contribution of our work. 
+In this paper, we adapt the concept of learnable templates from DETR framework to achieve dynamic moment sampling. DETR was originally introduced for object detection in computer vision (CV), to be briefed shortly. Most similar to our work is~\citet{xiaoNaturalLanguageVideo2021}, which also uses learnable templates. However, their work directly adopts learnable templates without any adaption to the specific requirements of NLVL. For instance, the answer moment in NLVL needs to match the given text query, whereas in object detection, there is no such requirement. We bridge the gap between NLVL and object detection by introducing a hierarchical encoder and a decoder with an anchor highlight mechanism. These designs greatly improve performance and unveil the potential of DETR for NLVL. At the same time, these designs also make our model much different from the original DETR. 
+
+\paragraph{Transformer-based Object Detection.}
+Object detection is a fundamental CV task. Transformer-based methods now set a new paradigm that uses learnable templates to sparsely localize objects in  images. The core idea is to aggregate encoder features globally, by using (randomly initialized) learnable templates. To achieve end-to-end detection,  object detection is reformulated as a set prediction problem, \eg certain template combinations can be used to identify some specific image objects. Early solutions match predictions with ground-truth one by one using bipartite matching, leading to unstable matching and slow convergence. Recent work alleviates this issue by designing many-to-one assignment ~\cite{chenGroupDETRFast2022,jiaDETRsHybridMatching2022} or the self-supervision task specifically for learnable templates~\cite{liDNDETRAccelerateDETR2022,zhangDINODETRImproved2022}.
+
+Introducing learnable templates to NLVL poses two challenges: \textit{supervision sparsity} and \textit{scale mismatching}. An image typically contains multiple objects and these co-occurred objects all serve as detection objects for supervision. In NLVL, given a good number of candidate moments in a video, there is only one ground-truth. We refer to this phenomenon as supervision sparsity. The scale extremity in NLVL is more severe than that in object detection. The ground truth moments in videos, analogous to objects in images, vary from 3\% to 90\% in terms of video length.  The diverse scales bring the issue of scale mismatching when the learned templates are decoded to cover all encoder features, \ie the entire video. Hence in \modelname, we adapt learnable templates mainly for the purpose of sparsely sampling moments for interaction, rather than as the main backbone.
+
+
+
+
+Problem Formulation
+We first present how to map video and text into features, and then define NLVL in feature space. 
+
+Let $V=[f_t]_{t=0}^{t=T-1}$ be an untrimmed video with $T$ frames; $L=[w_j]_{j=0}^{j=M-1}$ be a natural language query with $M$ words. 
+We uniformly split the video $V$ into $N$ segments (\ie video tokens) and employ a pre-trained video feature extractor to encode these segments into visual features  $\mathbf{V}=[\mathbf{v}_i]_{i=0}^{i=N-1}$. The $M$ words are encoded with pre-trained word embeddings as $\mathbf{L}=[\mathbf{w}_j]_{j=0}^{j=M-1}$. 
+
+Given the video and text query in their encoded features  $(\mathbf{V}, \mathbf{L})$, the task of NLVL is to localize the timestamp pair $(t_s, t_e)$, the start and end timestamp, of the video moment that matches the query. Note that, due to the  uniform split to segments, there is a correspondence between $t_s$ and $t_e$ of the original video and the segment Ids in the segment sequence. 
+
+
+ Method
+\label{sec:method}
+\begin{figure*}[t]
+    \centering
+    \includegraphics[trim={0cm 0.12cm 0cm 0cm},clip,width=0.9\textwidth]{figs/architecture.pdf}
+    \caption{\small The architecture of \modelname for Natural Language Video Localization.}
+	\label{fig:architecture}
+\end{figure*}
+
+The main architecture of the proposed \modelname is depicted in Fig.~\ref{fig:architecture}. Illustrated in the \textit{feature extraction} part, given visual features $\mathbf{V} \in \mathbb{R}^{d_v \times N}$ and language query features $\mathbf{L} \in \mathbb{R}^{d_w \times M}$, we first project them into a unified dimension $d$ using single layer FFN and decorate them by adding positional encoding, respectively. The linearly projected visual features $\{\mathbf{v}_i^0\}_{i=0}^{i=N-1}$ and language query features $\{\mathbf{w}_j^0\}_{j=0}^{j=M-1}$ are then concatenated and fed into multi-scale vision-language transformer. Next, we mainly detail two main components: multi-scale visual-language encoder, and anchor-guided moment decoder. 
+\subsection{Multi-scale Visual-Language Encoder}
+\label{ssec:mscaleEncoder}
+
+Many transformer-based methods for cross-modal interaction treat video and language tokens identically, in a unified sequence. 
+However, video and text have completely different syntactic and semantic structures. It is more reasonable to use separate projections for the two modalities, similar to the idea of modality-specific expert~\citet{pengBEiTV2Masked2022}. 
+In \modelname, we separate the projections by using specifically designed attention modules. 
+
+
+
+Before we further modify the multi-modal attention modules to handle different video resolutions (\ie multi-scale), we present our attention designs in their base form. 
+We design two sets of attentions: \textit{visual cross-modal attention} and \textit{linguistic cross-modal attention}, see the middle part of Fig.~\ref{fig:architecture}. The two sets are highly similar. For conciseness, we only introduce visual cross-modal attention, which contains language to video (\textit{L$\rightarrow$V}), and  video to video (\textit{V$\rightarrow$V}) attentions.
+The visual cross-modal attention aggregates visual embeddings $\mathbf{V}^l \in \mathcal{R}^{N \times d}$ and language embeddings $\mathbf{L}^l \in \mathcal{R}^{M \times d}$ into new visual features as $\mathbf{V}^{l+1}$: 
+
+\begin{align}
+    	\mathbf{A}^{l+1}_{LV} &= \frac{\text{FFN}(\mathbf{V}^l) \text{FFN}(\mathbf{L}^l)}{\sqrt{d_h}} \label{eqn:attenLV} \\
+        \mathbf{A}^{l+1}_{VV} &= \frac{\text{FFN}(\mathbf{V}^l) \text{FFN}(\mathbf{V}^l)}{\sqrt{d_h}} \label{eqn:attenVV} \\
+        \mathbf{A}^{l+1} &= \mathbf{A}^{l+1}_{LV} \oplus \mathbf{A}^{l+1}_{VV} \label{eqn:attenConcat} \\
+        \mathbf{V}^{l+1} &= \text{Softmax}(\mathbf{A}^{l+1}) \notag \\
+        &\times\left(\text{FFN}(\mathbf{L}^l)\oplus \text{FFN}(\mathbf{V}^l)\right) \label{eqn:AttenWeightSum} 
+\end{align}
+The linguistic cross-modal attention uses a similar set of equations to model language to language (\textit{L$\rightarrow$L}) and video to language (\textit{V$\rightarrow$L}) attentions, to get new language features as $\mathbf{L}^{l+1}$.
+
+\paragraph{Sequence-reduced Multi-modal Attention.} Recall that relative lengths of ground truth range from 3\% to 90\% to their source videos. 
+A fixed resolution for all moments becomes sub-optimal. 
+To this end, we extend the aforementioned multi-modal attention and build a transformer that is capable of providing hierarchical text-enhanced video features, from high to low temporal resolutions. Our encoder design is motivated by the Pyramid Vision Transformer (PVT) \cite{wangPyramidVisionTransformer2021}, which is a successful application of deploying transformer in segmentation problem. 
+
+Handling high temporal resolution is a challenge. Directly applying multi-modal attention on high temporal resolution video features suffers from its quadratic complexity as in Eq.~\ref{eqn:attenVV}.
+Recall that the sequence lengths of key, query, and value in multi-head attention \cite{vaswaniAttentionAllYou2017} do not have to be the same. Its output has the same length as the query, and the key-value pair keep the same length. Thus, reducing sequence lengths of the key and value simultaneously is an effective way to save computation. Accordingly, we modify \textit{V$\rightarrow$V} attention in the \textit{visual cross-modal attention} module to a sequence-reduced version as follows:
+\begin{align}
+    	\mathbf{V}_r^l &= \text{Conv1D}(\mathbf{V}^l) \notag \\
+    	\mathbf{A}^{l+1}_{VV} &= \frac{\text{FFN}(\mathbf{V}^l) \text{FFN}(\mathbf{V}^l)}{\sqrt{d_h}} \label{en:attenVV-R}\\
+        \mathbf{V}^{l+1} &= \text{Softmax}(\mathbf{A}^{l+1}) \notag\\
+        &\times\left(\text{FFN}(\mathbf{L}^l)\oplus \text{FFN}(\mathbf{V}_r^l)\right) 
+    \label{eq:seq-reduce}
+\end{align}
+Here, $\text{Conv1D}$ is a non-overlapping 1D convolution with stride and kernel size set to $R$. 
+Eq.~\ref{eqn:attenVV} and Eq.~\ref{eqn:AttenWeightSum} are respectively modified to their new versions in Eq.~\ref{en:attenVV-R} and Eq.~\ref{eq:seq-reduce}. Time complexity is reduced from $\mathcal{O}(N^2)$ to $\mathcal{O}(\frac{N^2}{R})$. We also apply sequence reduction to \textit{V$\rightarrow$L} attention in the \textit{linguistic cross-modal attention}. Conceptually, this sequence reduction technique can be explained as decomposing the local and global interaction. The local interaction is achieved by convolution and the global interaction by attention. Next, we focus on how to merge high to low temporal resolutions. 
+
+\paragraph{Temporal Merging}
+To form a hierarchical architecture, a crucial step is a pooling-like step to shrink the temporal scale. We utilize an 1D convolution with overlapping to shrink representations from high to low temporal resolutions. The overlapped convolution allows information flow among convolutional windows, so that the interaction is not constrained locally within windows. With both sequence-reduced multi-modal attention and temporal merging, we form a hierarchical architecture. For the deeper layers in the encoder, which already have a low resolution, we turn off these two components and use the vanilla multi-modal attention.
+
+\paragraph{Auxiliary Supervision Losses} We design two auxiliary losses: \textit{span loss} and \textit{masked word loss}. 
+Span loss is to enhance the language-conditioned video representations from encoder. We use the video features $\mathbf{V}^{(L_{enc}-1)}$ from the last layer of encoder to predict whether each video segment falls within the ground truth. This auxiliary supervision facilitates the model to distinguish relevant video segments from irrelevant ones.  We predict span logits $\mathbf{S_{sp}} = FFN(\mathbf{V}^{L_{enc}-1})$ by passing forward encoder output $\mathbf{V}^{(L_{enc}-1)}$ after a two-layer FFN. Span scores $\mathbf{P_{sp}}$ are then calculated from $\mathbf{S_{sp}}$ with a sigmoid function. Then the span loss is computed in Eq.~\ref{eq:span-loss}, where $\mathbf{Y}_{sp}\in\{0, 1\}$.
+\begin{equation}
+\mathcal{L}_{span} = \left(\log{\mathbf{P}_{sp}} \times \mathbf{Y}_{sp}\right) \times \left(\mathbf{P}_{sp} - \mathbf{Y}_{sp}\right)^2
+    \label{eq:span-loss}
+\end{equation}
+Considering  ground-truth can be a small portion of the source video, 
+focal loss \cite{DBLP:journals/pami/LinGGHD20} is adopted here to alleviate the label imbalance issue. 
+
+The masked word loss aims to better align text features and video features. We dynamically replace 15\% words from language query during training with randomly initialized mask embedding. The model is then compelled to learn from both textual and video contexts to recover the missing tokens. Text features $\mathbf{W}^{(L_{enc}-1)}$ from last layer of encoder are used to predict the original words before masking. Masked word score is predicted by  $\mathbf{P_{wm}} = Softmax(\mathbf{S_{wm}})$, where $\mathbf{S_{wm}} = FFN(\mathbf{W}^{(L_{enc}-1)})$. We use the cross entropy loss for masked word prediction.
+\begin{equation}
+    \mathcal{L}_{mask} = CrossEntropy(\mathbf{P_{wm}}, \mathbf{Y_{wm}})
+    \label{eq:word-mask-loss}
+\end{equation}
+
+\paragraph{Multi-scale Text-enhanced Features} 
+After $L_{enc}$ layers of encoder, we select $C$ text-enhanced video features of different scales from intermediate layer outputs. We re-index the selected outputs $\{\mathbf{V}^{i_0} \cdots \mathbf{V}^{i_{C-1}}\}$ into $\{\mathbf{V}_s^0 \cdots \mathbf{V}_s^{C-1}\}$ for future reference.
+
+\subsection{Anchor-guided Moment Decoder}
+\label{ssec:momentDecoder}
+
+After obtaining the multi-scale text-enhanced video features $\mathbf{V}_s=\{\mathbf{V}_s^c\}_{c=0}^{c=C-1}$, our focus now is to decode the learnable templates with their corresponding anchors into moment timestamps. Recall that templates aim to match moment content and anchors are the reference start/end positions. Initially, the anchors are uniformly distributed along the video to guarantee at least one anchor falls within the range of ground truth. 
+
+The moment decoder contains two parts: (i) Moment-moment Interaction, which is achieved by self-attention, and (ii) Anchor Highlighting, which aims to not only highlight the area that is relevant to the current moment but also be aware of the global context. The highlighting, or searching for relevant moments, is achieved through an \textit{Anchor Highlight Attention}, an modification of the cross attention in DETR with RoI features, shown in Fig.~\ref{fig:decoder}. 
+All attentions mentioned above follow the specification of multi-head scaled dot-product defined in~\citet{vaswaniAttentionAllYou2017}.
+\begin{figure}[t]
+    \centering
+    \includegraphics[trim={1.6cm 0.1cm 1.6cm 0.1cm},clip, width=0.8\columnwidth]{figs/decoder.pdf}
+    \caption{\small Anchor-guided Moment Decoder. Here \textit{AHAttn} is the abbreviation for Anchor Highlight Attention.}
+    
+	\label{fig:decoder}
+\end{figure}
+
+\paragraph{Learnable Templates and Anchors}
+In the original DETR~\cite{carionEndtoEndObjectDetection2020} paper, the learnable templates can be seen as special positional embeddings, to provide a spatial prior of objects. However, the recent success of advanced DETRs~\cite{liuDABDETRDynamicAnchor2022,mengConditionalDETRFast2021} motivates us to separately model a moment anchor according to which the attention is constrained. Let $k$ denote the index of templates among the total $N_q$ templates. We define $q_k$ as the $k^{th}$ learnable template and $(c^0_k, w^0_k)$ as its initial anchor. Here $c$ and $w$ stand for the center and width of the corresponding moment, which can be easily mapped to the start/end boundary.
+Anchors will be refined in the decoder, layer by layer. We use $(c_k^l, w_k^l)$ to denote the anchor after refinement of the $l^{th}$ decoder layer. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[clip, width=0.75\columnwidth]{figs/refine.pdf}
+    \caption{\small An example of anchor refinement. The anchor $(c,w)$ paired with learnable template $q_0$ is refined to $(c',w')$. Accordingly, its moment contents shift from $\mathbf{R}$ to $\mathbf{R}'$.
+    }
+    \label{fig:refine}
+\end{figure}
+\paragraph{Anchor Highlight Attention.} One of our motivations is to discriminate the best matching moment among all candidate moments that share good matching to the text query.
+To highlight the areas that are similar to the current moment, we modify the attention query to adjust attention weight.
+
+Suppose the current anchor is $(c_k, w_k)$, we can easily locate the corresponding area in the $n^{th}$ multi-scale feature from the encoder output. We use  $\mathbf{r}_{c,k}$ to denote the features in this area that are taken from the $c^{th}$ multi-scale video features $\mathbf{V}_s^c$. Let $\mathbf{R}_k$ be the collection of features from all scales. We then construct a function $\mathbf{f}$ to map  $\mathbf{R}_k$ to a single vector $\mathbf{H}_k \in \mathbb{R}^{d}$ to guide the highlight in attention mechanism, illustrated in Fig.~\ref{fig:decoder}. Let $\mathbf{H}^{N_q \times d} \in \mathbb{R}^{}$ be the collection of $\mathbf{H}_k$ and $\mathbf{M}$ be the moment features after self-attention module in decoder layer, we adjust the attention as follows: 
+ \begin{equation}
+ 	\begin{aligned}
+ 		\mathbf{A}_{AH} &= \frac{FFN(\mathbf{M} + \mathbf{H}) FFN(\mathbf{V}^{C-1}_s)^\mathsf{T}}{\sqrt{d_h}} \\
+        \mathbf{M}_{AH} &= \mathbf{A}_{AH} \times FFN(\mathbf{V}^{C-1}_s)
+ 	\end{aligned}
+    \label{eq:attentionHighlight}
+\end{equation}
+Here, $A_{AH}$ refers to the adjusted attention weight, and $\mathbf{M}_{AH}$ is the output of the adjusted cross attention. Since $\mathbf{H}$ is sampled and transformed from the corresponding anchor areas in encoder outputs $\mathbf{V}_s$, it is essentially the representation of moment content. Therefore, the term $\mathbf{H}(\mathbf{V}_s^{C-1})^T$ will be more responsive when a specific area from $\mathbf{V}_s^{C-1}$ is similar to the moment content. Consequently, the attention above will highlight the areas similar to the current moment. We then refine the anchors based on these highlighted areas, through an offset prediction head as shown in Fig.~\ref{fig:decoder}.
+
+\paragraph{Anchor Refinement.} Based on the predictions from the last decoder block, we revise the anchor with the predicted offsets.  This is analogous to the eye skimming process of humans: focuses on a local area in the video and then decides where to move her sight at the next step. The anchors are refined iteratively as shown in Fig.~\ref{fig:refine}.  Specifically, we first project the center $c_k^l$ and scale $s_k^l$ of the $k^{th}$ anchor at the $l^{th}$ decoder level into logit space, using an inverse sigmoid operation. The offset $(\Delta c_k^l, \Delta w_k^l)$ is added to their logits, then the modified logits are projected back using sigmoid. The whole process is described in Eq.~\ref{eq:anchor-refine}.
+\begin{equation}
+    \begin{aligned}
+    	c_k^{m+1} &= \sigma\left(\Delta c_k^m + \sigma^{-1}(c_k^m)\right) \\
+        w_k^{m+1} &= \sigma\left(\Delta w_k^m + \sigma^{-1}(w_k^m)\right)
+    \end{aligned}
+    \label{eq:anchor-refine}
+\end{equation}
+Here $\sigma$ stands for sigmoid function, and $\sigma^{-1}$ for inverse sigmoid function. 
+
+\paragraph{Boundary Modeling.} After encoding moment candidate features, we pass them through two separate FFNs to predict anchor offset and scores, respectively. Depending on anchor positions, only a small portion of anchors may match with ground truth moments. Among them, we simply select the candidate moment with the largest IoU (intersection over union) with ground truth as our positive sample. A similar label assignment strategy has been used in early studies \cite{carionEndtoEndObjectDetection2020}.
+After labeling predictions as positive or negative, we refer to the index of positive prediction as $i_p$. Then we model the boundary with two losses: (i) IoU prediction loss, and (ii) $L1$ regression loss. Note that,  $L1$ regression loss is only applied to the positive prediction. Let $(t_s^k, t_e^k)$ be the timestamps predicted by $k^{th}$ anchor and $(t_s^{g}, t_e^{g})$ be the ground-truth timestamps, we calculate $L1$ regression loss and IoU prediction loss as follows:
+\begin{equation}
+    \begin{aligned}
+    	\mathcal{L}_{L1} &= \frac{1}{2} \left( \lvert t_s^{i_p} - t_s^{g} \rvert + \lvert t_e^{i_p} - t_e^{g} \rvert \right) \\
+        \mathcal{L}_{IoU} &= \frac{1}{N_q} \sum_{k\in N_q} \text{Focal}(\text{TrIoU}_k, o_k)
+    \end{aligned}
+    \label{eq:boundary-modeling}
+\end{equation}
+Here $TrIoU$ truncates IoU between $(t_s^k, t_e^k)$ and $(t_s^g,t_e^g)$ below a threshold $\theta$ and set IoU of the assigned positive prediction to 1. Different from \citet{carionEndtoEndObjectDetection2020}, by using $TrIoU$, we not only calculate IoU loss for the positive prediction but also consider the hard negative predictions which have large overlapping with ground-truth. Note that, IoU prediction loss and $L1$ regression loss are calculated for all decoder layer outputs.
+
+
+\subsection{Training and Inference}
+
+The overall training loss of \modelname contains three losses: 
+\begin{equation}
+	\begin{aligned}
+      \mathcal{L} &= \lambda_{span} \mathcal{L}_{span} + \lambda_{mask} \mathcal{L}_{mask} \\
+      &+\sum_{m\in L_{dec}}\left(\lambda_{IoU} \mathcal{L}_{IoU} + \lambda_{L1} \mathcal{L}_{L1}\right)
+	\end{aligned}
+    \label{eq:sum-loss}
+\end{equation}
+To stabilize training, we introduce an extra denoising group of templates and pass them through the decoder,  motivated by \cite{chenGroupDETRFast2022}. The overall loss is averaged over losses calculated from two groups independently.
+During inference, we deprecate the denoising group and use the main group only. All moments are sorted by their scores and their anchors are converted from $(c,w)$ to start/end format. We apply truncation to start/end timestamps to deal with out-of-range values, since no constraint is attached to $(c,w)$ during training.
+
+
+Experiments
+\label{sec:exp}
+We evaluate \modelname against baselines on three public benchmarks: ActivityNet Captions \cite{DBLP:conf/iccv/KrishnaHRFN17},  TACoS \cite{DBLP:journals/tacl/RegneriRWTSP13}, and Charades-STA \cite{gaoTALLTemporalActivity2017}. 
+
+Following prior work \cite{zhangParallelAttentionNetwork2021}, we adopt ``$R@n, IoU=\mu$'' and ``mIoU'' as evaluation metrics. $R@n, IoU=\mu$
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

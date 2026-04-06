@@ -1,0 +1,206 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Detecting anomalies by only nominal images without annotation is an appealing topic, especially in industrial applications where defects can be extremely tiny and hard to collect. Unsupervised sensory anomaly detection, also called covariate shift detection~\cite{yang2021generalized, tao2022deep}, is proposed to solve this problem and has been largely explored. 
+Recent deep learning methods~\citep{yang2022memseg,dsr,ding2022catching,ristea2022self,10} usually model the AD problem as a one-class learning problem and employ computer visual tricks to improve the perception where a clean nominal training set is provided to extract representative features. 
+Most previous unsupervised AD methods have to measure the distance between the test sample and the standard dataset distribution to determine whether a sample differs from the standard dataset. 
+Even though recent methods have achieved excellent performance, they all rely on the clean training set to extract nominal features for later comparison with anomalous features. 
+Putting too much faith in training data can lead to pitfalls. 
+If the standard normal dataset is polluted with noisy data, i.e., the defective samples, the estimated boundary will be unreliable, and the classification for abnormal data will have low accuracy. In general, current unsupervised AD methods are not designed for and are not robust to noisy data. 
+
+However, in real-world practice, it is inevitable that there are noises that sneak into the standard normal dataset, especially for industrial manufacturing, where a large number of products are produced daily. This noise usually comes from the inherent data shift or human misjudgment. 
+Meanwhile, existing unsupervised AD methods~\cite{roth2021towards,gudovskiy2022cflow,zheng2022focus} are susceptible to noisy data due to their exhaustive strategy to model the training set. 
+As in Fig.~\ref{fig:1}, noisy samples easily misinform those overconfident AD algorithms, so algorithms misclassify similar anomaly samples in the test set and generate wrong locations. 
+Additionally, AD with noisy data can be developed to a fully unsupervised setting, which discards the implicit supervised signal that the training set is all defect-free, compared with the previous unsupervised setting in AD. 
+This setting helps to expand more industrial quality inspection scenarios, i.e., rapid deployment to new production lines without data filtration. 
+
+In this paper, we first point out the significance of studying noisy data problems in AD and especially in unsupervised sensory AD. 
+Our solution is inspired by one of the recent state-of-the-art methods, PatchCore~\cite{roth2021towards}. PatchCore proposed a method to subsample the original CNN features of the standard normal dataset with the nearest searching and establish a smaller coreset as a memory bank. However, the coreset selection and classification process are vulnerable to polluted data. 
+In this regard, we propose a patch-level selection strategy to wipe off the noisy image patch of noisy samples. Compared to conventional sample-level denoising, the abnormal patches are separated, and the normal patches of a noise sample are exploited in coreset. 
+Specifically, the denoising algorithm assigns an outlier factor to each patch to be selected into coreset. Based on the patch-level denoising, we propose a novel AD algorithm with better noise robustness named SoftPatch. 
+Considering noisy samples are hard to be removed completely, SoftPatch utilizes the outlier factor to re-weight the coreset examples. Patch-level denoising and re-weighting the coreset samples are proved effective in revising misaligned knowledge and alleviating the overconfidence of coreset in inference. 
+Extensive experiments in various noise scenes demonstrate that SoftPatch outperforms the state-of-the-art (SOTA) AD methods on MVTec Anomaly Detection (MVTecAD) \cite{16} benchmark. 
+Meanwhile, due to the noise in existing datasets, SoftPatch achieves optimal results on the original BTAD ~\cite{btad} dataset. 
+ 
+Our main contributions are summarized as follows:
+\begin{itemize}
+    \item[$\bullet$] 
+To the best of our knowledge, we are the first to focus on the image sensory anomaly detection with noisy data, which is a more practical setting but seldom investigated. 
+Existing image sensory AD methods fully trust the training set's cleanliness, leading to their performance degradation in noise interference. 
+    \item[$\bullet$] 
+We propose a patch-level denoising strategy for coreset memory bank, which essentially improves the data usage rate compared to conventional sample-level denoising. Based on this strategy, we apply three noise discriminators which strengthen model robustness by combining the re-weighting of coreset.
+    \item[$\bullet$] 
+We set a baseline for unsupervised AD with noisy data, which performs well in the settings with additional noisy data and the general settings without noise, providing a new view for further research. 
+\end{itemize}
+
+\begin{figure}
+\small
+  \centering
+  \includegraphics[width=1\linewidth]{neurips/images/intuition.pdf}
+  \caption{Illustration of SoftPatch. Unlike previous methods that construct coreset without considering the negative effect of noisy data, SoftPatch wipes off easy noisy data to formulate a clean training set and alleviates hard noisy data's impact by soft-reweighting.}
+  \label{fig:1}
+\end{figure}
+
+
+Related Work
+
+\subsection{Unsupervised Anomaly Detection}
+
+\textbf{Training with agent tasks.} Also known as self-supervised learning, agent tasks is a viable solution when there is no category and shape information of anomalies. 
+~\citet{5} employ transformations such as horizontal flip, shift, rotation, and gray-scale change after a multi-scale generative model to enhance the representation learning. ~\citet{2} mention that naively applying existing self-supervised tasks is sub-optimal for detecting local defects and propose a novelty agent task named CutPaste, which simulates an abnormal sample by clipping a patch of a standard image and pasting it back at a random location. 
+Similarity, DRAEM~\citep{7} synthesizes anomalies through Perlin Noise.
+Nevertheless, the inevitable discrepancy between the synthetic anomaly and the real anomaly disturbs the criteria of the model and limits the generalization performance. The gap between anomalies is usually larger than that between anomaly and normal. This is why AD methods deceived by some noisy samples can still work well when handling other kinds of anomalies.   
+
+\textbf{Agnostic methods.} Including knowledge distillation and image reconstruction, agnostic methods based on a theory that models that have never seen anomalies will behave differently in inference when inputting both normal and anomaly samples. 
+Knowledge distillation is ingeniously used in anomaly detection. ~\citet{11} propose that the representations of unusual patches are different between a pretrained teacher model and a student model, which tried its best to simulate teacher output with an anomaly-free training set. Based on this theory, ~\citet{4} propose that considering multiple intermediate outputs in distillation and using a smaller student network lead to a better result. 
+Reverse distillation~\citep{deng2022anomaly} uses a reverse flow that avoids the confusion caused by the same filters and prevents the propagation of anomaly perturbation to the student model, whose structure is similar to reconstruction networks.
+Image Reconstruction methods~\citep{10,13,liang2022omni} utilize the assumption that the reconstruction network trained in the normal set can not reconstruct the anomaly part. A high-resolution result can be obtained by comparing the differences between the reconstructed and original images. 
+However, all agnostic methods need long training stages, which limit their usage, i.e., the rapid deployment assumption in fully unsupervised learning. 
+
+\textbf{Feature modeling.} We specifically refer to the direct modeling of the output features of the extractor, including distribution estimation~\citep{defard2021padim, yi2020patch}, distribution transformation~\citep{9,gudovskiy2022cflow}, pre-trained model adaption~\citep{3, lee2022cfa}, and memory storage~\citep{6, roth2021towards}. 
+PaDiM~\citep{defard2021padim} utilizes multivariate Gaussian distributions to estimate the patch embedding of nominal data. In the inference stage, the embedding of irregular patches will be out of distribution. It is a simple but efficient method, but Gaussian distribution is inadequate for more complex data cases. 
+So to enhance the estimation of density, DifferNet~\citep{9} and CFLOW~\citep{gudovskiy2022cflow} leverage the reversible normalizing flows based on multi-scale representation. 
+~\citet{6} proposed that the granularity of division on feature maps is closely related to the reconstruction capability of the model for both normal and abnormal samples. So a multi-scale block-wise memory bank is embedded into an autoencoder network as a model of past data. 
+PatchCore~\citep{roth2021towards} is a more explicit but valuable memory-based method, which stores the sub-sampled patch features in the memory bank and calculates the nearest neighbor distance between the test feature and the coreset as an anomaly score. Although PatchCore is outperformance in the typical setting, it is overconfident in the training set, which leads to poor noise robustness. 
+\subsection{Learning with Noisy Data}
+Noisy label recognition is becoming an emerging topic for supervised learning but has rarely been explored in unsupervised anomaly detection because there is no apparent label. For classification, some research \citep{simPLE,fixmatch} propose to filter noisy pseudo-labeled data with a high confidence threshold. \citet{li2020dividemix} selects noisy-labeled data with a mixture model and trains in a semi-supervised manner. ~\citet{kong2021resolving} relabel harmful training samples. For object detection, multi-augmentation~\cite{softteacher}, teacher-student~\cite{unbiased}, or contrastive learning~\cite{CCSSL} are adopted to alleviate noise with the help of the expert model's knowledge. However, current noisy label recognition methods all rely on labeled data to co-rectify noisy data. In comparison, we target to improve the model's noise robustness in an unsupervised manner without introducing labor annotations. 
+
+While there are some model robustness researches on unsupervised AD, their objects and tasks are distinguished from our work since “anomaly detection” is an overloaded term. 
+A recent survey~\cite{han2022adbench} explores the model robustness of 30 AD algorithms. Nevertheless, unsupervised methods are excluded from the annotation errors setting. 
+~\citet{pang2020self} deals with video anomaly without manually labeled data where information in consecutive frames can be exploited. While our work tackle anomaly detection from a single image. Other related papers~\cite{liu2021rca, zhou2017anomaly, wuunderstanding} eliminate noisy and corrupted data in semantic anomaly detection. Unlike semantic anomaly detection, we focus on image sensory anomaly detection~\cite{yang2021generalized}, which has recently raised much concern and contains a new task, anomaly localization. Although some existing methods~\citep{yoon2021self,qiu2022latent,cordier2022data,chen2022deep} treat covariate shift the same way they treat semantic shift and enhance model robustness with universal processes, their basic structures are poor compared with rapid-developed sensory AD methods, which leads to the robustness improvement insignificant. 
+Noise in image sensory anomaly detection is more similar to the normal data and brings more challenges. 
+\begin{figure}
+  \centering
+  \includegraphics[width=1.0\linewidth]{neurips/images/framework.pdf}
+  \caption{Overview of the proposed method. In the training phase, the noises are distinguished at patch level at each position of the feature map by a noise discriminator. The deeper color a patch node has, the higher probability that it is a noise patch. After achieving outlier scores for all patches, the top $\tau$\% patches with the highest outlier score are removed. The coreset is a subset of remaining patches after denoising. Different from other methods, our memory bank consists of the samples in coreset and their outlier scores which are stored as soft weights. Soft weights will be further utilized to re-weight the anomaly score in inference.}
+  \label{fig:framwork}
+\end{figure}
+
+
+The Proposed Method
+
+\subsection{Overview}
+
+Patch-based unsupervised anomaly methods, such as PatchCore \cite{roth2021towards} and CFA ~\cite{lee2022cfa},  have three main processes: feature extraction, coreset selection with memory bank construction, and anomaly detection. 
+One of the important assumptions is that the training set only contains nominal images, and the coreset should have full coverage of the entire training data distribution. During the test, an incoming image will directly search in the memory bank for similar features, and the anomaly score is the dissimilarity with the nearest patches. 
+The searching process may collapse if the assumed clean full coverage memory bank contains noise. Therefore, we propose SoftPatch, which filters noisy data by a noise discriminator before coreset construction and softens the searching process for down-weighting the hard unfiltered noisy samples. 
+
+The general denoising methods against the label contamination at the sample level are sub-optimal in image sensory anomaly detection.
+The abnormalities in image sensory AD, represented by industrial defect detection and medical image analysis, usually occupy only a tiny area of the image. 
+At the sample level, noisy data is hard to distinguish, but the sample's inherent deviation may be more remarkable. 
+So we propose a patch-level denoising strategy that works on the feature space to judge the noisy patch better. 
+First, the collected features are grouped according to position to narrow the domain of noise discrimination. 
+Then we insert the patch-level noise discrimination process before the coreset sampling, which generates the noise score according to the feature distribution of each position. 
+Since most areas of the noisy image are usually anomaly-free, we remove those noisy patches and retain the rest to maximize the use of data.
+At the same time, the rest denoising scores reflecting the behavior of clustering are used to scale the anomaly score in inference. The other parts of the algorithm, such as feature extraction, dimension reduction, coreset sampling, and nearest neighbor search, follow the baseline PatchCore\cite{roth2021towards}. Figure~\ref{fig:framwork} shows the framework of SoftPatch. 
+
+The target of image-level denoising is to find $\mathcal{X}_{noise}$ from $\mathcal{X}$, where $\mathcal{X} = \{x_i:i \in[1,N], x_i \in \mathbb{R}^{C \times H \times W} \}$ denotes training images (channels $C$, height $H$, width $W$). 
+Following convention in existing work\cite{roth2021towards}, we use $\phi_{i} \in \mathbb{R}^{c^* \times h^* \times w^*} $ as the feature map (channels $c^*$, height $h^*$, width $w^*$) of image $x_i \in \mathcal{X}$, $\phi_{i}(h, w) \in \mathbb{R}^{c^*}$ as the patch at $(h, w)$ on the aggregated feature map with dimension $c$ . 
+
+
+
+\subsection{Noise Discriminative Coreset Selection}
+With increasing training images, the features memory can become exceedingly large and infeasible to discriminate noise by overall statistics.  
+Therefore, we group all features by position and count their outlier scores. Then all the scores are aggregated to determine noise patches, after which we just remove the features with top $\tau$\ percent scores. 
+We apply three noise reduction methods in total.
+
+\subsubsection{Nearest Neighbor}  \label{sec:near_neigh}
+
+With the assumption that the amount of noisy samples $X_{noise}$ is much less than clean samples $X_{nominal}$, we set Nearest neighbor distance as our baseline ~\cite{nearest_wiki} where a large distance means an outlier. 
+Given a set of images, $\phi \in \mathbb{R}^{N \times c^* \times h^* \times w^*}$ represents all features. Each patch's nearest neighbor distance $\mathcal{W}_i^{nn}$ is defined as:
+\begin{equation}
+    \mathcal{W}^{nn}_i(h, w) = \min_{n \in [1,N] , n \neq i }\|\phi_i(h, w) - \phi_n(h, w)\|_2 \label{eq:nn_distance},
+\end{equation}
+We first calculate the distances, then take the minimum among batch dimensions (neighbor) as $W^{nn}$. Previous methods~\citep{roth2021towards, lee2022cfa} have proved that the minimum feature distance from a pretrained network can be an indicator to discriminate anomaly. This method can discriminate apparent outliers but suffer from uneven distribution of different clusters, where some clusters can have large inter-distance and lead to being mistakenly threshed as noisy data. To treat all clusters equally, we propose another multi-variate Gaussian method to calculate the outlier score without the interference of different clusters' densities. 
+
+\subsubsection{Multi-Variate Gaussian} \label{sec:multi_vgau}
+With Gaussian's normalizing effect, all clean images' features can be treated equally. To apply Gaussian distribution on image characteristics dynamically, we calculate the inlier probabilities on the batch dimension for each patch $\phi_i(h, w)$, similar to  \ref{sec:near_neigh}. The multi-variate Gaussian distribution $\mathbb{N}(\mu_{h,w}, \Sigma_{h, w})$  can be formulated that $\mu_{h,w}$ is the batch mean of $\phi_i(h, w)$ and sample covariance ${\Sigma}_{h, w}$ is:
+
+\begin{equation}
+    {{\Sigma}_{h, w}} = \frac{1}{N - 1}\sum_{n = 1}^N{(\phi_n(h, w) - \mu_{h, w})(\phi_n(h, w) - \mu_{h, w})^T) + \epsilon I} \label{eq:gau_dist},
+\end{equation}
+where the regularization term $\epsilon I$ makes ${\sum}_{h, w}$ full rank and invertible \cite{defard2021padim}. Finally, with the estimated multi-variate Gaussian distribution $\mathcal{N}(\mu_{h,w}, \sum_{h, w})$. 
+Notice that we do not exclude the $x_i$ when calculating the $\mathcal{N}$, so all samples can share a joint distribution, which is much less computationally intensive than doing the calculations one by one. 
+Mahalanobis distance is calculated as the noisy magnitude $\mathcal{W}_i^{mvg}(h, w)$ of each patch:
+\begin{equation}
+    \mathcal{W}_i^{mvg}(h, w) = \sqrt{(\phi_i(h, w) - \mu_{(h, w)})^T{\Sigma}_{h, w}^{-1}(\phi_i(h, w) - \mu_{(h, w)})} \label{eq:gau_weight} .
+\end{equation}
+A high Mahalanobis distance means a high outlier score. Even though Gaussian distribution normalizes and captures the essence of image characteristics, small feature clusters may be overwhelmed by large feature clusters. In the scenario of a prominent feature cluster and a small cluster in a batch, the small cluster may be out of 1-, 2- or 3-$\Sigma$ of calculated $\mathbb{N}(\mu_{h,w}, \Sigma_{h, w})$ and erroneously classified as outliers. After analyzing the above two methods, we need a method that can: 1. treat all image characteristics equally; 2. treat large and small clusters equally; 3. high dimension calculation applicable. 
+
+\subsubsection{Local Outlier Factor (LOF)} \label{sec:lof}
+LOF\cite{LOF} is a local-density-based outlier detector used mainly on E-commerce for criminal activity detection. Inspired by LOF, we can solve above mentioned three questions in \ref{sec:multi_vgau}: 1. Calculating the relative density of each cluster can normalize different density clusters; 2. Using local k-distance as a metric to alleviate the overwhelming effect of large clusters; 3. Modeling distance as normalized feature distance can be used on high-dimensional patch features.
+Therefore, the k-distance-based absolute local reachability density $lrd_i(h, w)$ is first calculated as:
+\begin{equation}
+    lrd_i(h,w) = 1/(\frac{\sum_{b \in \mathcal{N}_k(\phi_i(h,w))} dist^{reach}_k(\phi_i(h,w), \phi_b(h,w))}{|\mathcal{N}_k(\phi_i(h,w))|}),
+\end{equation}
+\begin{equation}
+    dist^{reach}_k(\phi_i(h,w), \phi_b(h,w)) = max(dist_k(\phi_b(h,w)), d(\phi_i(h,w), \phi_b(h,w))),
+\end{equation}
+where $d(\phi_i(h,w), \phi_b(h,w))$ is L2-norm, $dist_k(\phi_i(h,w))$ is the distance of kth-neighbor, $\mathcal{N}_k(\phi_i(h,w))$ is the set of k-nearest neighbors of $\phi_i(h,w)$ and $|\mathcal{N}_k(\phi_i(h,w))|$ is the number of the set which usually equal k when without repeated neighbors. 
+With the local reachability density of each patch, the overwhelming effect of large clusters is largely reduced. To normalize local density to relative density for treating all clusters equally, the relative density $\mathcal{W}_i^{LOF}$ of image $i$ is defined below:
+\begin{equation}
+    \mathcal{W}^{LOF}_i(h, w) = \frac{\sum_{b \in \mathcal{N}_k(\phi_i(h,w))} Ird_b((h, w))}{|\mathcal{N}_k(\phi_i(h,w))| \cdot Ird_i(h,w)} .
+\end{equation}
+$\mathcal{W}^{LOF}_i(h, w)$ is the relative density of the neighbors over patch's own, and represents as a patch's confidence of inlier. 
+Our experiments found that all three noise reduction methods above are helpful in data pre-selection before coreset construction, while $LOF$ provides the best performance. 
+However, after visualization of our cleaned training set, we found that hard noisy samples, which are similar to nominal samples, are still hidden in the dataset. To further alleviate the effect of noisy data, we propose a soft re-weighting method that can down-weight noisy samples according to outlier scores. 
+
+\subsection{Anomaly Detection based on SoftPatch}
+Besides the construction of the Coreset, outlier factors of all the selected patches are stored as soft weights in the memory bank. With the denoised patch-level memory bank $\mathcal{M}$ as shown in figure~\ref{fig:framwork}, the image-level anomaly score $s \in \mathbb{R}$ can be calculated for a test sample $x_i \in \mathcal{X}^{test}$ by nearest neighbor searching at patch level. Denoting the collection of patch features of a test sample as $\mathcal{P}(x_i)$, for each patch $p_{h,w} \in \mathcal{P}_{x_i}$ the nearest neighbor searching can be formulated as the following equation:
+\begin{equation}
+    m^* = \mathop{\arg\min}\limits_{m \in \mathcal{M}} \|p-m\|_2 .
+\end{equation}
+
+After nearest searching, pairs of test patch and its corresponding nearest neighbor in $\mathcal{M}$ can be achieved as $(p, m^*)$. For each patch $p_{i,j} \in \mathcal{P}_{x_i}$, the patch-level anomaly score is calculated by 
+\begin{equation}
+s_{h,w}=\mathcal{W}_{m^*}\|p_{h,w} - m^*\|_2 , 
+\end{equation}
+where $\mathcal{W}_{m^*}$ is the soft weight calculated by one noise discriminator. 
+The image-level anomaly score is attained by finding the largest soft weights re-weighted patch-level anomaly score: 
+$s^*=\mathop{\max}\limits_{(h,w)}s_{h,w}$.
+
+Different from PatchCore which directly considers patches equally, SoftPatch softens anomaly scores by noise level from noise discriminater. 
+The soft weights, i.e., local outlier factors, have considered the local relationship around the nearest node. Thus, a similar effect can be achieved as PatchCore but with more noise robustness and fewer searches.
+According to the image-level anomaly score, a sample is classified into a normal sample or an abnormal sample. 
+
+
+
+Experiments
+\subsection{Experimental Details}
+
+ \paragraph{Datasets.} Our experiments are mainly conducted on the MVTecAD and BTAD benchmarks\cite{16, btad}. MVTecAD contains 15 categories with 3629 training images and 1725 test images in total, and BTAD has three categories with 1799 images, where different classes of industry production mean a comprehensive challenge, such as object or texture and whether rotation. 
+ Since each category of MVTecAD is divided into nominal-only images and a test set with both nominal and anomalous samples, to create a noisy training set, we sample anomalous images randomly from the test set and mix them with the existing training images. Notice that the original normal number of samples in the training set remains unchanged compared with the noiseless case. 
+ In this setting(\textit{No overlap}), the injected anomalous samples will not be evaluated, which is more likely the case in the real application. We also construct a different setting(\textit{Overlap}) where the injected anomalous samples are also in the test set to demonstrate the risk that defects with similar appearance will severely exacerbate the performance of an anomaly detector trained with noisy data.
+ Meanwhile, the overlap samples test the outlier detection performance of our algorithm. 
+ By controlling the proportion of negative samples being injected into the train set, we obtain several new datasets with different noise ratios dubbed MVTecAD-noise-$n$, where $n$ refers to the ratio of noise. For BTAD, we just use the original fold. 
+ 
+\begin{table}[htb]
+\scriptsize
+\setlength\tabcolsep{3pt}
+\caption{Anomaly detection performance on MVTecAD with noise. The results are evaluated on MVTecAD-noise-0.1. \emph{Overlap} means the injected anomalous images are included in the test set. PaDiM* uses ResNet18 as the backbone. PatchCore-random uses 1\% random subsampler instead of the default greedy subsampler. \emph{Gap} row shows the performance gap between a noisy scene and a normal scene. }
+\label{tab-1}
+\centering
+\begin{tabular}{l|cccccc|cccc}
+\toprule
+Noise=0.1  & \multicolumn{6}{c}{No overlap}                                                                                                                                                                                   |& \multicolumn{4}{c}{Overlap}                                                                               \\ 
+\midrule
+Category   & PaDiM & CFLOW & PatchCore & \begin{tabular}[c]{@{}c@{}}SoftPatch-\\ nearest\end{tabular} & \begin{tabular}[c]{@{}c@{}}SoftPatch-\\ gaussian\end{tabular} & \begin{tabular}[c]{@{}c@{}}SoftPatch-\\ lof\end{tabular} & PaDiM* & PatchCore & \begin{tabular}[c]{@{}c@{}}PatchCore-\\random\end{tabular} & \begin{tabular}[c]{@{}c@{}}SoftPatch-\\ lof\end{tabular}\\ 
+\midrule
+bottle     & 0.994 & 0.998 & \textbf{1.000}     & \textbf{1.000}                                                       & 0.997                                                                                                          & 0.937 & \textbf{1.000} & 0.692     & 0.998                                                          & \textbf{1.000}        \\
+cable      & 0.873 & 0.925 & 0.982     & 0.935                                                       & 0.952                                                        & \textbf{0.995}                                                   & 0.680 & 0.756     & 0.920                                                          & \textbf{0.994}        \\
+capsule    & 0.920 & 0.947 & \textbf{0.976}     & 0.916                                                       & 0.662                                                        & 0.963                                                   & 0.796 & 0.783     & 0.779                                                          & \textbf{0.955}        \\
+carpet     & \textbf{0.999} & 0.961 & 0.996     & 0.995                                                       & \textbf{0.999}                                                        & 0.991                                                   & 0.890 & 0.681     & 0.973                                                          & \textbf{0.993}        \\
+grid       & 0.966 & 0.891 & 0.971     & 0.972                                                       & \textbf{0.997}                                                        & 0.968                                                   & 0.674  & 0.526     & 0.793                                                          & \textbf{0.969}        \\
+hazelnut   & 0.956 & \textbf{1.000} & 0.998     & \textbf{1.000}                                                       & \textbf{1.000}                                                        & \textbf{1.000}                                                   & 0.543  & 0.441     & 0.998                                                          & \textbf{1.000}        \\
+leather    & \textbf{1.000} & \textbf{1.000} & \textbf{1.000}     & \textbf{1.000}                                                       & \textbf{1.000}                                                        & \textbf{1.000}                                                   & 0.964  & 0.739     & \textbf{1.000}                                                          & \textbf{1.000}        \\
+metal\_nut & 0.987 & 0.959 & \textbf{0.999}     & 0.994                                                       & 0.997                                                        & \textbf{0.999}                                                   & 0.820  & 0.765     & 0.969                                                          & \textbf{1.000}        \\
+pill       & 0.918 & 0.929 & \textbf{0.975}     & 0.921                                                       & 0.873                                                        & 0.963                                                   & 0.722  & 0.770     & 0.874                                                          & \textbf{0.955}        \\
+screw      & 0.838 & 0.784 & \textbf{0.966}     & 0.862                                                       & 0.475                                                        & 0.960                                                   & 0.567  & 0.710     & 0.462                                                          & \textbf{0.923}        \\
+tile       & 0.977 & 0.991 & 0.985     & 0.996                                                       &\textbf{0.997}                                                        & 0.993                                                   & 0.830  & 0.716     & \textbf{1.000}                                                          & 0.981        \\
+toothbrush & 0.92
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

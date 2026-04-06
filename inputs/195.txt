@@ -1,0 +1,228 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+In the realm of artificial intelligence, continual learning has become an area of significant interest. One of the pivotal techniques that greatly facilitates this domain is pre-training, which not only delivers positive knowledge transfer but also enhances resilience to catastrophic forgetting \cite{ramasesh2021effect,mehta2021empirical,wang2023comprehensive,panos2023first,zhang2023slca}. 
+A recent innovation is the implementation of prompt-based methodologies, which freeze a pre-trained transformer backbone and employ a few prompt parameters to steer representation learning. Such approaches typically involve \emph{construction} of adaptive prompts for each task and \emph{inference} of appropriate prompts during the test phase.
+By exploring prompt architectures to accommodate task-sharing and task-specific knowledge, this emerging direction demonstrates distinct superiority, almost reaching the upper bound of continual learning performance under supervised pre-training.
+
+Nonetheless, given that robust pre-trained models typically necessitate the learning of substantial amounts of unlabeled data in a self-supervised manner, the influence of pre-training paradigms on the effectiveness of prompt-based continual learning represents a significant and unresolved query.
+To answer this question, we first perform an extensive empirical investigation, and it clearly demonstrates the sub-optimality of recent prompt-based approaches under the more realistic self-supervised pre-training.
+Since self-supervised representations tend to be more general, task-specific knowledge is difficult to incorporate into instructed representations via prompt parameters, as well as predicted by uninstructed representations at test time. Consequently, the performance of many recent approaches, such as L2P \cite{wang2022learning_l2p}, DualPrompt \cite{wang2022dualprompt}, S-Prompt \cite{wang2022sprompts}, and CODA-Prompt \cite{smith2022coda}, is remarkably compromised. We further disclose the importance of adaptive prediction for all tasks together, which can potentially mitigate the aforementioned shortcomings to some extent.
+
+Motivated by these observations, we provide an in-depth theoretical analysis of the continual learning objective in the context of pre-training, which can be decomposed into hierarchical components such as \emph{within-task prediction}, \emph{task-identity inference} and \emph{task-adaptive prediction}.
+Thanks to the well-distributed representations resulting from adequate pre-training, the hierarchical components can be optimized explicitly by constructing an ensemble of task-specific prompts and exploiting the preserved statistics of uninstructed and instructed representations. A novel contrastive regularization is further devised to coordinate these hierarchical components.
+We refer to this approach as Hierarchical Decomposition (HiDe-)Prompt and demonstrate its superiority through extensive continual learning experiments, especially under the more realistic self-supervised pre-training. 
+
+Our contributions include: (1) We provide an extensive empirical study under self-supervised pre-training to demonstrate the sub-optimality of current progress in prompt-based continual learning; (2) To overcome such sub-optimality, we theoretically analyze the objective of continual learning with pre-training, and decompose it into hierarchical components for model design; (3) With task-specific prompts and representation statistics, we propose an innovative approach to optimize the hierarchical components explicitly; (4) Across various continual learning benchmarks and pre-training paradigms, our approach achieves clearly state-of-the-art performance in a rehearsal-free manner. 
+
+
+Related Work
+
+\textbf{Continual Learning:} The ability of continual learning is critical for artificial neural networks to accommodate real-world changes \cite{wang2023comprehensive,wang2023incorporating}. Numerous efforts in this direction have been devoted to overcoming catastrophic forgetting \cite{mcclelland1995there,wang2021afec,wang2021ordisco}.
+According to a recent survey \cite{wang2023comprehensive}, representative strategies include selective stabilization of network parameters, replay of a few old training samples, explicit manipulation of optimization programs, exploitation of well-distributed representations, construction of task-specific parameters, etc. 
+The performance of such strategies varies with particular settings of continual learning. As one of the most challenging and representative settings, class-incremental learning (CIL) \cite{van2019three,wang2023comprehensive} requires a continual learning model to perform all old tasks (or classes) without the oracle of task identity. Strong CIL methods generally depend on storage and rehearsal of old training samples \cite{rebuffi2017icarl,hou2019learning_lucir,wang2021memory}, which result in efficiency and privacy issues.
+
+\textbf{Self-Supervised Learning and Pre-Training:}
+The exploitation of well-distributed representations, especially from the success of large-scale pre-training, brings significant benefits for downstream continual learning \cite{wang2023comprehensive,ramasesh2021effect,mehta2021empirical}.
+Due to the scarcity and expense of explicit labeling in many real-world applications, self-supervised learning is typically involved in the pre-training stage to cope with huge amounts of unlabeled data.
+In particular, instance discrimination \cite{chen2020simple,he2020momentum} with contrastive learning \cite{oord2018representation} has become the dominant strategy, which aims to maximize representation similarity of the same instance and minimize representation similarity of different instances.
+Besides, self-supervised paradigms have been shown less sensitive to catastrophic forgetting in upstream continual learning \cite{hu2021well}, providing a practical way to enrich pre-trained knowledge from in-the-wild data.
+
+\textbf{Prompt-Based Approach:}
+Inspired by parameter-efficient fine-tuning techniques in NLP \cite{ke2022continual,ke2022nlpsurvey}, recent prompt-based approaches \cite{chen2023promptfusion,wang2022learning_l2p,wang2022dualprompt,wang2022sprompts,smith2022coda} are developed to leverage pre-trained knowledge adaptively for downstream continual learning. 
+The basic idea includes \emph{construction} and \emph{inference} of adaptive prompts for each task, so as to instruct a frozen transformer backbone.
+The former mainly focuses on exploring prompt architectures to instruct representations with task-sharing and task-specific knowledge, closely related to the discussion of model architectures in continual learning \cite{wang2023comprehensive,wang2022coscl}, while the latter attempts to predict appropriate (combinations of) prompts with uninstructed representations. % (see Sec~3.1 for a detailed comparison).
+Although such methods have achieved remarkably strong performance under supervised pre-training, whether these advantages are consistent under the more realistic self-supervised pre-training remains to be explored. 
+A concurrent study \cite{zhang2023slca} observed that self-supervised pre-training is more challenging for continual learning approaches that require fine-tuning of the backbone, implying a non-trivial impact of pre-training paradigms on downstream continual learning.
+
+
+
+Preliminary Analysis
+In this section, we first introduce the problem formulation of prompt-based continual learning, and then evaluate the impact of pre-training paradigms with an extensive empirical study.
+
+\subsection{Formulation of Prompt-Based Continual Learning}\label{Sec31_Formulation}
+\textbf{Continual learning} aims to master a sequence of tasks represented by their respective training sets $\mathcal{D}_1, ..., \mathcal{D}_T$ and excel on their corresponding test sets. The training set for task $t$ is typically represented as $\mathcal{D}_{t} = \{(\boldsymbol{x}_{t,n}, y_{t,n})\}_{n=1}^{N_t}$, comprising various data-label pairs. Here, $|\mathcal{D}_{t}| = N_t$ denotes the size of $\mathcal{D}_t$, while $\boldsymbol{x}_{t, n} \in \mathcal{X}_t$ and $y_{t, n} \in \mathcal{Y}_t$ represent the sample and label elements, respectively. Consider a neural network model with a backbone $f_\theta$ parameterized by $\theta$, and an output layer $h_\psi$ parameterized by $\psi$. This model seeks to learn the projection from $\mathcal{X} = \bigcup_{t=1}^{T} \mathcal{X}_t$ to $\mathcal{Y} = \bigcup_{t=1}^{T} \mathcal{Y}_t$, aiming to predict the label $y = h_\psi(f_\theta(\boldsymbol{x})) \in \mathcal{Y}$ of an unseen test sample $\boldsymbol{x}$ drawn from previous tasks. The backbone function $f_\theta$ is assumed to be pre-trained with a substantial quantity of additional training samples external to each $\mathcal{D}_{t}$.
+There are commonly three distinct settings for continual learning \cite{van2019three}:
+task-, domain-, and class-incremental learning (TIL, DIL, and CIL). Specifically, $\mathcal{Y}_1,...,\mathcal{Y}_T$ are identical for DIL while disjoint for TIL and CIL. The task identity is provided for TIL at test time but is not available for DIL and CIL. Therefore, CIL is considered to be more representative and challenging in general.
+Of note, all elements of $\mathcal{D}_{t}$ are restricted to be available only when learning task $t$, i.e., the continual learning process is \emph{rehearsal-free} \cite{smith2022coda}.
+
+\iffalse
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\linewidth]{Conceptual_Model.jpg}
+\caption{Conceptual comparison of representative prompt-based approaches for continual learning. }
+\label{Conceptual_Model}
+\end{figure}
+\fi
+
+\textbf{Prompt-based approaches} for vision tasks further specify the backbone $f_\theta$ as a pre-trained vision transformer (ViT), where multiple consecutive multi-head self-attention (MSA) layers can transform an input sample into a sequence-like output representation $\boldsymbol{h} \in \mathbb{R}^{L_{\boldsymbol{h}} \times D}$ of sequence length $L_{\boldsymbol{h}}$ and embedding dimension $D$.
+The backbone parameters $\theta$ are typically frozen to obtain generalizable representations. A few prompt parameters $\boldsymbol{p} \in \mathbb{R}^{L_{\boldsymbol{p}} \times D}$ of sequence length $L_{\boldsymbol{p}}$ and embedding dimension $D$ are prepended to $\boldsymbol{h}$ to exploit the pre-trained knowledge adaptively. % as an extended representation
+Here we denote the input of the $l$-th MSA layer as $\boldsymbol{h}^{l} \in \mathbb{R}^{L_{\boldsymbol{h}^{l}} \times D}$, which consists of query $\boldsymbol{h}^{l}_Q$, key $\boldsymbol{h}^{l}_K$ and value $\boldsymbol{h}^{l}_V$, and denote the prompt as $\boldsymbol{p}^{l} \in \mathbb{R}^{L_{\boldsymbol{p}^{l}} \times D}$.
+For notation clarity, we take one MSA layer as an example and omit the layer label $l$ if not necessary.
+Then, the output of this MSA layer is given as
+\begin{small}
+\begin{equation}
+\begin{split}
+    {\rm{MSA}}(\boldsymbol{h}_Q, \boldsymbol{h}_K, \boldsymbol{h}_V) = {\rm{Concat}} (h_1, ..., h_m) W_O,\\
+\end{split}
+\end{equation}
+\begin{equation}
+\begin{split}
+    h_i = {\rm{Attention}} (\boldsymbol{h}_Q W_{Q,i}, \boldsymbol{h}_K W_{K,i}, \boldsymbol{h}_V W_{V,i}), i=1,...,m,
+\end{split}
+\end{equation}
+\end{small}
+where $W_O$, $W_{Q,i}$, $W_{K,i}$ and $W_{V,i}$ are projection matrices, $m$ is the number of heads, and $\boldsymbol{h}_Q = \boldsymbol{h}_K = \boldsymbol{h}_V$ in ViT. %a regular ViT backbone.
+As discussed in previous work \cite{wang2022dualprompt}, there are two major implementations of prompt-based methodologies, i.e., Prompt Tuning (ProT) \cite{lester2021power} and Prefix Tuning (PreT) \cite{li2021prefix}.
+Specifically, ProT prepends an identical $\boldsymbol{p}$ to $\boldsymbol{h}_Q$, $\boldsymbol{h}_K$ and $\boldsymbol{h}_V$:
+\begin{small}
+\begin{equation}
+    f_{{\rm{ProT}}} (\boldsymbol{p}, \boldsymbol{h}) = {\rm{MSA}}([\boldsymbol{p};\boldsymbol{h}_Q], [\boldsymbol{p};\boldsymbol{h}_K], [\boldsymbol{p};\boldsymbol{h}_V]),
+\end{equation}
+\end{small}
+where $[\cdot \, ; \cdot]$ denotes the concatenation operation along the dimension of sequence length, and the output in $\mathbb{R}^{(L_{\boldsymbol{h}}+L_{\boldsymbol{p}}) \times D}$ has increased dimensions.
+In contrast, PreT splits $\boldsymbol{p}$ into $\boldsymbol{p}_K \in \mathbb{R}^{L_{\boldsymbol{p}}/2 \times D}$ and $\boldsymbol{p}_V \in \mathbb{R}^{L_{\boldsymbol{p}}/2 \times D}$ only for $\boldsymbol{h}_K$ and $\boldsymbol{h}_V$, respectively:
+\begin{small}
+\begin{equation}
+    f_{{\rm{PreT}}} (\boldsymbol{p}, \boldsymbol{h}) = {\rm{MSA}}(\boldsymbol{h}_Q, [\boldsymbol{p}_K;\boldsymbol{h}_K], [\boldsymbol{p}_V;\boldsymbol{h}_V]),
+\end{equation}
+\end{small}
+where the output dimension remains the same as the input $\boldsymbol{h} \in \mathbb{R}^{L_{\boldsymbol{h}} \times D}$.
+As the training samples for each task are introduced sequentially, prompt-based continual learning needs to incorporate task-specific knowledge into prompt parameters while overcoming their catastrophic forgetting. The mainstream idea is to construct adaptive prompts for each task and then infer appropriate (combinations of) prompts at test time. %, which is similar to the discussion of model architectures for continual learning \cite{wang2023comprehensive} in terms of prompt parameters.
+Here we compare state-of-the-art approaches from these two aspects, demonstrated conceptually in Fig.~\ref{Conceptual_Model}:
+\textbf{L2P} \cite{wang2022learning_l2p} constructs a prompt pool $\boldsymbol{P} = \{\boldsymbol{p}_1, ..., \boldsymbol{p}_M\}$ potentially shared by all tasks where $M$ is the total number of prompts, and then instructs the last MSA layer in a ProT fashion. Each prompt $\boldsymbol{p}_i$ is associated to a learnable key $\boldsymbol{k}_i \in \mathbb{R}^{D}$, optimized by the cosine distance $\gamma(q(\boldsymbol{x}), \boldsymbol{k}_i)$ of the top-$N$ keys to a query function $q(\boldsymbol{x}) = f_{\theta}(\boldsymbol{x})[0]$ to incorporate knowledge. %(i.e., $\gamma(q(\boldsymbol{x}), \boldsymbol{k}_i)$). 
+Therefore, the most relevant keys and the corresponding prompts can be selected with uninstructed representations for inference.
+
+\begin{wrapfigure}{r}{0.62\textwidth}
+	\centering
+	\includegraphics[width=0.62\columnwidth]{Fig_1.png}
+	\caption{Illustration of prompt-based continual learning.} 
+	\label{Conceptual_Model}
+\end{wrapfigure}
+
+\textbf{DualPrompt} \cite{wang2022dualprompt} constructs task-sharing prompts $\boldsymbol{g}^{l}$ and task-specific prompts $\boldsymbol{e}^{l}_{t}$ to instruct different MSA layers in a PreT fashion. All $\boldsymbol{e}^{l}_{t}$ belonging to the same task is associated to a task-specific key $\boldsymbol{k}_t \in \mathbb{R}^{D}$, optimized by $\gamma(q(\boldsymbol{x}), \boldsymbol{k}_t)$, and the index of the best-matched key is selected for inference.
+
+\textbf{S-Prompt} \cite{wang2022sprompts} constructs only task-specific prompts $\boldsymbol{e}_{t}$ for each task, and adopts a similar ProT strategy as L2P to instruct the last MSA layer. The inference of task identity is achieved by a simple KNN strategy for the nearest task centroid. Unlike other methods, S-Prompt associates an exclusive output head $\psi_t$ to each task $t=1,...,T$.
+
+\textbf{CODA-Prompt} \cite{smith2022coda} exploits the prompt pool $\boldsymbol{P}$ by its weighted summation, i.e.,  $\boldsymbol{p} = \sum_{i=1}^{M} \alpha_i \boldsymbol{p}_i$, where $\alpha_i = \gamma(q(\boldsymbol{x}), \boldsymbol{k}_i)$ is the weighting factor, and adopts a similar PreT strategy as DualPrompt to instruct multiple MSA layers. The inference of $\alpha_i$ enables construction of adaptive prompts.
+
+
+\subsection{Empirical Study of Pre-Training Paradigms}\label{Sec32_Empirical_Study}
+
+Either explicitly or implicitly, the above prompt-based approaches all incorporate the knowledge of each task into prompt parameters and predict their identities from uninstructed representations. 
+To evaluate the impact of pre-training paradigms, we perform an empirical study with widely-used CIL benchmarks such as Split CIFAR-100 and Split ImageNet-R \cite{wang2022learning_l2p,wang2022dualprompt}.
+In addition to supervised pre-training of ImageNet-21K \cite{ridnik2021imagenet21k} (denoted as Sup-21K), we consider several powerful self-supervised models that release ViT checkpoints\footnote{iBOT currently achieves the first-place performance for self-supervised classification on ImageNet and releases checkpoints on both ImageNet-21K and -1K, while others only release checkpoints on ImageNet-1K.}, such as iBOT \cite{zhouimage}, DINO \cite{caron2021emerging} and MoCo v3 \cite{chen2021empirical}.
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=1\linewidth]{Empirical_Analysis_v2.jpg}
+    \caption{Empirical study of prompt-based continual learning under different pre-training paradigms.}
+\label{Empirical_Analysis}
+\end{figure}
+
+We carefully evaluate the official implementations of all baselines, in order to make the comparison as fair as possible. 
+We follow largely the training regimes of L2P \cite{wang2022learning_l2p} and DualPrompt \cite{wang2022dualprompt}, both of which are basically consistent.
+As S-Prompt \cite{wang2022sprompts} is initially designed for DIL, we slightly modify its implementation by inserting task-specific prompts into the same layers as DualPrompt (i.e., layers 1-5) in a PreT manner, so as to evaluate the impact of prompt architectures.
+The output layer retains multiple heads associated with the task identity (still denoted as S-Prompt), or a single head as with other baselines (denoted as S-Prompt++).
+CODA-Prompt \cite{smith2022coda} is officially implemented in a DualPrompt-like architecture but depends heavily on the use of a smaller learning rate with cosine decay.
+Here we present its performance with both default and reduced learning rates.
+  % with different self-supervised models.
+As shown in Fig.~\ref{Empirical_Analysis}, a, b, the above prompt-based approaches achieve outstanding performance under Sup-21K, where the use of task-specific prompts clearly outperforms task-sharing prompts (i.e., S-Prompt++ $\approx$ CODA-Prompt $>$ DualPrompt $>$ L2P) due to explicit avoidance of catastrophic forgetting.
+However, the four baselines suffer \textbf{significant performance degradation} under the more realistic self-supervised pre-training. 
+In particular, the performance differences between prompt architectures have become much smaller, suggesting that the task-specific and task-sharing knowledge are not well differentiated.  % (using the same learning rate)
+Besides, CODA-Prompt can generally achieve leading performance as a direct result of the learning rate (LR) reduction rather than the prompt architecture.
+
+We perform two additional experiments to demonstrate the \textbf{obscured sub-optimality}\footnote{
+The experiments in Fig.~\ref{Empirical_Analysis}, c, d employ the same prompt architecture and inference methodology as S-Prompt++ to explicitly demonstrate the impact of task specificity. In fact, the objective of continual learning is tantamount to optimizing the probability distribution on the left side of Eq.~(\ref{BayesTheorem}), which can be decomposed into the two probabilities on the right side corresponding to Fig.~\ref{Empirical_Analysis}, c, d, respectively. Therefore, such empirical analysis is representative for prompt-based continual learning from a theoretical perspective.}.
+First, we evaluate the CKA similarity of uninstructed and instructed representations by learning task-specific prompts (Fig.~\ref{Empirical_Analysis}, c).
+The CKA similarity of self-supervised pre-training is significantly higher, suggesting a greater difficulty for prompt parameters to incorporate task-specific knowledge. 
+Second, we evaluate the ability to predict task identity from uninstructed representations and task-specific keys, where self-supervised pre-training exhibits much lower accuracy (Fig.~\ref{Empirical_Analysis}, d).
+Interestingly, although only less than 40\% task identities are correctly predicted, S-Prompt++ can still achieve considerable (albeit sub-optimal) performance, owning to the compensation effects of using a single-head output layer (Fig.~\ref{Empirical_Analysis}, e). Together with the results in Fig.~\ref{Empirical_Analysis}, c, d, it is conceivable that using an ``incorrect'' prompt would not severely affect the instructed representations, which can still be correctly predicted in a well-balanced single-head output layer.
+In contrast, S-Prompt performs much worse than S-Prompt++, as its multi-head output layer undertakes all errors of task-identity inference.
+
+
+Theoretical Foundation and Our Approach
+
+
+In this section, we first present a theoretical analysis of the sufficient and necessary conditions for improving continual learning in the context of pre-training, and then present an innovative approach for prompt-based continual learning to achieve this objective.
+
+\subsection{Hierarchical Decomposition of Continual Learning Objective}\label{Sec41_Theory}
+For continual learning of sequentially arrived $\mathcal{D}_{t}$, $\mathcal{X}_{t}$ and $\mathcal{Y}_t$ are the domain and label of task $t$.
+ 
+Let $\mathcal{X}_t=\bigcup_{j}\mathcal{X}_{t,j}$ and $ \mathcal{Y}_t=\{\mathcal{Y}_{t,j}\}$, where $j \in \{1,...,|\mathcal{Y}_t|\}$ indicates the $j$-th class in task $t$.   
+Now assume we have a ground event denoted as $\mathcal{D} = \{\mathcal{D}_1, ..., \mathcal{D}_{t}\}$ and a pre-trained model $f_\theta$.
+For any sample $\boldsymbol{x} \in \bigcup_{k=1}^{t}\mathcal{X}_{k}$, a general goal of the CIL problem is to learn $P(\boldsymbol{x} \in \mathcal{X}_{i,j}|\mathcal{D},\theta)$, where $i\in\{1,...,t\}$ and $j \in \{1,...,|\mathcal{Y}_i|\}$.
+This can be decomposed into two probabilities, including task-identity inference (TII) and within-task prediction (WTP), denoted as 
+$P(\boldsymbol{x} \in \mathcal{X}_{i}|\mathcal{D},\theta)$ and
+$P(\boldsymbol{x} \in \mathcal{X}_{i,j}|\boldsymbol{x} \in \mathcal{X}_{i},\mathcal{D},\theta)$, respectively.
+Based on Bayes' theorem, we have 
+\begin{small}
+\begin{align}\label{BayesTheorem}
+   P(\boldsymbol{x} \in \mathcal{X}_{i,j}|\mathcal{D},\theta) = P(\boldsymbol{x} \in \mathcal{X}_{i,j}|\boldsymbol{x} \in \mathcal{X}_{i},\mathcal{D},\theta) P(\boldsymbol{x} \in \mathcal{X}_{i}|\mathcal{D},\theta).
+\end{align}
+\end{small}
+Let $\bar{i}\in \{1,...,t\}$ and $\bar{j} \in \{1,...,|\mathcal{Y}_i|\}$ be the ground truth of an $\boldsymbol{x}$ w.r.t. the task identity and within-task index. 
+Eq.~(\ref{BayesTheorem}) shows that if we can improve either the WTP performance $P(\boldsymbol{x} \in \mathcal{X}_{\bar{i},\bar{j}}|\boldsymbol{x} \in \mathcal{X}_{\bar{i}},\mathcal{D},\theta)$, the TII performance $P(\boldsymbol{x} \in \mathcal{X}_{\bar{i}}|\mathcal{D},\theta)$, or both, then the CIL performance $P(\boldsymbol{x} \in \mathcal{X}_{\bar{i},\bar{j}}|\mathcal{D},\theta)$ would be improved.
+However, such an improvement is limited since it is upper-bounded by WTP or TII.
+To further improve the CIL performance, we propose a hierarchical decomposition of its objective. 
+That is, besides the improvement of $P(\boldsymbol{x} \in \mathcal{X}_{\bar{i},\bar{j}}|\mathcal{D},\theta)$, we also need to improve the performance of task-adaptive prediction (TAP), denoted as $ P(\boldsymbol{x} \in \mathcal{X}^{y}|\mathcal{D},\theta)$, where $\mathcal{X}^{y}$ represents the domain of class $y$ in all previous tasks, and $y=\mathcal{Y}_{\bar{i},\bar{j}}$ is the ground truth label of $\boldsymbol{x}$.
+Then the final goal of CIL is formulated as a multi-objective optimization problem, i.e., $\max [P(\boldsymbol{x} \in \mathcal{X}_{\bar{i},\bar{j}}|\mathcal{D},\theta),P(\boldsymbol{x} \in \mathcal{X}^{y}|\mathcal{D},\theta)]$.
+Notice that the TII probability is a categorical distribution over all observed tasks $\{1:t\}$, while the TAP probability is over all observed classes $\bigcup_{k=1}^{t} \mathcal{Y}_k$.
+To resolve the problems above, we derive the sufficient and necessary conditions in the context of the widely-used cross-entropy loss. % as it is used in almost all supervised systems. 
+Specifically, we define 
+\begin{small}
+\begin{align}\label{H_WTP}
+   {H}_{\rm{WTP}}(\boldsymbol{x}) &= \mathcal{H}(\boldsymbol{1}_{\bar{j}},\{P(\boldsymbol{x} \in \mathcal{X}_{\bar{i},j}|\boldsymbol{x} \in \mathcal{X}_{\bar{i}},\mathcal{D},\theta)\}_j),\\
+    {H}_{\rm{TII}}(\boldsymbol{x}) &= \mathcal{H}(\boldsymbol{1}_{\bar{i}},\{P(\boldsymbol{x} \in \mathcal{X}_{i}|\mathcal{D},\theta)\}_{i}),\\
+   {H}_{\rm{TAP}}(\boldsymbol{x}) &= \mathcal{H}(\boldsymbol{1}_{\bar{c}}, \{P(\boldsymbol{x} \in \mathcal{X}^{c}|\mathcal{D},\theta)\}_{c} ),
+\end{align}
+\end{small}
+where ${H}_{\rm{WTP}}$, ${H}_{\rm{TII}}$, and ${H}_{\rm{TAP}}$ are the cross-entropy values of WTP, TII, and TAP, respectively.
+The operation $\mathcal{H}(p,q) \triangleq -\mathbb{E}_{p}[\log q]=-\sum_{i}p_i \log q_i$. $\boldsymbol{1}_{\cdot}$ is a one-hot encoding function.
+
+ 
+\begin{theorem}
+    \label{LossError1}
+    For continual learning with pre-training, 
+    if $ \mathbb{E}_{\boldsymbol{x}} [{H}_{\rm{WTP}}(\boldsymbol{x})] \leq \delta$, $\mathbb{E}_{\boldsymbol{x}} [{H}_{\rm{TII}}(\boldsymbol{x})] \leq \epsilon$, and $\mathbb{E}_{\boldsymbol{x}} [{H}_{\rm{TAP}}(\boldsymbol{x})] \leq \eta$, we have the loss error $\mathcal{L} \in [0, \max\{{\delta +\epsilon},\eta\}]$, regardless whether WTP, TII and TAP are trained together or separately.
+\end{theorem}
+With the use of cross-entropy, the continual learning performance tends to be better as the bounds are tightened.
+In Theorem~\ref{LossError1} we have shown that good performances of WTP, TII and TAP are sufficient to guarantee a good performance of CIL. 
+For completeness, we now study the necessary conditions of a well-performed CIL model in Theorem~\ref{LossError2}.
+\begin{theorem}
+    \label{LossError2}
+     For continual learning with pre-training, if the loss error $\mathcal{L}\leq \xi $, then there always exist (1) a WTP, s.t. ${H}_{\rm{WTP}} \leq \xi$; (2) a TII, s.t. ${H}_{\rm{TII}} \leq \xi$; and (3) a TAP, s.t. ${H}_{\rm{TAP}} \leq \xi$.
+\end{theorem}
+The above theorem suggests that if a good continual learning model is trained, then a good WTP, a good TII and a good TAP for sequential tasks are always implied.
+
+Besides, the paradigm of pre-training is indeed related to the performance of continual learning, because it can affect the distribution of representations from $f_{\theta}$, and further WTP, TII and TAP. Previous work has demonstrated that self-supervised representations tend to be more robust to parameter changes than supervised ones \cite{hu2021well,madaan2021representational,wang2023comprehensive}, which is beneficial for accumulating pre-trained knowledge (if applicable) but challenging for adapting to downstream tasks on a continual basis (see Fig.~\ref{Empirical_Analysis}, c, d). 
+
+\subsection{HiDe-Prompt for Prompt-Based Continual Learning}\label{Sec42_Method}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{Fig_3.png}
+\caption{Illustration of Hierarchical Decomposition (HiDe-)Prompt.} %\xx{A hierarchical decomposition of continual learning objective with pre-training}
+\label{Our_Proposal}
+\end{figure}
+
+Motivated by the above empirical and theoretical insights, we propose to optimize explicitly the hierarchical components (i.e., WTP, TII and TAP) for prompt-based continual learning, as shown in Fig.~\ref{Our_Proposal}.
+Our proposal stems from a particular advantage of pre-training, where the distributions of uninstructed and instructed representations can be effectively preserved through their statistical information. 
+~\ref{tsne_representation_sup_21k} and Fig.~\ref{tsne_representation_ibot21k}), we can naturally approximate them with Gaussian distributions.
+For generality, here we denote the approximated distributions of uninstructed and instructed representations as $\hat{\mathcal{G}}_c$ and $\mathcal{G}_c$ for each class $c \in \mathcal{Y}_i, i=1,...t-1$, respectively, and discuss their specific forms latter. % (its mean is further denoted as $\boldsymbol{\mu}_c$)
+First, we improve \textbf{WTP} through effective incorporation of task-specific knowledge. We construct an expandable prompt pool with only task-specific prompts $\boldsymbol{e}_{t}$ to incorporate the knowledge of $\mathcal{D}_{t}$, optimized by a cross-entropy (CE) loss for ${H}_{\rm{WTP}}$. % $\mathcal{L}_{{\rm{CE}}}(\boldsymbol{e}_{t}, \psi; \mathcal{D}_{t})$.
+The previous prompts $\boldsymbol{e}_{1}, ..., \boldsymbol{e}_{t-1}$ are frozen to avoid catastrophic forgetting.
+In order to transfer knowledge for learning each task effectively, we employ a \emph{prompt ensemble} (PE) strategy, where the current prompt is initialized by the last prompt $\boldsymbol{e}_{t} \leftarrow \boldsymbol{e}_{t-1}$ and then optimized with a weighted combination of all previous prompts $\boldsymbol{p}_{t} = \alpha \sum_{i=1}^{t-1} \boldsymbol{e}_{i} + (1-\alpha) \boldsymbol{e}_{t}$.
+$\alpha$ is a hyperparameter that controls the strength of inherited old knowledge to facilitate $\boldsymbol{p}_{t}$ in learning the current task. 
+Meanwhile, the instructed representations of $\boldsymbol{p}_{t}$, although allowing the new task to be performed well, may overlap with that of the old tasks and thus affect TAP. 
+To overcome this issue, we exploit the old-task statistics of instructed representations (collected by $f_{\theta}$ and $\boldsymbol{p}_{i}$ for $i=1,...,t-1$), where for classification we calculate the mean $\boldsymbol{\mu}_c$ of $\mathcal{G}_c$ for each class $c \in \mathcal{Y}_i$, and design a \emph{contrastive regularization} (CR):
+\begin{small}
+\begin{equation}
+ \mathcal{L}_{{\rm{CR}}}( \boldsymbol{p}_{t}) =  \sum_{\boldsymbol{h} \in \mathcal{H}_{t}}  % \frac{1}{|\mathcal{D}_{t}|}
+ \frac{1}{\sum_{i=1}^{t-1} |\mathcal{Y}_i|} \sum_{i=1}^{t-1} \sum_
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

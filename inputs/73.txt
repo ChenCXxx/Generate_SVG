@@ -1,0 +1,338 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Camera-based 3D object detection in unconstrained real-world scenes has drawn much attention over the past few years. 
+Early monocular 3D object detection methods \cite{mousavian20173d,DBLP:journals/corr/abs-1904-07850,DBLP:conf/iccv/Brazil019,DBLP:conf/iccv/SimonelliBPLK19, DBLP:conf/cvpr/KuPW19,FCOS3D, PGD}
+typically build their framework following the 2D object detection pipeline. The 3D location and attributes of objects are directly predicted from a single view image.
+Though these methods have achieved great progress, they are incapable of utilizing the geometric configuration of surrounding cameras and multi-view image correspondences, which are pivotal for the 3D position of objects in the real world.
+Moreover, adapting these methods to multi-view setting relies on sophisticated cross-camera post-processing, which further causes degraded efficiency and efficacy. To handle these problems, recent researchers \cite{DETR3D, BEVDet, BEVFormer, BEVDepth, PETR} propose to directly localize objects in 3D world space based on multi-view images, providing a new paradigm for vision-based 3D object detection.
+\begin{figure}[t!]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figures/figure1.pdf}
+	\caption{Motivation of MV2D. The 3D detector with fixed object queries (fixed queries means the queries are invariant for different inputs) might mislocate or ignore some objects (b), which are however successfully detected by a 2D detector (c). If generating object queries based on 2D detector, a 3D detector can produce more precise locations (d).}
+	\label{fig:figure1}
+\end{figure}
+According to the representation of fused features, current multi-view 3D object detection methods can be mainly divided into two streams: dense 3D methods and sparse query methods. 
+Concretely, dense 3D methods render multi-view features into 3D space, such as Bird’s-Eye-View~(BEV) feature space \cite{BEVDet, BEVDepth, BEVFormer, PolarDETR} or voxel feature space \cite{ImVoxelNet, UVTR}.
+However, since the computational costs are squarely proportional to the range of 3D space, they inevitably cannot scale up to large-scale scenarios \cite{FSD}.
+Alternatively, query-based methods \cite{DETR3D, PETR} adopt learnable object queries to aggregate features from multi-view images and predict object bounding boxes based on query features.
+Although fixed number of object queries avoid computational cost exploding with 3D space, the query number and position relied on empirical prior may cause false positive or undetected objects in dynamic scenarios.
+In this paper, we seek a more reliable way to localize objects. The motivation comes from the rapid developments of 2D object detection methods \cite{RCNN, FasterRCNN, lin2017feature, FCOS} which can generate high-quality 2D bounding boxes for object localization in image space.
+One natural idea is to turn each 2D detection into one reference for the following 3D detection task. In this way, we design Multi-View 2D Objects guided 3D Object Detector (MV2D), which \emph{could lift any 2D detector to 3D detection, and the 3D detector could harvest all the advancements from 2D detection field.}
+Given the input multi-view images, we first obtain 2D detection results from a 2D detector and then generate a dynamic object query for each 2D bounding box.
+Instead of aggregating features from all regions in the multi-view inputs, one object query is forced to focus on one specific object.
+To this end, we propose an efficient relevant feature selection method based on the 2D detection results and camera configurations.
+Then the dynamically generated object queries, together with their 3D position embedded relevant features, are input to a transformer decoder with sparse cross-attention layers.
+Lastly, the updated object queries predict the final 3D bounding boxes.
+
+Thanks to the powerful 2D detection performances, the dynamic queries generated from 2D detection results can cover most objects that appeared in the images, leading to higher precision and recall, especially for small and distant objects compared with fixed queries. 
+As shown in Figure~\ref{fig:figure1}, 
+the objects that a fixed query-based 3D detector might miss can be recalled in MV2D with the help of a 2D object detector.
+Theoretically, since 3D object queries stem from 2D detection results, our method can benefit from all off-the-shelf excellent 2D detector improvements.
+Our contributions can be summarized as: 
+\begin{itemize}
+    \item We propose a framework MV2D that can lift any 2D object detector to multi-view 3D object detection. 
+    \item We demonstrate that dynamic object queries and aggregation from certain relevant regions in multi-view images based on 2D detection can boost 3D detection performance.
+    \item We evaluate MV2D on the standard nuScenes dataset, and it achieves state-of-the-art performance.
+\end{itemize}
+\begin{figure*}[t!]
+	\centering
+	\includegraphics[width=1.0\textwidth]{figures/framework.pdf}
+	\caption{The framework of the proposed MV2D.
+	Given the input multi-view images, image feature maps are extracted by a feature extractor. Meanwhile, a 2D detector is used to obtain per-view 2D detection results. 
+ Dynamic query generator takes object features, 2D detection boxes and camera parameters as input to initialize a set of object queries. RoI-Align is applied to the object regions to obtain the fixed length object features for query generator.
+ All the features fallen in the object regions are decorated with  3D PE (3D position embedding)~\cite{PETR}, then the object queries and object features are input to a decoder to update query features. Compared to  vallina transformer decoder, the decoder in MV2D employs sparse cross attention where each object query only interacts with its relevant features. 
+	Lastly, a prediction head is applied to the updated object queries to generate 3D detection results.
+}
+	\label{fig:framework}
+\end{figure*}
+
+
+Related Work
+\label{sec:related_work}
+\subsection{2D Object Detection}
+2D object detection aims to predict and localize objects in 2D images, which is a fundamental problem in computer vision.
+The RCNN series~\cite{RCNN, FastRCNN, FasterRCNN, lin2017feature} propose a two-stage pipeline for 2D object detection. 
+These methods first generate a set of region proposals likely to contain objects in the image, then make a second stage decision on the object classification and bounding box regression.
+Another group of researchers investigates to detect objects in a single-stage pipeline~\cite{YOLO, FCOS, RetinaNet}, aiming to provide faster detectors for deployment.
+Recently, DETR~\cite{DETR} introduces a transformer encoder-decoder architecture into 2D object detection and formulates object detection as a set prediction problem. In DETR, a set of learnable object queries are adopted to interact with image features and are responsible for detecting objects.
+Deformable DETR~\cite{Deformable-DETR} improves DETR by introducing multi-scale deformable attention. Besides, it transfers the vanilla DETR into a two-stage framework, where region proposals are first generated based on encoder features and then sent to the decoder as object queries for further refinement. 
+Efficient DETR~\cite{efficientdetr} conducts research on initializing queries for 2D detection, but it does not investigate how to transfer and tailor this initialization to 3D space.
+\subsection{Vision-based 3D Object Detection}
+The goal of vision-based 3D object detection is to predict 3D bounding boxes from camera images.
+Many previous works~\cite{FCOS3D, DBLP:conf/cvpr/KuPW19, DBLP:conf/iccv/Brazil019, DBLP:conf/iccv/ParkAG0G21, DBLP:conf/iccv/SimonelliBPLK19, PGD} perform the task based on single-view image setting.
+These methods mostly focus on instance depth estimation and use an extra depth prediction module to complement 2D detectors on depth information.
+However, when dealing with multi-view images surrounding the ego vehicle, these methods need to detect objects from each view and project them to the same 3D space with cumbersome NMS post-processing to merge results.
+
+Recently, some works attempt to directly detect objects in 3D space from multi-view images. 
+One branch of these methods lift 2D image into 3D space, then conduct detection based on the 3D representations.
+ImVoxelNet~\cite{ImVoxelNet} builds a 3D voxelized space and samples image features from multi-view to obtain the voxel representation. BEVFormer~\cite{BEVFormer} leverages dense BEV queries to project and aggregate features from multi-view images by deformable attention~\cite{Deformable-DETR}.
+PolarFormer~\cite{jiang2022polarformer} introduces the Polar representation to model BEV space.
+BEVDet and BEVDepth ~\cite{BEVDet, BEVDepth} adopt the Lift-Splat module~\cite{LSS} to transform multi-view image features into the BEV representation based on the predicted depth distribution.
+Although such 3D space representations are conducive to unifying multi-view images,
+the memory consumption and computational cost would increase with the enlarging of the detection range in 3D space~\cite{FSD}.
+
+Another group of works adopts learnable object queries to aggregate image features and predict objects following DETR~\cite{DETR}.
+DETR3D~\cite{DETR3D} generates 3D reference points from object queries and projects them to multi-camera images by camera parameters. Then the query features are refined by the corresponding point features sampling from images.
+In contrast to establishing fixed mapping through 3D-to-2D query projecting, some methods learn the flexible mapping via attention mechanisms~\cite{CVT, PETR}.
+PETR series~\cite{PETR, petrv2} introduce 3D position-aware image features and learns the flexible mapping between query and image features by global cross-attention.
+Nonetheless, these approaches usually require dense object queries distributed in 3D space to ensure sufficient recall of objects. 
+
+In this paper, we propose a 2D objects guided framework for multi-view 3D object detection. Based on 2D detectors, our method can count on dynamic queries to recall the objects and eliminate the interference of noises and distractors.
+
+
+Method
+
+\subsection{Overview}
+
+The overall pipeline of MV2D is shown in Figure~\ref{fig:framework}.
+Given $N$ multi-view images $\mathcal{I} = \{\mathbf{I}_v \mid 0\leq v < N\}$, image feature maps $\mathcal{F} = \{\mathbf{F}_v \mid 0 \leq v< N\}$ are first extracted from the input images using a backbone network, where $\mathbf{F}_v \in \mathbb{R}^{H^{f} \times W^{f} \times C}$ is the extracted feature map from the $v$-th image. 
+To get 2D object detection, a 2D object detector, i.e., Faster R-CNN~\cite{FasterRCNN}, is applied to all the input images, resulting in a set of 2D object bounding boxes $\mathcal{B} = \{\mathbf{B}_v \mid 0\leq v < N\}$, where $\mathbf{B}_{v} \in \mathbb{R}^{M_v \times 4}$ represents the predicted 2D bounding boxes in the $v$-th image and $M_v$ is the number of detected boxes. 
+In practice, the weights of the backbone of 2D detector can also be used for subsequent feature extraction.
+ 
+Different from common methods in multi-view 3D object detection which adopt fixed object queries across the whole dataset~\cite{DETR3D,PETR}, MV2D generates object queries conditioned on the input multi-view images.
+Given the predicted 2D bounding boxes and extracted image features, MV2D employs RoI-Align~\cite{MaskRCNN} to extract fixed length object features.
+Then the object features together with corresponding bounding boxes and camera parameters are input to the dynamic object query generator to produce object queries.
+For each object query, relevant image features in multi-view images are selected based on 2D detection results and camera parameters through a relevant feature selection module. 
+Then the object queries interact with each other and integrate information from relevant object features iteratively through transformer decoder layers~\cite{vaswani2017attention}. Finally, a simple feed-forward network (FFN) head is used to generate 3D object predictions with updated features.  
+
+
+\subsection{Dynamic Object Query Generation}
+\label{sec:query_generator}
+With the help of an effective 2D object detector, the object existences are well demonstrated and the object locations are constrained within certain image regions, thus providing valuable priors for localizing objects in 3D space. 
+
+To generate object queries from 2D detection, we propose a dynamic query generator as in Figure~\ref{fig:query_generator}. The dynamic query generator derives a 3D reference point $\mathbf{p}_{ref} \in \mathbb{R}^{3}$ in 3D world space for each RoI. Then the object query is generated from $\mathbf{p}_{ref}$ by a positional encoding layer~\cite{vaswani2017attention}.
+
+Specifically, given the 2D object detection results $\mathcal{B}$ and image feature maps $\mathcal{F}$ from all the images, we first extract object RoI features $\mathcal{O}$ through RoI-Align, where $\mathbf{O}_v \in \mathbb{R}^{M_v \times H^{roi} \times W^{roi} \times C}$ are the RoI features corresponding to 2D object bounding boxes $\mathbf{B}_v$:
+\begin{equation}
+    \mathbf{O}_v = \text{RoI-Align}(\mathbf{F}_v, \mathbf{B}_v), \quad  0 \leq v < N.
+\end{equation}
+The RoI features $\mathbf{O}_v$ contain sufficient object appearance information to infer the object center locations in image space.
+However, further estimating the object depths directly from RoI features is difficult. As the object region in original image space is rescaling into a fixed sized RoI, the geometric information contained in original images is missed.
+
+\begin{figure}[t!]
+	\centering
+	\includegraphics[width=0.46\textwidth]{figures/query_generator.pdf}
+	\caption{Dynamic object query generator.}
+	\label{fig:query_generator}
+\end{figure}
+
+Taking this into consideration, we apply equivalent camera intrinsic transformation to each RoI, such that the rescaling operation conducted on different RoIs is equivalent to perspective projection with different camera parameters. 
+Thus a point in the RoI coordinate system can be transformed into 3D world space with equivalent camera intrinsic:
+\begin{equation}
+    \mathbf{p}_{ref} = [\mathbf{R}|\mathbf{t}]^{-1} (\mathbf{K}_{v}^i)^{-1}\  \mathbf{p}_{v}^i,
+    \label{equ:coordinate_transformation}
+\end{equation}
+where $\mathbf{p}_{v}^i\in \mathbb{R}^4$ (homogeneous coordinate) represents the 2.5D point in RoI coordinate system, $\mathbf{p}_{ref}\in \mathbb{R}^4$ represents the point in 3D world space, $\mathbf{K}_{v}^i$ is the equivalent camera intrinsic of that RoI and $[\mathbf{R}|\mathbf{t}]$ is the camera extrinsic.
+
+Denote the RoI size is $H^{roi} \times W^{roi}$ (e.g., $7\times7$), the $i$-th 2D object bounding box in the $v$-th view is $\mathbf{B}_v^i=(x_{min}^i,y_{min}^i,x_{max}^i, y_{max}^i)$,
+and the original camera intrinsic matrix is:
+\begin{equation}
+\mathbf{K}_v =
+{\small
+\begin{bmatrix}
+    f_x  & 0 & o_x &  0\\
+    0 & f_y & o_y & 0\\
+    0 & 0 & 1 & 0 \\
+    0 & 0 & 0 & 1
+\end{bmatrix}}.
+\end{equation}
+The equivalent camera intrinsic for $i$-th RoI can be formulated as:
+\begin{equation}
+    \mathbf{K}_{v}^i = 
+    {\small
+    \begin{bmatrix}
+        f_x * r_x & 0 & (o_x-x_{min}^i)*r_x & 0\\
+        0 & f_y * r_y & (o_y-y_{min}^i)*r_y & 0\\
+        0 & 0 & 1 & 0 \\
+        0 & 0 & 0 & 1
+    \end{bmatrix}}
+    ,
+\end{equation}
+where $r_x = W^{roi} / (x_{max}^i - x_{min}^i), r_y = H^{roi} / (y_{max}^i - y_{min}^i)$.
+
+Since the equivalent camera intrinsic matrix contains the geometric property of the camera and object, we adopt a small network to implicitly encode the object location $\mathbf{p}_{v}^i \in \mathbb{R}^4$ based on the RoI feature $\mathbf{o}_v^i$ and the equivalent camera intrinsic $\mathbf{K}_{v}^i$:
+\begin{equation}
+    \mathbf{p}_{v}^i = \mathcal{H}(\text{MLP}(\text{Pool}(\text{Conv}(\mathbf{o}_v^i));\mathbf{K}_v^i)),
+\end{equation}
+where $(;)$ means feature concatenation and $\mathcal{H(\cdot)}$ represents homogeneous transformation.
+
+The implicitly encoded object location $\mathbf{p}_{v}^i$, which can be seen as the 3D object location in RoI coordinate system, is then transformed into 3D world space using equivalent camera intrinsic and camera extrinsic as in Equation~\ref{equ:coordinate_transformation}. Consequently, the transformed 3D location serves as reference point $\mathbf{p}_{ref}$ for localizing objects in 3D world space.
+
+By this transformation, MV2D generates a set of dynamic reference points $\mathcal{P}_{ref}=\{\mathbf{P}_{ref, v} \in \mathbb{R}^{M_v \times 3 } \mid 0\leq v < N\}$ based on 2D detections and camera configurations. 
+These reference points are then passed through a positional encoding layer~\cite{vaswani2017attention} to
+initialize a set of object queries $\mathcal{Q}=\{{\mathbf{Q}_v \in \mathbb{R}^{M_v \times C}} \mid 0\leq v < N\}$. Concretely, each object query $\mathbf{q}$ is obtained by:
+
+\begin{align}
+&\mathbf{q}=\text{Linear}(PE), \\
+&PE_{[6i:6i+3]}= \sin(\mathbf{p}_{ref}/10000^{2i/C}), 0\leq i < C/2, \\
+&PE_{[6i+3:6i+6]}=\cos(\mathbf{p}_{ref}/10000^{2i/C}),0\leq i < C/2.
+ \end{align}
+
+
+\subsection{Relevant Object Feature Selection}
+\label{sec:correlated_feature_selection}
+Each object is only captured in a sub-region within the multi-view images.
+By focusing on the relevant region w.r.t a target object, we can eliminate the distractors and noises that may hinder the object localization performance.  
+
+To this end, we propose to select relevant features for each object query's updating. 
+Since 2D object detectors can predict convincing 2D object proposals, 
+the detected object bounding boxes imply which region contains the most distinctive information about an object. So we consider two parts of the relevant features of an object: (1) the 2D bounding box $\mathbf{b}_v^i$ from where the object query is generated; (2) the bounding boxes in other views that correspond to $\mathbf{b}_v^i$. 
+
+\begin{figure}[t!]
+	\centering
+	\includegraphics[width=0.46\textwidth]{figures/correlated_feature_selection.pdf}
+	\caption{Illustration of relevant region selection. Each query box generates a discretized camera frustum from 3D meshgrid. The camera frustum is then projected to another view's pixel coordinate to calculate a minimum bounding box. Then the relevant box is selected based on the overlap with the minimum bounding box.}
+	\label{fig:correlated_feature_selection}
+\end{figure}
+
+In this paper, we develop an efficient method to associate the bounding boxes in other views
+for a given query.
+As shown in Figure~\ref{fig:correlated_feature_selection}, we create a 3D meshgrid $\mathbf{G}\in \mathbb{R}^{W^{roi}\times H^{roi}\times D \times 4}$ for each RoI. We denote $\mathbf{g}_{x,y,z} = (x \times d_z, y \times d_z, d_z, 1)$ as each point in the meshgrid, where $(x, y)$ is the coordinate in the RoI, $d_z \in \{d_0, d_1,\ldots, d_{D-1}\}$ is a set of predifined depth values.
+The meshgrid of RoI $\mathbf{b}_v^i$ is transformed into the coordinate system of the $w$-th view:
+\begin{equation}
+    \mathbf{g}_{v\rightarrow w;x,y,z}^i = \mathbf{K}_w\mathbf{T}_{v\rightarrow w}(\mathbf{K}_v^i)^{-1}\mathbf{g}_{x,y,z},
+\end{equation}
+where $\mathbf{g}_{v\rightarrow w;x,y,z}^i$ is the transformed meshgrid point in the $w$-th view and $\mathbf{T}_{v\rightarrow w}$ is the coordinate transformation matrix from the $v$-th view to the $w$-th view.
+Then the minimum bounding box $\mathbf{b}_{v\rightarrow w}^i$ for the transformed meshgrid $\mathbf{G}_{v\rightarrow w}^i$  can serve as guidance to find the relevant foreground regions for $\mathbf{b}_v^i$.
+In this paper, we consider 2 kinds of rules, ``top1 IoU'' and ``all overlapped'', to select relevant foreground regions $\mathcal{R}_v^i$ for $\mathbf{b}_v^i$ from  other views.
+\textbf{Top1 IoU:}  the boxes that have the highest Intersection-over-Union (IoU) with $\mathbf{b}_{v\rightarrow w}^i$ (if greater than 0) are selected as relevant regions for $\mathbf{b}_v^i$:
+\begin{equation}
+    \mathcal{R}_v^i = \left\{
+    \mathop{\arg\max}\limits_{\mathbf{b}_w^j \in \mathbf{B}_w} \text{IoU}(\mathbf{b}_{v\rightarrow w}^i, \mathbf{b}_w^j )
+    |v\neq w\right\}.
+\end{equation}
+
+\textbf{All overlapped:} all the detected boxes that has overlap with  $\mathbf{b}_{v\rightarrow w}^i$ are selected as relevant boxes:
+\begin{equation}
+    \mathcal{R}_v^i  = \left\{
+    \mathbf{b}_w^j| 
+    \text{IoU}(\mathbf{b}_{v\rightarrow w}^i, \mathbf{b}_w^j ) > 0, v\neq w
+    \right\}.
+\end{equation}
+
+Then, all the image features that fall into the region of $\mathbf{b}_v^i$ and $\mathcal{R}_v^i$ are regarded as relevant features and will be adopted to update object query $\mathbf{q}_v^i$. 
+
+\begin{table*}[t]
+\begin{center}
+\setlength{\tabcolsep}{0.95mm}
+\begin{tabular}{l | c c | c c | c c c c c}
+        \toprule[1.5pt]
+		Method & Backbone & Resolution & NDS$\uparrow$ & mAP$\uparrow$ & mATE$\downarrow$ & mASE$\downarrow$ & mAOE$\downarrow$ & mAVE$\downarrow$ & mAAE$\downarrow$ \\
+		\midrule
+		DETR3D~\cite{DETR3D} & ResNet-50 & 1600 $\times$ 900 & 0.373 & 0.302 & 0.811 & 0.282 & 0.493 & 0.979 & 0.212\\
+        PETR~\cite{PETR} & ResNet-50 & 1408 $\times$ 512 & 0.403 & 0.339 & 0.748 & 0.273 & 0.539 & 0.907 & 0.203\\
+        PETRv2~\cite{petrv2} & ResNet-50 & 1600 $\times$ 640 & 0.494 &0.398 &0.690 &0.273 &0.467 &0.424 &0.195\\
+        MV2D-S$\ddag$ & ResNet-50 & 1408 $\times$ 512 & 0.440 & 0.398 &  0.665&  0.269&  0.507&  0.946& 0.203\\
+        MV2D-T$\ddag$ & ResNet-50 & 1600 $\times$ 640 & \textbf{0.546}&  \textbf{0.459} & \textbf{0.613} & \textbf{0.265} & \textbf{0.388} & \textbf{0.385} & \textbf{0.179}\\ 
+        
+		\midrule
+		FCOS3D$\dag$~\cite{FCOS3D} & ResNet-101 & 1600 $\times$ 900 & 0.415 & 0.343 & 0.725 & 0.263 & 0.422 & 1.292 & \textbf{0.153}\\
+        PGD$\dag$~\cite{PGD} & ResNet-101 & 1600 $\times$ 900 & 0.428 & 0.369 & 0.683 & \textbf{0.260} & 0.439 & 1.268 & 0.185\\
+		DETR3D$\dag$~\cite{DETR3D} & ResNet-101 & 1600 $\times$ 900 & 0.425 & 0.346 & 0.773 & 0.268 & 0.383 & 0.842 & 0.216\\
+        BEVFormer-S$\dag$~\cite{BEVFormer} & ResNet-101 & 1600 $\times$ 900 & 0.448 & 0.375 & 0.725 & 0.272 & 0.391 & 0.802 & 0.200\\
+        PETR$\dag$~\cite{PETR} & ResNet-101 & 1600 $\times$ 900 & 0.442 & 0.370 & 0.711 & 0.267 & 0.383 & 0.865 & 0.201\\
+        BEVFormer~\cite{BEVFormer}$\dag$& ResNet-101 & 1600 $\times$ 900 & 0.517&0.416 & 0.673 &0.274& 0.372 &0.394 &0.198\\
+        PolarFormer~\cite{jiang2022polarformer}$\dag$& ResNet-101 & 1600 $\times$ 900 & 0.528 & 0.432 & 0.648 &0.270 &0.348 &0.409 &0.201\\
+        PETRv2$\dag$~\cite{petrv2}& ResNet-101 & 1600 $\times$ 640 &0.524& 0.421& 0.681 &0.267 &0.357 &0.377& 0.186\\
+        MV2D-S$\ddag$ & ResNet-101 & 1600 $\times$ 640 & 0.470 & 0.424 &  0.654&  0.267&  0.416&  0.888& 0.200\\
+        MV2D-T$\ddag$ & ResNet-101 & 1600 $\times$ 640 & \textbf{0.561} & \textbf{0.471} & \textbf{0.593} &0.262 &\textbf{0.340} &\textbf{0.368} &0.184\\
+        
+		\bottomrule[1.5pt]
+	\end{tabular}
+\caption{
+\textbf{3D object detection results on nuScenes \texttt{val} set}. $\dag$: the model is initialized from FCOS3D. $\ddag$: the model is pretrained on nuImages. 
+}
+\label{tab:val_set}
+\end{center}
+\end{table*}
+
+\subsection{Decoder with Sparse Cross Attention}
+The generated object queries interact with their relevant features through a DETR-like transformer decoder~\cite{DETR, PETR}.
+3D position embedding is provided for the relevant features following PETR~\cite{PETR}. 
+The difference in our decoder lies in the sparse cross attention layer as shown in Figure~\ref{fig:framework}.
+Instead of using the whole multi-view feature maps to construct keys and values shared by all the queries, MV2D only uses the relevant features to construct their own keys and values for each object query. This design not only contributes a compact set of keys and values% ({\small$[N\times H^{feat}\times W^{feat}]\rightarrow[N\times H^{roi}\times W^{roi}]$})
+, but also prevents the object queries from being interfered by background noises and distractors.  
+Lastly, we apply classification head and regression head composed of MLPs  to the updated object queries to predict the final 3D object detection results.
+Note that in 3D object detection, the predicted object center $\hat{\mathbf{b}}_{center}$ is composed of $\mathbf{p}_{ref}$ and offset predicted by query $\hat{\mathbf{b}}_{offset}$, i.e., $\hat{\mathbf{b}}_{center}=\mathbf{p}_{ref}+\hat{\mathbf{b}}_{offset}$. 
+
+\subsection{Loss Functions}
+In our implementation, the 2D detector and the 3D detector are jointly trained in MV2D, with the backbone weights shared across both detectors.
+The 2D object detection loss $\mathcal{L}_{2d}$ is directly taken from 2D detectors.
+As for 3D object detection loss, we follow previous works~\cite{DETR3D, PETR} to use Hungarian algorithm~\cite{kuhn1955hungarian} for label assignment. Focal loss~\cite{RetinaNet} and $L_1$ loss are adopted for classification and box regression respectively. The 3D object detection loss can be summarized as:
+\begin{equation}
+    \mathcal{L}_{3d} = \lambda_{cls3d} \cdot \mathcal{L}_{cls3d} + \mathcal{L}_{reg3d}.
+\end{equation}
+The overall loss function of MV2D is:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{2d} + \lambda_{3d} \cdot \mathcal{L}_{3d},
+\end{equation}
+where $\lambda_{3d}$ is the weight term to balance 2D detection and 3D detection losses, set to $0.1$ in our experiments.
+\subsection{Multi-Frame Input}
+By considering all the input images  (whether from the same timestamp or not) as  camera views with different extrinsic matrices, MV2D can deal with multi-frame input without modification on the pipeline. 
+The object queries not only interact with the relevant object features from the same timestamp,  but also the relevant object features from other timestamps. The relevant object feature selection keeps the same as described in Section~\ref{sec:correlated_feature_selection}.
+
+\begin{table*}[t!]
+\begin{center}
+\setlength{\tabcolsep}{1.20mm}
+\begin{tabular}{l |c |c c| c c c c c c }
+\toprule[1.5pt]
+Method & Backbone & NDS$\uparrow$  & mAP$\uparrow$  & mATE$\downarrow$     & mASE$\downarrow$     & mAOE$\downarrow$ & mAVE$\downarrow$ & mAAE$\downarrow$ \\
+\midrule
+
+FCOS3D$\dag$~\cite{FCOS3D}  & ResNet-101 & 0.428 & 0.358 & 0.690 & 0.249 & 0.452 & 1.434 & 0.124 \\
+PGD$\dag$~\cite{PGD} &  ResNet-101 & 0.448 & 0.386 & 0.626 & \textbf{0.245} & 0.451 & 1.509 & 0.127 \\
+BEVFormer$\dag$~\cite{BEVFormer} & ResNet-101 & 0.535 &0.445 &0.631 &0.257 &0.405 &0.435 &0.143 \\
+PolarFormer$\dag$~\cite{jiang2022polarformer} & ResNet-101 & 0.543 &0.457 & 0.612 & 0.257 & 0.392 &0.467 & 0.129\\
+PETRv2$\dag$~\cite{petrv2} & ResNet-101 & 0.553 &0.456& 0.601 &0.249& 0.391 &\textbf{0.382} &0.123 \\
+ MV2D-T $\ddag$ & ResNet-101 & \textbf{0.573} &\textbf{0.483}&\textbf{0.567}&0.249&\textbf{0.359}&0.395&\textbf{0.116}\\
+\midrule
+
+BEVDet~\cite{BEVDet} & Swin-Base & 0.488 & 0.424 & 0.524 & 0.242 & 0.373 & 0.950 & 0.148\\
+M2BEV$\ddag$~\cite{M2BEV} & ResNeXt-101 & 0.474 & 0.429 & 0.583 &0.254 &0.376 & 1.053 & 0.190\\
+DETR3D$\S$~\cite{DETR3D} & V2-99 & 0.479 & 0.412 & 0.641 & 0.255 & 0.394 & 0.845 & 0.133\\
+BEVDet4D\cite{huang2022bevdet4d}  & Swin-Base & 0.569 &0.451& \textbf{0.511}& \textbf{0.241}& 0.386& \textbf{0.301} &0.121 \\
+BEVFormer$\S$~\cite{BEVFormer} & V2-99 & 0.569& 0.481 &0.582 &0.256& 0.375& 0.378 &0.126\\
+PolarFormer$\S$~\cite{jiang2022polarformer} & V2-99 & 0.572& 0.493 &0.556 &0.256& 0.364& 0.440 &0.127\\
+PETRv2$\S$~\cite{PETR} & V2-99 & 0.582 &0.490 &0.561& 0.243& 0.361 &0.343& \textbf{0.120}\\
+MV2D-T$\S$ &V2-99& \textbf{0.596} & \textbf{0.511} & 0.525 &0.243 &\textbf{0.357} &0.357 & \textbf{0.120}\\ 
+\bottomrule[1.5pt]
+\end{tabular}
+\caption{
+\textbf{3D detection results on nuScenes \texttt{test} set}.
+$\dag$: the model is initialized from FCOS3D. 
+$\ddag$: the model is pretrained on nuImages. 
+$\S$: the model is initialized from DD3D.
+}
+\label{tab:test_set}
+\end{center}
+\end{table*}
+
+
+Experiments
+\label{sec:experiments}
+\subsection{Datasets and Metrics}
+We validate the effectiveness of MV2D on the large-scale nuScenes dataset~\cite{nuscenes2019}.
+NuScenes contains 1000 driving sequences, which are divided into 700 samples for training, 150 samples for validation, and 150 samples for testing, respectively.
+Each sequence is approximately 20-second long, including annotated 3D bounding boxes from 10 categories of sampled key frames.
+Each sample consists of $6$ surround-view images with $1600 \times 900$ resolution, which provide $360^{\circ}$ horizontal FOV in total. We submit \textit{test} set results to the online server for official evaluation. Other experiments are based on the \textit{val} set.
+
+
+\subsection{Implementation Details}
+\label{sec:implementation_details}
+
+\textbf{Training and evaluation.}
+All the models are trained using AdamW~\cite{DBLP:conf/iclr/LoshchilovH19} optimizer with a weight decay of $0.01$.
+Cosine annealing policy~\cite{loshchilov2016sgdr} is adopted and the initial learning rate is set to $2 \times 10^{-4}$.
+Since MV2D generates object queries from 2D detection results, we pretrain the 2D detectors on nuImages~\cite{nuscenes2019} to provide appropriate initialization. Since nuScenes dataset does not provide 2D bounding box annotations, we generate the box labels from 3D bounding boxes following \cite{M2BEV}. We employ image-space augmentation (e.g., gridmask~\cite{chen2020gridmask}, random flip, crop, and resize) and BEV-space augmentation~\cite{BEVDet} during training.
+The models are trained for 72 epochs without CBGS~\cite{zhu2019class} in comparison with state-of-the-arts.
+No test time augmentation is used during inference.
+We denote MV2D-S and MV2D-T as the models without and with multi-frame input respectively. For MV2D-T, we sample two frames from different timestamps with the interval of $15T (T\approx 0.083s)$ in the inference. We use denoise training for MV2D-T following PETRv2~\cite{petrv2} for fair comparison.
+Our implementation is based o
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

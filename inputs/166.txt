@@ -1,0 +1,291 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Recent deep learning models tend to grow deeper and wider for ultimate performance~\citep{he2016deep, xie2017aggregated,li2019selective}. However, with the limitations of computational and memory resources, such huge models are clumsy and inefficient to deploy on edge devices. As a friendly solution, knowledge distillation (KD) \citep{hinton2015distilling, romero2014fitnets} has been proposed to transfer knowledge in the heavy model (teacher) to a small model (student). Nevertheless, applying KD on dense prediction tasks such as object detection and semantic segmentation sometimes cannot achieve significant improvements as expected. For example, Fitnet~\citep{romero2014fitnets} mimics the feature maps of teacher element-wisely but it has only minor improvement in object detection\footnote{Fitnet~\citep{romero2014fitnets} improves \textit{Faster RCNN-R50} by only 0.5\%, while has no gain on \textit{RetinaNet-R50} (see Table~\ref{tab:det}).}. 
+
+Therefore, feature reconstruction for all pixels may not be a good option for dense prediction, since not every pixel contributes equally to the performance. 
+Many followups~\citep{li2017mimicking, wang2019distilling, sun2020distilling, guo2021distilling} thus dedicated to show that distillation on sampled valuable regions could achieve noticeable improvements over the simple baseline methods. For example, Mimicking~\citep{li2017mimicking} distills the positive regions proposed by region proposal network (RPN) of the student; FGFI~\citep{wang2019distilling} and TADF~\citep{sun2020distilling} imitate valuable regions near the foreground boxes; Defeat~\citep{guo2021distilling} uses ground-truth bounding boxes to balance the loss weights of foreground and background distillations; GID~\citep{dai2021general} selects valuable regions according to the outputs of teacher and student. These methods all rely on the priors of bounding boxes; however, \textit{are all pixels inside the bounding boxes necessarily valuable for distillation?}
+
+The answer might be negative. As shown in Figure~\ref{fig:vis_mask}, the activated regions inside each object box are much smaller than the boxes. Also, different layers, even different strides of features in FPN, have different regions of interest. Moreover, objects that do not exist in ground-truth annotations would be treated as ``background'', but they actually contain valuable discriminative information. 
+This inspires us that we should \textbf{discard the ground truth boxes and select distillation regions on a fine-grained pixel level.}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\textwidth,height=0.45\textwidth]{figures/vis_masks.pdf}
+    \caption{\textbf{Visualization of learned masks on COCO dataset.} In \textit{Faster RCNN-R101} model, the earlier stages in FPN focus more on small objects, while the later ones focus on larger objects. Zoom up to view better.}
+    \label{fig:vis_mask}
+\end{figure}
+
+In this way, we propose to learn a pixel-wise mask as an indicator for the feature distillation. An intuitive idea is that we need to localize what pixel in the teacher's feature map is really meaningful to the task. To this end, we introduce a learnable embedding dubbed \textit{receptive token} to perceive each pixel via attention calculation. Then a mask is generated to indicate the pixels of interests (PoIs) encoded by a receptive token. As there may be sophisticated pixel dependencies within feature maps, we thus leverage multiple receptive tokens in practice to enhance the distillation. The receptive tokens as well as the corresponding masks can be trained with the regular task loss with the teacher fixed. For the group of masks, we adopt Dice loss to ensure their diversity, and devise a mask weighting module to accommodate the different importance of masks. During distillation, we also propose to customize the learned masks using the student's feature, which helps our distillation focus more on the pixels that teachers and students really care about simultaneously.
+
+Our MasKD is simple and practical, and does not need task prior for designing masks, which is friendly for various dense prediction tasks. Extensive experiments show that, our MasKD achieves state-of-the-art performance consistently on object detection and semantic segmentation tasks. For example, MasKD significantly improves 2.4 AP over the Faster RCNN-R50 student on object detection, while 2.79 mIoU over the DeepLabV3-R18 student on semantic segmentation.
+
+
+
+Related work
+
+\textbf{Knowledge distillation on object detection.} Knowledge distillation methods on object detection task have been demonstrated successful in improving the light-weight compact detection networks with the guidance of larger teachers. The distillation methods can be divided into response-based and feature-based methods according to their distillation inputs. Response-based methods~\citep{hinton2015distilling, chen2017learning, li2017mimicking} perform distillation on the predictions (\eg, classification scores and bounding box regressions) of teacher and student. In contrast, feature-based methods~\citep{romero2014fitnets, wang2019distilling, guo2021distilling} are more popular as they can distill both recognition and localization information in the intermediate feature maps. Unlike the classification tasks, the distillation losses in detection tasks will encounter an extreme imbalance between positive and negative instances. To alleviate this issue, some methods~\citep{wang2019distilling, sun2020distilling, dai2021general, guo2021distilling, yang2021focal} propose to distill the features on various sophisticatedly-selected sub-regions of the feature map. For instance, FGFI~\citep{wang2019distilling} selects anchors overlapping with the ground-truth object anchors as distillation regions; GIDs~\citep{dai2021general} distills student detectors based on discriminative instances selected by the predictions of teacher and student; %Defeat~\citep{guo2021distilling} has proved the background derived from regions also afford valuable information to distillation and propose to re-weight the foreground and background losses based on ground-truth bounding boxes; 
+In this paper, we propose to learn the pixels of interests in the feature map without box priors, and perform feature distillations on a finer pixel level.
+
+\textbf{Knowledge distillation on semantic segmentation.} Knowledge distillation methods on semantic segmentation often focus on preserving the structural semantic relations between teacher and student. He et al. \citep{he2019knowledge} optimize the feature similarity in a transferred latent space using a pre-trained autoencoder to alleviate the inconsistency between the features of teacher and student. 
+SKD \citep{liu2019structured} performs a pairwise distillation among pixels to retain the pixel relations and an adversarial distillation on score maps to distill holistic knowledge.
+IFVD \citep{wang2020intra} transfers the intra-class feature variation from teacher to student for more robust relations with class-wise prototypes. 
+CWD~\citep{shu2021channel} proposes channel-wise distillation for a better mimic on the spatial scores along the channel dimension. CIRKD~\citep{yang2022cross} proposes to learn better semantic relations from the teacher by adopting intra-image and cross-image relational distillations.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.\textwidth]{figures/maskd_framework.pdf}
+    \caption{\textbf{Overview of our KD framework on Faster R-CNN.} We perform our masked distillation on the feature pyramid, where a set of receptive tokens are proposed to generate the masks, and a mask weighting module is conducted to adapt the loss weights for each mask. $\odot$ denotes Hadamard product, and \textcircled{$\times$} denotes matrix multiplication.}
+    \label{fig:framework}
+\end{figure}
+
+
+
+Distillation with feature reconstruction
+In order to distill the feature maps of teacher, one typical manner is to mimic the tensor pixel-wisely \citep{romero2014fitnets, chen2017learning}. Formally, with the feature maps $\bm{F}^{(t)}\in\mathbb{R}^{C\times H\times W}$ and $\bm{F}^{(s)}\in\mathbb{R}^{C_s\times H\times W}$ of teacher and student networks, where $C$, $H$, $W$ denote the number of channels, height, and width, respectively, the mimicking can be fulfilled via feature reconstruction as 
+\begin{equation} \label{eq:mimic}
+    \Ls_\mathrm{mimic} = \frac{1}{HWC} \left\|\bm{F}^{(t)} - \phi(\bm{F}^{(s)})\right\|_2^2 ,
+\end{equation}
+where $\phi$ is a linear projection layer to adapt $\bm{F}^{(s)}$ to the same resolution as $\bm{F}^{(t)}$. For example, the mimic loss $\Ls_\mathrm{mimic}$ is usually conducted on the outputs of feature pyramid network~\citep{lin2017feature} (FPN) for detection tasks. 
+
+However, on dense prediction tasks, the predictions are highly determined by its corresponding spatial regions in the feature maps. Treating all regions equally would weaken student's attentions on those small but critical regions, \eg, the feature map contains both smaller objects and larger ones, while the larger ones obtain larger loss values as they have larger areas.
+Moreover, different regions often have different importance to the predictions, \eg, foreground is usually more important than background in detection. Recklessly imitating the unimportant noise features would also limit the distillation performance.
+
+As a result, a typical improvement of feature distillation in recent methods~\citep{wang2019distilling, sun2020distilling, guo2021distilling} is to reconstruct the features on selected and separate regions (masks). Specifically, suppose we have a set of $K$ generated masks $\bm{M} \in \mathbb{R}^{K\times H\times W}$, these methods generate $K$ masked features and perform distillation separately, \ie,
+\begin{equation}\label{eq:region_distillation}
+    \Ls_\mathrm{feature} = \frac{1}{K}\sum_{i=1}^K \frac{1}{C\sum_{j=1}^{H\times W}M_{i,j}} \left\|\bm{M}_i \odot \bm{F}^{(t)} - \bm{M}_i \odot \phi(\bm{F}^{(s)})\right\|_2^2 .
+\end{equation}
+
+However, the masks in these methods are usually generated with the priors of bounding boxes, which are highly influenced by the annotations in ground-truth or the configurations of anchors. For example, the unlabeled boxes in the annotation data (see Figure~\ref{fig:vis_mask}) or unsuitable scales of anchors would assign wrong classes (\eg, foreground and background) to some pixels, resulting in overlooked or over-valued pixels, thus weaken the performance. In this paper, we propose a novel mask generation method to locate the finer pixel-level interest areas, with neither ground-truth annotations nor predictions used.
+
+
+
+
+Proposed approach: MasKD
+
+Our MasKD comprises two stages: the mask learning and the conventional knowledge distillation stages. In the mask learning stage, we learn the masks from a trained teacher, then adopt the learned masks to
+the knowledge distillation stage. Note that these two stages can be merged into one stages like previous KD methods, and the cost of the first mask learning stage is negligible. In this paper, we formulate them separately for better understanding.
+
+\subsection{Learning masks with receptive tokens} \label{sec:learn_regions}
+
+We introduce a learnable embedding $\bm{E}\in\mathbb{R}^{T\times C}$ dubbed \textit{mask tokens} to represent $T$ pixel dependencies in the feature map, then the pixels of interests (PoIs) can be obtained by calculating the similarities between mask tokens and the spatial points in the feature map:
+\begin{equation}
+    \bm{M}^{(t)} = \sigma(\bm{E}\bm{F}^{(t)}) ,
+\end{equation}
+where $\sigma$ denotes Sigmoid function, for simplicity, we flatten the teacher's feature map $\bm{F}^{(t)}$ into shape $(C, H\times W)$ in the paper, and thus the masks $\bm{M}^{(t)}$ have a shape of $(T, H\times W)$.
+
+To learn the masks with task knowledge, we propose to train them with teacher's task loss, where a masked feature $\hat{\bm{F}}^{(t)} = \sum_{i=1}^T \bm{M}^{(t)}_i \odot \bm{F}^{(t)}$ is used to replace the original feature $\bm{F}^{(t)}$. Then the loss can be treated as an observation of mask quality, and we fix the teacher's weights and minimize the loss to force the masks to focus on the substantial pixels.
+However, simply minimizing $\Ls^{(t)}_\mathrm{task}$ would lead to an undesired collapse of the mask tokens. Specifically, some mask tokens will be learned to directly recover all the features (the learned mask is filled with $1$ everywhere). However, we want to partition the feature into meaningful regions. To make the masks represent different spatial pixels, we propose a mask diversity loss based on Dice coefficient:
+\begin{equation}
+    \Ls_\mathrm{div} = \frac{1}{T^2}\sum_{i=1}^{T}\sum_{j=1}^{T} \rho_\mathrm{dice}(\bm{M}^{(t)}_i, \bm{M}^{(t)}_j)
+\end{equation}
+with
+\begin{equation}
+    \rho_\mathrm{dice} (\bm{a}, \bm{b}) = \frac{2\sum_{i=1}^{N} a_i b_i}{\sum_{j=1}^{N}a_j^2 + \sum_{k=1}^{N}b_k^2} ,
+\end{equation}
+where $\bm{a}\in\mathbb{R}^{N}$ and $\bm{b}\in\mathbb{R}^{N}$ are two vectors. Dice coefficient $\rho_\mathrm{dice}$ is widely used to measure the similarity of two images in segmentation tasks. By minimizing the coefficients of each mask pair, we can make masks associated with different PoIs. As a result, the training loss of mask tokens is composed of teacher's task loss and mask diversity loss:
+\begin{equation}
+    \Ls_\mathrm{token} = \Ls^{(t)}_\mathrm{task} + \mu\Ls_\mathrm{div} ,
+\end{equation}
+where $\mu$ is a factor for balancing the loss. Note that we simply set $\mu=1$ in all experiments as the mask tokens are easy to converge\footnote{For example, the teacher \textit{Cascade Mask RCNN ResNeXt101} has $45.6$ mAP on COCO val set, and the masked one is $45.4$.}, and the masked feature $\hat{\bm{F}}^{(t)}$ is only used for learning semantic-aware mask tokens. In the distillation stage, we use the teacher's original feature to get predictions.
+
+\textbf{Mask weighting module.} By learning mask tokens, we can obtain multiple masks of different PoIs, yet not all masks are of the same importance. For example, we would assign larger loss weights on foreground distillations than on background, as the foreground regions are usually more important in detection. In this paper, we thus propose a mask weighting module to determine the mask importance independently for each image. Concretely, we conduct a simple convolution-based module (see Figure~\ref{fig:vis_arch} (a)) to predict the weights of each mask in each feature map, then weight the importance vector $\bm{w}$ onto the masked features,
+\begin{equation}
+    \hat{\bm{F}}^{(t)} = \sum_{i=1}^T w_i (\bm{M}^{(t)}_i \odot \bm{F}^{(t)}).
+\end{equation}
+Therefore, the masks on important pixels could obtain larger weights, while the pixels redundant to the task get small weights. As illustrated in Figure~\ref{fig:vis_arch} (b), we visualize the masks and the corresponding importance on the last stage ($\mathrm{stride} = 32$) of FPN. The background and meaningless empty masks have negligible weights, while the masks associated with real objects have larger weights.
+
+\begin{figure}[t]
+    \centering
+    \subfloat[\textbf{Computation of masked features.}] {
+        \centering
+        \begin{minipage}[c][0.32\linewidth]{0.42\linewidth}
+            \centering
+            \includegraphics[width=1\linewidth]{figures/mask_arch.pdf}
+        \end{minipage}
+    }
+    \subfloat[\textbf{Visualization of learned masks and weights.}] {
+        \centering
+        \begin{minipage}[c][0.32\linewidth]{0.55\linewidth}
+            \centering
+            \includegraphics[width=1\linewidth]{figures/Prob.pdf}
+        \end{minipage}
+    }
+    \caption{(a) Illustration of the computation of masked features. We learn receptive tokens to generate the masks containing pixels of interests, then multiply the masks to the original features to get the masked features, along with a mask weighting module to learn the mask importance. (b) Visualization of learned masks and their corresponding importance on stage 4 of FPN in Faster RCNN-R101.}
+    \label{fig:vis_arch}
+\end{figure}
+
+\subsection{Distillation with learned masks}
+
+Now we formulate our feature distillation in the knowledge distillation stage. With the learned masks $\bm{M}^{(t)}$, a straightforward way is to reconstruct the teacher's feature is adopting Eq.(\ref{eq:region_distillation}) as previous methods. However, as previously discussed in Section~\ref{sec:learn_regions}, our masks contain both important PoIs and less valuable ones, and we thus propose a mask weighting module to capture the importance of each mask, which can be used in distillation for better balance.
+
+\textbf{Instance-dependent mask weights.}
+With the learned mask importance in Section~\ref{sec:learn_regions}, we can naturally adopt these importance weights as the loss weights on each mask; \ie, if a mask is critical to the performance, it should be highlighted in teacher-student knowledge transfer. Therefore, Eq.(\ref{eq:region_distillation}) can be reformulated as 
+\begin{equation} \label{eq:maskd_weights}
+    \Ls_\mathrm{feature} = \sum_{i=1}^T \frac{w_i}{C\sum_{j=1}^{H\times W}M_{i,j}} \left\|\bm{M}^{(t)}_i \odot \bm{F}^{(t)} - \bm{M}^{(t)}_i \odot \phi(\bm{F}^{(s)})\right\|_2^2 .
+\end{equation}
+Note that the mask importance is determined instance-wisely, and thus our adaptive mask loss weights can be more precise and effective than pre-assigning fixed loss weights in a heuristic way.
+
+\textbf{Customizing masks with student feature.} In feature distillation, it is difficult for the student to reconstruct all the feature maps from the teacher finely due to their capacity gap. Forcing the student to learn from the teacher would disturb the optimization for those hard-to-reconstruct pixels. Besides, some pixels that are meaningless to the student could also exist, and the unnecessary reconstructions on them may also weaken the distillation performance. In MasKD, we propose to alleviate these problems by refining the masks with the student feature.
+
+The teacher's learned mask tokens can provide a precise observation of the reconstruction rate of the student's feature, \ie, if a pixel fully recovers the teacher's corresponding feature, their similarities to the mask tokens will be the same. In contrast, the similarities will be different when the features vary significantly. Therefore, we propose to customize the mask regions by multiplying the student's mask regions, and the distillation pixels should consist of the ones both important to the teacher and student. In contrast, the noise pixels in the teacher's feature map will be ignored. Our eventual feature distillation loss can be formulated as 
+\begin{equation} \label{eq:maskd}
+    \Ls_\mathrm{MasKD} = \sum_{i=1}^T \frac{w_i}{C\sum_{j=1}^{H\times W}M^{(r)}_{i,j}} \left\|\bm{M}^{(r)}_i \odot \bm{F}^{(t)} - \bm{M}^{(r)}_i \odot \phi(\bm{F}^{(s)})\right\|_2^2 ,
+\end{equation}
+where $\bm{M}^{(r)} = \bm{M}^{(s)} \odot \bm{M}^{(t)}$, and $\bm{M}^{(s)} = \sigma(\bm{E}\phi(\bm{F}^{(s)}))$ is generated by the teacher's learned mask tokens $\bm{E}$ and student's feature $\bm{F}^{(s)}$. Notably, to avoid masking out critical regions by the student's mask, we add a warmup stage in the early training period, and perform mask customization after the warmup to ensure a sufficient convergence of student.
+
+\textbf{Overall loss function.} Following the previous detection KD method GID~\citep{dai2021general}, we also adopt a distillation on the predicted bounding box regressions. Therefore, as the overall knowledge distillation framework illustrated in Figure~\ref{fig:framework}, the overall loss function of student is formulated as
+\begin{equation} \label{eq:overall_loss}
+    \Ls_\mathrm{student} = \Ls_\mathrm{task} + \lambda_1\Ls_\mathrm{MasKD} + \lambda_2\Ls_\mathrm{reg\text{-}kd}(\bm{r}_t, \bm{r}_s) ,
+\end{equation}
+where $\bm{r}_t$ and $\bm{r}_s$ are regression predictions of teacher and student, $\lambda_1$ and $\lambda_2$ are factors for balancing the losses. Note that we do not adopt distillation on the classification outputs, as the classification losses vary in different detectors (\eg, SoftMax CrossEntropy loss in Faster R-CNN~\citep{ren2015faster} and Sigmoid Focal loss in RetinaNet~\citep{lin2017focal}), we empirically find that their suitable loss weights on classification KD are quite different, requiring a large amount of resources in hyper-parameter tuning compared to $\lambda_1$ and $\lambda_2$. As a result, we remove the classification distillation for better generalizability and transferability of our method, though it could gain further improvements. 
+
+
+Experiments
+In this section, to show our superiority and generalizability, we conduct experiments on two popular dense prediction tasks: object detection and semantic segmentation. Furthermore, we also experiment on image classification task to show that our MasKD can also achieve improvements on it.
+
+\subsection{Object detection}
+
+\begin{table}[t]
+    \centering
+    \begin{minipage}[t]{0.48\textwidth}
+	\renewcommand\arraystretch{1.25}
+	\setlength\tabcolsep{0.4mm}
+	\centering
+	\caption{\textbf{Object detection performance with baseline settings on COCO val set.} T: teacher. S: student. $\dag$: inheriting strategy~\citep{yang2021focal} adopted.}
+	\label{tab:det}
+	\footnotesize
+	\begin{tabular}{l|cccccc}
+	    \shline
+	    Method & AP & AP$_{50}$ & AP$_{75}$ & AP$_{S}$ & AP$_{M}$ & AP$_{L}$\\
+	    \shline
+	    \multicolumn{7}{c}{\textit{Two-stage detectors}}\\
+	    \scriptsize{T: Faster RCNN-R101} & 39.8 & 60.1 & 43.3 & 22.5 & 43.6 & 52.8 \\
+	    \scriptsize{S: Faster RCNN-R50} & 38.4 & 59.0 & 42.0 & 21.5 & 42.1 & 50.3\\
+        Fitnet & 38.9 &  59.5 & 42.4 & 21.9 & 42.2 & 51.6 \\
+        GID & 40.2 & 60.7 & 43.8 & 22.7 & 44.0 & 53.2\\ 
+        FRS &39.5 & 60.1 & 43.3 & 22.3 & 43.6 & 51.7\\
+        FGD & 40.4 &- & - & 22.8 & 44.5 & 53.5 \\
+	    \rowcolor{goldenrod}
+	    MasKD & 40.8 & 60.7 & 44.4 & 23.2 & 44.6 & 53.6\\
+	    \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{41.0} & \textbf{60.8} & \textbf{44.6} & \textbf{23.5} & \textbf{45.0} & \textbf{53.9}\\
+	    \hline
+	    \multicolumn{7}{c}{\textit{One-stage detectors}}\\
+	    T: RetinaNet-R101 & 38.9 & 58.0 & 41.5 & 21.0 & 42.8 & 52.4\\
+	    S: RetinaNet-R50 & 37.4 & 56.7 & 39.6 & 20.0 & 40.7 & 49.7 \\
+        Fitnet & 37.4 & 57.1 & 40.0 & 20.8 & 40.8 & 50.9 \\
+        GID &39.1 & 59.0 & 42.3 & 22.8 & 43.1 & 52.3\\
+        FRS &39.3 & 58.8 & 42.0 & 21.5 & 43.3 & 52.6\\
+        FGD & 39.6 &- & - & 22.9 & 43.7 & 53.6\\
+	    \rowcolor{goldenrod}
+	    MasKD & 39.8 & 59.0 & 42.5 & 21.5 & 43.9 & 54.0\\
+	    \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{39.9} & \textbf{59.0} & \textbf{42.5} & \textbf{23.3} & \textbf{43.9} & \textbf{54.4}\\
+	    \hline
+	    \multicolumn{7}{c}{\textit{Anchor-free detectors}}\\
+	    T: FCOS-R101 & 40.8 & 60.0 & 44.0 & 24.2 & 44.3 & 52.4\\
+	    S: FCOS-R50 & 38.5 & 57.7 & 41.0 & 21.9 & 42.8 & 48.6\\
+         Fitnet & 39.9 & 58.6 & 43.1 & 23.1 & 43.4 & 52.2 \\
+         GID &42.0 & 60.4 & 45.5 & 25.6 & 45.8 & 54.2 \\
+         FRS &40.9 & 60.3 & 43.6 & 25.7 & 45.2 & 51.2\\
+         FGD & 42.1 &- & - & 27.0 & 46.0 & 54.6\\
+	    \rowcolor{goldenrod}
+	    MasKD & 42.6 & 61.2 & 46.3 & 26.5 & \textbf{46.9} & 54.2\\
+        \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{42.9} & \textbf{61.5} & \textbf{46.5} & \textbf{27.2} & 46.8 & \textbf{54.9}\\
+	    \shline
+	\end{tabular}
+    \end{minipage}
+    \hspace{2mm}
+    \begin{minipage}[t]{0.48\textwidth}
+    \renewcommand\arraystretch{1.25}
+	\setlength\tabcolsep{0.4mm}
+	\centering
+	\caption{\textbf{Object detection performance with stronger teachers on COCO val set.} \textit{CM RCNN}: Cascade Mask RCNN. $\dag$: inheriting strategy adopted.}
+	\label{tab:det2}
+	\footnotesize
+	\begin{tabular}{l|cccccc}
+	    \shline
+	    Method & AP & AP$_{50}$ & AP$_{75}$ & AP$_{S}$ & AP$_{M}$ & AP$_{L}$\\
+	    \shline
+	    \multicolumn{7}{c}{\textit{Two-stage detectors}}\\
+	    \scriptsize{T: CM RCNN-X101} & 45.6 & 64.1 & 49.7 & 26.2 & 49.6 & 60.0 \\
+	    \scriptsize{S: Faster RCNN-R50} & 38.4 & 59.0 & 42.0 & 21.5 & 42.1 & 50.3 \\
+        LED &38.7 & 59.0 & 42.1 & 22.0 & 41.9 & 51.0 \\
+        FGFI &39.1 & 59.8 & 42.8 & 22.2 & 42.9 & 51.1 \\
+        COFD &38.9 & 60.1 & 42.6 & 21.8 & 42.7 & 50.7\\
+        FKD & 41.5 & 62.2 & 45.1 & 23.5 & 45.0 & 55.3 \\
+        FGD & 42.0 & - & - & 23.7 & 46.4 & 55.5\\
+	    \rowcolor{goldenrod}
+	    MasKD & 42.4 & 62.9 & 46.8 & 24.2 & 46.7 & 55.9\\
+	    \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{42.7} & \textbf{63.1} & \textbf{47.0} & \textbf{24.5} & \textbf{47.4} & \textbf{56.2}\\
+	    \hline
+	    \multicolumn{7}{c}{\textit{One-stage detectors}}\\
+	    T: RetinaNet-X101& 41.2 & 62.1 & 45.1 & 24.0 & 45.5 & 53.5\\
+	    S: RetinaNet-R50 & 37.4 & 56.7 & 39.6 & 20.0 & 40.7 & 49.7 \\
+        COFD &37.8 & 58.3 & 41.1 & 21.6 & 41.2 & 48.3\\
+        FKD &39.6 & 58.8 & 42.1 & 22.7 & 43.3 & 52.5\\
+        FRS &40.1 & 59.5 & 42.5 & 21.9 & 43.7 & 54.3\\
+        FGD & 40.4 &- & - & 23.4 & 44.7 & 54.1\\
+	    \rowcolor{goldenrod}
+	    MasKD & 40.9 & 60.1 & 43.6 & \textbf{22.8} & 45.3 & 55.1\\
+	    \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{41.0} & \textbf{60.2} & \textbf{43.8} & 22.6 & \textbf{45.3} & \textbf{55.3}\\
+	    \hline
+	    \multicolumn{7}{c}{\textit{Anchor-free detectors}}\\
+        T: RepPoints-X101 & 44.2 & 65.5 & 47.8 & 26.2 & 48.4 & 58.5\\
+	    S: RepPoints-R50 & 38.6 & 59.6 & 41.6 & 22.5 & 42.2 & 50.4\\
+        FKD & 40.6 & 61.7 & 43.8 & 23.4 & 44.6 & 53.0\\
+        FGD & 41.3 &- & - & 24.5 & 45.2 & 54.0\\
+	    \rowcolor{goldenrod}
+	    MasKD & 41.8 & 62.6 & 45.1 & 24.2 & 45.4 & 55.2\\
+	    \rowcolor{goldenrod}
+	    MasKD$^\dag$ & \textbf{42.5} & \textbf{63.4} & \textbf{45.8} & \textbf{24.9} & \textbf{46.1} & \textbf{56.8}\\
+	    \shline
+	\end{tabular}
+    \end{minipage}
+\end{table}
+
+We first validate our efficacy on object detection task. We conduct experiments on MS COCO dataset~\citep{lin2014microsoft} following previous KD works \citep{wang2019distilling, dai2021general, 2021Distilling}, and evaluate the networks with average precision (AP) on COCO \textit{val2017} set.
+
+\textbf{Network architectures.} For comprehensive experiments, we first follow \citep{wang2019distilling, dai2021general, 2021Distilling}, and adopt multiple detection frameworks for our baseline settings, including two-stage detector Faster-RCNN \citep{ren2015faster}, one-stage detector RetinaNet \citep{lin2017focal}, and anchor-free detector FCOS \citep{tian2019fcos}. We take ResNet-101 (R101)~\citep{he2016deep} backbone as the teacher network,  with ResNet-50 (R50) as the student.  Follow \citep{2020FKD, yang2021focal} methods, we conduct experiments on stronger teacher detectors, including two-stage detector Cascade Mask RCNN \citep{cai2018cascade}, one-stage detector RetinaNet \citep{lin2017focal}, and anchor-free detector RepPoints \citep{yang2019reppoints}, with stronger backbone ResNeXt101 (X101) \citep{xie2017aggregated}. %Notably, when the distillation under Cascade Mask RCNN, Faster-RCNN is taken by the student.
+
+\textbf{Training strategies.} We train our mask tokens for $2000$ iterations using an Adam optimizer with $0.001$ weight decay, and a cosine learning rate decay is adopted with an initial value of $0.01$. In the distillation stage, we follow the standard $2\times$ schedule on detection as previous works \citep{wang2019distilling, dai2021general, 2021Distilling, yang2021focal}. For the loss weights, we simply set $\lambda_1$ and $\lambda_2$ to $1$ in Eq.(\ref{eq:overall_loss}) on Faster RCNN-R50 student, and the weights on other architecture variants are adjusted to keep a similar amount of loss values as Faster RCNN-R50.
+
+\textbf{Distillation settings.} We conduct feature distillation on the predicted feature maps, and train the student with our MasKD loss $\Ls_\mathrm{MasKD}$, regression KD loss, and task loss, as formulated in Eq.(\ref{eq:overall_loss}). The number of tokens is set to $6$ in all experiments.
+
+\textbf{Experimental results.} Our results compared with previous methods are summarized in Table ~\ref{tab:det} and Table ~\ref{tab:det2}. 
+In Table~\ref{tab:det}, we first compare KD methods with baseline settings, where the teacher and student are the same ResNet~\citep{he2016deep} variants. Our MasKD can significantly surpass the other state-of-the-art methods. For example, the 
+RetinaNet with ResNet-50 backbone gets 2.5 AP improvement on COCO. We further investigate our efficacy on stronger teachers whose backbones are replaced by stronger ResNeXts. As in Table~\ref{tab:det2}, student detectors achieve more enhancement on both AP and AR with our MasKD, especially when with a Cascade Mask RCNN-X101 teacher, MasKD gains a significant improvement of 3.8 AP over the Faster RCNN-R50.
+
+Our MasKD outperforms existing state-of-the-art methods consistently on all the popular model settings. Note that our method is more general to dense prediction tasks without any ground-truth prior or manual heuristics on specific detection frameworks, showing that our mask tokens effectively locate the important PoIs that benefit the distillation.
+
+\begin{comment}
+\begin{table}[t]
+	\renewcommand\arraystretch{1.3}
+	\setlength\tabcolsep{3mm}
+	\centering
+	\caption{\textbf{The segmentation results on the Cityscapes dataset.} $\dag$: trained from scratch. $\ddag$: pre-trained on ImageNet. }
+	\label{tab:seg}
+	\footnotesize
+
+\begin{tabular}{l|cccc}
+\shline
+Method& Params (M) & FLOPs (G) & Val & Test \\
+\shline
+\multicolumn{5}{c}{Current state-of-the-art results}\\
+\hline
+ENet \cite{paszke2016enet} & $0.358$ & $3.612$ & - & $58.3$\\
+ESPNet \cite{mehta2018espnet} & $0.363$ & $4.422$ & - & $60.3$\\
+ERFNet \cite{romera2017erfnet} & $2.067$ & $25.60$ & - & $68.0$\\
+
+ICNet\cite{zhao2018icnet} & 26.5 & 28.3 & - & 69.5 \\
+FCN \cite{long2015fully} & $134.5$ & $333.9$ & - & $62.7$\\
+RefineNet \ci
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

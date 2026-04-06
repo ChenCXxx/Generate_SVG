@@ -1,0 +1,272 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+3D data is used in many different fields, including autonomous driving, robotics, remote sensing, and more \cite{chen2022pseudo,zhang2022adversarial,james2022coarse,liu2022cdgnet,li2022exploiting}. Point cloud has a very uniform structure, which avoids the irregularity and complexity of composition. However, in practical applications, due to the occlusion of objects, the difference in the reflectivity of the target surface material, and the limitation of the resolution and viewing angle of the visual sensor, the collected point cloud data is often incomplete. The resultant missing geometric and semantic information will affect the subsequent 3D tasks \cite{uddin2022incomplete}. Therefore, how to use a limited amount of incomplete data to complete point cloud and restore the original shape has become a hot research topic, and is of great significance to downstream tasks \cite{wu2020multimodal,chen2022pointtree,chen2022imlovenet,hou2022hitpr,xu2022bico,liu2022pvnas}. 
+
+	
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=8.5cm]{pictures/First_Figure.pdf}\\
+		\caption{\textbf{Visual comparison of point cloud completion results.} Compared with GRNet \cite{xie2020grnet} and PoinTr \cite{yu2021pointr}. \emph{ProxyFormer} completely retains the partial input (blue bounding box) and restores the missing part with details (purple bounding box).}
+		\label{main_Fig.1.}
+	\end{figure}
+	
+With the tremendous success of PointNet \cite{qi2017pointnet} and PointNet++ \cite{qi2017pointnet++}, direct processing of 3D coordinates has become the mainstream of point cloud analysis. In recent years, there have been many point cloud completion methods \cite{achlioptas2018learning,yuan2018pcn,huang2020pf,xie2020grnet,yu2021pointr,xiang2021snowflakenet,zhou2022seedformer}, and the emergence of these networks has also greatly promoted the development of this area. Many methods \cite{achlioptas2018learning,yuan2018pcn,xie2020grnet} adopt the common encoder-decoder structure, which usually get global feature from the incomplete input by pooling operation and map this feature back to the point space to obtain a complete one. This kind of feature can predict the approximate shape of the complete point cloud. However, there are two drawbacks: (1) The global feature is extracted from partial input and thus lack the ability to represent the details of the missing part; (2) These methods discard the original incomplete point cloud and regenerate the complete shape after extracting features, which will cause the shape of the original part to deform to a certain extent. Methods like \cite{huang2020pf,yu2021pointr} attempt to predict the missing part separately, but they do not consider the feature connection between the existing  and the missing parts, which  are still not good solutions to the first drawback. The results of GRNet \cite{xie2020grnet} and PoinTr \cite{yu2021pointr} in Fig. \ref{main_Fig.1.} illustrate the existence of these problems. GRNet failed to keep the ring on the light stand while PoinTr incorrectly predicted the straight edge of the lampshade as a curved edge. Besides, some methods \cite{yu2021pointr,xiang2021snowflakenet,lin2021pctma,zhou2022seedformer} are based on the transformer structure and use the attention mechanism for feature correlation calculation. However, this also brings up two other problems: (3) In addition to the feature, the position encoding also has a great influence on the effect of the transformer. Existing transformer-based methods, either directly using 3D coordinates \cite{guo2021pct,zhou2022seedformer} or using MLP to upscale the coordinates \cite{yu2021pointr,xiang2021snowflakenet}, the position information of the point cloud cannot be well represented; (4) It also leads to the problem of excessive parameters or calculation. Furthermore, we also note that most of the current supervised methods do not make full use of the known data. During the training process, the point cloud data we can obtain includes incomplete input and Ground Truth (GT). This pair of data can indeed undertake the point cloud completion task well, but in fact, we can obtain a new data through these two data, that is, the missing part of the point cloud, so as to increase our prior knowledge.
+	
+In order to solve the above-mentioned problems, we propose a novel point cloud completion network named \emph{ProxyFormer}, which completely preserves the incomplete input and has better detail recovery capability as shown in Fig. \ref{main_Fig.1.}. Firstly, we design a feature and position extractor to convert the point cloud to proxies, with a particular attention to the representation of point position. Then, we let the proxies of the partial input interact with the generated missing part proxies through a newly proposed missing part sensitive transformer, instead of using the global feature extracted from incomplete input alone as in prior methods. After mapping proxies back to the point  space, we splice it with the incomplete input points to 100\%  preserve  the original data. During training, we use the true missing part of the point cloud to increase prior knowledge and for prediction error refinement. Overall, the main contributions of our work are as follows:
+\begin{itemize}
+    \item We design a Missing Part Sensitive Transformer, which focuses on the geometry structure and details of the missing part. We also propose a new position encoding method that aggregates both the coordinates and features from neighboring points.
+    \item We introduce Proxy Alignment into the training process. We convert the true missing part into proxies, which are used to enhance the prior knowledge while refining the predicted missing proxies.
+    \item Our proposed method \emph{ProxyFormer} discards the transformer decoder adopted in most transformer based completion methods such as PointTr, which achieves SOTA performance compared to various baselines while having considerably few parameters and the fastest inference speed in terms of GFLOPs.
+\end{itemize}
+
+
+
+Related Work
+\label{sec:related work}
+
+\noindent{\bfseries 3D shape completion.} Traditional shape completion work mainly includes two categories: geometric rule completion \cite{zhao2007robust,pauly2008discovering,mitra2013symmetry} and template matching completion \cite{nan2012search,kim2013learning,li2015database}. However, these methods require the input to be as complete as possible, and thus are not robust to new objects and environmental noise. VoxelNet \cite{zhou2018voxelnet} attempts to divide the point cloud into voxel grids and applies convolutional neural networks, but the voxelization will lose the details of the point cloud, and the increasing resolution of the voxel grid will significantly increase the memory consumption. Yuan \emph{et al.} \cite{yuan2018pcn} designed PCN, which proposed a coarse-to-fine method based on the PointNet \cite{qi2017pointnet} and FoldingNet \cite{yang2018foldingnet}, but its decoder often fails to recover rare geometries of objects such as seat backs with gaps, \emph{etc.} Therefore, after PCN, many other methods \cite{tchapmi2019topnet,huang2020pf,wang2020cascaded,xia2021asfm} focus on multi-step point cloud generation, which is helpful to recover a final point cloud with fine-grained details. Furthermore, following DGCNN \cite{wang2019dynamic}, some researchers developed graph-based methods \cite{wu2021point,zhu2021towards,wu2021lra} which consider regional geometric details. Although these methods provided better feature extractors and decoders, none of them considered the feature connection between the incomplete input and the missing part, which affects the quality of the completion result. Our proposed \emph{ProxyFormer} is not limited to the partial input but also incorporates true missing points during training. We generate features separately for the  missing part and explore the correlation with the features extracted from the partial input via self-attention.
+
+\noindent{\bfseries Transformers.} The transformer structure originated in the field of natural language processing, which is proposed by Vaswani \emph{et al.} \cite{vaswani2017attention} and applied to machine translation tasks. Recently, this structure was introduced into point cloud processing tasks due to its advantage in extracting correlated features between points. Guo \emph{et al.} \cite{guo2021pct} proposed PCT and optimized the self-attention module, making the transformer structure more suitable for point cloud learning, and achieved good performance in shape classification and part segmentation. Point Transformer \cite{zhao2021point} designs a vector attention for point cloud feature processing. PointTr \cite{yu2021pointr} and SeedFormer \cite{zhou2022seedformer} treat the point cloud completion as a set-to-set translation problem that share similar ideas as \emph{ProxyFormer}. PoinTr designs a geometry-aware block that explicitly simulates local geometric relations to facilitate transformers to use better inductive bias. However, it adopts a transformer encoder-decoder structure for point cloud completion, which results in a large amount of parameters. SeedFormer designs an upsample transformer by extending the transformer structure into a basic operation in point generators that effectively incorporates spatial and semantic relationships between neighboring points. However, the upsample transformer runs throughout its network, resulting in excessive computation. Differently, \emph{ProxyFormer} discards the transformer decoder to reduce the number of parameters, and modifies the query of transformer to make it more suitable for the prediction of the missing part. In the coarse-to-fine process, we still adopt the Foldingnet \cite{yang2018foldingnet}, which greatly reduces the amount of calculation.
+
+
+
+Method
+\label{sec:method}
+    \begin{figure*}
+      \centering
+      \includegraphics[width=17.3cm]{pictures/Pipeline2.pdf}\\
+      \quad
+      \begin{subfigure}{0.48\linewidth}
+        \includegraphics[width=8.5cm]{pictures/FAPE.pdf}
+        \caption{Feature And Position Extractor (FAPE).}
+        \label{main_Fig.2-a.}
+      \end{subfigure}
+      \hfill
+      \begin{subfigure}{0.48\linewidth}
+        \includegraphics[width=8cm]{pictures/MFG.pdf}
+        \caption{Missing Feature Generator.}
+        \label{main_Fig.2-b.}
+      \end{subfigure}
+      \caption{The pipeline of \emph{ProxyFormer} is shown in the upper part. The completion of the point cloud is divided into two steps. First, we simply convert the incomplete seed feature into a predicted coarse missing part. Second, we send the predicted missing proxies and the coarse part into FoldingNet \cite{yang2018foldingnet} to obtain the predicted dense missing part. True missing part  is used for training only so that we block its back-propagation and directly employ the pretrained FAPE on the incomplete point cloud to generate the proxy. (a) The feature and position extractor is applied to obtain seed feature and position encoding which are combined to the so-called proxies. $P$ represents the count of points in the input point cloud. $C_1$ and $C_2$ is the dimensions of point cloud features. (b) The missing feature generator is used to generate predicted seed feature from incomplete seed feature. $N$ and $M$ means the point count of the incomplete seed feature and predicted seed feature. $C$ means the dimensions of the seed feature and is divided into $U$ groups to speed up operations.}
+      \label{main_Fig.2.}
+    \end{figure*}
+The overall network structure of \emph{ProxyFormer} is shown in Fig. \ref{main_Fig.2.}. We will introduce our method in detail as follows.
+\subsection{Proxy Formation}
+\label{sec:PF}
+
+\noindent{\bfseries Proxy introduction.} A proxy represents a local region of the point clouds. All the proxies in this paper fuse two information: \textbf{feature} and \textbf{position}. The types of proxies are defined as follows:
+
+\begin{itemize}
+  \item \textbf{Existing Proxies} (\emph{EP}): It combines incomplete seed feature and incomplete position encoding. (obtained by FAPE).
+  \item \textbf{Missing Proxies} (\emph{MP}): It combines predicted seed feature and random position encoding. During the training process, \emph{MP} is also divided into:
+  \begin{itemize}
+      \item[-] \textbf{Predicted Missing Proxies} (\emph{pre-MP}): It is obtained by Missing Part Sensitive Transformer (Sec. \ref{sec:MPST}).
+      \item[-] \textbf{True Missing Proxies} (\emph{true-MP}): It combines true missing seed feature and true missing position encoding. (obtained by pre-trained FAPE). It is only used for Proxy Alignment (Sec. \ref{sec:PA}).
+  \end{itemize}
+\end{itemize}
+
+For clarity, we next explain how to obtain the information these proxies need.
+\noindent{\bfseries Feature and position extractor (FAPE).} For \textbf{feature} extraction, as shown in Fig. \ref{main_Fig.2-a.}, the point cloud of dimension $\left(P, 3\right)$ is sent to point transformer block \cite{zhao2021point}, and the center point cloud of $\left(\frac{P}{16}, 3\right)$ is obtained by farthest point sampling twice. The feature of $\left(\frac{P}{16}, C_2\right)$ is obtained through two vector attention calculations \cite{zhao2021point}. After that, we use a shared MLP to convert the feature to final seed feature.
+
+    \begin{figure}[t]
+		\centering
+		\includegraphics[width=8.5cm]{pictures/Position_Encoding.pdf}\\
+		\caption{Details of position extractor. $n = \frac{P}{16}$. $K$ is the count of neighbor points. $C_2$ and $C_{out}$ are the dimension of point features. $Shared~MLP$ means shared multi-layer perceptron and $attn$ means attention score calculation.}
+		\label{main_Fig.3.}
+	\end{figure}
+
+For \textbf{position} encoding, we found that directly concatenating the point coordinates with extracted features \cite{qi2017pointnet++,zhao2019pointweb,wang2019dynamic} or simply using MLP to upgrade the three-dimensional coordinates \cite{yu2021pointr} are ineffective. So we design a new position extractor (as shown in Fig. \ref{main_Fig.3.}) to improve this. The coordinates and features of the center points after feature extraction are used as input. For each point, we take its adjacent $K$ points, and use $\tilde{p}_i^k=p_i^k-p_i$ to calculate the relative position of the point. $p_i^k\in{\mathbb{P}=\left\{p_i^1,p_i^2,...,p_i^K\right\}}$, which means the neighbor point coordinates of $p_i$. We also perform neighbor points subtraction in the feature dimension using $\tilde{f}_i^k=|f_i^k-f_i|$. Similarly, $f_i^k\in{\mathbb{F}=\left\{f_i^1,f_i^2,...,f_i^K\right\}}$, which means the neighbor point features of $p_i$. After that, we get the coordinate information of $K \times 3$ and the feature information of $K \times C_2$. Then we concatenate them and transform feature from $K \times (3+C_2)$ to $K \times C_{out}$ (the transition feature ${TF}_i^k$ for each neighboring point) using a shared MLP. After obtaining ${TF}_i^k$, we use attention mechanism to learn a unique attention score for each channel of point features and then aggregate them. The attention score is calculated and channel-wise multiplied with the feature and summed to obtain the final $PE$ (\emph{i.e.} position encoding) of each point. This process can be represented by Eq. (\ref{main_eq.1.}).
+
+    \begin{equation}
+        \begin{aligned} PE=\sum_{k=1}^K\left(attn\left(\left\{{TF}_i^k\right\}\right)\cdot\left\{{TF}_i^k\right\}\right)
+        \end{aligned} ~ ,
+        \label{main_eq.1.}
+    \end{equation}
+where $\left\{{TF}_i^k\right\}$ is the set of transition feature of $K$-neighbor points and $attn()$ is a shared function (per-point MLPs) with learnable weights $W_{attn}$.
+
+Incomplete point cloud and true missing part point cloud are sent into FAPE to get \emph{EP} and \emph{true-MP}, and the imcomplete seed feature of \emph{EP} is used to predict coarse missing part at the same time.
+
+
+
+
+
+
+\subsection{Missing Part Sensitive Transformer}
+\label{sec:MPST}
+
+Usually, query, key and value come from the same input. Many methods \cite{yu2021pointr,xiang2021snowflakenet,zhou2022seedformer} attempt to modify the source of value to adapt to the specific tasks  (the left part of Fig. \ref{main_Fig.4.}). Differently, we change the query source, taking the \emph{MP} with random position encoding as query conditions, to maximally mine the representation of the missing part from the features and positions of existing proxies via self-attention mechanism. 
+
+In order to change the query source to \emph{MP}, we  propose a Missing Feature Generator, which is specially used to learn the missing part features from the existing features. The generation process is shown in Fig. \ref{main_Fig.2-b.}. Specifically, incomplete seed feature of $N \times C$ is used as input, and the $C$-dimensional channels are divided into $U$ equal length groups. Then, the change dimension of the convolution is determined by the point number $M$ of the predicted coarse missing part, which means that we convert each $\frac{C}{U}$ to $\frac{M}{N} \times \frac{C}{U}$. Lastly, we transform the transition feature into predicted seed feature of $M \times C$ through the reshape operation. All channel groups use convolutional layers with shared parameters, reducing the amount of parameters and computation. Predicted missing feature is added with random position encoding to get \emph{MP}.
+
+    \begin{figure}[h]
+		\centering
+		\includegraphics[width=8cm]{pictures/MPSTransformer2.pdf}\\
+		\caption{Details of Missing Part Sensitive Transformer. Compared with vanilla transformer block and PoinTr transformer block, we change the source of query to make it more suitable for the prediction of the missing part.}
+		\label{main_Fig.4.}
+	\end{figure}
+
+In Sec. \ref{sec:PF}, we have obtained \emph{EP} and \emph{true-MP}, and through the missing feature generator  described above, we have obtained \emph{MP}. Then we design a Missing Part Sensitive Transformer to further explore their relationship and learn the representation of the missing points for subsequent completion work. Its structure is illustrated in Fig. \ref{main_Fig.4.}, which receives \emph{EP} and \emph{MP} as input and outputs \emph{pre-MP}. \emph{EP} is a matrix $\mathbb{E}$ of $N \times C$, and \emph{MP} is a matrix $\mathbb{M}$ of $M \times C$. Output \emph{pre-MP} is a matrix $\mathbb{P}$ of $M \times C$. 
+
+We use multi-head self-attention mechanism and add residual connections to obtain \emph{pre-MP}:
+
+    \begin{equation}
+    	\begin{gathered}
+    	    T=\mu \left(Q+\xi (Q,K,V)\right) ~ ,\\
+    	    \emph{\text{pre-MP}}=\sigma(T)+T ~ ,
+        \end{gathered}
+    	 \label{main_eq.2.}
+    \end{equation}
+where $Q=\mathbb{M} \times W^{Q}$, $K=\mathbb{E} \times W^{KV}$, $V=\mathbb{E} \times W^{KV}$. $\mu$ means layer normalization. $\xi$ means multi-head attention calculation. $\sigma$ means feed forward network. The attention of each head is calculated with $Q_i$, $K_i$, $V_i$ on head $i$:
+
+    \begin{equation}
+    	\begin{gathered}
+    	    attn_i=softmax\left(\frac{Q_i\left(K_i\right)^T}{\sqrt{d_k}}\right)V_i
+        \end{gathered} ~ .
+    	 \label{main_eq.3.}
+    \end{equation}
+
+This method predicts the proxies of the missing points, which not only discovers feature associations between missing and existing parts, but also converts random positions into meaningful position information. The \emph{pre-MP} is next used for proxy alignment with \emph{true-MP}.
+
+\subsection{Proxy Alignment}
+\label{sec:PA}
+
+In this subsection, we describe the Proxy Alignment strategy and how this operation assists us in the point cloud completion task. 
+
+The detailed computational graph of \emph{ProxyFormer} is plotted in Fig. \ref{main_Fig.8.}. Therefore, \emph{pre-MP} and \emph{true-MP} can be formulated as:
+
+    \begin{equation}
+    	\begin{gathered}
+    	    \emph{\text{pre-MP}}=T\left({PE}_{R}\oplus\theta\left(\omega\left(C_i\right)\right)\right)\\
+    	    \emph{\text{true-MP}}={PE}_{T}\oplus\omega\left(C_m\right)
+        \end{gathered} ~ .
+    	 \label{main_eq.4.}
+    \end{equation}
+
+In order to refine the prediction error in \emph{pre-MP}, the proxy alignment constraint is imposed on the model, which can be formulated as:
+
+    \begin{equation}
+        \begin{gathered}
+        	l_p=MSE\left(\emph{\text{pre-MP}},\emph{\text{true-MP}}\right)
+        \end{gathered} ~ ,
+    	\label{main_eq.5.}
+    \end{equation}
+where $l_p$ means the alignment loss that we will apply to our training loss (Sec. \ref{sec:training loss}) and $MSE$ means the mean squared error. After correcting the \emph{pre-MP}, it is used as a feature and sent to FoldingNet \cite{yang2018foldingnet} for coarse-to-fine conversion, and then combined with the previously predicted coarse missing part to obtain the  dense missing part.
+
+\subsection{Training Loss}
+\label{sec:training loss}
+\noindent{\bfseries Chamfer Distance.} We use the average Chamfer Distance(CD) \cite{fan2017point} as the first type of our completion loss. 
+    
+
+\noindent{\bfseries proxy alignment Loss.} We use the $MSE$ loss between \emph{pre-MP} and \emph{true-MP} as the second type of loss.
+    
+To sum up, as shown in Fig. \ref{main_Fig.8.}, the loss used in this paper consists three parts: (1). $l_{c1}$, the CD between the predicted coarse missing part $C_{pcm}$ and the true center point $C_{tcm}$ of the missing part; (2). $l_{c2}$, the CD between the predicted complete point cloud $C_{pc}$ and the GT $C_{gt}$; (3) $l_{p}$, the alignment loss between \emph{pre-MP} and \emph{ture-MP}. We use the weighted sum of these three terms for network training (we set $\gamma$ to $1.5$ in experiments):
+
+    \begin{equation}
+        \begin{gathered}
+        	L=l_{c1}+l_{c2}+\gamma l_p
+        \end{gathered} ~ .
+    	\label{main_eq.6.}
+    \end{equation}
+
+    \begin{figure}[t]
+    	\centering
+    	\includegraphics[width=8.5cm]{pictures/Proxies_Alignment.pdf}
+    	\caption{The computational graph for \emph{ProxyFormer}. The part framed by the blue dotted line is used for training only. For the left part, we input incomplete point cloud $C_i$ and use \emph{FAPE} ($\omega$) to get feature $F_{ep}$ in \emph{EP}. $F_{ep}$ is not only sent to a linear projection layer $\chi$ to generate predicted coarse missing part $C_{pcm}$, but also sent to missing feature generator ($\theta$) to generate feature $F_{rmp}$. $F_{rmp}$ is added ($\oplus$) with random position distribution ${PE}_{R}$ and sent to missing part sensitive transformer ($T$) to get \emph{pre-MP}. Then \emph{pre-MP} and $C_{pcm}$ are sent to FoldingNet ($f$), and the result is spliced with input $C_i$ to form predicted complete point cloud $C_{pc}$. For the right part, we input true missing part point cloud $C_m$ and use the same \emph{FAPE} ($\omega$) to get feature $F_{tmp}$ and position ${PE}_{T}$ in \emph{true-MP}. \emph{pre-MP} is aligned with \emph{true-MP} for correcting deviation values. We also retain the center point $C_{tcm}$ obtained after $C_m$ is downsampled by \emph{FAPE}. $l_p$, $l_{c1}$ and $l_{c2}$ are the losses we use, which will be detailed in the next subsection.}
+    	\label{main_Fig.8.}
+    \end{figure}
+
+
+
+Experiments
+In this section, we use \emph{ProxyFormer} for two common point cloud completion benchmarks PCN \cite{yuan2018pcn} and KITTI \cite{geiger2013vision} to evaluate the completion ability of the network, and then we also train and test on two other datasets, ShapeNet-55 and ShapeNet-34 proposed by PoinTr \cite{yu2021pointr}. Finally, through ablation experiments, we demonstrate the effectiveness of each module in the proposed \emph{ProxyFormer}.
+
+\subsection{Point Cloud Completeion on PCN Dataset}
+\noindent{\bfseries Dataset and evaluation metric.} The PCN dataset \cite{yuan2018pcn} is created from ShapeNet dataset \cite{chang2015shapenet}, including eight categories with a total of 30974 CAD models. When preparing the data, we use missing part extractor to extract the missing part of the point cloud from the complete point cloud and then downsample it to 3584 points as the true missing part (This process is described in detail in the supplementary material). 
+
+We use the L1 CD to evaluate the results of each methods. In addition, We also use density-aware chamfer distance (DCD) \cite{wu2021density} as a quantitative evaluation criterion, which can retain the measurement ability similar to CD but also better judge the visual effect of the result. 
+
+    \begin{figure*}[t]
+		\centering
+		\includegraphics[width=17cm]{pictures/PCN_Dataset_Result_Picture.pdf}\\
+		\caption{The visualization results of each method on the PCN dataset, showing Cabinet, Car, Chair and Vessel from top to bottom.}
+		\label{main_Fig.9.}
+	\end{figure*}
+
+\noindent{\bfseries Quantiative comparison.} According to the results in Table \ref{main_tab.1.}, on the PCN dataset, our method has substantially surpassed PoinTr \cite{yu2021pointr} and reaches lowest CD in the cabinet, car, sofa and table categories. Further, as can be seen from the DCD shown in Table \ref{main_tab.2.}, our method outperforms state-of-the-art in all the categories, which means that our method is more able to take into account the rationality of shape and distribution density while complementing the object.
+
+    \begin{table}[h]
+		\centering
+		\caption{Quantitative comparison of PCN dataset. Point resolutions for the output and GT are 16384. For CD, lower is better.}
+		\scalebox{0.6}{
+		\begin{tabular}{c|c|c|c|c|c|c|c|c|c}
+			\cline{1-10}
+			\multirow{2}{*}{Methods} & \multicolumn{9}{c}{Chamfer Distance($10^{-3}$)}
+			\\
+			\cline{2-10}
+			& Air & Cab & Car & Cha & Lam  & Sof & Tab & Ves & Ave \\
+			\cline{1-10}
+			FoldingNet \cite{yang2018foldingnet} & 9.49 & 15.80 & 12.61 & 15.55 & 16.41 & 15.97  & 13.65 & 14.99 & 14.31 \\
+			TopNet \cite{tchapmi2019topnet} & 7.61 & 13.31  & 10.90 & 13.82 & 14.44 & 14.78 & 11.22 & 11.12  & 12.15 \\
+			AtlasNet \cite{groueix2018papier} & 6.37 & 11.94 & 10.10 & 12.06 & 12.37 & 12.99 & 10.33 & 10.61  & 10.85 \\
+			PCN \cite{yuan2018pcn} & 5.50 & 22.70 & 10.63 & 8.70 & 11.00 & 11.34 & 11.68 & 8.59 & 9.64  \\
+			GRNet \cite{xie2020grnet} & 6.45 & 10.37 & 9.45 & 9.41 & 7.96 & 10.51 & 8.44 & 8.04 & 8.83  \\
+			CRN \cite{wang2020cascaded} & 4.79 & 9.97 & 8.31 & 9.49 & 8.94 & 10.69 & 7.81 & 8.05 & 8.51 \\
+			NSFA \cite{zhang2020detail} & 4.76 & 10.18 & 8.63 & 8.53 & 7.03 & 10.53 & 7.35 & 7.48 & 8.06 \\
+			PMP-Net \cite{wen2021pmp} & 5.65 & 11.24 & 9.64 & 9.51 & 6.95 & 10.83 & 8.72 & 7.25 & 8.73 \\
+			PoinTr \cite{yu2021pointr} & 4.75 & 10.47 & 8.68 & 9.39 & 7.75 & 10.93 & 7.78 & 7.29 & 8.38 \\
+			PMP-Net++ \cite{wen2022pmp} & 4.39 & 9.96 & 8.53 & 8.09 & 6.06 & 9.82 & 7.17 & 6.52 & 7.56 \\
+			SnowflakeNet \cite{xiang2021snowflakenet} & 4.29 & 9.16 & 8.08 & 7.89 & 6.07 & 9.23 & 6.55 & 6.40 & 7.21 \\
+			SeedFormer \cite{zhou2022seedformer} & \textbf{3.85} & 9.05 & 8.06 & \textbf{7.06} & \textbf{5.21} & 8.85 & 6.05 & \textbf{5.85} & \textbf{6.74} \\
+			\cline{1-10}
+			ProxyFormer(Ours) & 4.01 & \textbf{9.01} & \textbf{7.88} & 7.11 & 5.35 & \textbf{8.77} & \textbf{6.03} & 5.98 & 6.77 \\
+			\cline{1-10}
+		\end{tabular}}
+		\label{main_tab.1.}
+	\end{table}
+
+    \begin{table}[h]
+		\centering
+		\caption{Quantitative comparison of PCN dataset. Point resolutions for the output and GT are 16384. For DCD, lower is better.}
+		\scalebox{0.6}{
+		\begin{tabular}{c|c|c|c|c|c|c|c|c|c}
+			\cline{1-10}
+			\multirow{2}{*}{Methods} & \multicolumn{9}{c}{Density-aware Chamfer Distance}
+			\\
+			\cline{2-10}
+			& Air & Cab & Car & Cha & Lam  & Sof & Tab & Ves & Ave \\
+			\cline{1-10}
+			GRNet \cite{xie2020grnet} & 0.688 & 0.582 & 0.610 & 0.607 & 0.644 & 0.622 & 0.578 & 0.642 & 0.622  \\
+			PoinTr \cite{yu2021pointr} & 0.574 & 0.611 & 0.630 & 0.603 & 0.628 & 0.669 & 0.556 & 0.614 & 0.611 \\
+			SnowflakeNet \cite{xiang2021snowflakenet} & 0.560 & 0.597 & 0.603 & 0.582 & 0.598 & 0.633 & 0.521 & 0.583 & 0.585 \\
+			SeedFormer \cite{zhou2022seedformer} & 0.557 & 0.592 & 0.598 & 0.579 & 0.585 & \textbf{0.626} & 0.520 & 0.605 & 0.583 \\
+			\cline{1-10}
+			ProxyFormer(Ours) & \textbf{0.555} & \textbf{0.590} & \textbf{0.597} & \textbf{0.571} & \textbf{0.562} & \textbf{0.626} & \textbf{0.518} & \textbf{0.507} & \textbf{0.577} \\
+			\cline{1-10}
+		\end{tabular}}
+		\label{main_tab.2.}
+	\end{table}
+
+\noindent{\bfseries Qualitative comparison.} In Fig. \ref{main_Fig.9.}, we visualize the completion results of different methods on the PCN dataset. Compared with other methods, the results show that our method can perceive the position of the missing points while completing, and reduce the noisy points in the process of refinement. For example, as can be seen from the chair in the third row, except that the chair generated by PCN \cite{yuan2018pcn} has been deformed to a large extent, the other methods have successfully recovered the complete chair, but there are many noisy points around it. The chair completed by our method is more visually plausible. In addition, it can be evident from the chair leg and back that the chair completed by our method are more prominent in detail.
+
+\subsection{Point Cloud Completion on ShapeNet-55/34}
+
+    \begin{table*}[t]
+        \centering
+        \caption{Quantitative comparison on ShapeNet-55. For L2 CD $\times1000$ and DCD, lower is better. For F1-Score@1\%, higher is better.}
+        \scalebox{0.8}{
+        \begin{tabular}{c|ccccc|cccccc|ccc} 
+        \hline
+        Methods    & Table & Chair & Plane & Car  & Sofa & CD-S & CD-M & CD-H & DCD-S & DCD-M & DCD-H & CD-Avg & DCD-Avg & F1     \\ 
+        \hline
+        FoldingNet \cite{yang2018foldingnet} & 2.53  & 2.81  & 1.43  & 1.98 & 2.48 & 2.67 & 2.66 & 4.05 & - & - & - & 3.12 & - & 0.082  \\
+        PCN \cite{yuan2018pcn}        & 2.13  & 2.29  & 1.02  & 1.85 & 2.06 & 1.94 & 1.96 & 4.08 & 0.570 & 0.609 & 0.676 & 2.66   & 0.618 & 0.133  \\
+        TopNet \cite{tchapmi2019topnet}     & 2.21  & 2.53  & 1.14  & 2.18 & 2.36 & 2.26 & 2.16 & 4.30  & - & - & - & 2.
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

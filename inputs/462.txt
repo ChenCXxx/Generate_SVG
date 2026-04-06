@@ -1,0 +1,245 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+With the development of transformer     models~\cite{vaswani2017attention,gpt3,llama,llama2,liu2023llava,team2023gemini,li2023llamavid,yuan2023osprey,lai2023lisa,hanoona2023GLaMM,detr,cheng2021mask2former,OMGSeg}, recent works in both natural language processing (NLP) and computer vision raise one common trend: adopting one unified model to solve multiple tasks. 
+For example, large language models (LLMs)~\cite{llama,llama2,team2023gemini} adopt scale-up models to solve multiple NLP tasks and achieve better results than previous expert models.
+In vision, we have also seen a similar trend~\cite{cheng2021mask2former,OMGSeg,SegGPT,Painter,kirillov2023segment,UNINEXT}, adopting one model to solve multiple tasks or sub-tasks, including detection, segmentation, video analysis, low-level vision, pose estimations, and more tasks.
+Different methods adopt different transformer designs, including visual-in-context learning~\cite{Painter,SegGPT}, unified decoder~\cite{cheng2021mask2former,OMGSeg}, and unified tokenizer~\cite{radford2021learning,chen2021pix2seq,OMGSeg}.
+In summary, benefiting from the \textit{scalability} and \textit{flexibility} of the transformer, adopting one model for all tasks has made a great progress~\cite{cheng2021mask2former,liu2023llava,liu2023llavaplus,liu2024llavanext,yuan2023osprey,ren2023pixellm,hanoona2023GLaMM}.
+
+Meanwhile, by combining vision models and language models~\cite{liu2023llava,liu2023llavaplus,liu2024llavanext,li2023llamavid,li2024mini,wu2023next}, research on multi-modal models also adopts transformer-based design. 
+One representative work, LLaVA~\cite{liu2023llava,liu2023llavaplus,liu2024llavanext}, treats visual tokens as the inputs of LLMs and makes LLMs understand visual contents. 
+Several works adopt similar designs~\cite{Qwen-VL,chen2023shikra,li2023llamavid,chen2024far,internlmxcomposer2_4khd}, and all of them are termed Multi-modal Large Language Models (MLLMs).
+After that, most research focuses on improving MLLM benchmarks in various ways, including increasing data sizes~\cite{chen2023sharegpt4v,chen2024far,liu2024llavanext} and enhancing the visual encoders~\cite{internlmxcomposer,internlmxcomposer2,chen2024far} and visual resolutions~\cite{xu2024llavauhd,chen2024far,li2024mini,internlmxcomposer2_4khd}. 
+However, LLaVA-like models cannot output precise location information since they only carry out image-level analysis.
+Thus, recent works~\cite{yuan2023osprey,zhang2023gpt4roi,chen2023position,peng2023kosmos,chen2023shikra,you2023ferret,zhang2023next,hanoona2023GLaMM,lin2024draw} try to fill this gaps by adding extra detection models for object level analysis, mask decoder for pixel-level analysis, visual prompts, and also propose task-specific instruction tuning with various datasets.
+By providing extra detection data and a decoder, the updated MLLMs can perform localization output.
+However, these models~\cite{zhang2024psalm,wang2024llm,lai2023lisa} are specifically tuned on specific tasks, losing the ability of LLaVA for image level analysis, such as caption and visual question answering.
+Meanwhile, several works~\cite{yuan2023osprey,lai2023lisa,hanoona2023GLaMM,ma2024groma} adopt LLMs as agents to collaborate with various visual models or generation models.
+Despite the works being simple and effective, the inference and parameter costs are huge due to the multiple visual encoders and decoders.
+Moreover, there are no specific designs for task unification.
+
+\begin{figure}[t]
+\hsize=\textwidth
+\centering
+\includegraphics[width=1.0\textwidth]{figs/teaser.pdf}
+\caption{\small{The comprehensive capabilities of OMG-LLaVA. OMG-LLaVA can handle a variety of pixel-level, object-level, and image-level understanding and reasoning tasks.}}
+\label{fig:teaser}
+\end{figure}
+Motivated by the previous analysis, we ask one essential question: Can we bridge image-level, object-level, and pixel-level tasks into one MLLM model with only one LLM, one visual encoder, and one visual decoder? 
+Back to the universal perception models, we can leverage these models to help us build a stronger MLLM to unify three-level inputs, including image, object, and pixel levels. 
+In particular, we adopt OMG-Seg~\cite{OMGSeg} as our universal perception model due to its simplicity and effectiveness in various segmentation tasks.
+
+In this work, we present OMG-LLaVA, an elegant MLLM that bridges image-level, object-level, and pixel-level reasoning and understanding tasks in one model. 
+We preserve the basic pixel-level segmentation ability of OMG-Seg by freezing the visual encoder and decoder, as shown in the bottom left of Fig.~\ref{fig:teaser}.
+Since the LLM processes text input, OMG-LLaVA can also perform referring segmentation, reasoning segmentation, and grounded conversation and generation, shown in the top left of Fig.~\ref{fig:teaser}.
+Moreover, as shown in Fig.~\ref{fig:teaser}, with the help of LLMs, OMG-LLaVA can also perform image-level understanding as LLaVA, including caption and conversation, where most MLLMs for grounding lose such ability.
+In addition, OMG-LLaVA also supports the visual prompts as inputs, which results in object level understanding, such as visual prompt-based conversation and region-level captions.
+We achieve all these abilities using one LLM, one encoder, and one decoder.
+
+In particular, to better encode the visual segmentation outputs, we propose a perception prior embedding module to absorb the object queries into object-centric visual tokens, which are the inputs of LLMs. We present a unified instruction formation strategy, which lets the model accept visual images, texts, and visual prompts as inputs and generate the response of text, segmentation tokens, segmentation masks, and labels. 
+Following the LLaVA~\cite{liu2023llava}, we adopt pretraining and instruct tuning pipelines. Extensive experiments show the effectiveness of our components and training strategy. In addition to visual segmentation, OMG-LLaVA can also achieve good enough performance on 6 datasets, including COCO panoptic segmentation, VIPSeg video panoptic segmentation, refCOCO, refCOCO+, refCOCOg referring expression segmentation, GranDf grounded conversation generation, and refCOCOg region caption datasets.
+We hope our research can inspire the research on MLLM design in a more elegant way for the community.
+\begin{figure}[t]
+\hsize=\textwidth
+\centering
+\includegraphics[width=1.00\textwidth]{figs/meta_arch.pdf}
+\caption{\small{Summary of Current MLLM Architectures: (a) MLLMs with only image-level capability, including \cite{liu2023llava, liu2023llavaplus, liu2024llavanext, li2024mini}, etc., (b) MLLMs with object-level capability, including \cite{yuan2023osprey, hanoona2023GLaMM}, (c) MLLMs with pixel-level capability, including \cite{lai2023lisa, ren2023pixellm}, etc., (d) MLLMs with both object-level and pixel-level capabilities but with a very complex system, such as \cite{hanoona2023GLaMM}, (e) OMG-LLaVA's architecture, which possesses an elegant and simple design while having image-level, object-level, and pixel-level capabilities.}}
+\label{fig:meta}
+\end{figure}
+
+
+
+Related Work
+\label{sec:related_work}
+
+\noindent
+\textbf{Multimodal Large Language Models.} Early multimodal models~\cite{li2022blip} explore better fusion strategies, various feature extractors, and different meta-architectures. Most works focus on single tasks, such as caption and VQA. With the development of the large language models~\cite{gpt3,llama,llama2}, recent works~\cite{li2023blip2,Qwen-VL,team2023gemini,liu2023llava,chen2023llava} mainly explore building an instruction-tuning pipeline for multiple multimodal benchmarks~\cite{hudson2019gqa,liu2023mmbench,li2023evaluating,fu2023mme}. LLaVA~\cite{liu2023llava,liu2024llavanext,liu2023improvedllava,wu2024towards,mgllava} is one earlier work that treats visual features as tokens. After that, several works~\cite{yuan2023osprey} explore visual cues to enhance the visual inputs of LLaVA. On the other hand, several works~\cite{zhang2023llavagrounding, zang2023contextual, ren2023pixellm, internlmxcomposer, internlmxcomposer2, internlmxcomposer2_4khd, lin2023videollava, zhang2023videollama, qi2024generalizable,huang2024reason3d,lai2023lisa} add extra components to adapt LLaVA for visual grounding, detection, segmentation, and video analysis. In particular, several works explore language-driven grounding and segmentation. However, these works are all trained with a specific purpose. We aim to build the simplest model to unify segmentation, instruction tuning, and prompt-driven segmentation in one model. To the best of our knowledge, we are the first model to achieve this goal.
+
+\noindent
+\textbf{Unified Segmentation Models.} The vision transformers~\cite{detr,VIT,mvitv1,vaswani2017attention} have led to research interest in universal segmentation. Recent works~\cite{wang2020maxDeeplab,cheng2021mask2former,yu2022kmaxdeeplab,panopticpartformer,cheng2023segment,yang2021collaborative,yang2024aost,liu2023grounding,sun2024remax,kmax_deeplab_2022,cmt_deeplab_2022,zhou2023context,xu2024rapsam,li2023transformer,zhou2024dvis} have developed mask classification architectures with an end-to-end set prediction approach, outperforming previous specialized models~\cite{htc,kirillov2019panoptic,maskrcnn,sfnet,guo2022segnext,li2021global,zhou2022transvod} in both image, video and generalization segmentation tasks~\cite{kim2022tubeformer,li2022videoknet,li2023tube}.
+In particular, several works explore open-world segmentation, including entity segmentation~\cite{qi2022open,qi2022fine}, open-vocabulary segmentation~\cite{yuan2024ovsam,wu2023open}.
+Meanwhile, several works~\cite{OMGSeg,jain2023oneformer,xu2024rapsam, UNINEXT,gu2023dataseg, athar2023tarvis} adopt one model with shared parameters to perform various segmentation tasks. One recent work, OMG-Seg~\cite{OMGSeg}, first unifies image, video, open-vocabulary, and interactive segmentation in one simple model. However, all of these works focus on visual segmentation and cannot generate interactive text and visual prompts, like MLLMs. Our work builds such a bridge to align MLLMs, visual segmentation, and prompt-driven segmentation models from joint co-training and model sharing, which serves as a new baseline for this field.
+
+\noindent
+\textbf{Language-driven Location and Segmentation.} Early works~\cite{yu2018mattnet, GRES, khoreva2019video, MeViS, wu2024lgvi, zhang2024psalm} in this direction mainly define the various language-driven tasks, including referring segmentation and referring localization. Most works~\cite{EFN, botach2021end, LAVT, MCN, wu2022towards, wu2023open} design effective fusion modules to achieve better performance. Meanwhile, several works~\cite{li2023robust,wu2022towards,wu2023see,lai2023lisa,hanoona2023GLaMM,yuan2023osprey, pan2023tap} explore more complex language-driven tasks from various aspects, including robustness, reasoning, and region-level caption. LISA~\cite{yang2023improved} involves reasoning-based segmentation. Then, GLaMM~\cite{hanoona2023GLaMM} annotates a new dataset and proposes region-level caption and segmentation tasks. Meanwhile, several works~\cite{hao2024vitron, liu2023llavaplus} use LLMs as agents to assign different visual experts. In contrast to these works, our method is a more elegant baseline, which contains \textbf{only} one visual encoder, one LLM, and one decoder.
+\noindent
+\textbf{Visual Prompts.} With the prompting ability of LLMs, several works~\cite{SegGPT,Painter,visualprompt,learningtoprompt,generative,li2023visual,pan2023tap} also explore visual prompting methods in vision. 
+According to the design and purposes, these works can be divided into different aspects, including learnable tokens~\cite{learningtoprompt}, mask-visual-modeling for different tasks~\cite{SegGPT,fang2024explore,wang2023skeleton}, and various visual prompting encoders for visual
+outputs~\cite{Painter,wang2023promptdiffusion,yuan2024ovsam,kirillov2023segment}. 
+Our OMG-LLaVa also supports visual prompts for better interaction with the user's inputs, showing the potential for product purposes. 
+
+
+Methodology
+\label{sec:method}
+
+
+
+\begin{table*}[t!]
+    \centering
+    \caption{\small{Comparison of capabilities of different models. We include several representative methods here. Our OMG-LLaVA offers the most comprehensive capabilities, encompassing image-level, object-level, and pixel-level understanding and reasoning. Compared to~\cite{hanoona2023GLaMM, he2024multi}, OMG-LLaVA features an elegant and simple system architecture with only a single visual encoder.}}
+    \resizebox{0.96\textwidth}{!}{
+    \begin{tabular}{c|c|cc|ccc|ccc}
+    \toprule[0.2em]
+    \multirow{2}{*}{Method} & Visual & \multicolumn{2}{c|}{Image-level} & \multicolumn{3}{c|}{Object-level} &  \multicolumn{3}{c}{Pixel-level}\\
+    ~ & Encoder & Caption & Conversation & Visual Prompts & Caption &  Conversation & Universal Seg & RES & GCG \\
+    \midrule
+    LLAVA~\cite{liu2023llava} & 1 & \checkmark & \checkmark &&&&&& \\
+    MiniGPT4~\cite{zhu2023minigpt} & 1 & \checkmark & \checkmark &&&&&& \\
+    mPLUG-Owl~\cite{ye2023mplugowl} & 1 & \checkmark & \checkmark &&&&&& \\
+    LLaMA-Adapter~\cite{zhang2023llamaadapter} & 1 & \checkmark & \checkmark &&&&&& \\
+    Mini-Gemini~\cite{li2024mini} & 2 & \checkmark & \checkmark &&&&&& \\
+    InternVL 1.5~\cite{chen2024far} & 1 & \checkmark & \checkmark &&&&&& \\
+    VisionLLM~\cite{2023visionllm} & 1 & \checkmark & \checkmark & & & & &\checkmark & \\ 
+    Shikra~\cite{chen2023shikra} & 1 & \checkmark & \checkmark & Point~\&~Box &  \checkmark & \checkmark & & & \\
+    Kosmos-2~\cite{peng2023kosmos} & 1 & \checkmark & \checkmark & Box & \checkmark & \checkmark & & & \\ 
+    GPT4RoI~\cite{zhang2023gpt4roi} & 1 & \checkmark & \checkmark & Box & \checkmark & \checkmark & & & \\
+    Ferret~\cite{you2023ferret} & 1 & \checkmark & \checkmark & Point~\&~Box~\&~Mask & \checkmark & \checkmark & & & \\
+    Osprey~\cite{yuan2023osprey} & 1 & \checkmark & \checkmark & Mask & \checkmark &  \checkmark & & &\\
+    SPHINX-V~\cite{lin2024draw} & 1 & \checkmark & \checkmark & Point~\&~Box~\&~Mask & \checkmark & \checkmark & & & \\
+    LISA~\cite{lai2023lisa} & 2 & \checkmark & \checkmark&  &  & &  & \checkmark & \checkmark \\
+    GLAMM~\cite{hanoona2023GLaMM} & 2 & \checkmark & \checkmark& Box & \checkmark & \checkmark & & \checkmark & \checkmark  \\
+    Groundhog~\cite{zhang2024groundhog} & 4 & \checkmark & \checkmark & Point~\&~Box~\&~Mask & \checkmark & \checkmark & & \checkmark & \checkmark \\
+    AnyRef~\cite{he2024multi} & 2 & \checkmark & \checkmark & Box & \checkmark & \checkmark & & \checkmark & \\
+    PixelLM~\cite{ren2023pixellm} & 1 & \checkmark & \checkmark & & & & & \checkmark & \\
+    GSVA~\cite{xia2023gsva} & 2 & \checkmark & \checkmark & & & & & \checkmark & \\
+    Groma~\cite{ma2024groma} & 1 & \checkmark & \checkmark & Box & \checkmark & \checkmark & & & \\
+    VIP-LLaVA~\cite{cai2024vipllava} & 1 & \checkmark & \checkmark & Point~\&~Box~\&~Mask & \checkmark & \checkmark & & & \\
+    PSALM~\cite{zhang2024psalm} & 1 & & &  Point~\&~Box~\&~Mask & & & \checkmark & \checkmark & \\
+    LaSagnA~\cite{wei2024lasagna} & 2 & & & & & & & \checkmark & \\
+    OMG-Seg~\cite{OMGSeg} & 1 & & & Point & & & \checkmark & & \\
+    \hline
+    OMG-LLaVA & 1 & \checkmark  & \checkmark  & Point~\&~Box~\&~Mask  & \checkmark  & \checkmark  & \checkmark  & \checkmark  & \checkmark \\
+    \bottomrule[0.1em]
+    \end{tabular}
+    }
+    \label{tab:ability_compare}
+\end{table*}
+
+\subsection{Task Unification}
+
+\noindent
+\textbf{Motivation and Our Goals.} 
+The LLMs unify most NLP tasks as token generation tasks and exhibit strong reasoning and instruction-following capabilities.
+As shown in Fig.~\ref{fig:meta}~(a), LLaVA-like models~\cite{liu2023llava,liu2024llavanext,liu2023improvedllava,xu2024llavauhd,li2024mini,internlmxcomposer,internlmxcomposer2,internlmxcomposer2_4khd,chen2024far,li2023llamavid} further introduce visual tokens into LLMs, enabling LLMs to understand visual information and perform visual-based reasoning. 
+However, they cannot accomplish fine-grained visual tasks like object-level and pixel-level understanding and reasoning.
+As shown in Fig.~\ref{fig:meta}~(b), \cite{yuan2023osprey,zhang2023gpt4roi,chen2023position,peng2023kosmos,chen2023shikra,you2023ferret} introduce region-level visual embeddings, allowing LLMs to achieve object-level understanding and reasoning tasks. 
+However, these models rely on complex region embedding extraction designs. 
+In addition, most cannot perform pixel-level understanding tasks.
+Thus, as shown in Fig.~\ref{fig:meta}~(c),\cite{lai2023lisa, ren2023pixellm, he2024multi} introduce segmentation tokens, enabling LLMs to output segmentation masks and thus handle pixel-level understanding and reasoning tasks. 
+Nonetheless, they require a large segmentation module, such as SAM~\cite{kirillov2023segment}, making the system highly redundant. 
+As shown in Fig.~\ref{fig:meta}~(d), GLAMM~\cite{hanoona2023GLaMM} combines the above pipelines to handle object-level and pixel-level tasks. However, this significantly increases the system's \textit{complexity} and \textit{redundancy}. 
+Additionally, GLAMM relies on explicit instructions from the user, \textbf{losing} the perception ability to handle basic pixel-level understanding tasks such as instance segmentation, semantic segmentation, panoptic segmentation, and interactive segmentation.
+In this paper, we focus on addressing all the challenges above in a more simple yet elegant way.
+Our OMG-LLaVA unifies image-level (such as image caption and image-based conversation), object-level (such as region caption and visual prompt-based conversation), and pixel-level (such as universal segmentation, referring segmentation, reasoning segmentation, and grounded conversation generation) visual understanding and reasoning tasks into token-to-token generation.
+The framework follows a simple and elegant system design, including only one visual perception module and one large language model.
+
+\begin{figure}[t]
+\hsize=\textwidth
+\centering
+\label{fig:overview}
+\end{figure}
+
+\noindent
+\textbf{Unified View of Different Tasks.} We model various tasks as the token-to-token generation to bridge the gap between image-level, object-level, and pixel-level understanding and reasoning.
+To support these tasks, we define three types of tokens: text tokens $T_{t}$, pixel-centric visual tokens $T_{pv}$, and object-centric visual tokens $T_{ov}$.
+Text tokens encode textual information. Pixel-centric visual tokens represent dense image features, providing the LLM with comprehensive image information.
+Object-centric visual tokens encode the features of specified objects, offering the LLM object-centric information, and can be easily decoded into segmentation masks.
+
+Then, all the tasks can be unified as:
+\begin{equation}
+    T_{t}^{out}, T_{ov}^{out} = LLM(T_{pv}^{in}, T_{ov}^{in}, T_{t}^{in})
+\end{equation}
+\label{eq0}For example, in the classic image-level understanding task, i.e., image caption, a text response $T_{t}^{out}$ is generated based on text instruction $T_{t}^{in}$ and image features $T_{pv}^{in}$. 
+In the object-level understanding task, region captioning, the text response $T_{t}^{out}$ is generated based on text instruction $T_{t}^{in}$, image features $T_{pv}^{in}$, and specified object-centric visual tokens $T_{ov}^{in}$. 
+The pixel-level reasoning task, referring segmentation, involves generating object-centric visual tokens $T_{ov}^{out}$ based on text instruction $T_{t}^{in}$ and image features $T_{pv}^{in}$. 
+Additionally, OMG-LLaVA can support various mixed-level tasks, such as providing grounded descriptions around specified objects.
+Pixel-centric visual tokens can be obtained by tokenizing images using a CLIP backbone as the tokenizer. However, object-centric visual tokens require encoding object information to be easily decoded into segmentation masks. 
+Therefore, methods like mask pooling in Osprey~\cite{yuan2023osprey} and ROI pooling in GLaMM~\cite{hanoona2023GLaMM} fail to meet these requirements. We found that a universal perception decoder can meet all the requirements. 
+Thus, we chose the OMG-Seg decoder~\cite{OMGSeg} as the object-centric tokenizer due to its comprehensive capabilities. 
+\begin{figure}[t]
+\hsize=\textwidth
+\centering
+\includegraphics[width=0.98\textwidth]{figs/omg_decoder.pdf}
+\caption{The Architecture of the OMG Decoder. A simple attention mask generation strategy enables the OMG decoder to encode point, box, and mask prompts.}
+\label{fig:omg_decoder}
+\end{figure}
+\subsection{OMG-LLaVA Framework}
+\label{sub_sec_omg_llava}
+
+The framework of OMG-LLaVA is shown in Fig.~\ref{fig:meta}~(e). OMG-LLaVA comprises a large language model (LLM) and a \textit{frozen} universal perception module. 
+The universal perception module encodes images and visual prompts from users into pixel-centric and object-centric visual tokens. 
+It obtains object-centric visual tokens output by the LLM into explicit segmentation mask responses. 
+The LLM accepts text instruction tokens and pixel-centric and object-centric visual tokens from the universal perception module as inputs and then outputs text responses along with object-centric visual tokens. 
+The detailed architecture of OMG-LLaVA is illustrated in Fig.~\ref{fig:overview}. 
+The universal perception module comprises an image encoder, an OMG decoder~\cite{OMGSeg}, and a non-trainable perception prior embedding component.
+\textbf{Image Encoder.} To maximize the perception capabilities of the universal perception module, we use the ConvNeXt-L~\cite{liu2022convnet}-based CLIP~\cite{radford2021learning} model as the image encoder and employ a high image resolution (1024$\times$1024). 
+However, the large image resolution results in excessive visual tokens input into the LLM, leading to significantly higher computational costs than using lower-resolution images (such as 224$\times$224 or 336$\times$336). 
+We address this issue by utilizing the lowest resolution image features (32$\times$ downsampling). Additionally, we use the pixel shuffle operator to further reduce the image features' resolution. 
+Ultimately, the downsampling factor for the image features used to generate visual tokens is 64, meaning that a 1024$\times$1024 image produces 256 visual tokens.
+\textbf{OMG Decoder.} We utilize the OMG decoder~\cite{OMGSeg} to generate object-centric visual tokens, furnishing the LLM with information regarding the primary objects in the image and those mentioned by the user's input visual prompts. As shown on the left side of Fig.~\ref{fig:omg_decoder}, the OMG decoder comprises masked cross-attention~\cite{cheng2021mask2former} and self-attention layers. 
+The OMG decoder's input includes a set of learnable object queries~\cite{cheng2021maskformer, cheng2021mask2former, detr} for automatically capturing all objects of interest and visual prompt queries derived from encoded input visual prompts~\cite{kirillov2023segment}. 
+The visual prompt queries and learnable object queries are collectively termed object queries. 
+The OMG decoder probes feature for object queries from the image features by employing masked cross-attention and models relationships between objects through self-attention. 
+The object queries can be decoded into segmentation masks and object categories via a simple FFN layer. 
+With the OMG decoder, OMG-LLaVA can efficiently tokenize object information into object-centric visual tokens, thereby equipping the LLM with information about objects in the image and those referenced by the user.
+
+The OMG decoder can accept point prompts as input. While box and mask prompts can be easily converted into point prompts, this crude conversion significantly loses prompt information, complicating the explicit encoding of the user's intent. 
+To address this, we can impose constraints on the attention masks of the masked cross-attention layers based on the visual prompt to precisely encode the object information referenced by the prompt. 
+As depicted on the right side of Fig.~\ref{fig:omg_decoder}, we utilize the box coordinates to define attention masks for all pixel features outside the box for box prompts. 
+Similarly, we directly employ the provided object mask to generate attention masks for mask prompts. 
+With this straightforward attention mask modification strategy, OMG-LLaVA can accurately capture the user's visual prompts, encompassing point, box, and mask prompts.
+\begin{wrapfigure}{r}{0.7\textwidth}
+  \centering
+  \includegraphics[width=0.7\textwidth]{figs/Perception_embed.pdf}
+  \caption{\small{The process of the perception prior embedding strategy. The perception prior embedding strategy integrates object queries into image features based on segmentation prior.}}
+  \label{fig:perception_embed}
+\end{wrapfigure}
+\textbf{Perception Prior Embedding.} We find that directly combining a frozen perception module with LLM doesn't perform well, as also observed in LISA~\cite{lai2023lisa}. 
+To retain the full capabilities of the universal perception module, OMG-LLaVA doesn't fine-tune the perception module to adapt to the output of the large language model. 
+Instead, we propose a perception prior embedding strategy to tackle this challenge. Fig.~\ref{fig:perception_embed} illustrates the perception prior embedding strategy.
+
+First, we fuse the image features $\mathcal{F} \in \mathbb{R}^{HW \times C}$ outputted by the image encoder with the object queries $\mathcal{Q}\in \mathbb{R}^{N_{q} \times C}$ outputted by the OMG decoder $\mathcal{D}$. 
+Specifically, we utilize the segmentation mask $\mathcal{M} \in \mathbb{R}^{N_{q} \times HW}$ obtained from the object queries and the corresponding confidence score $\mathcal{S} \in \mathbb{R}^{1 \times N_{q}}$ to derive a mask score $MS \in \mathbb{R}^{HW \times N_{q}}$ for each pixel for the object queries:
+\begin{equation}
+    MS = Softmax(\mathcal{M} \odot \mathcal{S}, dim=-1)
+\end{equation} 
+\label{eq1}Then, we compute a weighted average of the object queries $\mathcal{Q}$ based on the mask score $MS$ and obtain the corresponding weighted object queries for each pixel. Pixel-centric visual tokens $T_{pv}$ are obtained by adding the weighted object queries to the image features $\mathcal{F}$:
+\begin{equation}
+    T_{pv} = MS \cdot \mathcal{Q} + \mathcal{F}
+\end{equation}
+\label{eq2}Additionally, we treat the foreground object queries as object-centric visual tokens $T_{ov}$. The object-centric visual tokens $T_{ov}$ are concatenated with the pixel-centric visual tokens $T_{pv}$ to form the visual tokens $T_{v}=(T_{pv}, T_{ov})$, which are input to the LLM to provide rich perception prior information.
+
+\textbf{Visual Projector and Text Projector.} Following~\cite{liu2023llava}, we use an MLP as the visual projector, which is responsible for mapping visual tokens to the LLM's text embedding space. 
+Since our visual tokens consist of pixel-centric and object-centric tokens, the visual projector comprises two MLPs, each handling one type of visual token separately.
+Inspired by~\cite{lai2023lisa, hanoona2023GLaMM}, we also use a simple MLP to map the LLM output's hidden states of the [SEG] token to the visual space.
+
+\textbf{Instruction Formulation.} OMG-LLaVA can accept \textbf{visual} input, \textbf{text} input, and \textbf{visual prompt} input and output text responses and segmentation token, segmentation masks and labels.
+Thus, it can handle tasks such as image captioning, image-based conversation, region captioning, visual prompt-based conversation, referring segmentation, reasoning segmentation, grounded conversation, etc. 
+We use a unified instruction formulation to support these functionalities. 
+As shown in Fig.~\ref{fig:overview}, there are three special tokens: \textcolor{green}{<Image>}, \textcolor{blue}{<Region>}, and \textcolor{red}{[SEG]}. 
+Before being fed into the LLM, the \textcolor{green}{<Image>} token is replaced by visual tokens $T_{v}$, and the \textcolor{blue}{<Region>} token can be replaced by any object-centric visual token encoded by the visual prompt. 
+The \textcolor{red}{[SEG]} token in the LLM's output is sent to the frozen OMG decoder to be decoded into a segmentation mask.
+\subsection{Training and Testing Setup}
+\label{sub_sec:training_testing}
+
+\textbf{Training.} Following LLaVA~\cite{liu2023llava}, our OMG-LLaVA performs two-stage training: pretraining and instruction tuning. 
+During the pretraining stage, the perception model and LLM are frozen, and only the visual and text projectors can be tuned. 
+In addition to the text regression loss, we apply regularization penalties to the visual projector $\mathcal{P}_{v}$ and text projector $\mathcal{P}_{t}$ to preserve object-centric information as much as possible.
+\begin{equation}
+    \mathcal{L}_{pretrain} = \mathcal{L}_{text} + \mathcal{L}_{reg}, \quad \mathcal{L}_{reg} = (T_{ov} - \mathcal{P}_{t}(\mathcal{P}_{v}(T_{ov})))^2
+\end{equation}
+\label{eq3}During instruction tuning, in addition to finetuning the visual projector and text projector, we use LoRA~\cite{hu2021lora} to finetune the LLM. Following~\cite{hanoona2023GLaMM, OMGSeg}, besides the text regression loss, we apply cross-entropy loss and dice loss~\cite{milletari2016v} to supervise the segmentation mask decoded by the [SEG] token.
+\begin{equation}
+    \mathcal{L}_{intruction} = \mathcal{L}_{text} + \mathcal{L}_{mask}, \quad \mathcal{L}_{mask} = \alpha \mathcal{L}_{CE} + \beta \mathcal{L}_{DICE}
+\end{equation}
+\label{eq4}
+
+\textbf{Testing.} The image-level, object-level, and pixel-level understanding and reasoning tasks can all be encompassed within the Eq.~\ref{eq0} paradigm. During the inference stage, we encode the necessary task requirements, such as text prompts, visual prompts, and image features, into tokens to input into the LLM. The output tokens of LLM are then decoded into text responses and segmentation ma
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

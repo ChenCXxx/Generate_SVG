@@ -1,0 +1,195 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sect:intro}
+Graph Neural Networks (GNNs) have emerged as a pivotal framework in graph machine learning, harnessing the ability to capture intricate message-passing patterns for robust graph representation. These advancements have yielded various GNN architectures, including the Graph Convolution Network (GCN)~\cite{GCN}, Graph Attention Network (GAT)~\cite{GAT}, and GraphSAGE~\cite{SAGE}. Despite their efficacy, GNNs often exhibit limited generalization capabilities, struggling to maintain consistent performance when transitioning across different datasets or downstream tasks~\cite{ParetoGNN}. This limitation underscores the necessity for more adaptable and universally applicable models in the graph learning domain.
+
+To mitigate the dependency on labeled data and enhance the resilience of graph models, self-supervised learning has been widely adopted in GNN training. Techniques such as Deep Graph Infomax (DGI)~\cite{DGI} and GraphCL~\cite{GraphCL} have demonstrated effectiveness by leveraging mutual information maximization and contrastive learning, respectively. However, these methods typically require fine-tuning task-specific heads for downstream applications, which can be resource-intensive and limit their practicality in diverse scenarios. Moreover, graph prompt learning enhances GNN generalization by using unified task templates and meta-learning to adapt to various downstream applications~\cite{graphprompt, allinone}, but it often requires extensive fine-tuning and is constrained by the specificity of task types.
+
+In recent years, the remarkable generalization capabilities of Large Language Models (LLMs) have spurred interest in their potential applications within graph machine learning. Some methods attempt to encode graph structures into text for LLM input~\cite{graph2text, gpt4graph, nlgraph, llm2graph}, but these approaches often lead to suboptimal outcomes~\cite{canllm}. Alternatively, using LLMs as enhancers to generate data or node text representations~\cite{natureisneed, llmgnn1, llmgnn2, labelfree, OFA} has shown promise but remains constrained by the inherent reliance on GNNs for prediction. Recent efforts~\cite{graphgpt, llaga} to use LLMs as predictors have demonstrated potential. However, their performance often remains unstable due to the challenge of producing transferable graph representations that work effectively for LLMs across diverse tasks and datasets.
+
+In light of these challenges, we propose a novel framework named Token Embedding-Aligned Graph Language Model (TEA-GLM). Inspired by the zero-shot capabilities of instruction-fine-tuned LLMs~\cite{finetunedlmforzs}, TEA-GLM leverages LLMs as cross-dataset and cross-task zero-shot predictors for graph machine learning. The core idea is to pretrain a GNN and align its representations with the token embeddings of an LLM. This alignment enables the GNN to effectively utilize the LLM's pretrained knowledge, allowing it to generalize across different datasets and tasks without task-specific fine-tuning. Additionally, we train a linear projector to convert graph representations into a fixed number of token embeddings, which are then incorporated into a unified instruction designed for various graph tasks at different levels. Experiments show TEA-GLM achieves superior performance in zero-shot scenarios and when encountering unseen tasks, offering a more generalized and efficient solution for graph zero-shot learning. Our contributions are summarized as follows:
+\begin{itemize}[leftmargin=8pt]
+    \item We introduce TEA-GLM, a novel framework that aligns GNN representations with LLM token embeddings, enabling cross-dataset and cross-task zero-shot learning for graph machine learning.
+    \item We propose a linear projector that maps graph representations into a fixed number of graph token embeddings. These embeddings are incorporated into a unified instruction designed for various graph tasks at different levels, enhancing the model's generalization capabilities.
+    \item Our extensive experiments demonstrate that TEA-GLM significantly outperforms state-of-the-art methods on unseen datasets and tasks.
+\end{itemize}
+
+
+
+Methodology
+\label{sect:method}
+In this section, we introduce TEA-GLM, a novel framework designed for cross-dataset and cross-task zero-shot graph machine learning. TEA-GLM consists of two main components: a Graph Neural Network (GNN) to derive node representations from the graph, and a Large Language Model (LLM) to perform zero-shot tasks such as node classification and link prediction. Our methodology involves two key stages: enhanced self-supervised learning of the GNN, where feature-wise contrastive learning with LLM's token embeddings is proposed, and training a linear projector to map graph representations into a fixed number of graph token embeddings by designing an instruction that is suitable for various graph tasks at different levels. The framework of our proposed method is illustrated in Fig.~\ref{fig:framework}.
+
+\subsection{Notations}
+
+Formally, a graph is denoted as $\mathcal{G} = \left ( \mathcal{V}, \mathcal{E}, \mathbf{A}, \mathbf{X} \right ) $, where $\mathcal{V} = \left \{ v_1, v_2, \dots , v_{\left | \mathcal{V} \right |}  \right \} $ with $\left | \mathcal{V}  \right | = N$ indicating the total number of nodes and $\mathcal{E} = \left \{ e_1, e_2, \dots , e_{\left | \mathcal{E} \right |} \right \}$ representing the sets of nodes and edges, respectively. The adjacency matrix is denoted as $\mathbf{A} \in \mathbb{R} ^{N \times N } $, with $\mathbf{A}_{ij} = 1$ iff $(v_i, v_j) \in \mathcal{E}$. The feature matrix $\mathbf{X} \in \mathbb{R} ^{N \times F_N}$ contains the attribute or feature information associated with each node, where $\boldsymbol{x_i} \in \mathbb{R}^{F_N}$ is the feature of ${v_i}$, and $F_N$ represents the dimensionality of features.
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[scale=0.38]{TEA-GLM_framework.pdf}
+        \caption{Framework of TEA-GLM}
+    \label{fig:framework}
+\end{figure}
+
+\subsection{Token embeddings-aligned graph self-supervised learning}
+Given the increasing model sizes and data volumes in recent years, self-supervised learning has become a prominent research focus due to the scarcity of labeled data. In this context, we propose a contrastive learning method to obtain more transferable node representations suitable for use with large language models (LLMs). Our approach leverages instance-wise contrastive learning and introduces a feature-wise contrastive learning method that maps node representations to the textual embedding space of the LLM.
+
+\subsubsection{Instance-wise contrastive learning with structural information}
+
+To alleviate the need for labeled data and enhance model generalization capability, we employ self-supervised learning for pre-training. To better extract structural information from the graph, we follow the work of \cite{zhu2020deep} to generate two views of $\mathcal{G}$, denoted as ${\mathcal{G}_{1}}$ and ${\mathcal{G}_{2}}$, for contrastive learning. Specifically, we adopt the Removing Edges (RE) and Masking Node Features (MF) methods to generate different views. The RE strategy samples a random masking matrix $\widetilde{\mathbf{R}} \in \left \{ 0, 1 \right \} ^{N \times N }$ to mask the raw adjacency matrix, computed as:
+\begin{equation}
+    \widetilde{\mathbf{A}} = \mathbf{A} \circ \widetilde{\mathbf{R}},
+\end{equation}
+where $\circ$ denotes the Hadamard product. The MF strategy samples a random mask vector $\widetilde{\boldsymbol{m}} \in \left \{ 0, 1 \right \} ^F$. The generated node features $\widetilde{\mathbf{X}}$ are computed by:
+\begin{equation}
+    \widetilde{\mathbf{X}} = \left[ \boldsymbol{x_1} \circ \widetilde{\boldsymbol{m}}; \boldsymbol{x_2} \circ \widetilde{\boldsymbol{m}}; \ldots; \boldsymbol{x_N} \circ \widetilde{\boldsymbol{m}} \right].
+\end{equation}
+Thus, we obtain two views of $\mathcal{G}$, denoted as ${\mathcal{G}_{1}} = \left( \widetilde{\mathbf{X}}_1, \widetilde{\mathbf{A}}_1\right)$ and ${\mathcal{G}_{2}} = \left( \widetilde{\mathbf{X}}_2, \widetilde{\mathbf{A}}_2\right)$. Then, we use a graph encoder to derive node representations:
+\begin{equation}
+    \mathbf{U_\ast} = f_\mathrm{GNN}\left(\widetilde{\mathbf{X}}_\ast, \widetilde{\mathbf{A}}_\ast \right) \in \mathbb{R}^{N \times F_U},
+\end{equation}
+Where $F_U$ is the dimension size of node representations. Here, $\ast \in \left\{ 1, 2\right\}$ represents different views of the graph.
+
+We employ a contrastive objective to distinguish the embeddings of the same node in these two different views from other node embeddings. For node $v_i$, its node embedding generated in one view, $\boldsymbol{u_i}$, is treated as the anchor, while the embedding generated in the other view, $\boldsymbol{u_i}^\prime$, forms the positive sample. Embeddings of other nodes in the same view are regarded as intra-view negative samples, while embeddings of other nodes in the other view are regarded as inter-view negative samples. The contrastive loss is defined as:
+\begin{equation}
+    \ell\left(\boldsymbol{u_i}, \boldsymbol{u_i}^\prime\right)=\log \frac{e^{\theta\left(\boldsymbol{u_i}, \boldsymbol{u_i}^\prime\right) / \tau}}{\underbrace{e^{\theta\left(\boldsymbol{u_i}, \boldsymbol{u_i}^\prime\right) / \tau}}_\text{the positive pair}+\underbrace{\sum_{j=1}^N \mathrm{1}_{[j \neq i]} e^{\theta\left(\boldsymbol{u_i}, \boldsymbol{u_j}\right) / \tau}}_\text{intra-view negative pairs}+\underbrace{\sum_{j=1}^N \mathrm{1}_{[j \neq i]} e^{\theta\left(\boldsymbol{u_i}, \boldsymbol{u_j}^\prime\right) / \tau}}_\text{inter-view negative pairs}},
+    \label{loss_ins}
+\end{equation}
+where $\mathrm{1}_{[j \neq i]} \in \left \{ 0, 1 \right \}$ is an indicator function that equals 1 iff $j \neq i$, $\theta\left(\cdot, \cdot\right)$ is the cosine similarity function, and $\tau$ is a temperature parameter. The loss for the other view is similarly defined, and the overall objective $\mathcal{L}_{ins}$ is the average of all instances:
+\begin{equation}
+    \mathcal{L}_{ins} = \frac{1}{2N} \sum_{i=1}^{N} \left [ \ell\left(\boldsymbol{u_i}, \boldsymbol{u_i}^\prime\right) + \ell\left(\boldsymbol{u_i}^\prime, \boldsymbol{u_i}\right) \right ].
+\end{equation}
+
+To enhance the scalability of our method for large-scale graphs, we employ the subsampling approach proposed by~\cite{SAGE}. Both the RE and MF methods, along with the loss function described in Equation~\ref{loss_ins}, are seamlessly adaptable to the sampled subgraphs.
+
+\subsubsection{Feature-wise contrastive learning with token embeddings}\label{text_proto}
+
+Instance-wise contrastive learning relies heavily on individual instances, which can cause transfer issues when transitioning to other datasets. Moreover, there is a significant gap between the obtained node representations and the semantic space of LLMs. To address these issues, we propose feature-wise contrastive learning with token embeddings.
+
+Feature-wise contrastive loss breaks the independence between instances. For the feature matrix $\mathbf{U_\ast}$, we denote the columns in different views as $\boldsymbol{m_i} \in \mathbf{U_1^\top}$ and $\boldsymbol{n_i} \in \mathbf{U_2^\top}$. Here, $\boldsymbol{m_i}, \boldsymbol{n_i} \in \mathbb{R}^{N}$. The loss is denoted as $\mathcal{L}_{fea}$, and is calculated as:
+\begin{equation}
+    \mathcal{L}_{fea}=\frac{1}{F_U} \sum_{i=1}^{F_U}\log \frac{e^{\theta\left(\boldsymbol{m_i}, \boldsymbol{n_i}\right) / \tau}} {\sum_{j=1}^{F_U}\left[{e^{\theta\left(\boldsymbol{m_i}, \boldsymbol{m_j}\right) / \tau}}+{e^{\theta\left(\boldsymbol{m_i}, \boldsymbol{n_j}\right) / \tau}}\right]}.
+    \label{loss_fea}
+\end{equation}
+
+To map node representations to the semantic space of LLMs, we use the principal components of the token embeddings of LLMs as coordinate axes. This approach ensures that the representations of similar instances are closely aligned in the textual embedding space. This helps alleviate the inconsistency in optimization objectives during graph self-supervised learning due to the gap between node representations and the text embedding space.
+
+Specifically, we first use principal component analysis (PCA) to obtain the $P$ principal components, denoted as $\mathbf{C} \in \mathbb{R}^{P \times F_L}$, where $F_L$ is the dimension size of token embeddings of LLM. Then, we map node representations by:
+\begin{equation}
+    \widetilde{\mathbf{U}}_\ast = \mathbf{U}_\ast \times \mathbf{C}^\top.
+\end{equation}
+To map the node representations obtained from the GNN using principal components, we set the output dimension of the GNN to be equal to the token embeddings' dimension~(i.e., $F_U=F_L$). The columns of the mapped feature matrix $\widetilde{\mathbf{U}}_\ast$, denoted as $\widetilde{\boldsymbol{m}}_i$ and $\widetilde{\boldsymbol{n}}_i$, are fed into $\mathcal{L}_{fea}$. Therefore, the final contrastive loss for graph self-supervised learning is the average of Equation \ref{loss_ins} and Equation \ref{loss_fea}:
+\begin{equation}
+\mathcal{L}=\frac{1}{2} \left( \mathcal{L}_{ins} + \mathcal{L}_{fea} \right).
+\label{loss_all}
+\end{equation}
+
+\textbf{\emph{Remark:}}  The introduction of feature-wise contrastive learning with token embeddings successfully addresses the semantic space discrepancy between graph node representations and LLM token embeddings. Our method enables the direct and simple use of graph structural and text information obtained by GNN in LLMs, thereby avoiding the significant generalization loss associated with complex modality alignment training during the fine-tuning process. Its role in fine-tuning will be further described in Sec.~\ref{graph2token} and validated by experiments. Additionally, the feature-wise contrastive method itself exhibits stronger generalization, allowing it to perform well on unseen instances~(or tasks) rather than relying on trained instances~(or tasks).
+
+\subsection{Alignment tuning}
+
+The development of LLMs has introduced a new paradigm for graph machine learning. However, existing research~\cite{canllm} indicates that LLMs alone cannot fully comprehend graph structures and their underlying information. To enable LLMs to more effectively capture information and improve their performance in cross-dataset and cross-task zero-shot learning, it is essential to design specific methods for LLMs to incorporate graph information suitably. To this end, we propose an alignment tuning method that includes specially designed instructions for various graph tasks at different levels, as well as a graph representation to graph token embeddings mechanism to integrate graph information.
+
+\subsubsection{Instructions design}
+\label{instruction_design}
+The instruction we designed can be divided into two parts: one part provides graph information, and the other part describes the task. Here, we take a citation graph as an example, where nodes are papers, and relations are citations, to introduce the instruction.
+
+\paragraph{Graph information provision} 
+The graph information provision in the instructions for node, edge, and graph-level tasks is presented as follows: \textit{Given the representation of a paper/two papers/a paper set: $\mathsf{\langle graph \rangle}$, with the following information:\textbackslash nTitle: First Paper: $\mathsf{\left \{ title_1 \right \}}$ ...\textbackslash n}, where $\mathsf{\langle graph \rangle}$ is the placeholder for graph inputs (see Sect.~\ref{graph2token}), and $\mathsf{\left \{ title_1 \right \}}$ is the node text information.
+
+Note that, different from most work which use LLM as a predictor, the instruction we designed uses only the title of a paper node, excluding more extensive textual information such as its abstract or description. In fact, reducing the amount of input text not only does not decrease the model's performance but actually improves it. \cite{canllm} confirmed through experiments that LLMs benefit from structural information only when the target node lacks sufficient phrases for reasonable predictions. Therefore, using only titles as text input can help LLMs extract more critical information from graph information.
+\paragraph{Task description} 
+To achieve cross-dataset capability, where the model can be trained on one graph dataset and then perform reasoning on any other dataset, the instruction is designed to include not only the task description itself but also the set of alternative answers. Using the node classification task on the Arxiv dataset (see Sect.~\ref{sect:setup}) as an example, the instruction is structured as follows: \textit{Which arXiv CS sub-category does this paper belong to? Please directly give the most likely answer from the following sub-categories: $\mathsf{\left \{ ans \right \}}$}, where $\mathsf{\left \{ ans \right \}}$ represents the set of alternative answers, which varies across datasets. Including alternative answers enables the model to learn the task of ``reasoning the answer from a given set according to the task'' rather than memorizing answers for a particular dataset, thus facilitating reasoning across datasets.
+
+\subsubsection{Graph token embeddings }
+\label{graph2token}
+
+The token embeddings of graph mentioned previously, {\it i.e.}, $\mathsf{\langle graph \rangle}$, are crucial for incorporating graph information and enabling the model's generalization. We use a projector to map central node representations into $K$ graph token embeddings and replace $\mathsf{\langle graph \rangle}$ with these tokens. Kindly note that, we map the representations to fixed number of token embeddings regardless of the task type. For example, for node-level tasks, we map the central node representation to $K$ token embeddings; for edge-level tasks, we sum the representations of the two nodes of the target edge and then map this sum to $K$ token embeddings; for graph-level tasks, similar approach can be applied. In this way, we unify the instruction of graph tasks at different levels. Thanks to the text-aligned contrastive learning, a linear projector is enough to capture the map relationship without tuning LLM:
+\begin{equation}
+    \mathbf{H}_{token} = f_\mathrm{Linear}\left(\boldsymbol{u_i}\right)
+\end{equation}
+where $\boldsymbol{u_i} \in \mathbf{U}$, $\mathbf{H}_{token} \in \mathbb{R}^{K \times F_L}$, $F_L$ is the dimension size of token embedding of LLM, and $f_\mathrm{Linear}(\cdot)$ is a linear layer.
+
+\textbf{\emph{Remark:}} This approach offers three primary advantages: (\romannumeral1) When handling tasks at different levels, the changes to the instructions are minimal. This consistency facilitates the transfer of knowledge learned during training to unseen tasks in large language models (LLMs); (\romannumeral2) The fixed number of token embeddings can be seen as a conditional soft prompt. Unlike traditional soft prompts, learning at the instance level reduces the risk of overfitting to specific datasets or tasks, thereby enhancing generalization to unseen datasets and tasks; (\romannumeral3) Different from current work which intends to include the representations of all nodes in the subgraph, we only map the representations of the central node to tokens, since there has enough information carried by message passing of GNN. This method is more efficient, and it offers greater generalizability and practicality.
+
+\subsubsection{Training and evaluation strategy}
+\label{train_strategy}
+To ensure compatibility and facilitate comparisons across various datasets, we map the node features into a consistent vector space. Specifically, we employ a pretrained BERT model \cite{devlin2018bert} to encode the raw text associated with each node, thereby generating the node features. We then pretrain the graph model using contrastive learning with the loss function defined in Equation \ref{loss_all} on a single dataset. After pretraining, the model parameters are fixed. We utilize the pretrained model to obtain node representations and follow the instructions in Section \ref{instruction_design} to train the linear projector on specific tasks within the same dataset. Finally, we evaluate the performance of our model on unseen datasets and tasks. Throughout all phases, the parameters of the language model remain fixed. We use GraphSAGE \cite{SAGE} as our graph encoder and Vicuna-7B-v1.5 \cite{vicuna2023} as the foundational language model. 
+
+
+Experimental results
+\label{sect:exper}
+In this section, comprehensive experiments are conducted to validate the effectiveness of TEA-GLM. These experiments aim to investigate the following research questions:
+\begin{itemize}[leftmargin=28pt]
+    \itemsep0em 
+    \item[\textbf{RQ1:}] How effective is TEA-GLM in handling the cross-dataset zero-shot learning problem?
+    \item[\textbf{RQ2:}] How well does TEA-GLM transfer knowledge when adapted to an unseen task and dataset in a zero-shot setting?
+    \item[\textbf{RQ3:}] What is the contribution of the feature-wise contrastive learning and graph token embeddings to the zero-shot learning ability of TEA-GLM?
+\end{itemize}
+
+\subsection{Experimental setup}
+\label{sect:setup}
+
+\paragraph{Datasets}
+We test TEA-GLM across eight widely used datasets spanning two distinct domains. Within the citation domain, we employ Arxiv~\cite{OGB}, Pubmed~\cite{Pubmed}, and an expanded version of Cora~\cite{Cora} with an increased range of classes and larger scale. In these datasets, each node represents an individual paper, with edges indicating citation relationships. In the e-commerce domain, we utilize datasets from the TAG benchmark~\cite{TAG}, including Children (Book-Children), History (Book-History), Computer (Ele-Computer), Photo (Ele-Photo), and Sports (Sports-Fitness). Here, nodes represent distinct products, while edges denote co-viewing or co-purchasing between two products.
+
+\paragraph{Baselines}
+We conduct a comprehensive comparison of TEA-GLM with various categories of baseline methods: (\romannumeral1) Non-graph neural network approaches, such as MLP, which employs a Multilayer Perceptron for node representation; (\romannumeral2) Supervised methods, including GCN~\cite{GCN}, GraphSAGE~\cite{SAGE}, and GAT~\cite{GAT}; (\romannumeral3) Self-supervised methods like DGI~\cite{DGI}, which maximizes mutual information to learn node representations without relying on ground truth labels; (\romannumeral4) Graph knowledge distillation frameworks: GKD~\cite{GKD}, which distills knowledge from a teacher GNN trained on a complete graph to a student GNN operating on a smaller or sparser graph; GLNN~\cite{GLNN}, a method combining the advantages of graph neural networks and MLPs using knowledge distillation, aimed at reducing dependency on the inference graph; (\romannumeral5) Graph transformer networks, including NodeFormer~\cite{NodeFormer} and DIFFormer~\cite{DIFFormer}; (\romannumeral6) Large language models, such as Vicuna-7B-v1.5; (\romannumeral7) The latest models equipped with transfer and zero-shot capabilities, such as OFA~\cite{OFA}, GraphGPT~\cite{graphgpt}, and LLaGA~\cite{llaga}.
+
+\paragraph{Implementation details}
+\label{imple_detail}
+For datasets within the citation domain, we follow the data split methodology outlined in GraphGPT~\cite{graphgpt}. For those within the e-commerce domain, we utilize scripts provided by the TAG benchmark~\cite{TAG} to generate data splits. To ensure comparability among different methods, identical data splits are applied to all models. To assess the performance of TEA-GLM, we employ three commonly adopted evaluation metrics: Accuracy and Macro F1 for node classification, and AUC (Area Under the Curve) for link prediction. To ensure result robustness, we conduct five experiments with random seed values ranging from 0 to 4 and report the mean and standard deviation of the results.
+
+In the pre-training phase of the GNN, we set the GNN layers to 2. We use a batch size of 512 for 60 epochs and a learning rate of $2 \times 10^{-2}$. During the training of the linear projector, we configure a batch size of 2 per GPU for one epoch, with a learning rate of $1 \times 10^{-3}$. The Adam optimizer is employed for all approaches. For baseline models, we adjust hyperparameters and utilize the optimal settings. All experiments are conducted on 2 NVIDIA A100 GPUs with 80GB memory each, using CUDA version 11.7.
+
+\begin{table}[t!]
+    \centering
+    \caption{Zero-shot accuracy on citation and e-commerce datasets (\textbf{bold} highlights the best result across all methods, while \underline{underline} highlights the second-best results)}
+    \label{tab:nc_citation}
+    \Large
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{cc|cc|cccc}
+    \toprule
+    \multirow{2}{*}{\textbf{Model type}} & \multirow{2}{*}{\textbf{Model}} & \multicolumn{2}{c|}{\textbf{Citation}} & \multicolumn{4}{c}{\textbf{E-commerce}} \\
+    \cmidrule{3-8}
+    & & \textbf{Pubmed} & \textbf{Cora} & \textbf{Children} & \textbf{History} & \textbf{Photo} & \textbf{Sports} \\
+    \midrule
+    & MLP & 0.323$\pm$0.027 & 0.021$\pm$0.006 & 0.029$\pm$0.037 & 0.080$\pm$0.041 & 0.110$\pm$0.070 & 0.042$\pm$0.021 \\
+    \midrule
+    \multirow{9}{*}{\shortstack{GNN as\\ predictor}} 
+    & GCN & 0.288$\pm$0.092 & 0.017$\pm$0.004 & 0.030$\pm$0.018 & 0.063$\pm$0.042 & 0.103$\pm$0.047 & 0.042$\pm$0.025 \\
+    & GraphSAGE & 0.316$\pm$0.058 & 0.014$\pm$0.007 & 0.008$\pm$0.007 & 0.195$\pm$0.206 & 0.056$\pm$0.055 & 0.051$\pm$0.015 \\
+    & GAT & 0.343$\pm$0.064 & 0.016$\pm$0.004 & 0.086$\pm$0.084 & 0.172$\pm$0.098 & 0.050$\pm$0.027 & 0.142$\pm$0.138 \\
+    & DGI & 0.329$\pm$0.103 & 0.026$\pm$0.009 & 0.082$\pm$0.035 & 0.218$\pm$0.168 & 0.224$\pm$0.127 & 0.049$\pm$0.017 \\
+    & GKD & 0.399$\pm$0.033 & 0.042$\pm$0.008 & 0.202$\pm$0.064 & 0.339$\pm$0.138 & 0.166$\pm$0.086 & 0.208$\pm$0.077 \\
+    & GLNN & 0.390$\pm$0.011 & 0.031$\pm$0.006 & 0.187$\pm$0.012 & 0.283$\pm$0.021 & \underline{0.403$\pm$0.019} & 0.317$\pm$0.048 \\
+    & NodeFormer & 0.308$\pm$0.093 & 0.016$\pm$0.007 & 0.048$\pm$0.028 & 0.168$\pm$0.127 & 0.073$\pm$0.015 & 0.165$\pm$0.057 \\
+    & DIFFormer & 0.361$\pm$0.071 & 0.029$\pm$0.014 & 0.129$\pm$0.030 & 0.275$\pm$0.171 & 0.321$\pm$0.055 & 0.306$\pm$0.131 \\
+    & OFA & 0.314$\pm$0.059 & 0.130$\pm$0.019 & 0.064$\pm$0.086 & 0.052$\pm$0.049 & 0.340$\pm$0.026 & 0.101$\pm$0.071 \\
+    \midrule
+    \multirow{5}{*}{\shortstack{LLM as\\ predictor}} 
+    & Vicuna-7B-v1.5 & 0.719$\pm$0.010 & 0.156$\pm$0.001 & \underline{0.270$\pm$0.001} & \underline{0.363$\pm$0.001} & 0.378$\pm$0.004 & \underline{0.370$\pm$0.001} \\
+    & GraphGPT-std & 0.701 & 0.126 & - & - & - & - \\
+    & GraphGPT-cot & 0.521 & \underline{0.181} & - & - & - & - \\
+    & LLaGA & \underline{0.793$\pm$0.036} & 0.168$\pm$0.032 & 0.199$\pm$0.007 & 0.146$\pm$0.067 & 0.276$\pm$0.069 & 0.352$\pm$0.033 \\
+    & \textbf{TEA-GLM} & \textbf{0.848$\pm$0.010} & \textbf{0.202$\pm$0.014} & \textbf{0.271$\pm$0.010} & \textbf{0.528$\pm$0.058} & \textbf{0.497$\pm$0.027} & \textbf{0.404$\pm$0.010} \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+\subsection{Cross-dataset zero-shot ability (RQ1)}
+\label{sect:cross-dataset}
+
+We train all methods on the Arxiv and Computer, respectively, followed by an evaluation of their zero-shot performance on datasets from the same domain. Zero-shot learning presents challenges for GNN-based models, particularly regarding variations in the number of classes across different datasets. To address this, we adopt the setting outlined in GraphGPT~\cite{graphgpt}. For each target dataset, we utilize the GNN backbone trained on the source dataset along with a classifier trained with target data, typically a linear layer. Due to the considerable time cost associated with training and evaluating GraphGPT on e-commerce datasets, we only report its performance on citation datasets as provided in their paper. ``-std'' and ``-cot'' denote the use of the standard procedure of dual-stage graph instruction tuning and COT instruction datasets generated by LLM, respectively. The Accuracy results are presented in Table~\ref{tab:nc_citation}.
+
+The results clearly demonstrate that TEA-GLM outperforms all state-of-the-art (SOTA) models, resulting in significant improvements. Comparative analysis with baseline models across all datasets highlights the robust generalization capability of TEA-GLM. Models utilizing GNN as a predictor face challenges in achieving cross-dataset transferability with traditional supervised and self-supervised learning methods. Even recently developed robust GNN-based models, such as NodeFormer, DIFFormer, and GKD, encounter similar issues. In the case of OFA, a recent framework for cross-domain learning, strong transferability is observed between topic-related datasets such as Arxiv and Cora (both related to computer science). Nevertheless, its generalization performance notably decreases on datasets with lower topic relevance, such as those in the e-commerce domain.
+
+LLM-based solutions, such as Vicuna-7B, demonstrate consistent performance across various datasets. Nevertheless, their predictive capabilities are confined to text information alone. In contrast, GNN-LLM-combined solutions that use LLM as a predictor demonstrate generalization ability but often face limitations. For instance, GraphGPT tends to underperform compared to Vicuna-7B, due to the lack of a graph foundation model. Instead of relying on a graph foundation model, LLaGA directly maps node representations without GNN and can generalize on citation datasets. However, it demonstrates limited generalization capability across e-commerce datasets, which are more challenging due to highly irrelevant topics. TEA-GLM, on the other hand, utilizes principal components of token embeddings of LLMs to constrain representations learned by GNN, helping the graph representations well transfer to other datasets. Experimental results validate the superior generalization capabilities of TEA-GLM, achieved with less textual data and fewer parameters.
+\subsection{Cross-
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

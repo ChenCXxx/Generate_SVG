@@ -1,0 +1,304 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Deep neural networks (DNNs) have become the core enabler of a wide spectrum of AI applications, such as 
+natural language processing~\citep{vaswani2017attention, kenton2019bert},
+visual recognition~\citep{li2022contextual, faraki2021cross}, 
+automatic machine translation~\citep{sun2020automatic, zheng2021towards},
+and also the emerging application domains such as 
+robot-assisted eldercare~\citep{do2018rish, bemelmans2012socially}, 
+mobile diagnosis~\citep{panindre2021artificial, abdel2020fusion}, 
+and wild surveillance~\citep{akbari2021applications, ke2020smart}.
+To satisfy the growing demand for adaptability and training efficiency of DNN models in deployment, a surge of research efforts has been devoted to designing efficient training paradigms~\citep{he2021pipetransformer, yuan2021mest, wu2020enabling, wu2021enabling}.
+For example, sparse training~\citep{evci2020rigging, yuan2021mest} and low-precision training~\citep{yang2020training, zhao2021distribution} are two active research areas for efficient training that can effectively reduce training costs, such as computing FLOPs and memory.
+However, there are still fundamental limitations in the generality of these methods when used in practice.
+Concretely, sparse training methods generally require the support of dedicated libraries or compiler optimizations~\citep{chen2018tvm, niu2020patdnn} to leverage the model sparsity and save computation costs. Similarly, low-precision training (e.g., INT-8 or fewer bits) is hard to be supported by GPUs and requires specialized designs for edge devices such as field-programmable gate arrays (FPGAs) and application-specific integrated circuits (ASICs).
+Therefore, it is desirable to have a generic efficient training method that can be easily and effectively adapted to various application scenarios.
+
+Recent studies~\citep{brock2017freezeout,liu2021autofreeze} revealed that freezing some DNN layers at a certain stage (i.e., training iteration) during the training process will not degrade the accuracy of the final trained model and can effectively reduce training costs. 
+Most importantly, layer freezing can be achieved using native training frameworks such as PyTorch/TensorFlow without additional support, making it more accessible to wide applications and users for training costs reduction and acceleration.
+Previous work has mainly used heuristic freezing strategies, 
+such as empirically selecting which DNN layers to freeze and when to freeze~\citep{lee2019would, yuan2022layer}. 
+As such, these heuristic freezing strategies require a trial-and-error process to find appropriate freezing configurations for individual tasks/networks, resulting in inconvenience and inefficiency when deployed to various application scenarios.
+Some recent works attempt to freeze the DNN layers in an adaptive manner by using the gradient-norm~\citep{liu2021autofreeze} or SVCCA score~\citep{he2021pipetransformer}.
+However, it is known that DNN models generally do not monotonically converge to their optimal position.
+As a result, these adaptive methods, which decide whether the layers are frozen or not using the heuristic criteria, are less robust to the fluctuation of model training, leading to compromised accuracy.
+Therefore, we raise a fundamental question that has seldom been asked: 
+
+\begin{quote}
+\textit{Is there a layer freezing method that can overcome the above-mentioned shortcomings while keeping the method efficient?}
+\end{quote}
+
+Inspired by the outstanding performance of attention mechanism in solving sequence classification problems such as classification tasks~\citep{long2018attention}, dialog detection~\citep{shen2016neural}, and affect recognition~\citep{gorrostieta2018attention}, it is possible that the attention mechanism could also be a promising solution for layer freezing in efficient training, but it has never been explored in prior literature.
+In this paper, we innovatively introduce attention mechanism for layer freezing.
+In specific, we design a lightweight attention-based predictor to collect and rank the DNN context information from multiple timestamps during training process. Based on the prediction, we adaptively freeze DNN layers to save training computation costs and accelerate training process while maintaining high model accuracy.
+To train the attention-based predictor, we propose a layer representational similarity-based method to generate a special training dataset using publicly available dataset (e.g., ImageNet). 
+Then, the predictor is trained offline once, and learns the generic convergence pattern along the training history, which can be generalized across different models and datasets. 
+We summarize our contributions as:
+\begin{itemize}
+\item We design a novel and lightweight predictor using attention mechanism for layer freezing in efficient training. The predictor automatically captures DNN context information from multiple timestamps and adaptively freezes the layers during the training process.
+\item We propose to leverage the layer representational similarity to generate a special dataset for training the attention-based predictor. The trained predictor can be used for different datasets and networks.
+\item Combining the attention-based predictor design and its training method, we propose a generic efficient training framework, namely \textbf{SmartFRZ}, which can effectively reduce the training costs and accelerate training time. 
+Specifically, for fine-tuning scenarios, SmartFRZ consistently achieves higher training acceleration while maintaining similar or higher accuracy compared to the prior works.
+For training from scratch scenarios, our SmartFRZ shows more significant advantages compared to the baseline methods including full training, linear freezing, and AutoFreeze, which 
+achieves 0.16\%, 2.65\%, and 4.82\% higher accuracy with 24\%, 13\%, and 15\% less training time, respectively.
+\end{itemize}
+
+
+
+
+
+Background and Related Work
+\label{sec:background}
+
+\textbf{Layer Freezing.}
+Recent researches~\citep{brock2017freezeout,kornblith2019similarity} have found that not all layers in deep nerual networks need to be trained equally.
+For example, the early layers in DNNs are responsible for low-level features extraction and usually have fewer parameters than the later layers, making the early layers converge faster during training.
+Therefore, the layer freezing techniques are proposed, which stop updating certain layers during the training process to save the training costs~\citep{lee2019would,zhang2020accelerating}.
+
+The previous work mainly uses heuristic strategies to determine which layers to freeze and when to freeze them.
+For example, \cite{brock2017freezeout} uses a linear/cubic schedule to freeze the layers sequentially (one by one from the first layers to the later layers).
+The recent work~\cite{yuan2022layer} also freezes layer by layer in a constant interval, but uses target training FLOPs reduction to decide the time to start freezing.
+Another branch of works attempt to freeze DNN layers adaptively and use the criteria such as gradient-norm~\citep{liu2021autofreeze} or SVCCA score~\citep{he2021pipetransformer} to control the freezing.
+However, all of these heuristic-based freezing strategies require manually designed freezing configurations or threshold, which can be varied between different networks and datasets. In this paper, we intend to address these shortcomings and propose a generic freezing method that can be adopted to different scenarios.
+
+\textbf{Training Costs Reduction through Layer Freezing.} 
+Layer freezing technique can save training costs including \textit{computation FLOPs} and \textit{memory accesses}.
+Generally, each iteration of DNN training consists of forward and backward propagation.
+On the one hand, once a layer is frozen, it still needs to compute the forward propagation since the subsequent layers still need its output features as their input features.
+Therefore, layer freezing cannot save training costs in forward propagation.
+On the other hand, the backward propagation consists of two parts of computations: i) calculating the gradients of weights and ii) calculating the gradients of activations.
+A frozen layer can always eliminate the computation cost and memory cost of the former part since the weights in the layer will not be updated anymore.
+However, the computation costs and memory costs of the latter part can only be eliminated if all the predecessor layers earlier than the current layer are frozen as well. 
+This is because if a predecessor layer is not frozen, it needs to calculate the gradients of activations of the current layer to maintain the data pass through the backward propagation.
+Compared to the other efficient training techniques such as pruning or quantization, one significant advantage of layer freezing is that it does not require dedicated supports such as compiler optimizations or specialized hardware.
+It can be easily integrated into the general deep learning frameworks (e.g., PyTorch) and achieve almost linear acceleration according to the computation FLOPs reduction~\citep{yuan2022layer}. Meanwhile, it focuses on layers as granularity which is more efficient in reducing the training cost, and potentially, it can be combined with pruning and quantization to bring combined benefits. 
+
+
+
+SmartFRZ Framework Design
+\label{sec:design}
+
+\begin{figure*}[t]
+\centering
+    \includegraphics[width=0.88\textwidth]{framework.pdf}
+    \caption{Overview of our attention-based layer freezing framework SmartFRZ. SmartFRZ continuously records the weights of all actively being-trained layers during the training process. 
+    Periodically, there will be a freezing stage, when SmartFRZ applies an attention-based predictor to determine whether each active layer can be frozen at this moment, based on the collected historical data.
+    After the freezing stage, the model training process continues, and the frozen layer will not be updated and its weights will not be recorded anymore. In this figure, we assume that the attention-based predictor predicts to freeze layer 1 only.
+    }
+\label{fig:framework}
+\end{figure*}
+\subsection{Framework Overview}
+\label{sec:design_overview}
+In this section, we introduce our proposed layer freezing framework for efficient training, which can automatically freeze appropriate network layers to reduce unnecessary computation during the training process without compromising accuracy. Figure \ref{fig:framework} shows the overview of the SmartFRZ framework.
+The core component of our framework is a lightweight attention-based predictor, which can automatically decide which layers will be frozen and when to freeze them during the training process.
+However, the attention-based predictor cannot be directly trained using conventional dataset for the classification tasks such as ImageNet.
+Therefore, we propose a novel method to generate the training dataset.
+We adopt offline training to train the predictor. Once the predictor is well-trained, it can be used for different datasets and networks since it learns generic converging patterns from collected training histories.
+
+In the following parts of this section, we will first introduce the design principle and workflow of our attention-based predictor in Section~\ref{sec:design_predictor} and Section~\ref{sec:workflow_predictor}. Then, we will introduce how to create the special training dataset for the predictor in Section~\ref{sec:design_predictor_training}.
+
+
+
+
+\subsection{Design Principle of the Attention-based Predictor}
+\label{sec:design_predictor}
+
+
+\begin{figure*}[t]
+\centering
+    \includegraphics[width=0.98\textwidth]{attention_predicto_overview.pdf}
+    \caption{(a) An illustrated example of noisy weight history in which a darker shade within the circle indicates a lower loss. The training loss decreases at iteration $\{1,2,5\}$, yet increases at iterations $\{3,4\}$. So the predictor needs to pay more attention to the weight history from iteration $\{1,2,5\}$ and less attention to the weight history from iterations $\{3,4\}$ since the latter converge towards less optimal directions. (b) Detailed workflow of the attention-based predictor. At timestamp $t$, the predictor decides whether to freeze a specific layer $l$ in three steps. First, it encodes the training history independently into feature vectors (i.e., $K^j_l$, $Q^j_l$, $V^j_l$ ). Second, it computes attention scores $\alpha^j_l$ and aggregates the historical state feature into a context vector $C^t_l$. Third, it predicts the confidence scores of freezing or not and selects the decision with higher confidence.
+    }
+\label{fig:predictor}
+\end{figure*}
+The goal of the predictor is to decide whether to freeze a layer or not at a specific training iteration.
+While existing approaches measure the gradient norm change between two timestamps~\citep{liu2021autofreeze}, the patterns of long-term converging history are missed.
+To this end, it is desirable to leverage the long-term weight history sequence for the prediction. Specifically, the predictor is designed to capture the generic converging pattern within the model training histories. We can define the task of the predictor as follows:
+
+\textbf{Freezing Prediction Task (Definition \#1)}. 
+For a layer $l$, whose weights at timestamp $j$ can be denoted as $W^j_l$: Given a sequence of its weight history $(W^j_l)^{t}_{j=0}$ at timestamp $t$, yield positive decision to freeze the layer at the current iteration (i.e., $d^t_l=1$) if the layer is ready to be frozen, and yield negative decision (i.e., $d^t_l=0$) if the layer needs further training.
+
+The task is non-trivial due to noisy weight history information within the input sequence. 
+Since the training model does not monotonically converge to the optimal solution, there exist scenarios such that: the history weight $W^n_l$ from iteration $n$ is less optimal than the history weight $W^m_l$ from iteration $m$, even if the $W^n_l$ is updated from $W^m_l$ (i.e., $n>m$).
+We call weights like $W^n_l$ as noisy weight history. 
+These noisy weight histories represent incorrect converging directions, thus introducing unnecessary noises. We illustrate an example of the scenario in Figure \ref{fig:predictor}(a).
+To this end, the predictor should avoid leveraging these misleading weight histories and selectively focus on other weight histories that provide more accurate training information toward the optimal weights.
+
+We apply an attention-based predictor to meet the requirement. The predictor ranks the information from each timestamp (i.e., sampled iteration) and adaptively aggregates weight history from the input sequence. The aggregation is input-dependent and can select the history from those preferred timestamps. The detailed workflow is discussed in Section \ref{sec:workflow_predictor}.
+
+\begin{figure*}[t]
+\centering
+    \includegraphics[width=1\textwidth]{grad_distribution.pdf}
+    \caption{The histogram of the gradient value frequency distribution of a network layer at a certain point during the training. Figure (a) counts all the parameters of the layer, while Figure (b) counts the randomly selected 1024 parameters. These gradient values belong to the 30th CONV layer of ResNet50 and were sampled during the training of ResNet50 on CIFAR-10. 
+    }
+\label{fig:grad_distribution}
+\end{figure*}
+
+\textbf{Layer Tailoring.}
+To minimize the overheads introduced by the predictor, we need to make the predictor lightweight.
+Instead of assigning individual predictors for each layer, 
+we intend to use only one predictor to serve different layers, thanks to the attention mechanism that makes the predictor can learn the generic convergence pattern.
+However, this raises another issue: \textit{how to fit weight information with different sizes from different layers into a fixed-sized MLP predictor?}
+
+
+To solve the above issue,
+we conduct an experiment to explore the relationship between a layer's parameter subsets and all its parameters.
+We observe the gradient value frequency distribution since the gradients are the most direct factor that determines the weight updates in the training process. 
+As shown in Figure \ref{fig:grad_distribution}, we can observe that, for a network layer, the gradient distribution of the randomly selected weights subset is highly similar to the gradient distribution of all the weights.
+Therefore, we make the assumption that the updating pattern of parameter subsets can represent that of the whole layer.
+This characteristic provides us with the feasibility to design the \textit{layer tailoring} technique.
+In specific, we randomly sample the weights from each layer to tailor all the layers to a uniform size (e.g., 1024) and fit the sampled weights into the predictor model.
+With our layer tailoring, the predictor can be shared by the layers with different sizes.
+
+\subsection{Workflow of the Lightweight Attention-based Predictor}\label{sec:workflow_predictor}
+The overview of the detailed predictor workflow is depicted in Figure \ref{fig:predictor}(b).
+For each historical weight $W^j_l$ (sampled parameter of layer $l$ at timestamp $j\in\{0,1,\cdots,t\}$), the predictor first encodes them into a query vector $Q^{j}_{l}$, a key vector $K^{j}_{l}$, and a value vector $V^{j}_{l}$, following \Eqref{eq:kqv}, in which $MLP_{k/q/v}(\cdot)$ denotes trainable three-layer Multi-Layer-Perceptrons.
+\begin{equation}\label{eq:kqv}
+    K^{j}_{l} = MLP_{k}(W^j_l), 
+    Q^{j}_{l} = MLP_{q}(W^j_l), 
+    V^{j}_{l} = MLP_{v}(W^j_l), 
+    j \in \{0, 1, \cdots, t\} 
+\end{equation}
+Next, it computes the correlation score $a^{j}_{l}$ between the current time (i.e., iteration $t$) and each previous timestamp $j$. Specifically, it conducts dot-product between query vector at time $t$ (i.e., $Q^{t}_{l}$) with key vectors from timestamp $j$ (i.e., $K^{j}_{l}$), then gets a normalized attention score $\alpha^{j}_{l}$ by softmax across all previous timestamps, following \Eqref{eq:ranking}. 
+\begin{gather}\label{eq:ranking}
+    a^{j}_{l} = Q^{t}_{l} \cdot K^{j}_{l}, j \in \{0, 1, \cdots, t\}\\\nonumber
+    \alpha^{j}_{l} = \frac{\exp{(a^{j}_{l})}}{\sum^{t}_{i=0}\exp({a^{i}_{l})}}, j \in \{0, 1, \cdots, t\}\nonumber
+\end{gather}
+The value vector from each timestamp $j$ (i.e., $v^{j}_{l}$) is weighted by the attention score $\alpha^{j}_{l}$, and accumulated to the final context vector $C^t_l$, following \Eqref{eq:aggr}. Hence, the aggregated context vector keeps more information from those with higher attention scores while paying less attention to those with low scores. 
+\begin{equation}\label{eq:aggr}
+    C^t_l = \sum^{t}_{j=0}\alpha^{j}_{l}V^{j}_l
+\end{equation}
+In the end, the prediction module $MLP_{z}(\cdot)$ (i.e., a three-layer MLP followed by a softmax) computes confident scores of freezing or not as a two-element vector. We choose a decision with higher confidence, as shown in \Eqref{eq:pred}. If $d^t_l=1$, we will freeze layer $l$ at timestamp $t$; otherwise, we continue its training at the moment. 
+The predictor is lightweight in terms of both computing and memory overhead.
+\begin{equation}\label{eq:pred}
+    d^t_l = Argmax(MLP_{z}(C^t_l))
+\end{equation}
+
+\subsection{Training the Predictor}
+\label{sec:design_predictor_training}
+
+In order to not seize the computational resources during the model training, we decide to train the predictor offline and then use it during the training process instead of jointly training the predictor.
+To train the attention-based predictor, we need to generate a dataset ourselves. As mentioned in Section~\ref{sec:design_predictor}, we use the layer weights as input data and then apply a layer representational similarity-based method to label the input data.
+
+\textbf{Layer Representational Similarity.}
+As training proceeds, the model layers are continuously being updated, and the representational similarity between a layer of the model being trained and the corresponding layer of the well-trained model will increase. The representational similarity indicates the feature extraction capability of a specific layer.
+We adopt a widely-used index Centered Kernel Alignment (CKA) to indicate the representational similarity of two layers~\citep{kornblith2019similarity}. CKA is obtained by comparing the output feature maps of two layers under the same input image batch.
+It is calculated as:
+\begin{equation}
+    CKA\left( X, Y \right) = \left\|Y^{\mathrm{T}} X\right\|_{\mathrm{F}}^{2} /\left(\left\|X^{\mathrm{T}} X\right\|_{\mathrm{F}}\left\|Y^{\mathrm{T}} Y\right\|_{\mathrm{F}}\right) 
+    \label{equa:CKA}
+\end{equation}
+where $X$ and $Y$ are the output feature maps from two layers, and $\left\|\cdot \right\|_{\mathrm{F}}^{2}$ represents the square of the Frobenius norm of a matrix. 
+A higher CKA value indicates that the two layers will output more similar feature maps with the same inputs.
+Further, if the CKA value of a layer stabilizes during the training process, we consider this layer is converged and ready to be frozen.
+
+\begin{wrapfigure}{r}{0.43\textwidth}%靠文字内容的右侧
+\centering
+    \includegraphics[width=\textwidth]{CKA.pdf}
+    \caption{CKA variation curve as training proceeds. Result is obtained while training ResNet50 on CIFAR-10 and the ResNet50 is pre-trained on ImageNet.}
+\label{fig:CKA}
+\end{wrapfigure}
+
+Figure \ref{fig:CKA} plots the CKA value curve of several CONV layers as training proceeds.
+As one can observe from the figure, after a period of fine-tuning, the layer's CKA stabilizes, which means that the feature extraction capability of those layers hardly changes even if the training continues. 
+At this moment, freezing those layers will have little impact on accuracy.
+Moreover, the similarity with the well-trained model is not monotonically increasing but fluctuating, which correlates with our discussion in section \ref{sec:design_predictor} that it is not always the most recent model that has the most significant impact on the current model parameters.
+We can also observe from the figure that different layers require different training epochs to stabilize, and basically the layers in the front stabilize faster than the layers in the back (e.g., layers 10 and 20 stabilize faster than layers 40 and 50). 
+But it is interesting to see that the layer in the back is possible to stabilize faster than the front layer (e.g., layer 30 stabilizes faster than layers 10 and 20).
+This is due to the presence of residual connections in the ResNet architecture, which allows some of the later layers to behave like the earlier layers~\citep{veit2016residual}.
+These observations demonstrate the need for an adaptive layer freezing method, which is exactly what the SmartFRZ does, rather than forcing sequential freezing from front to back.
+Note that we cannot directly use this representational similarity-guided freezing because we cannot obtain the well-trained reference model in advance in practice.
+\textbf{Generating the Training Dataset.}
+We first train a model on a certain dataset and use it as a well-trained reference model for CKA calculation. 
+Then we 
+train the same network on the same dataset
+again, in which we periodically calculate the CKA value between the well-trained model and the model under training for all the layers. 
+With the CKA value, we are able to determine whether to freeze a layer or not.
+In this way, each piece of training data includes a sequence of historical weights of a tailored layer and a label indicating whether to freeze that layer or not at the moment of the latest record of this sequence.
+
+We conduct an experiment to show the effectiveness of labeling the data through layer representational similarity. 
+Specifically, we first train and obtain well-trained ResNet50~\citep{He_2016_CVPR} and VGG11~\citep{Simonyan15} models on the CIFAR-100~\citep{krizhevsky2009learning} dataset. Then we train another ResNet50 and VGG11 model with CIFAR-100 dataset again and freeze the network layers under the guidance of layer representational similarity during the training process. 
+In this experiment, the freezing is conducted at the end of each epoch.
+Table \ref{table_CKA_effectiveness} shows the experimental results of the training with and without layer freezing. 
+As shown in the table, training the networks using the representational similarity-guided freezing method can significantly reduce the computation cost (e.g., it saves 48\% computation for training ResNet50) while maintaining the model accuracy, demonstrating the effectiveness of our similarity-guided labeling method and the correctness of the generated dataset. 
+
+\begin{table}[t]
+    \footnotesize
+    \setlength\tabcolsep{4pt}
+	\centering
+	\caption{Comparison of model accuracy and total computation of the training process using different methods: full training and layer representational similarity-guided freezing. Both models are pre-trained on the ImageNet dataset and then trained for 10 epochs on CIFAR-100.}
+	\begin{tabular}{m{3.5cm}<{\centering} m{1.6cm}<{\centering} m{2.3cm}<{\centering} m{1.6cm}<{\centering} m{2.3cm}<{\centering}}
+	\toprule
+	    \multirow{2}{*}{Method} & \multicolumn{2}{c}{ResNet50} & \multicolumn{2}{c}{VGG11}\\
+	    \cline{2-3} \cline{4-5}
+		& Accuracy & Comp. (TFLOPs) & Accuracy & Comp. (TFLOPs) \\ 
+		\midrule
+		    Full Training                   & 81.68\%   & 12,360  & 74.95\% & 22,950\\
+            Similarity-Guided Freezing	    & 81.75\%   & 6,454   & 74.89\% & 12,811\\
+            \bottomrule
+	\end{tabular}
+\label{table_CKA_effectiveness}
+\end{table}
+
+
+
+
+
+
+
+Evaluation
+\label{sec:eval}
+\subsection{Experimental Setup}
+\label{sec:eval}
+
+In this section, we evaluate the proposed SmartFRZ framework in both computer vision and language domains. In CV domain, we use three representative CNN models ResNet50, VGG11, and MobileNetV2~\citep{sandler2018mobilenetv2}, and a vision transformer model DeiT-T~\citep{pmlr-v139-touvron21a}. 
+And we use three widely-used datasets ImageNet~\citep{deng2009imagenet}, CIFAR-10, and CIFAR-100.
+In NLP domain, we fine-tune the pre-trained BERT-base model~\citep{kenton2019bert} using two datasets MRPC~\citep{dolan2005automatically} and CoLA~\citep{warstadt2019neural} in GLUE benchmark~\citep{wang2018glue}.
+We conduct our experiments on two servers: i) a server with 8$\times$ NVIDIA RTX 2080Ti GPUs is used for the experiments on ImageNet dataset and ii) an NVIDIA Tesla P100 GPU server is used in all other experiments.
+Both the predictor and the target networks are trained using the SGD optimizer with momentum.
+The training data is divided into batches with a size of 32. 
+In CNN models, we freeze the BN layer together with its corresponding CONV layer to avoid unnecessary computation costs in back-propagation.
+The attention-based lightweight predictor is trained once on ImageNet using ResNet50 and then used in different models and datasets. The attention window size for the predictor is 30. 
+And we tailor all the layers into the size of 1024 by random sampling to fit into the generic predictor.
+All the accuracy results in this paper are the average of 5 runs using different random seeds. And the overhead introduced by predictor is included in the results.
+A benchmark is defined as a model-dataset combination (e.g., VGG11+CIFAR-100).
+
+\subsection{Main Results}
+\label{sec:main_results}
+
+\textbf{Fine-tuning.} Table \ref{table_compare_freezing} shows the results of different freezing methods (Linear Freezing~\citep{brock2017freezeout} and AutoFreeze~\citep{liu2021autofreeze}).
+Linear freezing is a manually determined sequential freezing method. In our experiments, we set the number of frozen layers to increase according to the number of training epochs and let its total training time similar to that of SmartFRZ for fair comparison as it is highly rely on manually predefined freezing configurations.
+AutoFreeze is also a sequential freezing scheme and uses the variation of gradients norm as the metric to guide the freezing.
+SmartFRZ can significantly reduce computation cost and training time without compromising accuracy compared to full training. And it consistently outperforms Linear Freezing and AutoFreeze. 
+\begin{table}[t]
+\setlength\tabcolsep{0.39pt}
+	\centering
+\footnotesize
+	\caption{Comparison of different freezing methods. All the models are pre-trained on ImageNet dataset. Then the CNN models and ViT model are trained for 10 epochs and 100 epochs to converge, respectively, using a cosine annealing learning rate scheduler according to the training epochs.
+}
+	\label{table_compare_freezing}
+    \begin{tabular}{m{1.6cm}<{\centering} m{2.48cm}<{\centering} m{2.1cm}<{\centering} m{1.15cm}<{\centering} m{1.6cm}<{\centering} m{2.05cm}<{\centering} m{1.15cm}<{\centering} m{1.6cm}<{\centering}}
+	\toprule
+	    \multirow{2}{*}{Model} & \multirow{2}{*}{Method} & \multicolumn{3}{c}{CIFAR-10} & \multicolumn{3}{c}{CIFAR-100}\\
+	    \cline{3-5} \cline{6-8}
+		 & & \multirow{2}{*}{Accuracy} & Time & Computation & \multirow{2}{*}{Accuracy} & Time & Computation\\
+		 & &                           & (Second)     & (TFLOPs)    &                           & (Second)     & (TFLOPs) \\ 
+		
+		\hline
+        \multirow{4}{*}{ResNet50}       & Full Training     & 96.10\%$\pm$0.12\%   & 2,594 & 12,360    & 81.68\%$\pm$0.15\%  & 2,500  & 12,360\\
+                                        & Linear Freezing   & 96.05\%$\pm$0.25\%   & 1,980 & 8,247     & 81.48\%$\pm$0.29\%  & 1,844  & 7,085  \\
+                                        & AutoFreeze        & 96.24\%$\pm$0.38\%   & 2,424 & 8,716     & 81.30\%$\pm$0.48\%  & 1,963  & 7,716 \\
+                                        \rowcolor[gray]{.9} & SmartFRZ (Ours)	& 96.12\%$\pm$0.19\%   & 1,955 & 8,122     & 81.73\%$\pm$0.22\%  & 1,787  & 6,398 \\
+		
+		\hline
+		    \multirow{4}{*}{VGG11}      & Full Training     & 93.36\%$\pm$0.17\%   & 2,698  & 22,950       & 74.95\%$\pm$0.11\%  & 2,703  & 22,950\\
+		                                & Linear Freezing   & 92.35\%$\
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

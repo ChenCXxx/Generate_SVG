@@ -1,0 +1,167 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+As the Large Language Models (LLMs) currently kindle the spark of Artificial General Intelligence (AGI), Large Multimodal Models (LMMs)~\cite{zhu2023minigpt,liu2023visual} take a step forward by integrating visual modalities with the linguistic prowess of LLMs. With the instruction-following and content-reasoning capabilities inherited from LLMs, the LMM has successfully functioned as a versatile assistant across a wide range of tasks, including visual question answering~\cite{antol2015vqa,qian2023nuscenes}, image captioning~\cite{vaswani2017attention,jiao2022more}, visual commonsense reasoning~\cite{bagherinezhad2016elephants,norlund2021transferring}, etc.
+
+In pursuit of more convenient and efficient human-AI interaction, it is crucial to further explore fundamental vision-centric capabilities encapsulated in the LMMs, which aid in detailed object referencing and dialogue responses. Early works, e.g., MiniGPT-v2~\cite{chen2023minigpt}, Kosmos-2~\cite{peng2023kosmos} and Qwen-VL~\cite{bai2023qwen}, equip the LMM with the grounding ability by reformulating bounding boxes as a sequence of coordinate tokens and adapting them to the language model's output space. Griffon~\cite{zhan2023griffon} extends this design to object detection by meticulously curating a language-prompted detection dataset. Owing to such language model-oriented reformulation, these methods can be implemented with minimal modifications to existing LMMs.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.9\linewidth]{Fig1_v2.pdf}
+  \caption{\textbf{Comparison of our proposed Lumen with previous methods.} 
+  Our Lumen first predicts unified heatmaps for various tasks. These heatmaps are further used for guiding simple decoding tools with the parsed task-type indicators to support versatile visual tasks. 
+  We omit the user instruction of referring to all persons in the image for conciseness. 
+  }
+  \label{fig:fig1}
+\end{figure}
+
+Although convenient, the aforementioned approaches encounter challenges when scaling up to more intricate scenarios and vision-centric tasks. First, those LLMs highly relies on language models's auto-regressive sequence generation method, which leads to high uncertainty when multiple objects are concurrently addressed.
+As shown in the first row of Fig~\ref{fig:fig1}, the three persons highlighted with bounding boxes of different colors  lack an inherent order. And imposing a sequential order on them would exacerbate the confusion in the decoding process, as the model would be compelled to produce drastically different outputs after the same word ``person''. 
+Although sequence augmentation techniques introduced in Pix2Seq~\cite{chen2021pix2seq} can alleviate this issue, they are tailored for the object detection task and can not be seamlessly transferred to other vision-centric tasks such as instance segmentation and pose estimation.
+On the other hand, in contrast to tasks within the NLP field, which often exhibit stronger inter-task correlations~\cite{wei2021finetuned}, vision-centric tasks are inherently discrete due to 
+the inductive bias introduced by their distinct task definitions~\cite{xie2023towards}. Therefore, reformulating heterogeneous vision-centric task outputs into language-oriented formats tends to overemphasize the format consistency with language models, while the learning of the underlying visual perception capabilities and intrinsic characteristics of diverse vision tasks is overlooked.
+
+When delving into fundamental vision-centric tasks, namely object detection, instance segmentation, and pose estimation\footnote{We only investigate these three visual tasks in this paper, as LMMs inherently lack image generation capabilities.}, 
+we observe that they can be decoupled into task-agnostic and task-specific learning processes. Essentially, these tasks share a common task-agnostic objective of identifying individual instances with an instruction like \emph{``finding the area addressed in instructions''}, while their task-specific definitions introduce different decoding rules for generating diverse formats of outputs (e.g., boxes, masks, or points). 
+Compared with the general task-agnostic objective, task-specific outputs relies less on semantics but is more difficult for the LMMs to learn to output.
+Based on the above analysis, in this paper, we propose \textbf{Lumen}, a \textbf{L}arge m\textbf{u}ltimodal \textbf{m}odel with vision-centric capabilities \textbf{en}hancement, which decouples the task-agnostic and task-specific learning in two consecutive stages as shown in the Fig~\ref{fig:fig1}. Concretely, in the first stage, the aforementioned visual tasks are unified by reformulating them into the same matching problem. We start by feeding the user's instruction and image into a LMM for content comprehension. The obtained responses contain a designed special token (i.e, \texttt{[LOC]} in Fig~\ref{fig:fig1}) that encapsulates the visual concepts conveyed in the provided instruction, regardless of the specific task. Subsequently, this special token interacts with image patches via a transformer-based aligner to generate a heatmap, wherein the response at each location indicates the matching probability between the instruction and the corresponding image region.
+In the second stage, utilizing this heatmap as indicative guidance, task-specific decoding processes are further managed by flexibly assembling predefined decoding rules and lightweight decoders to generate the final outputs with different formats. Due to such decoupled learning behaviors, on the one hand, Lumen can concentrate on promoting fine-grained multimodal content comprehension, rather than being trapped in learning diverse specialized decoding rules lacking in semantics. On the other hand, Lumen can be affected less by the various inductive biases associated with vision-centric tasks within the LLM token space, thereby seamlessly maintaining general visual understanding and instruction following capabilities, as demonstrated in Table~\ref{tab:vqa}.
+In summary, our contributions are three folds: (1) We introduce \textbf{Lumen}, a \textbf{L}arge m\textbf{u}ltimodal \textbf{m}odel with vision-centric capabilities \textbf{en}hancement, which unleashes the vision-centric potential of the LMM by decoupling the task-agnostic and task-specific learning processes; (2) Our Lumen can seamlessly adapt to tasks such as object detection, instance segmentation, and pose estimation without requiring specialized dialogue datasets as done in the previous work~\cite{zhan2023griffon}. 
+(3) Our Lumen not only matches or exceeds the performances of existing LMM-based approaches on a series of vision-centric tasks, but also maintains general visual understanding and instruction following capabilities. 
+
+
+Related Work
+\subsection{Large Multimodal Models (LMMs)}
+Benefiting from the remarkable reasoning capabilities of Large Language Models (LLMs), LMMs transfer these abilities to the vision domain by aligning visual tokens with LLMs' input space. To achieve this, pioneering work, Flamingo~\cite{alayrac2022flamingo} resamples the visual features and feeds them into attention-based adapter layers inserted in the LLM. Aiming at more comprehensive vision-language alignment, BLIP-2~\cite{li2023blip} designs a Q-Former and jointly performs cross-modal representation learning and generative learning. Inspired by the instruction tuning technique~\cite{wei2021finetuned,ouyang2022training} in NLP field, Instruct-BLIP~\cite{dai2023instructblip}, LLaVA~\cite{liu2023visual} and Mini-GPT4~\cite{zhu2023minigpt} curate high-quality multi-modal instruction data for enhanced instruction-following abilities. However, these methods focus on high-level visual content comprehension and reasoning, ignoring the fundamental visual perception functions, such as object detection, instance segmentation, pose estimation, etc. 
+
+\subsection{Vision Generalist Models}
+Generalist models in the vision domain aim at unifying a wide range of vision tasks using one model. Motivated by the success of sequence-to-sequence models in NLP field~\cite{vaswani2017attention}, OFA~\cite{wang2022ofa} and GIT~\cite{wang2022git} unify various tasks in the sequence generation format. Following this trend, Unified-IO~\cite{lu2022unified}, Pix2Seq v2~\cite{chen2022unified} and UniTab~\cite{yang2022unitab} add discrete coordinate tokens into the vocabulary, so as to accommodating more tasks. Moreover, Gato~\cite{reed2022generalist} successfully unifies reinforcement learning tasks as the sequence generation format. Nevertheless, the sequence generation modeling can lead to low inference speeds and degraded performances. Toward this end, Uni-Perceivers~\cite{zhu2022uni,li2023uni} unify different tasks as the maximum likelihood matching problem by calculating representation similarities of all targets and each input. With such an objective, generative and non-generative tasks can be unified by selecting corresponding input and target candidates. However, these generalist models are restricted to pre-defined tasks, failing to be flexibly instructed by natural languages like LMMs. 
+
+\subsection{LMMs with Vision-Centric Capabilities}
+To endow LMMs with vision-centric capabilities, two research directions are investigated. On the one hand, a line of work regards LLMs/LMMs as intelligent planners, and allows them to trigger a wide range of task-specific Application Program Interfaces (APIs) according to user's instructions. HuggingGPT~\cite{shen2023hugginggpt} connect GPT with a suite of visual experts. AutoGPT~\cite{yang2023auto} can further execute post-processing programs after detection. Moreover, BuboGPT~\cite{zhao2023bubogpt} further combines visual grounding specialists with LMMs. On the other hand, an alternative approach explores the intrinsic localization potential of LMMs with task-specific modifications. Kosmos-2~\cite{peng2023kosmos}, MiniGPT-v2~\cite{chen2023minigpt}, Qwen-VL~\cite{bai2023qwen} and Shikra~\cite{chen2023shikra} enlarge the vocabulary size of LMMs with discrete coordinate tokens to deal with the visual grounding task~\cite{jiao2023suspected}. LISA~\cite{lai2023lisa} merges the LMM with SAM~\cite{kirillov2023segment} for enhanced reasoning capability in the referring image segmentation scenario~\cite{jiao2021two}. However, these methods do not address fundamental vision tasks like object detection and instance segmentation, where multiple objects should be detected or segmented simultaneously. To address this issue, VisionLLM~\cite{wang2023visionllm} regards an LLM as a DETR-like task decoder and customizes structural prompts for the detection task with Hungarian matching~\cite{kuhn1955hungarian} for label assignment. Griffon~\cite{zhan2023griffon} takes a different approach by leveraging the inherent detection capabilities of the LMM, introducing a language-prompted detection dataset for the instruction tuning. However, these methods leverage discrete coordinate tokens as outputs for different vision tasks, while ignoring their inherent disparities. In this paper, we disentangle the task-agnostic and task-specific learning of various vision-centric tasks to unlock the visual potential of LMMs.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.9\linewidth]{Framework_v5.pdf}
+  \caption{\textbf{Overall framework of the proposed Lumen}. Our Lumen consists of two stages. In the first stage, the input image and the instruction with designed special tokens are embedded and fed into a large language model to interact and comprehend visual and textual contents. Then, the \texttt{[LOC]} token output and high-resolution image features are further aligned to produce a heatmap denoting cross-modal matching probabilities. In the second stage, the heatmap can serve as a strong indication for various vision tasks, and the task outputs can be obtained with lightweight task-specific decoders. The routing of the decoding pathway is determined by the task token (e.g., \texttt{[DET]} in image) output generated in the first stage.
+  }
+  \label{fig:framework}
+\end{figure}
+
+
+
+Method
+As shown in Fig~\ref{fig:framework}, our proposed Lumen comprises two consecutive stages. 
+In the first stage, we concentrate on promoting fine-grained multimodal content comprehension via densely aligning visual regions and language instructions, disregarding the discrepancies between various vision tasks. In the second stage, with the resulting alignment heatmap from the first stage, task-specific decoding is performed with specialized operations or decoders.
+In the following parts, we will elaborate on the detailed designs within each stage.
+\subsection{Stage 1: Task-Agnostic Matching}
+\subsubsection{Conversation Reformulation} 
+A preliminary step for adapting vision-centric tasks to LMMs is to reformulate the visual data into conversation formats. For different tasks, we employ a unified instruction-response template: ``\texttt{USER}: \texttt{[IMG]}. \textit{Please find the location of} \texttt{\{description\}}. \textit{Respond with} \texttt{\{format\}}. \texttt{ASSISTANT}: \textit{Sure, the location is} \texttt{[LOC]}. \textit{The task output is} \texttt{[DET]/[SEG]/...}'' Here, \texttt{\{description\}} and \texttt{\{format\}} can be customized according to specific tasks. For vision-centric tasks like object detection, instance segmentation and pose estimation, \texttt{\{description\}} is a certain class name, and \texttt{\{format\}} can be boxes, masks, or points. For vision-language tasks like visual grounding and referring segmentation, \texttt{\{description\}} is the referring sentence and \texttt{\{format\}} can be boxes or masks.
+Apart from \texttt{[IMG]} that denotes image features, we also introduce a task-agnostic special token \texttt{[LOC]} and a set of task-specific special tokens, including \texttt{[DET]}, \texttt{[SEG]}, \texttt{[POINT]}, \texttt{[GROUND]} and \texttt{[REFSEG]}. As shown in Fig~\ref{fig:framework}, regardless of task types, \texttt{[LOC]} is tasked to summarize the visual concepts in instructions and further densely align with image regions. Task-specific tokens merely serve as routers for guiding the decoding pathway in the second stage \textbf{without encoding task-specific inductive bias}. Examples of reformulated conversation data of various tasks are illustrated in Fig~\ref{fig:conv}.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\linewidth]{Fig_conv_v0.pdf}
+  \caption{\textbf{The illustration of reformulated conversation data examples of different tasks.} For each reformulated data example, we sequentially present the original image (left), the heatmap generated from annotations (middle), and the task-specific ground truth (right) in the figure.
+  }
+  \label{fig:conv}
+\end{figure}
+
+\subsubsection{Model Architecture} 
+\label{method:arch}
+With the given image $x_{img}$ and reformulated instruction $x_{txt}$ as inputs, we first feed them into a conventional LMM (LLaVA-1.5~\cite{liu2023improved} in our implementation) to generate language responses. We also extract high resolution image features $f_{img}\in\mathbb{R}^{32\times32\times256}$ following prior works~\cite{bai2023qwen,zhan2023griffon}:
+\begin{equation}
+    f_{img} = \mathcal{F_V}(x_{img}),
+\end{equation}
+where $\mathcal{F_V}$ denotes the vision encoder. Since the adopted vision encoder, CLIP-ViT~\cite{radford2021learning}, is pretrained to accept image inputs of $336\times336$ pixels, we resize its positional embeddings to adapt to higher resolution, e.g., $448\times448$ pixels. Afterward, the feature of \texttt{[LOC]} token $h_{loc}\in\mathbb{R}^{1\times256}$ from the generated response, together with high-resolution image features, are fed into the proposed V-L dense aligner to calculate their matching probabilities, resulting in a heatmap $\hat{H}\in\mathbb{R}^{32\times32}$:
+\begin{equation}
+    \hat{H} = \mathcal{F_A}(f_{img},h_{loc}),
+\end{equation}
+where $\mathcal{F_A}$ represents the V-L dense aligner. In our implementation, we employ a lightweight transformer-based architecture as $\mathcal{F_A}$ to interact high resolution image feature tokens and the \texttt{[LOC]} token. More discussions on the architecture design are included in Sec.
+\subsubsection{Model Training}
+To enrich semantics during the dense alignment, we merge data from various tasks by reformulating them into uniform conversation formats as shown in Fig~\ref{fig:conv}. For vision-centric tasks, we hide diverse task-specific output format details and their learning targets are reformulated and unified as heatmaps, where each element denotes the matching probability between the instruction and the corresponding region. To construct the ground-truth heatmap $H$, we use a Gaussian kernel to fill the probabilities into a blank map following prior works~\cite{zhou2019objects,wang2022contextual}:
+\begin{equation}
+    H_{xy} = \mathrm{exp}(-\frac{(x-l_{x})^{2}+(y-l_{y})^{2}}{2\sigma^{2}}),
+\end{equation}
+where the $(l_{x},l_{y})$ is the location of the one referred by the instruction, and $\sigma$ is the standard deviation. For object detection and visual grounding, $(l_{x},l_{y})$ is the center coordinate of each object, and $\sigma$ is object size-adaptive following~\cite{zhou2019objects}. For instance segmentation and referring segmentation, we first convert their masks into bounding boxes by calculating enclosing rectangles of masks, and then calculate $(l_{x},l_{y})$ and $\sigma$ with the same rules as detection and visual grounding tasks. For pose estimation, $(l_{x},l_{y})$ is the coordinate of the annotated keypoint, $\sigma$ is a hyper-parameter designated as 2. 
+
+With the ground-truth heatmap $H$ and predicted heatmap $\hat{H}$, we apply Gaussian focal loss following~\cite{zhou2019objects} as:
+\begin{equation}
+\mathcal{L}_h = -\frac{1}{N} \sum_{xy} \left\{
+    \begin{array}{ll}
+      (1 - \hat{H}_{xy})^\alpha \log(\hat{H}_{xy}) & \text{if } H_{xy} = 1, \\
+      (1 - H_{xy})^\beta (\hat{H}_{xy})^\alpha \log(1 - \hat{H}_{xy}) & \text{otherwise}.
+    \end{array}
+\right.
+\end{equation}
+$\alpha$ and $\beta$ are hyper-parameters of the focal loss, and $N$ is the number of the location where the ground-truth matching probability equals to 1. We set $\alpha=2$ and $\beta=4$ in our implementation. For supervising the language outputs, we use the standard cross-entropy loss $\mathcal{L}_{t}$ following previous LMM-based methods~\cite{zhan2023griffon,bai2023qwen}. The overall loss function $\mathcal{L}$ can be formulated as:
+\begin{equation}
+    \mathcal{L} = \lambda_{h}\mathcal{L}_{h} + \lambda_{t}\mathcal{L}_{t},
+\end{equation}
+where $\lambda_{h}$ and $\lambda_{t}$ are hyper-parameters for balancing two losses.
+During training, since the vision encoder, adapter, tokenizer, and large language model parts in Fig~\ref{fig:framework} inherit the weights of LLaVA, we only finetune the large language model using the LoRA~\cite{hu2021lora} technique and train the V-L dense aligner under the supervision of the loss function $\mathcal{L}$.
+\subsection{Stage 2: Task-Specific Decoding}
+\label{method:stage2}
+
+\textbf{Decoding Modules.}\quad
+We first introduce the operations of the three key modules illustrated in Fig~\ref{fig:framework}. 
+(1) \textbf{Peak point selection} parses the heatmap into a set of points, where each point indicates the center location of an identified object or keypoint. Specifically, we filter the locations with heatmap response greater than their 8 surrounding neighbors as candidate peak points, and then retain the top $K$ candidates as the selected results. The value of $K$ can vary across different tasks, which will be elaborated on in Sec.\ref{sec:exp:exp_setup}. 
+(2) \textbf{Box decoder} is used for further regressing the extent of the objects designated by the selected peak points. For efficiency, instead of introducing an additional network as the box decoder, we reuse the V-L dense aligner by appending two new learnable special tokens after the \texttt{[LOC]} token as additional text-side inputs. Accordingly, the V-L dense aligner will generate two additional 1-channel map predictions, which are used for regressing the height and width under the supervision of the L1 loss functions similar to~\cite{zhou2019objects}. 
+(3) \textbf{Promptable mask decoder} can accept both points and boxes as visual instructions to generate the mask for the referred object. We directly use the SAM model~\cite{kirillov2023segment} for executing the above process without finetuning. 
+In general, these decoding modules introduce negligible training costs and can be easily implemented.
+
+\textbf{Decoding Pathways.}\quad
+On the basis of these three decoding modules, we customize their different cooperation patterns to perform diverse tasks, which will be introduced as follows: 
+(1) \textbf{Pose estimation} requires to return the keypoint coordinates. We can easily obtain these coordinates by parsing the predicted heatmap with the peak point selection operation. 
+(2) \textbf{Object detection} and \textbf{visual grounding} share the same output format of bounding box, therefore, we employ the identical decoding pathway for them. Specifically, as shown in Fig~\ref{fig:framework}, we feed the heatmap into the cascaded peak point selection and box decoder modules to generate bounding boxes. 
+(3) \textbf{Instance segmentation} and \textbf{referring segmentation} share a relationship analogous to the one between object detection and visual grounding, therefore, we also adopt the same decoding pathway for them. Concretely, we first parse both the center point and bounding box of the object, and then, we use them as visual instructions to guide the promptable mask decoder to generate the mask prediction.
+
+
+
+Experiments
+\subsection{Experimental Setup}
+\label{sec:exp:exp_setup}
+
+\textbf{Datasets.}\quad
+Our training data consists of datasets from the following different tasks. (1) For object detection, we use MSCOCO~\cite{lin2014microsoft}, Objects365~\cite{shao2019objects365} and OpenImages~\cite{kuznetsova2020open}. (2) For visual grounding, we use RefCOCO, RefCCO+ and RefCOCOg~\cite{yu2016modeling}. (3) For pose estimation, we use MSCOCO keypoints~\cite{lin2014microsoft} and AIC~\cite{wu2017ai}. (4) For visual question answering, we employ a subset of ShareGPT4V dataset~\cite{chen2023sharegpt4v} with 665K samples. It is worth noting that for instance segmentation and referring segmentation, since we first transform their masks into bounding boxes as mentioned in Sec~\ref{method:arch}, the constructed heatmaps are the same as the object detection. Additionally, given that we do not finetune the mask decoder in the second decoding stage, we actually do not use segmentation annotations throughout the entire training process. 
+
+\textbf{Model Configurations.}\quad
+
+For the first task-agnostic matching stage, we utilize pre-trained CLIP ViT-L/14-336~\cite{radford2021learning} and LLaVA-7B-v1.5~\cite{liu2023visual} as our vision encoder and large multimodal model, respectively.
+For the second decoding stage, since the different decoding modules and pathways have been introduced in Sec~\ref{method:stage2}, we primarily specify the $K$ value choices and corresponding post-processing details of different tasks here. (1) For object detection and instance segmentation, which generally includes multiple objects in a given image, we set $K=100$ to generate 100 box candidates. Then we apply regular NMS~\cite{hosang2017learning} to filter redundant boxes, and the remaining boxes are used for further prompt mask decoder to generate instance segmentation results. (2) For visual grounding and referring segmentation, given that only one object is referred by a referring sentence, we set $K=1$ to only generate one predicted box/mask, and no post-processing is required. (3) For pose estimation, we follow previous works~\cite{geng2023instructdiffusion,chen2021pix2seq} to first crop the single object from the image using bounding boxes. Then, for each keypoint category, we set $K=1$ to extract the point with the highest matching probability as the prediction result. 
+
+\textbf{Training Details.}\quad
+
+For the task-agnostic stage, our training comprises two phases. (1) In Phase 1, we mix the object detection, visual grounding and pose estimation data with sampling rates of 0.69, 0.23, 0.08, respectively, for balanced data sampling.
+(2) In Phase 2, we mix the visual question-answering, object detection, visual grounding and pose estimation data with sample rates of 0.67, 0.23, 0.07, 0.03, respectively. We set the batch size to 160 and train the first step for 50,000 steps and the second step for 10,000 steps on 8 NVIDIA 80G A100 GPUs. 
+The loss function balance terms $\lambda_h$ and $\lambda_t$ are both set to 1. For each phase, we use AdamW as the optimizer with an initial learning rate of $3\times10^{-4}$ and weight decay of 0. During training, we do not calculate heatmap loss $\mathcal{L}_{h}$ for visual question-answering data. We do not use any data augmentation techniques for all tasks.
+
+
+\textbf{Evaluation Metrics.}\quad
+We adopt evaluation metrics commonly used within each field of task. For object detection and instance segmentation, we use mAP based on box IoU and mask IoU, respectively. For pose estimation, we use mAP based on OKS (object keypoint similarity). For visual question-answering, we comply with the evaluation protocol of each individual benchmark.
+
+\begin{table*}[!t]
+\centering
+\caption{\textbf{Results on fundamental vision-centric tasks and vision-language tasks.} 
+We use ``-'' and gray cell to indicate the result is not reported and the corresponding task is not supported by the method, respectively.}
+\label{tab:ver}
+\scalebox{0.8}{
+\begin{tabular}{lccccccccccc}
+\toprule
+\multicolumn{1}{l|}{Method}           & \multicolumn{3}{c|}{Object Det.}                                   & \multicolumn{3}{c|}{Instance Seg.}                                 & \multicolumn{3}{c|}{Pose Est.}                                     & \multicolumn{1}{c|}{Grounding}     & Refer Seg. \\ \cline{2-12} 
+\multicolumn{1}{l|}{}                 & AP            & AP$_{50}$          & \multicolumn{1}{c|}{AP$_{75}$}          & AP            & AP$_{50}$          & \multicolumn{1}{c|}{AP$_{75}$}          & AP            & AP$_{50}$          & \multicolumn{1}{c|}{AP$_{75}$}          & \multicolumn{1}{c|}{AP$_{50}$}          & cIoU           \\ \midrule
+\multicolumn{12}{c}{\gray{\textit{\textbf{Task-specific Specialists}}}}                                                                                                                                                                                                                                                         \\ \midrule
+\multicolumn{1}{l|}{Faster R-CNN~\cite{ren2015faster}}  & \gray{40.3}          & \gray{61.0}          & \multicolumn{1}{c|}{\gray{44.0}}          & \cellcolor{lightgray}              & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}              \\
+\multicolumn{1}{l|}{DETR~\cite{carion2020end}}             & \gray{43.3}          & \gray{63.1}          & \multicolumn{1}{c|}{\gray{45.9}}          & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}              \\
+\multicolumn{1}{l|}{Mask R-CNN~\cite{he2017mask}}       & \gray{41.0}          & \gray{61.7}          & \multicolumn{1}{c|}{\gray{44.9}}          & \gray{37.1}          & \gray{58.4}          & \multicolumn{1}{c|}{\gray{40.1}}          & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}             \\
+\multicolumn{1}{l|}{PolarMask~\cite{xie2020polarmask}}       & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \gray{30.5}          & \gray{52.0}          & \multicolumn{1}{c|}{\gray{31.1}}          & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}              \\
+\multicolumn{1}{l|}{CPM~\cite{xie2020polarmask}}              & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \gray{62.7}          & \gray{86.2}          & \multicolumn{1}{c|}{\gray{70.9}}          & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}              \\
+\multicolumn{1}{l|}{RTMPose~\cite{jiang2023rtmpose}}          & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \gray{68.2}          & \gray{88.3}          & \multicolumn{1}{c|}{\gray{75.9}}          & \multicolumn{1}{c|}{\cellcolor{lightgray}}             & \cellcolor{lightgray}              \\
+\multicolumn{1}{l|}{MDETR~\cite{kamath2021mdetr}}            & \cellcolor{lightgray}             & \cellcolor{lightgray}             & \multicolumn{1}{c|}{\cellcolor{ligh
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

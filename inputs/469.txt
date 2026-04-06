@@ -1,0 +1,200 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Multi-task learning aims to simultaneously solve several related tasks~\cite{caruana1997multitask, zhang2017learning} by sharing information and has attracted much attention in recent years. 
+In this paper, we focus on multi-task classification under the multi-input multi-output setting~\cite{zhang2020deep, long2017learning, shen2021variational, zhang2017learning}. In this setting, the label space is shared but each task operates on a different type of visual modality or the same modality collected from different environments or equipment. As a consequence, each task follows different data distributions for the shared labels. The intuition behind multi-task classification is that tasks having the same label space provide partial knowledge of the distributions that can be shared among all tasks to reach a better view of the full distribution, which in turn benefits the individual tasks.  
+
+A real-world challenge for multi-task classification is category shift, where the categories in the testing phase are shared but during training not all classes are present for each individual task. This challenge is common in various realistic scenarios, such as skin lesion classification \cite{li2020domain, yoon2019generalizable}, fault diagnosis \cite{wang2020missing, feng2021globally}, or remote sensing scene classification \cite{lu2019multisource}. For example, in skin lesion classification, data provided by different hospitals or healthcare facilities should lead to the same set of diagnoses \cite{li2020domain, yoon2019generalizable}. Unfortunately, due to patient populations or proprietary use regulations, these tasks do not share the same diagnosis categories at training time. For example, some institutions miss instances from \textit{melanoma} and \textit{basal cell carcinoma} while others lack \textit{dermatofibroma} and \textit{benign keratosis} \cite{yoon2019generalizable}. 
+In this case, it is beneficial to expand the diagnostic scope of different hospitals or healthcare facilities by simultaneously learning their training data and improving the overall prediction accuracy. 
+Motivated by these realistic scenarios, we propose a new multi-task setting, namely multi-task classification with category shifts. 
+Figure~\ref{fig: category shifts} shows comparisons between multi-task classification with and without category shifts. 
+The goal of the proposed setting is to explore task-relatedness with an incomplete training label space to improve the generalization ability of the categorical information at test time.
+
+\begin{figure} [t]
+\centering
+\includegraphics[width=0.99\textwidth]{fig/category_shift.pdf}
+\caption{Comparison between multi-task classification without (left) and with category shifts. $\mathcal{X}^{tr}$ denotes the training set. Each row and column of the training data corresponds to one task and one category. Each visual modality (e.g., Artistic) corresponds to one task. $\mathcal{Y}^{tr}$ and $\mathcal{Y}^{te}$ denote the label spaces in training and test phases, respectively. 
+We address the category shifts in multi-task classification, where instances from several categories are unavailable during individual task training. 
+}
+\label{fig: category shifts}
+\end{figure}
+
+To deal with the category shifts, we propose to learn an association graph to transfer knowledge among tasks. 
+The association graph is constructed over three different types of nodes: task, class and instance nodes. 
+To model the complex relationships among these heterogeneous nodes, we apply different learnable metric functions to construct the edge weights among different types of nodes. 
+To propagate knowledge between the nodes, we apply message passing to update each node in the association graph according to their relationships. Essentially, the association graph stores the task and class-specific knowledge during training time and enhances each instance feature by associating it with other task and class nodes during inference.
+In the constructed association graph, the relationships between class and task nodes tend to be biased due to the category shifts. This hinders tasks in utilizing the categorical information for missing classes.
+To avoid these spurious correlations between task and class nodes, we introduce assignment entropy maximization. This regularization of the association graph encourages each class node to balance its edge weights with all tasks, enabling them to fully utilize the categorical information. 
+
+We evaluate our model on three multi-task classification benchmarks and a medical dataset for skin lesion analysis to demonstrate that the proposed model performs better under category shifts. 
+We also provide detailed analyses to show how the proposed association graph enhances the categorical information of each instance with transferred knowledge. 
+
+
+
+Problem Statement
+We first formally introduce the new problem setting of multi-task classification with category shifts. 
+We consider $T$ related classification tasks $\{\mathcal{D}_t\}_{t=1}^{T}$.  Each task contains a training set $\mathcal{D}_t^{tr}$ and a test set $\mathcal{D}_t^{te}$. We define $\mathcal{D}_t^{tr} {=} \{{\mathcal{X}}_t^{tr}, {\mathcal{Y}}_t^{tr}\}$, where ${\mathcal{X}}_t^{tr}$ denotes the set of training data from the $t$-th task and ${\mathcal{Y}}_t^{tr}$ is the corresponding label space in the training phase and $t \in \{1,2, ..., T\}$. Likewise, we define $\mathcal{D}_t^{te} {=} \{{\mathcal{X}}_t^{te}, {\mathcal{Y}}_t^{te}\}$. In addition, we define the entire label space of all tasks as $\mathcal{Y}$.
+The conventional multi-task classification setting, e.g., \cite{long2017learning, shen2021variational}, is a specific instantiation of our setting where all tasks share the entire label space at both training and test time $ {\mathcal{Y}}_t^{tr} {=}  {\mathcal{Y}}_t^{te} {=} {\mathcal{Y}}$.
+
+\begin{definition}[Category Shifts in Multi-Task Classification] 
+For each task, the training label space is a proper subset of the test label space ${\mathcal{Y}}_t^{tr} \subset {\mathcal{Y}}_t^{te}$, where $t \in \{1, 2, .., T\}$. The union of the training label spaces of all tasks $\mathcal{Y}{=}\bigcup_{t=1}^{T}{\mathcal{Y}}_t^{tr}$ determines the label space for the test phase. 
+\label{definition: category shifts}
+\end{definition}
+
+We provide a visual illustration of the difference between multi-task classification without and with category shifts in Figure~\ref{fig: category shifts}. The goal of the proposed setting is to explore task-relatedness in the presence of missing classes to improve the generalization ability of categorical information.
+To study the impact of different degrees of category shifts, we introduce the missing rate $\gamma$ that formally measures the degree of category shifts, with higher missing rates yielding more severe category shifts, and therefore more challenging conditions for each task.  
+
+\begin{definition}[Missing Rate]
+Given $T$ related classification tasks with entire label space $\mathcal{Y}$, the missing rate $\gamma$ is the average rate of the number of missing classes with respect to the size of the entire label space, $\gamma {=} \frac{1}{T}\sum_{t=1}^{T} ({\frac{|\mathcal{Y}| - |\mathcal{Y}_t^{tr}|}{|\mathcal{Y}|}})$.
+\label{definition: missing rate}
+\end{definition}
+
+Having defined the problem setting, we are now ready to present the first multi-task classification method tailored to handle category shifts.
+
+
+
+Methodology
+\subsection{Learning the association graph for knowledge transfer}
+To deal with the category shifts, we propose to learn an association graph to transfer knowledge among tasks for each class. The necessity of designing the graph is due to the category shifts requiring knowledge transfer among tasks and classes, which varies across different classes. We construct an undirected graph over three types of nodes: task, class and instance nodes. The association graph stores the task and class-specific knowledge from the training data in the task and class nodes. The edges encode the relationships between the nodes, enabling the relevant knowledge to be transferred to each instance node. Since the nodes are heterogeneous, we apply different learnable metric functions to compute edge weights for different types of nodes. To better explain the construction, we provide an illustration of the association graph in Figure~\ref{fig: graph}.
+
+The rationale behind our model is that relevant knowledge is transferred among nodes in the association graph to enhance the categorical information of each instance, making the instance more discriminative. 
+During training, the model learns the ability to update all nodes in the graph by transferring the relevant knowledge. 
+At inference time, the ability is generalized to each test instance of either observed or missing categories. Thus, each test instance is refined with the relevant knowledge stored in the association graph, which reduces the category shifts from the training to the test set.
+For clarity, we introduce the main components of the association graph: task and class graphs. 
+
+\paragraph{Task graph.}
+Given $T$ related tasks, we introduce the task graph to model the relationships between tasks. The features of the nodes in the task graph are task-specific representations, each of which aggregates all features from the corresponding task. We define the node of the $t$-th task as follows: 
+\begin{equation}
+   \mathbf{v}_t = \frac{1}{N_t^{tr}} \sum_{i=1}^{N_t^{tr}} \mathcal{E}(\mathbf{x}_{i}),
+\end{equation}
+where $\mathbf{x}_{i}$ is a training instance belonging to the $t$-th task and $N_t^{tr}$ is the number of training instances from the corresponding task. $\mathcal{E}$ is a feature extractor shared by all tasks, which embeds each instance into a $d$-dimensional feature space. $\mathcal{E}$ is a feature extractor shared by all tasks, which embeds each instance into a $d$-dimensional feature space.
+
+With the task nodes, we further define the edges between the task nodes $\mathbf{v}_i$ and $\mathbf{v}_j$ as ${A}_{\mathcal{T}}(\mathbf{v}_i, \mathbf{v}_j)$. The weight of the edge is determined by the learnable similarity between the task nodes, which is formulated as follows:
+\begin{equation}
+   A_{\mathcal{T}}(\mathbf{v}_i, \mathbf{v}_j) =  \sigma (\mathbf{W}_{\mathcal{T}}(|\mathbf{v}_i-\mathbf{v}_j| / \alpha_{\mathcal{T}})+\mathbf{b}_{\mathcal{T}}),
+\end{equation}
+where $\mathbf{W}_{\mathcal{T}}$ and $\mathbf{b}_{\mathcal{T}}$ are the learnable parameters for the task graph. $\alpha_{\mathcal{T}}$ is a scalar and $\sigma$ is the sigmoid function used to normalize the edge weight between 0 and 1. The edge weight indicates the proximity between the $i$-th and $j$-th tasks. 
+We denote the task graph as $\mathcal{G}_{\mathcal{T}} {=} (\mathbf{V}_{\mathcal{T}}, \mathbf{A}_{\mathcal{T}})$. In the task graph, $\mathbf{V}_{\mathcal{T}} {=}\{ \mathbf{v}_t | t \in [1, T]\} \in \mathbb{R}^{T \times d}$ is the set of all task nodes and $\mathbf{A}_{\mathcal{T}} {=} \{ A_{\mathcal{T}}(\mathbf{v}_i, \mathbf{v}_j) | i, j \in [1, T] \} \in \mathbb{R}^{T \times T}$ is the corresponding adjacency matrix, which characterizes task relationships.
+
+\paragraph{Class graph.} Likewise, we define the class graph as $\mathcal{G}_{\mathcal{C}} {=} (\mathbf{V}_{\mathcal{C}}, \mathbf{A}_{\mathcal{C}})$, where each node represents the corresponding categorical information. Here $\mathbf{V}_{\mathcal{C}} {=}\{ \mathbf{k}_c | c \in [1, C]\} \in \mathbb{R}^{C \times d}$, where $C$ denotes the size of the entire label space of all tasks. We define the features of the node of the $c$-th class as:
+\begin{equation}
+   \mathbf{k}_c = \frac{1}{N_c^{tr}} \sum_{m=1}^{N_c^{tr}} \mathcal{E}(\mathbf{x}_{m}),
+\end{equation}
+where $\mathbf{x}_{m}$ is a training instance from $c$-th class and $N_c^{tr}$ is the number of training instances of the corresponding class. The edge weight between class nodes $A_{\mathcal{C}}(\mathbf{k}_i, \mathbf{k}_j)$ is formulated as:
+\begin{equation}
+   A_{\mathcal{C}}(\mathbf{k}_i, \mathbf{k}_j) =  \sigma (\mathbf{W}_{\mathcal{C}}(|\mathbf{k}_i-\mathbf{k}_j| / \alpha_{\mathcal{C}}+\mathbf{b}_{\mathcal{C}})),
+\end{equation}
+where $\mathbf{W}_{\mathcal{C}}$ and $\mathbf{b}_{\mathcal{C}}$ are the learnable parameters for the class graph. $\alpha_{\mathcal{C}}$ is a fixed scalar. The motivation for designing the metric function with learnable parameters is to explore the task-specific or class-specific semantic information in the corresponding graph. The adjacency matrix of the class graph is  $\mathbf{A}_{\mathcal{C}} {=} \{ A_{\mathcal{C}}(\mathbf{k}_i, \mathbf{k}_j)|i, j \in [1, C]\} \in \mathbb{R}^{C \times C}$.
+\paragraph{Association graph.} 
+Having defined the task and class graphs, we build the association graph by connecting both graphs with each instance node, as shown in Figure~\ref{fig: graph}. We use the association graph to enhance instance feature learning by leveraging task representations (nodes in the task graph) and categorical information (nodes in the class graph). To do so, we query each instance in the task and class graphs. 
+Formally, we define an instance node as $\mathbf{V}_{\mathcal{X}} {=} \{ \mathcal{E}({\mathbf{x}})\} \in \mathbb{R}^{1 \times d}$.
+
+We build up the connection of the instance node to each node of the task graph and the class graph, which gives the instance node access to the knowledge stored in the task and class graph. The edge between the instance node $\mathcal{E}({\mathbf{x}})$ and a task node $\mathbf{v}_t$ is denoted by $A_{\mathcal{X} \sim \mathcal{T}} ({\mathbf{x}}, \mathbf{v}_t)$.
+The weight of the edge is obtained by the normalized similarity between the instance and task node, $A_{\mathcal{X} \sim \mathcal{T}}{=} \mathrm{softmax}(\frac{\mathcal{E}({\mathbf{x}})^{\top}\mathbf{v}_t}{\sqrt{d}})$. The corresponding adjacency matrix is $\mathbf{A}_{\mathcal{X} \sim \mathcal{T}} {=} \{ A_{\mathcal{X} \sim \mathcal{T}} ({\mathbf{x}}, \mathbf{v}_t) | t \in [1, T]\}  \in \mathbb{R}^{1 \times T}$. 
+Likewise, we define the adjacency matrix between instance nodes and the class graph as $\mathbf{A}_{\mathcal{X} \sim \mathcal{C}} {=} \{ A_{\mathcal{X} \sim \mathcal{C}} ({\mathbf{x}}, \mathbf{k}_c) | c \in [1, C]\} \in \mathbb{R}^{1 \times C}$.
+\begin{figure} [t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig/graph.pdf}
+\caption{
+The illustrative association graph (left) and the adjacency matrix (right). 
+The association graph contains the task graph, the class graph and an instance node.
+Nodes in the task and class graphs store the task and class-specific knowledge during training. Edges in the association graph encode the various relationships among nodes, facilitating knowledge transfer between them. Single and double
+lines denote the edges among the homogeneous nodes and the MULTIPLE edges among heterogeneous nodes, respectively.
+}
+\label{fig: graph}
+\end{figure}
+
+In the association graph, we further build the edges cross the task and class graphs to enable knowledge transfer between them. Formally, we define the edge connecting a class node and a task node as:
+\begin{equation}
+    A_{\mathcal{C} \sim \mathcal{T}}(\mathbf{k}_c, \mathbf{v}_t) = \frac{\exp(-{\| (\mathbf{k}_c - \mathbf{v}_t) / \alpha_\mathcal{P} \| }_{2}^2 / 2)}{\sum^{T}_{t^{'}=1} \exp(-{\| ( \mathbf{k}_c - \mathbf{v}_{t^{'}}) / \alpha_\mathcal{P} \|}_{2}^2 / 2)},
+\end{equation}
+where $\alpha_\mathcal{P}$ is a fixed scaling factor. 
+This metric function without learnable parameters aims to alleviate the overfitting of the learned connections between the task and its observed classes.
+The adjacency matrix between the task and class graphs is denoted by $\mathbf{A}_{\mathcal{C} \sim \mathcal{T}} {=} \{ A_{\mathcal{C} \sim \mathcal{T}}(\mathbf{k}_c, \mathbf{v}_t)| c \in [1,C], t\in [1, T]\} \in \mathbb{R}^{C \times T}$.
+Thus, the whole association graph $\mathcal{G} {=} (\mathbf{V}, \mathbf{A})$ with three types of nodes can be formulated as:
+\begin{equation}
+\mathbf{V} = (\mathbf{V}_\mathcal{T}; \mathbf{V}_\mathcal{C}; \mathbf{V}_\mathcal{X}),
+\mathbf{A} = 
+{\left[ 
+\begin{array}{ccc}
+\mathbf{A}_\mathcal{T} & \mathbf{A}^{\top}_{\mathcal{C} \sim \mathcal{T}} & \mathbf{A}^{\top}_{\mathcal{X} \sim \mathcal{T}}\\ \mathbf{A}_{\mathcal{C} \sim \mathcal{T}} & \mathbf{A}_{\mathcal{C}} & \mathbf{A}^{\top}_{\mathcal{X} \sim \mathcal{C}}\\
+\mathbf{A}_{\mathcal{X} \sim \mathcal{T}} & \mathbf{A}_{\mathcal{X} \sim \mathcal{C}} & 1
+\end{array}
+\right]}.
+\end{equation}
+
+\paragraph{Knowledge transfer by message passing.}
+With the constructed association graph, we perform message passing in the association graph via a multi-layer Graph Neural Network (GNN). In general, our model can work with various GNN architectures. In this work, we apply GraphSAGE \cite{hamilton2017inductive}. To simplify, we use $\mathbf{h}_i$ to represent one node in the association graph $\mathcal{G}$, which could be a task, class or instance node. The $l$-th layer of GNNs can be written as:
+\begin{equation}
+    \mathbf{h}_{i}^{(l)} = \mathbf{U}^{l}\mathrm{Concat}\Big(\mathrm{Mean}\Big(\{\mathrm{ReLU}(\mathbf{W}^{l} \mathbf{h}_{j}^{(l-1)}), \mathbf{h}_j \in \mathcal{N}_k(\mathbf{h}_i) \}\Big), \mathbf{h}_{i}^{(l-1)}\Big),
+\end{equation}
+where $\mathbf{h}_{i}^{(l)}$ denotes the node embedding by the $l$-th GNN layer and $\mathbf{U}^{l}$ and $\mathbf{W}^{l}$ are learnable weight matrices of the $l$-th GNN layer. $l \in \{1, 2, ..., L\}$ with $L$ denoting the number of GNN layers. $\mathbf{h}_{i}^{(0)}$ is initialized as the nodes defined above. $\mathcal{N}_k(\mathbf{h}_{i})$ denotes the top-$k$ neighbors of the node $\mathbf{h}_{i}$ according to the adjacency matrix between all nodes $\mathbf{A}$. 
+By message passing, each instance is refined with the categorical information stored in the association graph. As a result, the instance will gain more discriminative and informative representations. The enhanced instance feature is formulated as $\hat{\mathbf{V}}_\mathcal{X} {=} \{\hat{\mathcal{E}(\mathbf{x})}\}$. We compute the prediction for the enhanced feature as $p(\mathbf{y}|\mathbf{x}) {=} p(\mathbf{y}| \hat{\mathcal{E}(\mathbf{x})}, \mathbf{f}_t)$, where $\mathbf{f}_t$ denotes the corresponding task-specific classifier. 
+
+\subsection{Assignment entropy maximization}
+Category shifts in multi-task classification yield spurious correlations between tasks and their corresponding observed classes. This means the edges between each task and its observed classes have considerably higher weights than other edges. The knowledge transfer between tasks and classes will be dominated by these spurious correlations, hindering their missing classes from exploiting the categorical information. 
+
+To tackle this problem, we propose assignment entropy maximization to encourage each class node to balance the weights of its edges with all tasks. Formally, the assignment entropy for the $c$-th class is formulated as:
+\begin{equation}
+    \mathbf{H}(\mathbf{k}_c) = - \sum_{t=1}^{T}  A_{\mathcal{C} \sim \mathcal{T}}(\mathbf{k}_c, \mathbf{v}_t)   \log A_{\mathcal{C} \sim \mathcal{T}}(\mathbf{k}_c, \mathbf{v}_t).
+\end{equation}
+
+By maximizing the assignment entropy, weights are balanced for each class, which enables all tasks to fully utilize the categorical information for their missing classes. Intuitively, each class node is task-agnostic when the assignment entropy reaches its maximum values. In this ideal case, the model eliminates the spurious correlations between the class and its corresponding tasks in the graph.
+
+By combining the assignment entropy maximization and cross-entropy minimization of the classifiers, we have the final objective as follows:
+\begin{equation}
+\mathcal{L} = \frac{1}{T}\sum_{t=1}^{T} \mathcal{L}_{\rm{CE}}(\mathcal{D}_t) + \beta \frac{1}{C}\sum_{c=1}^{C}\mathcal{L}_{\rm{AE}}(\mathbf{k}_c),
+\end{equation}
+where $\mathcal{L}_{\rm{CE}}{=} \mathbb{E}_{\mathcal{D}_t}[-\log p(\mathcal{D}_t|\mathcal{G})]$ and $\mathcal{L}_{\rm{AE}}(\mathbf{k}_c) {=} -\mathbf{H}(\mathbf{k}_c)$.
+$\beta$ is introduced to balance the importance of the cross-entropy and assignment entropy losses. We provide the training and inference algorithms in the supplemental materials.
+
+
+
+Related Works
+\paragraph{Multi-task learning.}
+Multi-task learning \cite{caruana1997multitask} aims to learn several related tasks simultaneously and improve their overall performance. 
+The task relatedness is learned by many different aspects of the model, e.g., the loss functions~\cite{liu2020towards, kendall2018multi}, gradient space~\cite{sener2018multi, yu2020gradient}, parameter space~\cite{long2017learning, bakker2003task}, or representation space~\cite{argyriou2006multi, misra2016cross, guo2020learning}. 
+The basic idea of sharing information from multiple tasks has been successfully applied under different settings, including the single-input multi-output setting \cite{sener2018multi, yu2020gradient, strezoski2019many}, the multi-input multi-output setting~\cite{argyriou2006multi, long2017learning, shen2021variational}, and using meta-learning \cite{finn2017model, wang2021bridging, abdollahzadeh2021revisit}. 
+In the single-input multi-output setting~\cite{hazimeh2021dselect, fifty2021efficiently}, tasks are defined by different supervision information included in the same input. In meta-learning, tasks are sampled from one task distribution and different tasks have different category spaces \cite{wang2021bridging, zhen2020learning}. 
+In multi-input multi-output, tasks follow different data distributions since they are collected from different visual modalities or equipment \cite{long2017learning, shen2021variational, zhang2017learning, zhang2020deep}. 
+It remains unexplored to investigate category shifts in multi-task classification, despite being common in various realistic scenarios.
+
+\paragraph{Category shifts.}
+Category shifts denotes that training data collected from different domains may not completely share their categories, which is first proposed by \cite{xu2018deep} for domain adaptation. \cite{liu2022category} and \cite{rahman2021deep} challenge domain generalization with category shifts, where the change of domains is always followed by the change of categories. Category shift is a common scenario in real-world applications since it relaxes the requirement on the shared category set among source domains \cite{xu2018deep, chen2021deep}. As a result, category shift has drawn increasing attention and has been applied to a wide range of learning tasks, including fault diagnosis \cite{feng2021globally},  skin lesion classification \cite{li2020domain} and remote sensing image classification \cite{lu2019multisource}. 
+In this paper, we develop a new multi-task learning scenario in which individual tasks do not contain complete training data for the categories in the test set. 
+Unlike domain adaptation and generalization, which only focus on the unidirectional knowledge transfer from source domains to a target domain, our multi-task classification encourages simultaneous bidirectional knowledge transfer between any paired domain to enable efficient predictions for both tasks. 
+To the best of our knowledge, we are the first to address category shifts in multi-task classification.
+
+\paragraph{Exploring graph structure.} 
+Several recent works prove that graphs are effective in modeling label correlation \cite{chen2019multi, li2016conditional, lee2018multi, liu2016cross}, task relationships \cite{yao2020automated, cao2021relational, he2011graphbased}, meta-paths \cite{hu2020heterogeneous} and representation learning \cite{yang2022omni}. 
+For multi-label classification, \cite{li2016conditional} formulates the multi-label predictions as a conditional graphical lasso inference problem, while \cite{chen2019multi} utilizes a graph convolutional network to propagate information between multiple labels and consequently learn inter-dependent classifiers for each of the image labels. For multi-task learning, some works learn the relationship between multiple tasks by message passing over a graph neural network~\cite{liu2019learning, guo2021deep}. \cite{nassif2020multitask, buffelli2022graph} explore the graph structure to produce higher quality node embeddings on the graph-structured data. For few-shot learning, \cite{yao2019hierarchically} and \cite{yao2020automated} design the hand-crafted and automatically constructed meta-knowledge graph to provide meta knowledge for each task. Different from these methods, we address the new challenge, category shifts in multi-task classification, which yields a novel graph construction.
+Particularly, our work shares the high-level goal with~\cite{liu2016cross} in terms of joint inference over multiple heterogeneous graphs with within-graph relations and cross-graph interactions. With respect to the form of information exchange, the main differences are: \cite{liu2016cross} uses the spectral graph product and label propagation operators to exchange information between heterogeneous nodes, while our work performs message passing (e.g., GNNs). Moreover, \cite{liu2016cross} infers the unobserved multi-relations with observed multi-relations across the graphs. In contrast, our work refines each instance node with the categorical information from heterogeneous nodes. \cite{hu2020heterogeneous,yang2022omni} are related to our work since both of them construct new graph structures to enable knowledge transfer across graphs. \cite{hu2020heterogeneous} multiplies two adjacency matrices (edge types) of the heterogeneous graph to automatically learn new meta-paths. In contrast, our method constructs the connections between heterogeneous nodes by directly computing the similarities between any pair-wise nodes with different metric functions. \cite{yang2022omni} fixes the edges between heterogeneous nodes to one or zero. By contrast, our method constructs the connections between each heterogeneous node through the similarity between these nodes.
+
+\paragraph{Heterogeneous GNNs and relational graph models.} 
+Heterogeneous GNNs models~\cite{zhang2019heterogeneous,wang2019heterogeneous, hu2020heterogeneous, fu2020magnn, yun2019graph, lv2021we} have a similar spirit to our work in dealing with heterogeneous graphs, however the problem settings and technical implementations are fundamentally different. HetGNN-based methods focus on graph data (e.g., academic graph and review graph data) and need pre-processing modules for each node type to encode heterogeneous contents as a fixed-size embedding. Most HetGNN-based methods~\cite{zhang2019heterogeneous,wang2019heterogeneous, hu2020heterogeneous, fu2020magnn} depend on a hierarchical architecture to aggregate content embeddings of heterogeneous neighbors for each node, which contains node-level (intra-metapath) and semantic-level (inter-metapath) aggregations. Our work constructs an association graph from the non-graph data and enables pair-wise nodes to transfer knowledge whether they are from the same type or not. Thus, our method is suitable for solving the complex knowledge transfer in multi-task classification with category shifts.
+Moreover, relational graph models \cite{schlichtkrull2018modeling, vashishth2019composition, zhang2020relational, busbridge2019relational} are also related to our work since both aim to fully utilize the structure information in the graph. However, the main difference between them is that most relational graph models \cite{schlichtkrull2018modeling, vashishth2019composition, zhang2020relational, busbridge2019relational} are designed for homogeneous graphs, while the proposed graph model handles heterogeneous nodes. 
+
+\paragraph{Out-of-distribution generalization.} These methods are relevant in the sense that both deal with several domains that share the same label space. However, out-of-distribution generalization methods~\cite{xiao2021bit, shen2021towards, zhou2021domain_survey, xiao2022learning, wang2022generalizing, zhang2017mixup, zhou2021domain, arjovsky2019invariant, du2020learning, du2021hierarchical} focus on the single-directional knowledge transfer from the source domain(s) to the target domain(s), while our setting aims to learn a bi-directional knowledge transfer between pair-wise domains (tasks). Moreover, due to the various missing classes per task, the bi-directional knowledge transfer among domains (tasks) varies across different pairs of classes. Thus, the knowledge transfer in our setting is more complex than out-of-distribution generalization.
+
+
+
+Experiments and Results
+
+
+
+\paragraph{Datasets.} 
+We conduct experiments on three common multi-task classification benchmarks and a skin lesion classification dataset to evaluate the effectiveness of our proposed method.
+
+\texttt{Office-Home} \cite{venkateswara2017Deep} contains images from four domains/tasks: Artistic, Clipart, Product and Real-world. Each task contains images from $65$ object categories collected under office and home settings. There are about $15,500$ images in total.
+
+\texttt{Office-Caltech} \cite{gong2012geodesic} contains the ten categories shared between Office-31 \cite{saenko2010adapting} and Caltech-256 \cite{griffin2007caltech}. One task uses data from Caltech-256, and the other three tasks use data from Office-31, whose images were collected from three distinct domains/tasks, namely Amazon, Webcam and DSLR. There are $8 \sim 151$ samples per category per task, and $2,533$ images in total.
+
+\texttt{ImageCLEF} \cite{long2017learning}, the benchmark for the ImageCLEF domain adaptation challenge, contains $12$ common categories shared by four public datasets/tasks: Caltech-256, ImageNet ILSVRC 2012, Pascal VOC 2012, and Bing. There are $2,400$ images in total.
+
+\texttt{Skin-Lesion} contains three skin lesion classification tasks: HAM10000~\cite{tschandl2018ham10000}, Dermofit~\cite{ballerini2013color} and Derm7pt~\cite{kawahara2018seven}. Tasks are collected from 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

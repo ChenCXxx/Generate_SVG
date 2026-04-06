@@ -1,0 +1,373 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Untitled
+
+% ArXiv ID: 2403.12995
+
+
+
+
+\twocolumn[
+\icmltitle{ESM All-Atom: Multi-scale Protein Language Model for Unified Molecular Modeling}
+
+
+
+\icmlsetsymbol{equal}{*}
+\icmlsetsymbol{corresponding}{\#}
+
+\begin{icmlauthorlist}
+\icmlauthor{Kangjie Zheng}{equal,pku}
+\icmlauthor{Siyu Long}{equal,nju}
+\icmlauthor{Tianyu Lu}{thu}
+\icmlauthor{Junwei Yang}{pku}\\
+\icmlauthor{Xinyu Dai}{nju}
+\icmlauthor{Ming Zhang}{corresponding,pku}
+\icmlauthor{Zaiqing Nie}{air,PharMolix}
+\icmlauthor{Wei-Ying Ma}{air}
+\icmlauthor{Hao Zhou}{corresponding,air}
+\end{icmlauthorlist}
+\icmlaffiliation{pku}{School of Computer Science, National Key Laboratory for Multimedia Information Processing, Peking University-Anker Embodied AI Lab, Peking University, Beijing 100871, China}
+\icmlaffiliation{nju}{School of Artificial Intelligence, National Key Laboratory for Novel Software Technology, Nanjing University}
+\icmlaffiliation{thu}{Department of Computer Science, Tsinghua University}
+\icmlaffiliation{air}{Institute for AI Industry Research (AIR), Tsinghua University. This work was done during the internship of Kangjie, Siyu, Tianyu, and Junwei at AIR}
+\icmlaffiliation{PharMolix}{PharMolix Inc}
+
+
+\icmlcorrespondingauthor{Hao Zhou}{zhouhao@air.tsinghua.edu.cn}
+\icmlcorrespondingauthor{Ming Zhang}{mzhang\_cs@pku.edu.cn}
+\icmlkeywords{Machine Learning, ICML}
+
+\vskip 0.3in
+]
+
+
+
+
+\printAffiliationsAndNotice{\icmlEqualContribution} % otherwise use the standard text.
+
+
+\begin{abstract}
+Protein language models have demonstrated significant potential in the field of protein engineering.
+However, current protein language models primarily operate at the residue scale, which limits their ability to provide information at the atom level.
+This limitation prevents us from fully exploiting the capabilities of protein language models for applications involving both proteins and small molecules.
+In this paper, we propose \msESM~(ESM All-Atom), a novel approach that enables atom-scale and residue-scale unified molecular modeling.
+\msESM~achieves this by pre-training on multi-scale code-switch protein sequences and utilizing a multi-scale position encoding to capture relationships among residues and atoms.
+Experimental results indicate that \msESM~surpasses previous methods in protein-molecule tasks, demonstrating the full utilization of protein language models.
+Further investigations reveal that through unified molecular modeling, \msESM~not only gains molecular knowledge but also retains its understanding of proteins. \footnote{The source codes of \msESM~ are publicly released at \href{https://github.com/zhengkangjie/ESM-AA}{https://github.com/zhengkangjie/ESM-AA}.} 
+
+
+\end{abstract}
+
+\section{Introduction}
+\label{introduction}
+Protein language models (PLMs) have demonstrated significant potential in protein engineering, enabling the capture of biochemical and co-evolutionary knowledge during the pre-training of large-scale protein sequences.
+This has resulted in remarkable achievements across various domains, including protein structure prediction \citep{wu2022high,fang2022helixfold_single}, protein fitness prediction \citep{mardikoraem2023protein,notin2022tranception}, protein design \citep{zheng2023structure,ferruz2022protgpt2}, etc.
+For instance, ESM \citep{rives2021biological,lin2022language}, a widely used PLM, has served as the foundation for several significant models, including ESM-Fold \citep{lin2023evolutionary} for precise protein structure prediction and LM-Design \citep{verkuil2022language,hie2022high} for designing proteins with given target functions.
+
+Current PLMs primarily operate at the \textit{protein residue} (amino acid) \textit{scale}, which does not provide information at the \textit{atom scale}.
+In such circumstances, the potential of PLMs cannot be fully exploited to benefit applications involving both macromolecules (proteins) and small molecules, both of which are vital for various downstream applications.\footnote{These applications are widespread in the fields of chemistry and biology and are consistently pivotal for specific scientific breakthroughs. For instance, drug discovery aims to identify small molecules capable of binding to protein pockets \citep{anderson2003process,batool2019structure}, while enzyme engineering seeks to find enzymes (a special type of protein) that can efficiently catalyze molecular reactions \citep{mazurenko2019machine,kroll2023general}.} 
+Thus, external small molecule models must be included to address these applications.
+However, proteins are also composed of atoms, and modeling proteins solely at the residue scale may result in low resolution, meaning that it might not capture information at the atom scale.
+Intuitively, extending PLMs to operate at both residue and atom scales would make them applicable to a larger range of applications.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[scale=0.34]{pic/overview_new_v3.pdf}
+\caption{Overview of our multi-scale pre-training process. We mix protein datasets and molecular datasets to train \msESM. It is worth noting that the model's input is either a molecule or a protein, but not paired protein-molecule data.}
+\label{fig_overview}
+\vspace{-0.3cm} 
+\end{figure*}
+
+Nevertheless, the development of multi-scale PLMs poses significant challenges.
+First, achieving \textit{unified molecular modeling} that operates effectively at both the residue and atom scales is a challenging task, due to the incompatible vocabularies used at these two different scales.
+One potential approach to incorporate atomic information into PLMs is to represent and pre-train proteins at the atom scale instead of the original residue-scale pre-training.
+However, it should be noted that a typical protein can consist of thousands of residues, containing hundreds of thousands of atoms, making such an approach inefficient for modeling.
+Second, designing an appropriate position encoding to accurately describe the relationships among residues and atoms within the same protein is also non-trivial, which involves relationships varying from residues to residues, residues to atoms, and atoms to atoms.
+
+To tackle the aforementioned challenges, in this paper, we propose \msESM~(ESM All-Atom), which achieves multi-scale unified molecular modeling through (\romannumeral1) pre-training on multi-scale \textit{code-switch protein sequences} and (\romannumeral2) describing relationships among residues and atoms using a \textit{multi-scale position encoding}.
+
+First, drawing inspiration from the concept of multilingual code-switching in machine translation \citep{yang2020csp,li2022universal},\footnote{They create sentences that switch between two or more languages to help the model learn multilingual knowledge. \citet{yang2020csp} enhance multilingual model capabilities by substituting words in the source sentence with their translations in the target language. Similarly, \citet{li2022universal} improve these abilities by replacing a source word or phrase with its counterpart in a different language and then masking the corresponding target word. Collectively, these studies demonstrate that such code-switching techniques significantly strengthen the multilingual capabilities of machine translation models.} \msESM~introduces the concept of learning multi-scale knowledge by pre-training on code-switch protein sequences. These sequences are a hybrid of sequence and structure data, derived from randomly unzipping protein residues into their constituent atoms and assigning coordinates to each unzipped atom.
+In such a scenario, \msESM~can not only capture multi-scale aligned knowledge but also efficiently handle residue sequences and atomic coordinates.
+
+Second, \msESM~employs a multi-scale position encoding to comprehensively differentiate between residues and atoms within the code-switch protein sequence.
+At the residue scale, we extend the original position encoding used in ESM to align with the current best practices in handling pure residue sequences, thereby avoiding ambiguous positional information across different scales, including atom-to-atom, residue-to-residue, and residue-to-atom relationships.
+At the atom scale, to describe the relationships among unzipped atoms, we employ a spatial distance matrix that directly encodes their 3D positions.
+With this approach, we can effectively describe all relationships among the entities within the code-switch sequence.
+
+We pre-train \msESM~using a mixture of protein and small molecule data, and fine-tune it on a diverse set of benchmarks for evaluation. The improved experiment results demonstrate that \msESM~surpasses previous methods in protein-molecule tasks, indicating the full utilization of protein language models.
+The solid performance in protein tasks suggests that \msESM, facilitated by the novel unified molecular modeling we first proposed, acquires molecular knowledge without sacrificing its understanding of proteins.
+Additionally, when applying \msESM~to standard molecular benchmarks, it also outperforms several molecule-specific models.
+These findings clearly highlight the potential of unified molecular modeling.
+
+\begin{figure*}[!t]
+\centering
+\vspace{-0.3cm} 
+\subfigure[Multi-scale MLM]{\includegraphics[width=0.44\textwidth]{pic/multi_scale_mlm_new_v3.pdf}
+}
+\hspace{0.01\textwidth}
+\subfigure[Pair-wise Distance Recovery]{\includegraphics[width=0.45\textwidth]{pic/multi_scale_pdr_v2.pdf}}
+\caption{Framework of multi-scale pre-training comprises multi-scale masked language modeling and pairwise distance recovery.}
+\label{fig_mathod}
+\vspace{-0.3cm} 
+\end{figure*}
+
+\section{Proposed Method: \msESM}
+\label{multi_scale_pre_training}
+In this section, we will describe our multi-scale pre-training model, i.e., \msESM, in detail.
+Due to the vast number of atoms in a protein molecule, it is impossible to simultaneously input all atomic information of a protein into the model. Inspired by the concept of multi-lingual code-switching methods, \msESM~initially generates multi-scale code-switch protein sequences by randomly unzipping partial residues.
+Through training on these sequences with carefully designed multi-scale position encoding, \msESM~demonstrates its efficacy at both the residue and atom scales.
+When addressing protein-molecule tasks, i.e., tasks involving both proteins and small molecules, \msESM~does not require any additional models and can fully leverage the potential of pre-training.
+
+Specifically, in Section \ref{overview}, we introduce the overall objective of training \msESM.
+Subsequently, in Section \ref{hybrid_structure}, we delve into the details of constructing a code-switch protein sequence and implementing the multi-scale pre-training approach.
+To describe the complicated position relationships within the code-switch sequence, we present our design of a multi-scale position encoding in Section \ref{unified_relative_position_encoding}.
+
+\subsection{Overview}
+\label{overview}
+We start with an overview of our multi-scale pre-training model, i.e., \msESM~(Figure \ref{fig_overview}).
+Briefly, the total objective of our pre-training can be expressed as the following loss function:
+\begin{align}
+\mathcal{L}_{\theta} = \sum_{X_i \in B} &
+ \mathcal{L}_{\textsc{mlm}}(\bar{X}_{i}, E_{i};\theta)+  \mathcal{L}_{\textsc{pdr}}(\bar{X}_{i}, E_{i};\theta) \nonumber \\
+ =\sum_{X_i \in B} & \mathcal{L}_{\textsc{mlm}}(\textsc{Unzip}(X_i), \textsc{mspe}(X_i);\theta) ~+ \nonumber \\ & 
+ \mathcal{L}_{\textsc{pdr}}(\textsc{Unzip}(X_i), \textsc{mspe}(X_i);\theta)  \nonumber
+\end{align}
+where $B$ is a batch of data sampled from the dataset $D$.
+For each data $X_i$ in dataset $D$, we first create its code-switch sequence $\bar{X}_{i}$ by unzipping partial residues.
+Using the code-switch sequence, we employ Masked Language Modeling (MLM) and Pair-wise Distance Recovery (PDR) as pre-training tasks.
+We discuss the details of $\bar{X}_{i}$, $\mathcal{L}_{\textsc{MLM}}$, and $\mathcal{L}_{\textsc{PDR}}$ in Section \ref{hybrid_structure}.
+To account for the coexistence of residues and atoms in the sequence, we propose a Multi-Scale Position Encoding (MSPE) $E_i$ to describe the complicated position relationship within $\bar{X}_{i}$ (Section \ref{unified_relative_position_encoding}).
+We show more details of \msESM, including the parameterization of $\theta$ in Section \ref{pre_training}.
+Notably, since we utilize molecule data in pre-training, \msESM~can accept either proteins or molecules as inputs.
+
+\subsection{Multi-scale Pre-training}
+\label{hybrid_structure}
+In this section, we elaborate how to create a code-switch protein sequence $\bar{X}$ and implement the pre-training tasks, i.e., Masked Language Modeling (MLM) and Pair-wise Distance Recovery (PDR), on it (Figure \ref{fig_mathod}).
+
+\paragraph{Code-Switch Protein Sequence}
+Briefly, the concept of constructing a code-switch protein sequence is inspired by the multilingual code-switching technique in machine translation \citep{yang2020csp,li2022universal}.
+This technique, which constructs sentences that switch between multiple languages, has significantly enhanced the model's capability to handle multilingual tasks.
+In our multi-scale unified molecular modeling, we treat residues and atoms as different ``languages" and construct sequences that switch between residues and atoms, thereby augmenting the model's capability to handle downstream tasks.
+
+Specifically, in the residue scale, a protein $X$ can be seen as a sequence of $L$ residues, i.e., $X = (r_1, \cdots, r_{i}, \cdots, r_{L})$.
+Each residue $r_{i}$ further consists of a specific set of $N$ atoms $A_i = \{a_{i}^{1}, \cdots, a_{i}^{N}\}$.
+To construct a code-switch protein sequence $\bar{X}$, we randomly select a group of residues and insert their corresponding atoms into $X$, which is essentially an unzipping process. For each unzipped residue, we provide the model with structural information of the residue at the atomic scale, i.e., atomic coordinates, thus offering the model very diverse structural knowledge. In particular, during the unzipping process, we assign a sequential order to the unzipped atoms.
+Here, we take the case of unzipping a single residue as an example, whereas in actual modeling, multiple residues can be unzipped. 
+After inserting the atom set $A_i$ into $X$, i.e., unzipping the residue $r_i$, we obtain a code-switch sequence
+\begin{align*}
+\bar{X} &= (r_1, \cdots, r_i, \textsc{Order}(A_i), \cdots, r_L) \\
+&=(r_1, \cdots, r_{i}, a_{i}^{1}, \cdots, a_{i}^{N}, \cdots, r_L) \\
+&=(h_1, \cdots, h_{i}, h_{i+1}, \cdots,  h_{i + N}, \cdots, h_{L+N})
+\end{align*}
+where $\textsc{Order}$ is the order assigned to the atom set (Appendix \ref{pre_training_config}).
+$h_i$ represents either a single residue or an individual atom in $\bar{X}$.
+We also denote all the atoms in $\bar{X}$ as $\bar{A}$ and all the residues as $\bar{R}$.
+
+Notably, when we insert the atom set $A_i$ of residue $r_i$, we still retain $r_i$. 
+This allows the model to attend either to the corresponding residue-scale information or to the surrounding atom-scale information when predicting masked atoms and encourages the model to align residue-scale and atom-scale representations, similar to the approach in cross-lingual pre-training \citep{conneau2019cross}.
+We provide an illustration of the code-switch sequence in Figure \ref{fig_mathod}.
+
+\paragraph{Masked Language Modeling}
+After obtaining the code-switch sequence $\bar{X}$, we can implement MLM on it.
+Unlike the MLM used in ESM, which only masks residues, our approach masks both residues and atoms and requires models to predict them.
+Specifically, we start by randomly masking a portion of the atoms or residues in $\bar{X}$ and then ask the model to predict the original atoms or residues using the surrounding context.
+$$
+\mathcal{L}_{\theta\textsc{MLM}} = - \sum_{h \in \textsc{Mask}(\bar{X})} \log p_{\theta}(h|\bar{X}\backslash \textsc{Mask}(\bar{X}))
+$$
+where $\textsc{Mask}(\bar{X})$ represents the set of masked atoms and residues.
+$\bar{X} \backslash \textsc{Mask}(\bar{X})$ denotes the unmasked context.
+$h$ is a single masked atom or residue.
+Figure \ref{fig_mathod}a is the framework of MLM task.
+
+\paragraph{Pair-wise Distance Recovery}
+We also employ PDR as another pre-training task.
+Briefly, we use corrupted atoms as model input and ask model to recover the accurate Euclidean distances between these atoms.
+We corrupt the atoms by adding noises to their coordinates.
+Specifically, we replace the ground-truth coordinate with a randomly selected position that is within a certain range (Euclidean distances $< \epsilon$, Appendix \ref{pre_training_config}) of the true coordinate.
+Models are required to reconstruct the actual distances based on the corrupted coordinates.
+To avoid introducing residue-residue interactions that are very different from the interactions in small molecules, we only calculate PDR within residues, which can also make \msESM~learn very diverse structural knowledge of residues.
+$$
+\mathcal{L}_{\theta \textsc{PDR}} = \sum_{\substack{A_i = A_j\\h_i, h_j \in \bar{A},i \not = j   \\ c_i = \textsc{Coord}(h_i) \\ c_j = \textsc{Coord}(h_j)}} \Vert \textsc{Dis}_{\theta}(c_i + \sigma_i,c_j+\sigma_j)  - \textsc{Dis}(c_i, c_j)\Vert_{2}
+$$
+where $\textsc{Dis}_{\theta}$ is the recovered distance and $\textsc{Dis}$ is the ground truth.
+$\textsc{Coord}$ extracts coordinates from atoms.
+$\sigma_i, \sigma_j$ are the corresponding noises added to atom coordinates $c_i, c_j$.
+To elaborate further, these noises will affect the atom scale position encoding in Section \ref{unified_relative_position_encoding}.
+Figure \ref{fig_mathod}b shows the framework of PDR task.
+
+Notably, when training \msESM, we mix up a protein dataset $D_{p}$ and a molecule dataset $D_{m}$ as the final dataset, i.e., $D = D_{p} \cup D_{m}$.
+For a molecule from $D_{m}$, as it consists solely of atoms, its code-switch sequence $\bar{X}$ is the ordered set of all its atoms $\bar{A}$, and it does not have any residues, i.e., $\bar{R} = \emptyset$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[scale=0.34]{pic/unified_pe_v3.pdf}
+\caption{Framework of multi-scale position encoding.}
+\label{fig_pe}
+\vspace{-0.3cm}
+\end{figure}
+
+\subsection{Multi-scale Position Encoding}
+\label{unified_relative_position_encoding}
+Encoding the position relationship in the code-switch sequence is challenging.
+Given that both residues and atoms are present in the code-switch sequence, it is crucial for the position encoding to accurately represent the positional relationships.
+This includes relationships between residues, between atoms, and between residues and atoms, regardless of whether the atoms are part of the same residue.
+This situation is more complex than dealing with pure residue sequences.
+Because previous encodings in PLMs are only designed for residue sequences, they can not describe the relationships that extend from residues to atoms, and among atoms.
+
+In this section, we design a multi-scale position encoding $E$ to encode the positional relationships within a code-switch sequence.
+Specifically, $E$ contains a residue scale position encoding $E^{R}$ and an atom scale position encoding $E^{A}$, i.e., $E = (E^{R},E^{A})$.
+For $E^{R}$, we carefully extend an existing encoding method, allowing it to encode relationships from residues to atoms, while maintaining consistency with the original encoding when handling pure residue sequences.
+For $E^{A}$, to capture the relationships among atoms, we directly encode their 3D positions using a spatial distance matrix.
+The multi-scale encoding approach ensures that no ambiguous positional relationships affect the pre-training, enabling \msESM~to perform effectively in both scales.
+Figure \ref{fig_pe} illustrates the framework of our multi-scale position encoding.
+We will provide detailed explanations for each of them in the following paragraphs.
+
+\paragraph{Residue Scale Position Encoding}
+We design the residue scale position encoding $E^{R}$ following two principles: 
+(\romannumeral1) For encoding the relationship between two residues, $E^{R}$ should be consistent with the mainstream encoding method. (\romannumeral2) For atoms from the same unzipped residue, $E^{R}$ should not introduce any ambiguous position information.
+
+As previous PLMs have shown the effectiveness of the mainstream encoding method in handling pure residue sequences, it is prudent for $E^{R}$ to maintain consistency with it.
+Furthermore, when dealing with two atoms from the same residue, since we cannot define residue scale positional relationships within the residue, it is important for $E^{R}$ to avoid the impact of such ill-defined information.
+
+In particular, we use Rotary Position Embedding (RoPE) \citep{su2021roformer}, the original position encoding in ESM-2, to describe the position relationship among the residues in a code-switch sequence.
+For assigning the position encoding to an atom in the code-switch sequence, we reuse the position encoding of the residue to which the atom belongs.
+In cases where the atom belongs to a small molecule, not a residue, we assign a fixed position encoding (\textsc{RoPE}(0) in our paper) to it.
+Formally, for a code-switch sequence $\bar{X}$, its residue scale position encoding $E^{R} = (e_1^{R}, \cdots, e_{L+N}^{R})$ can be obtained according to the following formulation:
+$$
+e_i^{R} = 
+\left\{ \begin{array}{ll}
+\textsc{RoPE}(j) & h_i \in \bar{R}, h_i = r_j \\
+\textsc{RoPE}(k) & h_i \in \bar{A}, \exists k, h_i \in A_k \\
+\textsc{RoPE}(0) & \text{otherwise} \\
+\end{array} \right.
+$$
+By adopting such encoding strategy, $E^{R}$ satisfies the two aforementioned principles.
+Specifically, for pure residue sequences, $E^{R}$ is equivalent to RoPE.
+When handling atoms from the same residue, the relative nature of RoPE ensures that no ambiguous information will impact the pre-training model.
+For more details about the properties of RoPE, please refer to \citet{su2021roformer}.
+
+\paragraph{Atom Scale Position Encoding}
+Because $E^R$ will not provide the position encoding for atoms from the same residue, we need an atom scale position encoding $E^A$ to describe the relationship from atoms to atoms.
+As suggested by \citet{zhou2023uni}, we use Euclidean distance matrix and Gaussian kernel $\textsc{Gaussian}$ to encode the 3D position of atoms.
+
+For $h_i, h_j \in \bar{X}$, their atom scale position encoding $e_{ij}^{A}$ can be calculate as follows:
+$$
+e_{ij}^{A} = 
+\left\{ \begin{array}{ll}
+0 & h_i \in \bar{R} \text{~or~} h_j \in \bar{R} \\
+\textsc{Gaussian}(\textsc{Dis}(c_i, c_j)) & \text{otherwise}
+\end{array} \right.
+$$
+where $c_i = \textsc{Coord}(h_i), c_j = \textsc{Coord}(h_j)$. 
+We refer readers to \citet{zhou2023uni} for more details of this 3D position encoding.
+
+\subsection{Integrating Multi-scale PE into Transformer}
+\label{pre_training}
+The parameterization $\theta$ of \msESM~is slightly different from the original Transformer architecture proposed by \citet{vaswani2017attention}.
+To be specific, we begin by substituting the sinusoidal encoding in the Transformer with our residue scale position encoding $E^{R}$.
+For the atom scale position encoding $E^{A}$, we treat it as the bias term of self-attention layers \citep{luo2022one,zhou2023uni}.
+The self-attention in \msESM~can be calculated like:
+$$
+\textsc{Attention}(Q,K,V, E^{A}) = \textsc{softmax}(\frac{QK^{T}}{\sqrt{d_k}} + E^{A}) V
+$$
+where $Q, K, V$ are the query, key, and value corresponding to $\bar{X}$.
+We refer readers to \citet{vaswani2017attention} for more details of the original Transformer.
+With only slight modifications to the original Transformer architecture, \msESM~is capable of simultaneously processing residues and atoms, making it a versatile model for various downstream tasks.
+Moreover, \msESM~shows great compatibility with existing pre-training model, e.g., ESM series, which allows us to bulid up a better model based on previous study more easily.
+
+\begin{table*}[t]
+\footnotesize
+\color{black}{
+\caption{Performance comparison on Enzyme-Substrate Affinity Regression (ESAR) task and Enzyme-Substrate Pair Classification (ESPC) task. \msESM~outperforms other models and achieves the
+state-of-the-art results, which indicates that \msESM~operate at both the residue and atom scales successfully and our unified modeling harness the full potential of PLMs.}
+\label{table_protein_molecule_esa}
+\begin{center}
+\begin{tabular}{c|cc|ccc|ccc}
+\toprule
+\multicolumn{1}{c|}{\multirow{2}{*}{Method}} &\multicolumn{1}{c}{Protein} &\multicolumn{1}{c|}{Molecule} & \multicolumn{3}{c|}{\multirow{1}{*}{ESAR}} &\multicolumn{3}{c}{\multirow{1}{*}{ESPC}} \\ 
+& Pre-training & Pre-training & MSE $\downarrow$ & $R^2 \uparrow$& Pearson $\uparrow$& ACC $\uparrow$& MCC $\uparrow$&ROC-AUC $\uparrow$ \\
+\midrule
+\citet{gollub2023enkie} & / & / & / & 0.463 & 0.680 & / & / & /\\
+\citet{kroll2021deep} & / & / & 0.653 & 0.527 & 0.728& / & / & / \\
+\midrule
+$\text{Baseline}_{\text{ XGBoost}}$ & ESM-2 35M & Uni-Mol 48M & 0.652 & 0.528 & 0.727 & 89.9\% & 0.729 & 0.941\\
+$\text{Baseline}_{\text{ ProSmith}}$ & ESM-2 35M & Uni-Mol 48M & 0.642 & 0.536 & 0.733 & 90.8\% & 0.754 & 0.943\\
+\midrule
+\rowcolor{mygray} $\text{Ours}_{\text{ XGBoost}}$ & \msESM~35M& \msESM~35M& 0.620 & 0.551 & 0.744 & 90.4\% & 0.743& 0.949\\
+\rowcolor{mygray}$\text{Ours}_{\text{ ProSmith}}$ & \msESM~35M& \msESM~35M& {\bf 0.607} & {\bf 0.560} & {\bf 0.752} & {\bf 92.3\%} & {\bf 0.797} &  {\bf 0.957}\\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+\vspace{-0.2cm} 
+\end{table*}
+
+\begin{table*}[t]
+\vspace{-0.4cm} 
+\footnotesize
+\color{black}{
+\caption{Performance comparison on drug-target affinity regression task. 
+\msESM~achieves the state-of-the-art results on most metrics.
+}
+\label{table_protein_molecule_dta}
+\begin{center}
+\begin{tabular}{c|cc|ccc}
+\toprule
+\multicolumn{1}{c|}{\multirow{2}{*}{Method}} &\multicolumn{1}{c}{Protein} &\multicolumn{1}{c|}{Molecule} &\multicolumn{1}{c}{\multirow{2}{*}{MSE $\downarrow$}} &\multicolumn{1}{c}{\multirow{2}{*}{CI $\uparrow$}} &\multicolumn{1}{c}{\multirow{2}{*}{$r^{2}_{m} \uparrow$}}\\ 
+& Pre-training & Pre-training & & &\\
+\midrule
+\citet{ozturk2018deepdta} & / & / & 0.261  & 0.878  & 0.630 \\
+\citet{shin2019self} & / & Molecule Transformer & 0.245 & 0.887 & 0.665 \\
+\citet{nguyen2021graphdta} & / & / & 0.229 & 0.893 & 0.685 \\
+\citet{nguyen2021gefa} & TAPE 38M & / & 0.228 & 0.893 & / \\
+\citet{qiu2021rzmlp} & ProtBert 420M& / & 0.205 & 0.896 & 0.709 \\
+\citet{kao2021toward} & /	&/	&0.202 & 0.907& / \\
+\citet{yuan2022fusiondta}& ESM-1b 650M &/&	0.208 &	{\bf 0.913} 	&0.743 \\ 
+\citet{yang2022mgraphdta}&/	&/	&	0.207 &	0.900 &	0.710 \\
+\midrule
+$\text{Baseline}_{\text{ XGBoost}}$ & ESM-2 35M & Uni-Mol 48M & 0.261 & 0.885 & 0.652 \\
+$\text{Baseline}_{\text{ ProSmith}}$ & ESM-2 35M & Uni-Mol 48M & 0.219 & 0.899 & 0.711 \\
+\midrule
+\rowcolor{mygray}$\text{Ours}_{\text{ XGBoost}}$ & \msESM~35M& \msESM~35M& 0.243 & 0.890 & 0.678 \\
+\rowcolor{mygray}$\text{Ours}_{\text{ ProSmith}}$ & \msESM~35M& \msESM~35M& {\bf 0.196} & 0.903 & {\bf 0.752} \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+\vspace{-0.6cm} 
+\end{table*}
+
+\section{Experiments}
+\label{results_discussions}
+
+We pre-train \msESM~on mixed data of proteins and small molecules. 
+For the proteins, we construct code-switch sequences that contain both sequence and structural information, as described in Section \ref{hybrid_structure}.
+We fine-tune and evaluate \msESM~across diverse benchmarks and verify the contribution of each component through ablation experiments. Finally, a visualization analysis is included to explain the advantages of unified modeling. 
+
+\subsection{Pre-training Configuration}
+\paragraph{Datasets}
+We pre-train using a dataset that includes both protein and molecule data, specifically selecting those with structural details such as atom coordinates for encoding Euclidean distances and recovering pair-wise distances.
+For the protein dataset, we use AlphaFold DB \citep{varadi2022alphafold} dataset, which contains 8M protein sequences and structures predicted by AlphaFold2 \citep{jumper2021highly} with high confidence (pLDDT $>$ 90).
+For the molecule dataset, we use the dataset provided by \citet{zhou2023uni}, which contains 19M molecules and 209M conformations generated by ETKGD \citep{riniker2015better} and Merck Molecular Force Field \citep{halgren1996merck}.
+
+\paragraph{Hyperparameters}
+We implement \msESM~using 12 stacked Transformer layers, each with 20 attention heads, as discussed in Section \ref{pre_training}.
+The model dimension and feedforward dimension of each Transformer layer are 480 and 1920.
+We use Adam \citep{kingma2014adam} and polynomial learning rate scheduler to train \msESM~and set the learning rate 4e-4, weight decay 1e-2, warmup step 5000.
+The total training step is 300K and each batch has 256K tokens at maximum.
+We train \msESM~on 16 NVIDIA A100 GPU cards for 3 days.
+\msESM~is compatible with ESM series, so we load a ESM-2 checkpoint as the initialization of \msESM.
+When pre-training, 1.0\% of residues are unzipped as the pre-training setting, which makes the unzipped protein sequence 1.08 times longer than before on average. Thus we make an adjustment to the maximum sequence length permissible for \msESM, transitioning from ESM-2's 1024 to 2048.
+Table \ref{table_hyper} provides a complete list of hyperparameters.
+
+\subsection{Main Results}
+\label{protein_molecule_tasks}
+We use tasks involving both proteins and molecules to prove that \msESM~can operate at both residue and atom scales and our unified molecular modeling approach can exploit the full potential of PLMs.
+
+\paragraph{Fine-tuning} 
+For protein-molecule tasks, we follow the benchmark protocol from ProSmith \citep{kroll2023multimodal} to evaluate \msESM~on three tasks, including enzyme-substrate affinity regression, drug-target affinity regression, and enzyme-substrate pair classification.
+Specifically, each task provides the protein residue seq
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

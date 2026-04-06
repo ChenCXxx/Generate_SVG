@@ -1,0 +1,198 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+ 
+Adverse weather conditions (including rain, fog and snow) often degrade the performance of outdoor vision systems, such as autonomous driving and traffic surveillance, by reducing environment visibility and corrupting image/video content. Removing these adverse weather effects is challenging yet a promising task. While many video dehazing/deraining/desnowing methods have been proposed, they mainly address one type of weather degradation. As they require multiple models and sets of weights for all adverse weather conditions, resulting in expensive memory and computational costs, they are unsuitable for real-time systems. Additionally, the system would have to switch between a series of weather removal algorithms, making the pipeline more complicated and less practical for real-time systems.
+
+Recently, Li \etal~\cite{li2020all} proposed an All-in-One bad weather removal network that can remove any weather condition from an image, making it the first algorithm to provide a generic solution for adverse weather removal. Following this problem setting, several single-image multi-adverse-weather removal methods~\cite{valanarasu2022transweather,chen2022learning} have been developed to remove the degradation effects by one model instance of a single encoder and single decoder.
+While significant progress has been witnessed for the single-image multi-adverse-weather removal task, we believe that video-level algorithms can achieve better results by utilizing the temporal redundancy from neighboring frames to reduce the inherent ill-posedness in restoration tasks. 
+
+Therefore, a generic framework that can transform an image-level algorithm into its video-level counterpart is highly valuable. However, two bottlenecks need to be addressed: \textit{1) how to effectively maintain the temporal coherence of background details across video frames, and 2) how to prevent the perturbation of multiple kinds of weather across video frames.}
+To tackle the aforementioned bottlenecks, we present the \textbf{Vi}deo Adverse-\textbf{W}eather-Component \textbf{S}uppression \textbf{Net}work (\textbf{ViWS-Net}), \textit{the first video-level algorithm that can remove all adverse weather conditions with only one set of pre-trained weights}. Specifically, we introduce Temporally-active Weather Messenger tokens to learn weather-specific information across video frames and retrieve them in our messenger-driven video transformer decoder. We also design a Long Short-term Temporal Modeling mechanism for weather messenger tokens to provide early fusion among frames, and support recovery with temporal dependences of different time spans. To impede the negative effects of multiple adverse weather conditions on background recovery, we develop a Weather-Suppression Adversarial Learning by introducing a weather discriminator. Adversarial backpropagation is adopted, between the video transformer encoder and the discriminator, by gradient reversion to maintain the common background information and simultaneously suppress the weather-specific information in hierarchical pixel features. 
+Since there has been no public dataset for video desnowing, we synthesize the first video-level snow dataset, named KITTI-snow, which is based on KITTI~\cite{liao2022kitti}. We conduct extensive experiments on video deraining, dehazing, and desnowing benchmark datasets, including RainMotion~\cite{wang2022rethinking}, REVIDE~\cite{zhang2021learning}, and KITTI-snow, as well as several real-world weather videos, to validate the effectiveness and generalization of our framework for video multiple adverse weather removal.
+Our contributions can be summarized as follows:
+\begin{itemize}
+    \item We propose a novel unified framework, ViWS-Net, that addresses the problem of recovering video frames from multiple types of adverse weather degradation with a single set of pre-trained weights. 
+    \item We introduce temporally-active weather messenger tokens that provide early temporal fusion and help retrieving the residual weather-specific information for consistent removal of weather corruptions.
+    \item We design a weather-suppression adversarial learning approach that maintains weather-invariant background information and suppresses weather-specific information, thereby preventing recovery from the perturbation of various weather types.
+    \item To evaluate our framework under multiple adverse weather conditions, we synthesize a video-level snow dataset KITTI-snow. Our extensive experiments on three benchmark datasets and real-world videos demonstrate the effectiveness and generalization ability of ViWS-Net.
+\end{itemize}
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{figure/framework.pdf}
+\caption{\textbf{Overview of our ViWS-Net framework for Video Multiple Adverse Weather Removal.} Given a sequence of video frames, we divide the frames into patch tokens and concatenate them with the corresponding weather messenger token as inputs. The weather messengers temporally collect weather-specific information while the weather-agnostic video transformer encoder performs feature extraction and generates hierarchical pixel features. Simultaneously, a weather discriminator is adversarially learned by the gradient reversal layer to maintain the weather-invariant information and suppress the weather-specific counterpart. For each frame, the messenger-driven video transformer decoder leverages the last pixel feature $f^{N_s}$ as key and value, the well-learned weather messenger token $m^{N_s}$ as queries to retrieve the weather-specific feature $r$. Finally, the weather-specific feature $r$ is aggregated together with hierarchical pixel features $\{f^l\}_{l=1}^{N_s}$ across both spatial and temporal axis followed by a refinement network to obtain the final clean target frame $\hat{I}_t$.}
+\label{fig:overview}
+\end{figure*}
+
+
+Related Work
+\label{sec:relatedwork}
+
+\noindent \textbf{Video Single-Weather Removal.}
+We briefly introduce different video single-weather removal methods.
+For video deraining, Garg and Nayar first modeled the video rain and develop a rain detector based on the photometric appearance of rain streak~\cite{garg2004detection,garg2006photorealistic}. Inspired by these seminal works, many subsequent methods focusing on handcrafted intrinsic priors~\cite{barnum2010analysis,bossu2011rain,brewer2008using,zhang2006rain,liu2009pixel,chen2013rain,santhaseelan2015utilizing} have been proposed in the past decades.
+Recently, deep neural networks have also been employed along this research line~\cite{chen2018robust,li2018video,liu2018erase,wang2022rethinking,yan2021self,yang2019frame,yang2020self,yue2021semi}.
+Yang \etal~\cite{yang2019frame} built a two-stage recurrent network that utilizes dual-level regularizations toward video deraining. Wang \etal~\cite{wang2022rethinking} devised a new video rain model that accounts for rain streak motions, resulting in more accurate modeling of the rain streak layers in videos.
+For video dehazing, various methods~\cite{zhang2011video,kim2012temporally,li2015simultaneous} are introduced to generate more accurate dehazed results. For example, with the development of deep learning, Ren \etal~\cite{ren2018deep} proposed a synthetic video dehazing dataset and developed a deep learning solution to accumulate information across frames for transmission estimation. To break the limit of poor performance in real-world hazy scenes, Zhang \etal~\cite{zhang2021learning} developed a video acquisition system that enabled them to capture hazy videos and their corresponding haze-free counterparts from real-world settings. Based on \cite{zhang2021learning}, Liu \etal~\cite{liu2022phase} proposed a phase-based memory network that integrates color and phase information from the current frame with that of past consecutive frames.
+For snow removal, while most existing learning-based methods~\cite{chen2020jstasr,chen2021all,zhang2021deep} focused on single-image desnowing, no work explored the better solution for video desnowing using temporal information. 
+We propose a novel approach to address the challenge of removing adverse weather effects in videos. Unlike previous methods, we adopt a unified single-encoder single-decoder network that can handle various types of adverse weather conditions using a single model instance.
+
+Most recently, a body of researchers has investigated single-image multiple adverse weather removal tasks by one model instance.
+Li \etal~\cite{li2020all} developed a single network-based method All-in-One with multiple task-specific encoders and a generic decoder based on Neural Architecture Search (NAS) architecture. It backpropagates the loss only to the respective feature encoder based on the degradation types. TransWeather~\cite{valanarasu2022transweather} proposed a transformer-based end-to-end network with only a single encoder and a decoder. It introduced an intra-patch transformer block into the transformer encoder for smaller weather removal. It also utilized a transformer decoder with weather type embeddings learned from scratch to adapt to different weather types. Chen \etal~\cite{chen2022learning} proposed a two-stage knowledge distillation mechanism to transfer weather-specific knowledge from multiple well-trained teachers on diverse weather types to one student model. 
+Our study draws attention to multi-adverse-weather removal issue in videos. However, all the above methods failed to capture complementary information from temporal space. Although we can generalize them to remove adverse weather removal in a frame-by-frame manner, temporal information among video frames enables our method to work better than those image-level ones.
+
+Deep learning has gained popularity in recent years due to its ability to learn non-linear features, making it easier to learn invariant features for multiple tasks. Adversarial learning, inspired by generative adversarial networks~\cite{goodfellow2020generative}, has been employed in natural language processing to learn a common feature representation for multi-task learning, as demonstrated in~\cite{shinohara2016adversarial,liu2017adversarial,liu2018multi}. These adversarial multi-task models consist of three networks: a feature encoder network, a decoder network, and a domain network. The decoder network minimizes the training loss for all tasks based on the feature encoder network, while the domain network distinguishes the task to which a given data instance belongs.
+Such learning paradigm has also been used to tackle the domain shift problem~\cite{ganin2015unsupervised,tzeng2017adversarial,li2018deep,shao2019multi,rahman2020correlation} to learn domain-invariant information. Inspired by those works, we further explore the common feature representation of multiple adverse weather in videos by adversarial learning paradigm.
+
+
+Method
+In this work, our goal is to devise the first video-level unified model to remove multiple types of adverse weather in frames with one set of model parameters. We follow an end-to-end formulation of adverse weather removal as:
+\begin{equation}
+    \begin{aligned} 
+    \hat{I}_t &= \mathcal{D}(\mathcal{E}(\textbf{V}_i^q)),\\
+    \textbf{V} = \{I_{t-n},...,&I_{t-1},I_t,I_{t+1},...,I_{t+n}\},
+    \end{aligned}
+\label{eq:definition}
+\end{equation}
+where $\textbf{V}_i^q$ is the $i$-th video clip with $T=2n+1$ frames degraded by $q$-th weather type, $\hat{I}_t$ is the recovered target frame. Different from standard image-level method All-in-One~\cite{li2020all}, our ViWS-Net tackles multiple adverse weather problem more efficiently by one video transformer encoder $\mathcal{E}(\cdot)$ and one video transformer decoder $\mathcal{D}(\cdot)$.
+Next, we elaborate our solution for Video Multiple Adverse Weather Removal task.  
+\subsection{Overall Architecture}
+The overall architecture of our ViWS-Net is displayed in Figure~\ref{fig:overview}, which consists of a weather-agnostic video transformer encoder, a messenger-driven video transformer decoder, and a weather discriminator. Without loss of generality, we build ViWS-Net based on the Shunted transformer~\cite{ren2022shunted} consisting of shunted self-attention (SSA) and detail-specific feedforward layer (DSF). 
+SSA extends spatial reduction attention in PVT~\cite{wang2021pyramid} to unify multi-scale feature extractions within one self-attention layer through multi-scale token aggregation. DSF enhances local details by inserting a depth-wise convolution layer between the two fully connected layers in the feed-forward layer.
+
+Given a sequence of video clip with $T=2n+1$ frames \{$I_{t-n},...,I_{t-1},I_t,I_{t+1},...,I_{t+n}$\} degraded by $q$-th adverse weather, our transformer encoder performs feature extraction and generates hierarchical pixel features while weather messenger tokens conduct long short-term temporal modeling for the early fusion in the temporal axis. The weather discriminator with a gradient reversal layer is adversarially learned by predicting the weather type of video clips to maintain the weather-invariant background information and suppress the weather-specific information in the pixel features. The messenger-driven video transformer decoder initializes weather type queries with temporally-active weather messenger well-learned during encoding to retrieve the residual weather-specific information from the suppressed pixel feature. Finally, the hierarchical pixel features and weather-specific feature are spatiotemporally integrated and refined to reconstruct the clean target frame. 
+Empirically, we set $n=2$ to achieve a good trade-off between performance and computational cost.
+
+ 
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figure/method_temporal.pdf}
+\caption{\textbf{An illustration of our Long Short-term Temporal Modeling mechanism.} This mechanism is repeatedly applied at each stage of the transformer encoder.}
+\label{fig:method_temporal}
+\end{figure}
+\subsection{Temporally-Active Weather Messenger}
+\label{sec:mess}
+Previous single-image multi-adverse-weather removal work~\cite{valanarasu2022transweather} adopted a fixed number of learnable embeddings to query weather-specific features from pixel features in the transformer decoder, termed as weather type queries. However, hindered by random initialization, they are hard to tell the robust weather-specific information during decoding. Furthermore, these query embeddings are independently learned across frames, resulting in the absence of temporal information in the video scenario. To address these limitations, we introduce weather messenger in the video transformer encoder, and the well-learned weather messengers are adopted as the weather type queries.
+Specifically, a group of learnable embeddings with size of $M\times C$ is introduced as weather messenger tokens for each frame, which is denoted as $\{m^0_i\}^{T}_{i=1} \in \mathbb{R}^{T\times M\times C}$. A video clip with the resolution of $H\times W$ is divided and projected into $T\times \frac{HW}{P^2}\times C$ overlapped patch embeddings frame-by-frame, where $P$ and $C$ denote the patch size and the channel dimension respectively.
+Then, we concatenate patch embeddings of each frame with the corresponding weather messenger tokens before feeding into the video transformer encoder:
+\begin{equation}
+    \{[f^0_i,m^0_i]\}^T_{i=1} \in \mathbb{R}^{T\times(\frac{HW}{P^2}+M)\times C}.
+\end{equation}
+The joint tokens $\{[f^0_i,m^0_i]\}^T_{i=1}$ are taken as inputs for the first stage of the transformer encoder.
+Our video transformer encoder has $N_s=4$ stages and each stage consists of several blocks of SSA and DSF. The joint token of the $l$-th stage is learned as:
+\begin{equation}
+    \{[f^l_i,m^l_i]\}^T_{i=1}=\{DSF^l(SSA^l([f^{l-1}_i,m^{l-1}_i]))\}^T_{i=1}.
+\end{equation}
+Our weather messengers are temporally active between blocks of each stage to collect weather-specific information from pixel features. To further explore temporal dependence with different spans for the target frame, we conduct a long short-term temporal modeling mechanism as shown in Figure~\ref{fig:method_temporal}. 
+Weather messenger tokens of one frame are separated into 6 groups and shifted along the temporal axis with different time steps (0-2) and directions (forward or backward) followed by an inverse operation (shiftback). For the target frame $I_t$, the first 3 groups model short-term dependence by shifting messenger tokens of the neighbor frames $\{I_{t-1}, I_{t+1}\}$ with one time step, while the last 3 groups model long-term dependence by shifting messenger tokens of the neighbor frames $\{I_{t-2}, I_{t+2}\}$ with two time steps. Temporal dependences of different spans endow the recovery of the target frame with the comprehensive reference of weather-specific information from past and future frames.
+
+\subsection{Weather-Suppression Adversarial Learning}
+To construct a weather-agnostic transformer encoder, inspired by domain adaptation~\cite{ganin2015unsupervised}, we design Weather-Suppression Adversarial Learning to learn a great feature space maintaining weather-invariant background information and suppressing weather-specific information. To this end, we optimize a weather discriminator for classifying the weather types by adversarial backpropagation.
+
+Notably, a gradient reversal layer (GRL) is inserted between the video transformer encoder and weather discriminator. During backpropagation, GRL takes the gradient from the weather discriminator, multiplies it by $-\lambda$ and passes it to the transformer encoder. 
+To predict the weather type of a video clip, we combine information from all frames of one video clip by computing an attention-weighted average of their vector representations. We apply the gated attention mechanism by using the sigmoid function to provide a learnable non-linearity that increases model flexibility. An attention score $\alpha_i$ is computed on each frame as:
+\begin{equation}
+    \alpha_i = \frac{\exp{\{\textbf{w}_1^T(tanh(\textbf{w}_2\textbf{v}_i^T)\cdot sigm(\textbf{w}_3\textbf{v}_i^T)}\}}
+                {\sum_{k=1}^T \exp{\{\textbf{w}_1^T(tanh(\textbf{w}_2\textbf{v}_k^T)\cdot sigm(\textbf{w}_3\textbf{v}_k^T)}\}},
+\end{equation}
+where $\textbf{w}_1$, $\textbf{w}_2$, $\textbf{w}_3$ are learnable parameters.
+This process yields an attention-weighted fused vector representation, which reads:
+\begin{equation}
+    \textbf{v} = \sum_{i=1}^{T} \alpha_i \textbf{v}_i,
+\end{equation}
+where $\textbf{v}_i$ is the vector representation from feature embeddings of the frame $i$. The weather type is finally obtained from the fused vector by one fully connected layer.
+While the weather discriminator $\mathcal{W}(\cdot)$ seeks an accurate prediction for weather types, the video transformer encoder strives to generate weather-agnostic pixel features.
+The adversarial loss can be thus achieved by min-max optimization as:
+\begin{equation}
+    \mathcal{L}_{adv} = \min_{\theta_w}\left(\lambda \max_{\theta_\varepsilon}(\sum_{q=1}^Q \sum_{i=1}^{N_q}q \log[\mathcal{W}(\mathcal{E}(\textbf{V}_i^q)])\right).
+\end{equation}
+
+Our weather-suppression adversarial learning develops from the basic idea that the weather-specific information is suppressed in hierarchical pixel features in the transformer encoder by downplaying the discrimination of weather types. This protects the recovery of the target frame from perturbations by different weather types, and thus concentrates the model on the weather-invariant background information. At the training stage, weather-suppression adversarial learning is applied to empower the video transformer encoder with the characteristic of weather-agnostic. At the inference stage, video frames are only fed into the video transformer encoder and decoder for weather removal.
+
+\subsection{Messenger-driven Video Transformer Decoder}
+
+Intuitively, while weather-suppression adversarial learning largely impedes the appearance of weather-specific information, the residual still may exist in pixel features when the adversarial loss reaches a saddle point.
+To localize the perturbation from the residual weather-specific information, we design Messenger-driven Video Transformer Decoder to retrieve such information and recover frames from hierarchical features using temporally-active weather messengers described in Section~\ref{sec:mess}. 
+Firstly, we adopt the well-learned weather messengers $\{m_i^{N_S}\}_{i=1}^T$ to query the residual weather-specific information. After long short-term temporal modeling in the transformer encoder, weather messengers are trained to locate more true positives of adverse weather in pixel features referring to rich temporal information, than independently-learned query embeddings in \cite{valanarasu2022transweather}.
+With the pixel feature $\{f_i^{N_S}\}_{i=1}^T$ as key and value, the transformer decoder generates the weather-specific feature $\{r_i\}_{i=1}^T$. Note that the transformer decoder here operates at a single stage but has multiple blocks, which are similar to the stage of the transformer encoder. 
+As illustrated in Figure~\ref{fig:overview}, the weather-specific feature is spatially integrated with hierarchical pixel features in the convolution projection block with pairs of an upsampling layer and a 2D convolution residual layers frame-by-frame. To recover details of the background, we subtract the outputs from the original frames.
+After that, we concatenate the outputs of frames and feed them into the temporal fusion block consisting of three consecutive 3D convolution layers to achieve temporal integration. Finally, we obtain the clean target frame $\hat{I}_t$ by applying a refinement network, which is a vanilla and much smaller version of our ViWS-Net, onto the initial recovered results with tiny artifacts.
+
+The supervised objective function is composed of a smooth L1 loss and a perceptual loss as follows: 
+\begin{align}
+ \mathcal{L}_{S} &=  \mathcal{L}_{smoothL_1} + \gamma_1\mathcal{L}_{perceptual},  
+\label{eq:suploss}  \; \text{with} \\
+\mathcal{L}_{smoothL_1}& = \begin{cases}
+	      0.5(\hat{I}_t-B_t)^2, & if |\hat{I}_t-B_t|<1 \\
+	      |\hat{I}_t-B_t|-0.5, & otherwise,
+		   \end{cases}
+\label{eq:smooth}\\
+     \mathcal{L}_{perceptual}\!& = \!\mathcal{L}_{mse}(VGG_{3,8,15}(\hat{I}_t),VGG_{3,8,15}(B_t)),\!
+\label{eq:percpetual} 
+\end{align}
+where $\hat{I}_t,B_t$ denote the prediction and ground truth of the target frame, respectively.
+The overall objective function is composed of supervised loss and adversarial loss, which can be defined as follows:
+\begin{equation}
+\mathcal{L}_{total} = \mathcal{L}_{S} + \gamma_2\mathcal{L}_{adv},
+\label{eq:loss}
+\end{equation}
+where $\gamma_1$ and $\gamma_2$ are the balancing hyper-parameters, empirically set as 0.04 and 0.001, respectively.
+
+
+
+Experiments
+In this section, we describe in detail the range of experiments that we conducted to validate our proposed method.
+
+\begin{table}[!t]
+\centering
+  \caption{The data statistics of RainMotion, REVIDE and KITTI-snow for our video multiple adverse weather removal. The mixed training set is composed of the training set from the three datasets.}
+    \resizebox{1.0\columnwidth}{!}{%
+\begin{tabular}{c|c|c|c|c|c} 
+\toprule
+\textbf{Weather}      & \textbf{Dataset}            & \textbf{Split} & \textbf{Video Num} & \textbf{Video Length} & \textbf{Video Frame Num}  \\ 
+\hline
+\multirow{2}{*}{Rain} & \multirow{2}{*}{RainMotion} & train          & 40                 & 50                    & 2000                      \\ 
+\cline{3-6}
+                      &                             & test           & 40                 & 20                    & 800                       \\ 
+\hline
+\multirow{2}{*}{Haze} & \multirow{2}{*}{REVIDE}     & train          & 42                 & 7-34                  & 928                       \\ 
+\cline{3-6}
+                      &                             & test           & 6                  & 20-31                 & 154                       \\ 
+\hline
+\multirow{2}{*}{Snow} & \multirow{2}{*}{KITTI-snow} & train          & 35                 & 50                    & 1750                      \\ 
+\cline{3-6}
+                      &                             & test           & 15                 & 50                    & 750                       \\
+\bottomrule
+\end{tabular}
+    }
+\label{tab:dataset}
+\end{table}
+\begin{table*}[!tbp]
+\centering
+  \caption{\textbf{Quantitative evaluation for video multiple adverse weather removal.} For Original Weather, these methods are trained on the weather-specific training set and tested on the weather-specific testing set. For Rain, Haze, and Snow, these methods are trained on a mixed training set and tested on the weather-specific testing set. The average performance is calculated on Rain, Haze, and Snow. PSNR and SSIM are adopted as our evaluation metrics. The top values are denoted in red.}
+    \resizebox{1.0\textwidth}{!}{%
+\begin{tabular}{c|c|l|c|cc|cccccccc} 
+\toprule
+\multicolumn{2}{c|}{\multirow{2}{*}{\textbf{Methods }}}    & \multicolumn{1}{c|}{\multirow{2}{*}{\textbf{Type}}} & \multirow{2}{*}{\textbf{Source }}            & \multicolumn{10}{c}{\textbf{Datasets }}                                                                                                                                                                                                                                                                                                 \\ 
+\cline{5-14}
+\multicolumn{2}{c|}{}                                      & \multicolumn{1}{c|}{}                               &                                              & \multicolumn{2}{c|}{\textbf{Original Weather }} & \multicolumn{2}{c}{\textbf{Rain }}                                  & \multicolumn{2}{c}{\textbf{Haze }}                                 & \multicolumn{2}{c}{\textbf{Snow }}                                 & \multicolumn{2}{c}{\textbf{Average}}                                  \\ 
+\hline
+\hline
+\multirow{4}{*}{\textbf{Derain}}      & \textbf{PReNet}~\cite{ren2019progressive}    & Image                                      & CVPR'19                                      & 27.06 & 0.9077                                  & 26.80                           & 0.8814                            & 17.64                           & 0.8030                           & 28.57                           & 0.9401                           & 24.34~                           & 0.8748~                            \\
+                                      & \textbf{SLDNet}~\cite{yang2020self}    & Video                                      & CVPR'20                                      & 20.31 & 0.6272                                  & 21.24                           & 0.7129                            & 16.21                           & 0.7561                           & 22.01                           & 0.8550                           & 19.82~                           & 0.7747~                            \\
+                                      & \textbf{S2VD}~\cite{yue2021semi}      & Video                                      & CVPR'21                                      & 24.09 & 0.7944                                  & 28.39                           & 0.9006                            & 19.65                           & 0.8607                           & 26.23                           & 0.9190                           & 24.76~                           & 0.8934~                            \\
+                                      & \textbf{RDD-Net}~\cite{wang2022rethinking}   & Video                                      & ECCV'22                                      & 31.82 & 0.9423                                  & 30.34                           & 0.9300~                           & 18.36                           & 0.8432                           & 30.40~                          & 0.9560~                          & 26.37~                           & 0.9097~                            \\ 
+\hline
+\multirow{4}{*}{\textbf{Dehaze }}     & \textbf{GDN}~\cite{liu2019griddehazenet}       & Image                                      & ICCV'19                                      & 19.69 & 0.8545                                  & 29.96                           & 0.9370~                           & 19.01                           & 0.8805                           & 31.02                           & 0.9518                           & 26.66~                           & 0.9231~                            \\
+                                      & \textbf{MSBDN}~\cite{dong2020multi}     & Image                                      & CVPR'20                                      & 22.01 & 0.8759                                  & 26.70                           & 0.9146~                           & 22.24                           & 0.9047                           & 27.07                           & 0.9340                           & 25.34~                           & 0.9178~                            \\
+                                      & \textbf{VDHNet}~\cite{ren2018deep}    & Video                                      & TIP'19                                       & 16.64 & 0.8133                                  & 29.87                           & 0.9272~                           & 16.85                           & 0.8214                           & 29.53                           & 0.9395                           & 25.42~                           & 0.8960~                            \\
+                                      & \textbf{PM-Net}~\cite{liu2022phase}    & Video                                      & MM'22                                        & 23.83 & 0.8950~                                 & 25.79                           & 0.8880~                           & 23.57                           & 0.9143                           & 18.71                           & 0.7881            
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

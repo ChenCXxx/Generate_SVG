@@ -1,0 +1,194 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Many real-world applications, such as e-commerce dynamic search advertising~\cite{prabhu2014fastxml,prabhu2018parabel}, semantic matching~\cite{chang2021extreme}, and open-domain question answering~\cite{Chang2020Pre-training,lee2019latent}, can be formulated as eXtreme Multi-label Classification (XMC) problems. Given a text input, XMC aims to predict relevant labels from a label collection of extremely large size $L$. The scale of $L$, which is often of the order of millions, makes designing accurate and efficient XMC models arduous. 
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{figs/fig1_examples_updated.pdf}
+    \caption{Illustration of two types of side information, including (1) label metadata and (2) instance correlation signals, based on an example XMC task that recommends relevant keywords (labels) for input products (instances) in E-commerce. Specifically, the text descriptions of keywords serve as label metadata while customer behaviors collectively provide instance correlation signals.}
+    \label{fig:side-info}
+\end{figure}
+
+Despite the progress in tackling the XMC problem, most XMC solvers still only take instance features as inputs for prediction. Even though side information, such as label metadata (i.e., label text) and instance correlation signals, may be highly beneficial for the learning task, it cannot be leveraged directly. Taking product keyword recommendation as an example, 
+Figure~\ref{fig:side-info} illustrates two types of side information. For label metadata, the standard XMC formulation treats labels as identifiers and ignores their text descriptions~\cite{you2019attentionxml,babbar2019data}. More precisely, while recent XMC solutions such as XR-Linear~\cite{yu2020pecos} and XR-Transformer~\cite{zhang2021fast} have exploited the correlations among labels to generate label partitions or hierarchical label trees, they do not use label text features. Instead, they construct label embeddings via aggregation of positive instance features. Recent works~\cite{mittal2021decaf,dahiya2021siamesexml} have also demonstrated that using label text features is beneficial for the XMC problem, leading to state-of-the-art results on datasets containing label text information. Moreover, instance correlation signals based on the collective behaviors of customers are also ignored in the standard XMC formulation. For example, the co-purchase signal from Amazon is now used as a benchmark graph dataset for node classification problems~\cite{chiang2019cluster,hu2020open}.
+Beyond e-commerce, the idea of leveraging side information is universal and can be applied to XMC tasks in diverse fields, such as disease descriptions and cross-disease statistics in medical diagnosis~\cite{almagro2020icd}. Hence, it is of critical importance and expected to be widely impactful to enable side information inclusion into XMC models and thereby enhance prediction quality.
+
+In the recent graph learning literature, \citealt{chien2021node} have bridged the gap between XMC and neighborhood prediction. Intuitively, the XMC label matrix can be described as a biadjacency matrix of a bipartite graph connecting instances and labels. As shown in Figure~\ref{fig:XMC_graph}, the XMC task leads to the problem of  predicting the neighborhood of each instance, which is termed the neighborhood prediction task~\cite{chien2021node}. This work clearly illustrates the point that graph learning techniques can be useful in addressing XMC tasks. One standard operation to enhance the performance of graph learning methods is graph convolution~\citep{kipf2017semisupervised}, or message passing~\citep{gilmer2017neural}. The idea is to aggregate the neighborhood features, which implicitly encode the graph topological information. The graph convolution operation has by now been successfully used in various graph learning methods, including generalized PageRank~\citep{li2019optimizing}, Graph Neural Networks (GNNs)~\citep{hamilton2017inductive,velickovic2018graph,chien2020adaptive,chien2021node} and hypergraph learning~\citep{chien2019hs,chien2021landing,chien2021you}. This work asserts that aggregating neighborhood features can also be beneficial for XMC.
+
+Motivated by the connection between XMC and neighborhood prediction, we propose Predicted Instance Neighborhood Aggregation, PINA, to allow XMC methods such as XR-Transformers to leverage the aforementioned side information in a data enhancement manner. Our contributions can be summarized as follows:
+\begin{enumerate}
+    \item We introduce PINA, a data enhancement method that allows XMC models to leverage two types of side information, label metadata and instance correlation signal in a unified manner.
+    \item On five public benchmark datasets where the side information is label metadata, we compare PINA with the state-of-the-art XMC model, XR-Transformer. PINA consistently beats classical XR-Transformers and achieves roughly a $5\%$ gain in accuracy on the largest dataset LF-AmazonTitles-1.3M. Moreover, XR-Transformer enhanced by the PINA technique is shown to outperform all previous published results. 
+    \item We test PINA on the industrial scale proprietary dataset containing millions of instances and labels, where the side information is of the form of instance correlation signals. PINA provides a $3.5\%$ relative improvement in accuracy compared to the baseline XMC method.
+\end{enumerate}
+In summary, our approach consistently improves XR-Transformer on public benchmark datasets~\cite{Bhatia16} when the side information is label text. We achieve new state-of-the-art results on the public benchmark datasets with a significant gain, and also observe performance gains brought forth by PINA on proprietary datasets when the side information is in the form of instance correlation signals.
+\begin{figure*}[t]
+    \centering
+    \includegraphics[trim={0cm 8cm 5.5cm 0},clip,width=0.8\linewidth]{figs/XRT.pdf}
+    \caption{Illustration of the simplified XR-Transformer model. First, the model uses statistical text features (i.e. BoW or TF-IDF) and training labels to build the hierarchical label tree (HLT). Note that each layer of the HLT itself represents an XMC problem. Second, it trains a transformer $\Phi_{\text{dnn}}$ from the root to the leaves in a recursive manner. Third, it concatenates the statistical text feature $\Phi_{\text{stat}}(x)$ and transformer feature $\Phi_{\text{dnn}}(x)$ for learning linear one-versus-all (OVA) classifiers recursively.}
+    \label{fig:XRT}
+\end{figure*}
+
+
+
+Related Work
+\subsection{Extreme multi-label classification}
+Pioneering works on XMC adopt static input text representations and focus on the handling of
+extremely large label space. Treating labels as being binary, OVA architectures such as DiSMEC~\cite{babbar2017dismec} and PPDSparse~\cite{yen2017ppdsparse} require carefully designed parallel training algorithms to handle an enormously large number of labels. Even though these methods encourage model sparsity through weight truncation, the linear inference time with respect to the output space would still make them impractical to handle millions of labels. To address this issue, some works have focused on shortlisting candidate labels to achieve sub-linear training and inference complexity. One line of study focuses on partitioning label spaces. Tree-based methods~\cite{choromanska2015logarithmic, daume2017logarithmic} divide the label space recursively into hierarchical label trees and therefore come with logarithmic inference times. More recent works such as Parabel~\cite{prabhu2018parabel}, Xtext~\cite{wydmuch2018no}, Bonsai~\cite{khandagale2020bonsai}, NapkinXC~\cite{jasinska2020probabilistic,jasinska2021online} and XR-Linear~\citep{yu2020pecos} use the tree-partitioning architecture. Approximate nearest neighbor search (ANNS) is another method that adopts shortlisting the candidate labels in XMC. Instead of restricting the search space by partitioning, methods like AnnexML~\cite{tagami2017annexml}, SLICE~\cite{jain2019slice} and GLaS~\cite{guo2019breaking} accelerate the search in the original label space with pre-build label indexing~\citep{malkov2020hnsw} or product quantization~\citep{guo2020accelerating}. 
+\subsection{Deep learning based methods}
+Recent works on deep learning based XMC models adopt different neural network architectures to extract semantic features and have demonstrated better performance than methods using statistical features only, such as bag-of-words (BoW) and Term Frequency-Inverse Document Frequency (TF-IDF). Methods that use shallow networks such as XML-CNN~\cite{liu2017deep} and AttentionXML~\cite{you2019attentionxml} employ CNN and BiLSTM to directly extract semantic representation from input text. On the other hand, token embedding based methods~\cite{medini2019extreme,dahiya2021deepxml,mittal2021decaf,saini2021galaxc,mittal2021eclare} use shallow networks to combine pre-trained token embeddings into input sequence representations. Despite having limited capacity to capture semantic meanings, token embedding based methods still offer good performance on short-text applications (search queries, product titles, and document keywords).
+
+With the development of Transformer models~\cite{devlin2018bert,liu2019roberta,yang2019xlnet}, new state of the art results have been established on XMC benchmarks through fine-tuning the Transformer encoders on the downstream XMC tasks~\cite{chang2020xmctransformer,ye2020pretrained,jiang2021lightxml}. X-Transformer \cite{chang2020xmctransformer} and LightXML~\cite{jiang2021lightxml} fine-tune the transformer encoders on a simplified XMC problem, where each new label is induced by a cluster of the original labels. XR-Transformer~\cite{zhang2021fast} adopts the tree-based label partitioning approach and fine-tunes the transformer encoder on multi-resolution objectives.
+
+\subsection{XMC with label features}
+While most traditional XMC architectures treat labels as featureless identifiers, a recent study shows that taking label textural descriptions into consideration enhances the performance of XMC models~\cite{dahiya2021deepxml}. Following this line of thought, methods such as  GalaXC~\cite{saini2021galaxc}, ECLARE~\cite{mittal2021eclare} and SiameseXML~\cite{dahiya2021siamesexml} were put forward. While these methods obtained reasonable performance improvement by using label text especially when input texts are short, most of them make the assumption that the instance label bipartite graph is homophilic by using bi-encoders for candidate set retrieval (i.e. similar nodes are likely to have edges). While this is true for most XMC benchmark datasets, it does not hold in many real-world applications. For instance, complementary product recommendations in e-commerce would prefer to recommend accessories to a user who just bought a smartphone rather than yet another smartphone. Also, none of these works consider the instance correlation signals as our work.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[trim={1cm 6.5cm 1cm 0},clip, width=0.8\linewidth]{figs/XMC_graph.pdf}
+    \caption{Equivalence of the XMC problem and neighborhood prediction problem. Blue nodes correspond to instances and orange nodes correspond to labels. Note that the multi-label vectors $\{\mathbf{y}_i\}$ can be viewed as the rows of biadjacency matrix $\mathbf{B}$, which characterize the edges in the graphs on the right. Hence, predicting the multi-label $\mathbf{y}_i$ is equivalent to predicting the neighborhood of blue node $i$ in the graph on the right.}
+    \label{fig:XMC_graph}
+\end{figure*}
+
+
+
+Preliminaries
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[trim={0cm 2.2cm 0cm 2.5cm},clip,width=0.8\linewidth]{figs/PINA_augment.pdf}
+    \caption{Illustration of the two-stage PINA method. At stage $1)$, we construct a pretraining biadjacency matrix $\mathbf{B}_{pre}$ using only the \emph{training data}. Since we still have an XMC problem, we can train an XMC learner as the neighbor predictor $g(\cdot,\Phi_{\text{stat}})$ and obtain its corresponding text vectorizer $\Phi_{\text{pre}}(\cdot)$ as well. At stage $2)$, we first use the pretrained neighbor predictor $g(\cdot,\Phi_{\text{stat}})$ to extract the most relevant (top $K$) nodes among the output space of the pretraining task. Then we apply the pretrained text vectorizer $\Phi_{\text{pre}}(\cdot)$ to obtain the numerical features for both instances and labels. Finally, we perform normalized neighborhood aggregation to obtain the PINA augmented features, which can then be used in downstream XMC.}
+    \label{fig:PINA}
+\end{figure*}
+
+Assume that we are given a training set $\{x_i,\mathbf{y}_i\}_{i=1}^N$ where $x_i \in \mathcal{D}$ is the $i^{th}$ input instance text feature and $\mathbf{y}_i \in \{0,1\}^L$ is the one hot label vector with $y_{i,l} = 1$ indicating that label $l$ is relevant to instance $i$. The standard goal of XMC is to learn a function $f : \mathcal{D}\times [L] \mapsto \mathbb{R}$, such that $f(x,l)$ indicates the ``mutual relevance'' between $x$ and $l$. The standard way to compute this relevance is to use the one-versus-all (OVA) strategy:
+\begin{align}\label{eq:XMC_OVA}
+    f(x,l) = \mathbf{w}_l^T \Phi(x);\;l\in[L],
+\end{align}
+where $\mathbf{W} = [\mathbf{w}_1,\ldots,\mathbf{w}_L]\in \mathbb{R}^{d\times L}$ are learnable weight vectors and $\Phi: \mathcal{D}\mapsto \mathbb{R}^d$ is the text vectorizer. The function $\Phi(\cdot)$ can be obtained by either statistical methods such as BoW and TF-IDF models, or through the use of deep learning models with learnable weights. In practice, directly training with OVA is prohibitive when $L$ is large. This is due to not only the underlying $O(L)$ time complexity, but also due to severe label sparsity issues inherent to long-tailed label distributions~\cite{chang2020taming,zhang2021fast}.
+
+\textbf{XR-Transformers. }We start by briefly introducing the state-of-the-art XMC method: XR-Transformers~\cite{zhang2021fast}. A simplified illustration of it is given in Figure~\ref{fig:XRT}. The first step is to leverage the statistical text vectorizer $\Phi_{\text{stat}}(x)$ and training labels $\mathbf{y}$ to construct the label representation $\mathbf{Z}\in \mathbb{R}^{L\times d}$ (which should not be confused with the label text feature $\{z_l\}_{l=1}^L$). XR-Transformers adopt the Predicted Instance Feature Aggregation (PIFA) strategy for label representations, which is further used to construct the hierarchical label tree (HLT) via hierarchical $k$-means clustering,
+\begin{align}\label{eq:PIFA}
+    \text{(PIFA)}\;\quad & \mathbf{Z}_l = \frac{\sum_{i:y_{il}=1}\Phi_{\text{stat}}(x_i)}{\|\sum_{i:y_{il}=1}\Phi_{\text{stat}}(x_i)\|}\;\forall l \in [L].
+\end{align}
+
+Note that each level of the HLT gives rise to an XMC problem. The second step is to train the Transformer models $\Phi_{\text{dnn}}$, such as BERT~\cite{devlin2018bert}, recursively from root to leaves. In the third step, the XR-Transformer concatenates both the statistical feature $\Phi_{\text{stat}}(x)$ and Transformer embedding $\Phi_{\text{dnn}}(x)$ to arrive at the final feature $\Phi_{\text{cat}}(x)$. It also trains linear OVA classifiers~\eqref{eq:XMC_OVA} based on HLT recursively to generate the final prediction. Through the use of HLT, one can not only reduce the time complexity from $O(L)$ to $O(\log(L))$, but also alleviate the label sparsity issue~\cite{zhang2021fast}.
+
+\textbf{XMC with label text. }Consider the scenario where the label text $\{z_l\}_{l=1}^L$ is available as side-information, where $z_l\in \mathcal{D}$ is the label text of label $l$. One can observe that standard XMC approaches, such as XR-Transformers, cannot leverage this information directly. While it is possible to use the label text to improve the construction of the HLT, the learnable text vectorizer $\Phi_{\text{dnn}}$ itself cannot leverage the label text information. PINA, as we show, enables XMC learners to leverage label text information in a data enhancement manner, where the learnable text vectorizer $\Phi_{\text{dnn}}$ can also perform training with the label texts.
+
+\textbf{XMC with instance correlation signal. }In keyword recommendation problems, researchers aim to predict the most relevant keywords for each product. Keyword recommendation is an example of an XMC problem. In this scenario, instances (products) correlation signals are also available from the customer behavioral data, such as those pertaining to the ``frequently bought together'' category. This type of side information provides us with beneficial information about the instances. Unfortunately, it is not clear how to leverage the instances correlation signals within the standard XMC problem solvers. PINA makes use of this side information in a data enhancement way similar to what is done with the label text.
+
+\subsection{The XMC problem and the neighborhood prediction problem}
+
+To understand the key idea behind our approach, we have to describe the relationship between the XMC problem and the neighborhood prediction problem first described in the graph learning literature. Recently,~\citealt{chien2021node} revealed the equivalence of the XMC problem and the neighborhood prediction problem in graph learning. Let $G=(V_{\text{in}},V_{\text{out}},E)$ be a directed bipartite graph, where $V_{\text{in}}=[N]$ and $V_{\text{out}}=[L]$ are the input and output node sets, respectively, while $E \subseteq V_{\text{in}}\times V_{\text{out}}$ is the edge set. A common way to characterize the edge relations is to use a biadjacency matrix $\mathbf{B}\in \{0,1\}^{N\times L}$, where $B_{ij} = 1$ if and only if $(i,j)\in E$. The goal of the neighborhood prediction problem is to predict the $i^{th}$ row of $\mathbf{B}$ via the node attributes of node $i$. Since the $i^{th}$ row of $\mathbf{B}$ is just a vector in $\{0,1\}^{1\times L}$ (i.e., a binary vector), it can also be viewed as a multi-label $\mathbf{y}_i$. See Figure~\ref{fig:XMC_graph} for a pictorial illustration. 
+
+One standard operation in graph learning is graph convolution~\cite{kipf2017semisupervised}, where the key idea is to gather the attributes of the neighborhood of a node to enhance its ego node features. It has been proven to be  effective for many graph tasks, including node classification~\cite{kipf2017semisupervised,hamilton2017inductive,velickovic2018graph,chien2020adaptive}, link prediction~\cite{zhang2021labeling,zhang2018link} and graph classification~\cite{xu2018how,zhang2021nested}. Our proposed method -- PINA -- is motivated by the connection to the neighborhood prediction task and the graph convolution operation, which we describe in the next section.
+
+
+
+PINA: Predicted Instance Neighborhood Aggregation
+
+For simplicity, we mostly focus on the setting where side information is of the form of label text. The case of side information being of the form of instance correlation signals can be treated similarly. A detailed discussion regarding how to apply PINA with instance correlation signals is available in Section~\ref{sec:other_side_info}.
+
+We propose PINA to allow XMC learners such as XR-Transformers to make use of label text information in a \emph{data enhancement} manner. Due to the equivalence of XMC and neighborhood prediction, a naive way of including label attributes is via neighborhood aggregation. However, there are several issues preventing us from applying this idea directly. First, one can only apply the average operation on numerical features instead of raw text. Ideally, we have to fine-tune the text vectorizer $\Phi_{\text{dnn}}$ with both instance and label text features during the training phase. However, the XMC formalism (Figure~\ref{fig:XMC_graph}) does not treat label text as an input, which is suboptimal. Second, the neighborhood relation is defined using labels $\mathbf{y}_i$, which are \emph{unknown for test instances}. See Figure~\ref{fig:XMC_graph} for an illustration. Thus, we cannot apply neighborhood aggregation directly even though we are equipped with the bipartite graph underlying the XMC problem. We describe next the high-level ideas how to resolve these issues.
+
+\textbf{Lack of knowledge about neighborhoods for test instances. }In order to resolve this issue, we propose to pretrain a neighborhood predictor $g$. Instead of using the exact neighbors (i.e. ground truth multi-labels), we generate predicted neighbors via $g$. This allows us to generate neighbors for both \emph{train and test} instances. Note that pretraining $g$ only leverages training data (which includes both labels and instances).
+
+\textbf{The transformer text vectorizer $\Phi_{\text{dnn}}$ does not involve label text. }In order to resolve this issue, we propose a pretraining XMC task that also takes label text as input. More specifically, the input and output space of our pretraining task contains both instances and labels. See the illustration of the proposed pretrained XMC in Figure~\ref{fig:PINA}. Hence, our pretrained text vectorizer $\Phi_{\text{pre}}$ is trained with both instance text and label text. This resolves the issue of not being able to include the label text in standard XMCs.
+
+\subsection{A detailed description of PINA}
+We implemented PINA as a two-stage method, described in Figure~\ref{fig:PINA}. The first stage is the pretraining phase, where we design a pretraining task to learn a neighbor predictor $g(\cdot,\Phi_{\text{stat}})$ via a base XMC learner (e.g., XR-transformer). Note that the pretraining task is also an XMC problem, but both instances and label text are treated as inputs and both the input and output space contain instance and label nodes. The edges are defined by multi-label relations $\{\mathbf{y_i}\}_{i=1}^N$ in an undirected manner. We also add edges from all instances and label nodes in the input space to their output space counterpart. More specifically, we construct $\mathbf{B}_{pre}$ as described in Figure~\ref{fig:PINA}. Recall that $\mathbf{B}\in \{0,1\}^{N \times L}$ is obtained by training the multi-labels $\{\mathbf{y}_i\}_{i=1}^N$ and $\mathbf{I}$ represents an identity matrix of appropriate dimensions. Hence, in our pretraining XMC problem, we aim to predict the $i^{th}$ row of $\mathbf{B}_{pre}$ using $x_i$ when $i\in [N]$ and $z_{i-N}$ when $i = N+1,N+2,\ldots,N+L$. This allows both the label and instance text to be observed during the pretraining phase. We consequently obtain the corresponding text vectorizer $\Phi_{\text{pre}}$ to generate numerical features for both the labels and instances. 
+
+The second stage is the PINA augmentation phase, during which we leverage the pretrained neighborhood predictor $g(\cdot,\Phi_{\text{stat}})$ and text vectorizer $\Phi_{\text{pre}}(\cdot)$ to augment the instance features. We first predict the most relevant nodes among the output space of the pretraining stage as neighbors for both training and \emph{test} instances via our pretrained neighbor predictor $g(\cdot,\Phi_{\text{stat}})$. More specifically, we obtain the neighborhood prediction vector $g(x_i,\Phi_{\text{stat}})\in [0,1]^{1\times L}$ and zero out all but the top $K$ largest values $\mathbf{P}_i = top_K(g(x_i,\Phi_{\text{stat}}))$. Then we perform neighborhood aggregation on the numerical features obtained from $\Phi_{\text{pre}}$ accordingly, which results in PINA features. See lines $3-8$ in Algorithm~\ref{alg:PINA_augmentation} for PINA feature extraction of each instance. The augmented features are fed to the next XMC learner for solving the downstream XMC task. 
+
+\subsection{Applying PINA to instance correlation signals} \label{sec:other_side_info}
+We describe next how to apply PINA to instance correlation signals. In this case, the instance correlation can be formulated as an instance-to-instance graph (i.e., I2I graph). Similarly to the construction rules of the Amazon co-purchase graph benchmarking dataset known from the graph learning literature, a link $(i,j)$ exists if and only if the instance correlation signal between $i$ and $j$ is larger than a threshold. We thus capture the instance correlation signal by the (bi)adjacency matrix $\mathbf{B}^\prime$.  
+
+We then use $\mathbf{B}^\prime$ directly to formulate our pretraining XMC. More specifically, one can choose $\mathbf{B}_{pre} = \mathbf{B}^\prime$ in Stage 1 of Figure~\ref{fig:PINA} to obtain the neighbor predictor and text vectorizer. Note that the set of instances considered in the downstream application need not be identical to instances in the I2I graph. We only require their text domains to be the same (i.e., all texts associated with instances are product descriptions). This is due to the fact that we can still obtain the predicted neighbors among instances in the I2I graph for each instance in the downstream application (and similar to the reason why PINA applies to test data). The remainder of the PINA pipeline is as described in Figure~\ref{fig:PINA}.
+
+\begin{table}[t]
+\centering
+\caption{Public benchmark dataset statistics: $N_{train}, N_{test}$ refer to the
+    number of instances in the training and test sets, respectively;
+    $L$: the number of labels. $\bar{L}$: the average number of positive labels per
+    instance; $\bar{n}$: average number of instances per label; $d_{BoW}$:
+    the Bag-of-Word feature dimension.
+}
+\label{tab:data_stats}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{@{}ccccccc@{}}
+\toprule
+ & $d_{BoW}$ & $L$ & $N_{train}$ & $N_{test}$ & $\bar{n}$ & $\bar{L}$ \\
+ \midrule
+LF-Amazon-131K      & 80,000 & 131,073 & 294,805   & 134,835 & 5.15  & 2.29 \\
+LF-WikiSeeAlso-320K & 80,000 & 312,330 & 693,082   & 177,515 & 4.67  & 2.11 \\
+LF-Wikipedia-500K   & 500,000 & 501,070 & 1,813,391 & 783,743 & 24.75 & 4.77 \\ 
+LF-Amazon-1.3M   & 128,000 & 1,305,265 & 2,248,619 & 970,273 & 28.24 & 22.20 \\\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+Experimental Results
+\begin{table*}[t]
+  \centering
+    \caption{Main result on label text XMC benchmark datasets. Bold font refers to the best result. Superscripts $^\dagger$ and $^\star$ indicate the results are taken from DECAF paper~\cite{mittal2021decaf} and SiameseXML~\cite{dahiya2021siamesexml} respectively.}
+    \label{tab:LF-results}
+    \resizebox{1.0\textwidth}{!}{
+    \begin{tabular}{c|cccc|cccc}
+\hline
+Methods &
+  \textbf{P@1} &
+  \textbf{P@3} &
+  \multicolumn{1}{c|}{\textbf{P@5}} &
+  \textbf{Train Time (hrs)} &
+  \textbf{P@1} &
+  \textbf{P@3} &
+  \multicolumn{1}{c|}{\textbf{P@5}} &
+  \textbf{Train Time (hrs)} \\ \hline
+                        & \multicolumn{4}{c|}{LF-Amazon-131K}                                  & \multicolumn{4}{c}{LF-WikiSeeAlso-320K}            \\ \hline
+DECAF$^\dagger$         & 42.94 & 28.79          & \multicolumn{1}{c|}{21}             & 1.8   & 41.36 & 28.04 & \multicolumn{1}{c|}{21.38} & 4.84  \\
+AttentionXML$^\dagger$  & 42.9  & 28.96          & \multicolumn{1}{c|}{20.97}          & 50.17 & 40.5  & 26.43 & \multicolumn{1}{c|}{21.38} & 90.37 \\
+SiameseXML$^\star$      & 44.81 & 30.19              & \multicolumn{1}{c|}{21.94}          & 1.18  & 42.16 & 28.14     & \multicolumn{1}{c|}{21.35} & 2.33  \\
+ECLARE$^\star$          & 43.56 & 29.65              & \multicolumn{1}{c|}{21.57}          & 2.15  & 40.58 & 26.86     & \multicolumn{1}{c|}{20.14} & 9.40  \\
+$\text{XR-Transformer}$ & 45.61 & 30.85          & \multicolumn{1}{c|}{22.32}          & 7.9   & 42.57 & 28.24 & \multicolumn{1}{c|}{21.30} & 22.1  \\
+$\text{XR-Transformer + PINA}$ &
+  \textbf{46.76} &
+  \textbf{31.88} &
+  \multicolumn{1}{c|}{\textbf{23.20}} &
+  9.8 &
+  \textbf{44.54} &
+  \textbf{30.11} &
+  \multicolumn{1}{c|}{\textbf{22.92}} &
+  28.3 \\ \hline
+                        & \multicolumn{4}{c|}{LF-Wikipedia-500K}                               & \multicolumn{4}{c}{LF-Amazon-1.3M}                 \\ \hline
+DECAF$^\dagger$         & 73.96 & 54.17          & \multicolumn{1}{c|}{42.43}          & 44.23 & -     & -     & \multicolumn{1}{c|}{-}     & -     \\
+AttentionXML$^\dagger$  & 82.73 & \textbf{63.75} & \multicolumn{1}{c|}{\textbf{50.41}} & 221.6 & -     & -     & \multicolumn{1}{c|}{-}     & -     \\
+SiameseXML$^\star$      & 67.26 & 44.82          & \multicolumn{1}{c|}{33.73}          & 7.31  & -     & -     & \multicolumn{1}{c|}{-}     & -     \\
+ECLARE$^\star$          & 68.04 & 46.44          & \multicolumn{1}{c|}{35.74}          & 86.57 & -     & -     & \multicolumn{1}{c|}{-}     & -     \\
+$\text{XR-Transformer}$ & 81.62 & 61.38          & \multicolumn{1}{c|}{47.85}          & 41.0  & 54.67 & 47.87 & \multicolumn{1}{c|}{42.93} & 28.2  \\
+$\text{XR-Transformer + PINA}$ &
+  \textbf{82.83} &
+  63.14 &
+  \multicolumn{1}{c|}{50.11} &
+  85.0 &
+  \textbf{58.33} &
+  \textbf{51.06} &
+  \multicolumn{1}{c|}{\textbf{46.04}} &
+  39.1 \\ \hline
+\end{tabular}
+}
+\end{table*}
+We demonstrate the effectiveness of PINA on both public benchmark datasets with side information of the form of label text and proprietary datasets with side information of the form of instance correlation signals. We report the precision at $k$ (P@$k$) and recall at $k$ (R@$k$) as our evaluation metrics.
+
+\subsection{Label text benchmark datasets}
+
+\textbf{Datasets. }We consider the public benchmark long-text datasets for product-to-product recommendations as well as predicting related Wikipedia articles, taken from~\cite{Bhatia16}. The data statistics can be found in Table~\ref{tab:data_stats}. For a fair comparison with previous works, we adopt the provided BoW features as our statistical text feature in the experiments. For LF-Amazon-1.3M, where BOW features are only constructed using title text, we still use the provided BoW features~\cite{Bhatia16} and leverage the full text only as input to transformer encoders.
+
+\textbf{Baseline methods. }We not only compare PINA with plain XR-Transformers~\cite{zhang2021fast}, but also with other previously published XMC methods that achieve state-of-the-art results for the label text XMC problem. These include
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

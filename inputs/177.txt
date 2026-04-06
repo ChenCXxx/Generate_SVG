@@ -1,0 +1,228 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Although search engines primarily focus on textual data~\citep{singhal2001modern}, multi-media is necessary to satisfy user needs during retrieval. A user query can be answered by the information in variant formats, such as a text document, or a picture. The growth of multi-media content has been one of the most notable trends on the internet~\citep{mei2014multimedia}, and various studies have proved that users prefer more vivid multi-media content in search results~\citep{datta2008image}.
+
+Current multi-media search systems often employ a divide-and-conquer approach. As shown in Figure~\ref{fig:intro1a}, they first conduct search in individual modalities, including text, image, video, etc.~\citep{bajaj2016ms,grubinger2008overview,kwiatkowski2019natural,awad2021trecvid}, and then fuse the retrieval results from various verticals together, e.g., building another ranking layer on top of these single/cross modality retrievers~\citep{escalante2008late,grubinger2008overview}. Both relevance modeling and retrieval result fusion are usually entwined to achieve more accurate multi-modal retrieval results. However, due to the modality gap, they can be only pipeline-modeled in divide-and-conquer, making it challenging to fuse retrieval results from different modalities.
+
+
+In this paper, we explore the potential of universal multi-modal retrieval to build an end-to-end model and retrieve multi-modality documents for user queries. Illustrated in Figure~\ref{fig:intro1b}, universal multi-modal retrieval maps queries and multi-modality resources to one universal embedding space and retrieves multi-modality candidates via KNN search. As a result, the relevance modeling, cross-modality matching, and retrieval result fusion are done by one model.
+
+\input{Figure/intro}
+
+More specifically, we propose a Universal Vision-Language Dense Retrieval (UniVL-DR) model to get the representations of queries, texts, and images and learn a tailored vision-language embedding space for multi-modal retrieval. UniVL-DR optimizes the vision-language embedding space using hard negatives~\citep{xiong2020approximate} and balances the modalities of these negatives to alleviate the modality preference of multi-modal retrievers. Furthermore, UniVL-DR introduces an image verbalization method, which regards language as a kind of mentalese~\citep{doi:10.1177/0301006621991491} and mitigates the modality gap between images and texts. Our image verbalization method first aligns the semantics of image captions and figure pixels~\citep{DBLP:journals/tcyb/HuangPW21}, and then paraphrases the image facts. It helps to bridge language and vision understanding modules of UniVL-DR via natural language. 
+
+To build a multi-modal retrieval benchmark, we leverage a multi-modal question answering (QA) benchmark WebQA~\citep{chang2021webqa} and convert it to a standard open-domain setting: retrieving multi-modality candidates from text and image collections for a user query. Divide-and-conquer is an intuitive way to build a multi-modal retrieval system and we pre-route queries to oracle modality to show the upper bound performance of such a system. Compared with the divide-and-conquer system, UniVL-DR addresses the retrieval result fusion challenge, achieves state-of-the-art multi-modal retrieval performance, and brings more than 5\% improvement in single/cross modality retrieval.
+ 
+Our experiments show that UniVL-DR learns an effective embedding space for multi-modal retrieval by separating texts and images into different areas and guiding queries to return candidates from corresponding modalities. Our further analyses show that UniVL-DR can alleviate overfit single-modality signals by balancing hard negatives during training and bridging the modality gap between vision and language by verbalizing images. All experimental results show that learning one universal representation space is starting to benefit single-modality tasks---pretraining representation models on multi-modality and using our techniques can learn additional signals from multi-modalities, overcome the modality boundary, and provide convincing gains in single/multi-modality tasks.
+
+
+
+
+
+Related Work
+Document retrieval is a typical single modality retrieval task, which aims to return related documents for user queries and can be tackled with dense retrievers~\citep{xiong2020dense,lewis2020pre,zhan2020learning,li2021more,Yu2021FewShotCD}. Dense retrievers encode queries and documents with pretrained language models~\citep{devlin2019bert} and map them in an embedding space to conduct an efficient search. The query and document encoders are usually contrastively trained with in-batch negatives, BM25 retrieved negatives, and hard negatives~\citep{karpukhin2020dense,xiong2020approximate}.
+Recently, lots of work has focused on multi-modal retrieval tasks, which retrieve texts and images to satisfy the multi-modality information needs of users~\citep{hannan2020manymodalqa,singh2021mimoqa,talmor2021multimodalqa,chang2021webqa}. WebQA~\citep{chang2021webqa}, an open-domain multi-modal question answering benchmark, is built to encourage the following work to represent multi-modal knowledge in a unified space and answer user queries with the information from attribute modalities. It is a more realistic setting, which avoids synthesizing queries with templates~\citep{talmor2021multimodalqa} and downplays the role of modality disambiguation~\citep{hannan2020manymodalqa} in the multi-modality modeling. 
+
+To search information from large-scale multi-modality sources, WebQA~\citep{chang2021webqa} employs a divide-and-conquer pipeline to search text and image candidates with BM25 and CLIP~\citep{radford2021learning} and then fuse these retrieval results using a vision-language model. However, single-modality retrievers, such as BM25 and CLIP, usually show distinct retrieval effectiveness~\citep{chang2021webqa}, leading to modality discrimination during fusing retrieval results from different modalities.
+
+When building a unified multi-modal retriever, vision-language pretraining (VLP) is crucial to learn universal representations for texts and images, which has also shown success on lots of vision-language benchmarks~\citep{uppal2022multimodal,han2020survey,khan2021transformers,du2022survey}. Most VLP approaches encode texts and images and pretrain encoders with two tasks: masked token prediction and text-image matching~\citep{zhang2021vinvl}. These VLP methods teach vision-language models to learn the semantic alignments between texts and images, as well as encode images with the regional features of detected objects~\citep{chen2019uniter,lu2019vilbert,tan2019lxmert,su2019vl,li2019visualbert,li2021unimo,cho2021unifying,hu2020vivo,gan2020large} or the whole image features~\citep{xu2021e2e,kim2021vilt,huang2021seeing,wang2021simvlm}.
+
+
+\input{Figure/tasks}
+
+
+Multi-Modal Retrieval Task
+As shown in Figure~\ref{fig:model}, we compare different retrieval tasks and tell apart the differences between multi-modal retrieval and other two tasks, single modality retrieval and cross modality retrieval.
+\textbf{Single Modality Retrieval.} Single modality retrieval focuses on conducting relevance searching in one modality space, which includes text-text retrieval and image-image retrieval.
+Text-text retrieval~\citep{bajaj2016ms} aims to search relevant candidates from the text collection $\mathcal{T} = \{T_1, ..., T_n\}$ to answer a query $q$. And image-image retrieval~\citep{i2i2021} focuses more on returning similar images from the image collection $\mathcal{I} = \{I_1, ..., I_m\}$ for the given image $I_j$.
+
+\textbf{Cross Modality Retrieval.} The cross modality retrieval, e.g. MSCOCO~\citep{chen2015microsoft} and Flickr30K~\citep{young2014image}, contains two subtasks: text-image retrieval and image-text retrieval. Given an image caption $T_i$ or an image $I_j$, these tasks require retrieval models to conduct cross-modality matching between images and captions, aiming to search candidates from images $\mathcal{I} = \{I_1, ..., I_m\}$ or image captions $\mathcal{T}=\{T_1, ..., T_n\}$, respectively. 
+Such cross-modality interactions are built to align semantics between captions and images, which is distinct from the search relevance. 
+
+\textbf{Multi-Modal Retrieval.} 
+Given a query $q$, the multi-modal retrieval task~\citep{chang2021webqa} helps users uncover the information from multi-modality sources $\mathcal{D}=\{T_1, ..., T_n, I_1, ..., I_m\}$.
+
+Different from single/cross modality retrieval, multi-modal retrieval aims at returning relevant candidates from the multi-modality documents $\mathcal{D}$. The retrieval results may consist of texts, images, or a mixture of them according to user query $q$. Different from existing text and sketch base image retrieval~\citep{sangkloy2022sketch,DBLP:journals/ijcv/DuttaA20,DBLP:conf/icpr/Dey0GVLP18,DBLP:conf/cvpr/MaiJLFBL17}, the multi-modal retrieval focuses more on relevance modeling between queries and documents, single/cross modality matching, and modality routing, making this task more challenging.
+Moreover, we can pre-route queries to a single modality and convert the multi-modal retrieval to two subtasks, text-text retrieval and text-image retrieval, which are single and cross modality retrieval tasks.
+
+
+
+UnivSearch by Learning a Unified Embedding Space
+
+This section describes our Universal Vision-Language Dense Retrieval (UniVL-DR). As shown in Figure~\ref{fig:model}, given a query $q$ and multi-modality documents $\mathcal{D}=\{d^{\,1}_{\,\text{Text}}, ..., d^{\,n}_{\,\text{Text}}, d^{\,1}_{\,\text{Image}}, ..., d^{\,m}_{\,\text{Image}}\}$, it directly encodes query $q$, text document $d^{\,i}_{\,\text{Text}}$ and image document $d^{\,j}_{\,\text{Image}}$ in one embedding space, which conducts relevance modeling, modality routing, and result fusion in such a space (Sec.~\ref{sec:encode}).
+
+Texts and images usually have different understanding mechanisms, making it difficult to tackle multi-modality tasks. Nevertheless, language and vision can be commonly translated as a type of mentalese to better communicate between different modules in our brains~\citep{doi:10.1177/0301006621991491}, thus a unified representation method has the ability to break the boundary of different modalities and benefit vision-language learning. To build a unified multi-modal retrieval system, UniVL-DR learns a universal embedding space by contrastively optimizing vision-language representations using hard negatives with balanced-modality sampling (Sec.~\ref{sec:train}) and bridging the modality gap via verbalizing the picture to paraphrase pixel semantics in the raw text space (Sec.~\ref{sec:expansion}).
+
+\input{Figure/model}
+
+\subsection{Multi-Modality Dense Retrieval}\label{sec:encode}
+UniVL-DR gets representations of queries, image documents and text documents with two encoders: \textit{TextEnocder} and \textit{ImgEncoder}. Specifically, the image document $d^{\,j}_{\,\text{Image}}$ consists of a picture $I_j$ and an image caption $C_j$, thus we utilize \textit{ImgEncoder} and \textit{TextEnocder} to encode $I_j$ and $C_j$. 
+
+\textbf{Query Encoding.} UniVL-DR directly encodes the query $q$ to get its representation $\Vec{q}$:
+\begin{equation}
+\small
+    \Vec{q} = TextEnocder(q).
+\end{equation}
+
+\textbf{Text Document Encoding.} To represent text documents, UniVL-DR also leverages the \textit{TextEnocder} to encode the $i$-th text document $d^{\,i}_{\,\text{Text}}$ as $\Vec{d}^{\,i}_{\,\text{Text}}$:
+\begin{equation}
+\small
+    \Vec{d}^{\,i}_{\,\text{Text}} = TextEnocder(d^{\,i}_{\,\text{Text}}).
+\end{equation}
+
+\textbf{Image Document Encoding.} Different from text documents, image documents can be represented by picture features and image captions and the textual captions can help better understand the semantics of image documents~\citep{DBLP:conf/cvpr/BaldratiBUB22a}. Thus, UniVL-DR encodes picture $I_j$ and image caption $C_j$ and then sums these embeddings to get the representation $\Vec{d}^{\,j}_{\,\text{Image}}$ of $j$-th image document:
+\begin{equation}\label{eq:img_encode}
+\small
+    \Vec{d}^{\,j}_{\,\text{Image}} = ImgEnocder(I_j) + TextEnocder(C_j).
+\end{equation}
+The representations $\Vec{d}^{\,j}_{\,\text{Image}}$ and $\Vec{d}^{\,i}_{\,\text{Text}}$ of image document and text document use the same $TextEnocder$ to encode their textual information, which bridges different modalities in the text space and helps to build a universal embedding space for multi-modality retrieval.  
+
+\textbf{Multi-modality Document Retrieval.} The cosine similarity score $f(q,d)$ of query $q$ and document candidate $d \in \mathcal{D}$ can be calculated to estimate the relevance between $q$ and $d$:
+\begin{equation}
+\small
+  f(q,d)=\cos(\Vec{q},\Vec{d}\,),
+\end{equation}
+where $\Vec{q}$ and $\Vec{d}$ are the representations of $q$ and $d$. The efficient similarity calculation between queries and the multi-modality documents can be provided by FAISS~\citep{johnson2019billion}.
+\subsection{Universal Representation Learning}\label{sec:train}
+UniVL-DR employs a vision-language model,  CLIP~\citep{radford2021learning}, to learn universal representations for queries and multi-modality documents, which is knowledgeable about cross-modality retrieval. UniVL-DR optimizes the universal embedding space through training with modality-balanced hard negatives, which avoids overfitting to the signals of single-modality during multi-modal co-training.
+
+Given the query $q$ and its relevant candidate $d^+ \in \mathcal{D}$, the embedding space can be optimized by sampling hard negatives $\mathcal{D}^-$ and minimizing the following contrastive training loss $L$:
+\begin{equation}
+\small
+  \begin{split}
+\label{eq:ce_train}
+ L &= -\log\frac{e^{f(q,d^+)/\tau}}
+    {e^{f(q,d^+)/\tau} + \sum_{d^-\in \mathcal{D}^-}{e^{f(q,d^-)/\tau}}} \\
+    &= - \underbrace{f(q,d^+)/\tau}_{L_\text{Align}} + \log (e^{f(q,d^+)/\tau} + \underbrace{\sum_{i=1}^{k_1} {e^{f(q,d_{\,\text{Image}}^{i-})/\tau}}}_{L_\text{Image}} + \underbrace{\sum_{j=1}^{k_2} {e^{f(q,d_{\,\text{Text}}^{j-})/\tau}}}_{L_\text{Text}}),
+\end{split}
+\end{equation}
+where $\tau$ is the temperature to scale the similarity score. During training, we in fact maximize $L_\text{Align}$ and minimize $L_\text{Image}$ and $L_\text{Text}$, which make queries closer to related documents and away from unrelated documents. If $k_1>k_2$ or $k_2>k_1$, we can achieve a smaller loss $L_\text{Image} + L_\text{Text}$ by simply making queries far away from the image collection or the text collection. Such a behavior can win a lower loss $L$ but overfits the ranking features from single/cross modality matching, leading to a modality discrimination during retrieval.
+Our modality-balanced negative training strategy keeps $k_1=k_2=k$ to better train the modality selection ability of retrievers.
+\subsection{Image Verbalization for Expansion}\label{sec:expansion}
+UniVL-DR provides another way to bridge the modality gap between texts and images by verbalizing picture pixel features, including image caption and query generation methods.
+
+Following~\cite{li2020oscar}, we can represent a picture $I_j$ using detected objects $\mathcal{O}=\{O_1, ..., O_l\}$. For each image object $O_i$, we can get its pixel feature $\Vec{O}_i$ and the predicted class $\hat{O}_i$.
+Then UniVL-DR uses a vision-language model, such as VinVL~\citep{zhang2021vinvl}, to verbalize image documents. Specifically, we generate potentially matched captions or related queries as the image verbalization results $V(I_j)$, according to the picture $I_j$ or the image document $d^{\,j}_{\,\text{Image}} = \{I_j, C_j\}$.
+
+We can first feed the predicted classes $\{\hat{O}_1; ...; \hat{O}_l\}$ and regional features $\{\Vec{O}_1; ...; \Vec{O}_l\}$ of detected objects into image verbalization models. Then we train the model to generate image caption $C_j$:
+\begin{equation}\label{eq:caption}
+\small
+    X_j^c = \text{[CLS]}; C_j; \text{[SEP]}; \hat{O}_1;...;\hat{O}_l; \text{[SEP]}; \Vec{O}_1; ...; \Vec{O}_l;
+\end{equation}
+or replace the detected object classes $\{\Vec{O}_1; ...; \Vec{O}_l\}$ in the input sequence $ X_j^c$ with the image caption $C_j$ to generate related query $q$ of the image document $d^{\,j}_{\,\text{Image}}$:
+\begin{equation}\label{eq:query}
+\small
+    X_j^q = \text{[CLS]}; q ; \text{[SEP]};C_j; \text{[SEP]}; \Vec{O}_1; ...; \Vec{O}_l,
+\end{equation}
+where $;$ is the concatenation operation, and [CLS] and [SEP] are special tokens.
+During training or inference, we utilize Masked Language Modeling (MLM)~\citep{devlin2019bert} to mask and predict some or all of the tokens of image caption $C_j$ and query $q$ in the inputs $X_j^c$ and $X_j^q$, aiming to train image verbalization models or generate verbalized captions and queries.
+Finally, we enhanced the representations of image documents by expending their text representations $C^*_j$ by expanding the raw caption $C_j$ with image verbalization results $V(I_j)$:
+\begin{equation}
+\small
+    C^*_j = C_j; \text{[SEP]}; V(I_j),
+\end{equation}
+where the enhanced text representation $C^*_j$ is used to replace the raw caption $C_j$ in E.q.~\ref{eq:img_encode} during encoding the image document $d^{\,j}_{\,\text{Image}}$.
+
+
+Experimental Methodology
+This section describes the dataset, baselines, some vision language models used in our experiments, and implementation details.
+
+\textbf{Dataset.}
+A multi-hop and multi-modal open domain question answering dataset WebQA~\citep{chang2021webqa} is used in our experiments.
+\textbf{Evaluation Metrics.} We use NDCG@$K$, MRR@$K$, Recall@20, and Recall@100 as the evaluation metrics. $K$ can be 10 and 20. And we regard MRR@10 as our main evaluation~\citep{bajaj2016ms}.
+\textbf{Vision-Language Models.} In our experiments, we employ two state-of-the-art vision-language models, VinVL~\citep{zhang2021vinvl} and CLIP~\citep{radford2021learning} to implement different retrieval models in our experiments. VinVL~\citep{zhang2021vinvl} inherits Oscar~\citep{li2020oscar} architecture, which extracts object tags and region features to represent images, and learns cross-modal representations by aligning semantics between images and texts. Different from VinVL, CLIP~\citep{radford2021learning} utilizes a dual encoder to project images and texts in the same semantic space for computing their similarity scores and is trained on a large-scale dataset WebImageText that contains 400 million image-text pairs. It has shown strong effectiveness in cross-modality retrieval.
+
+\textbf{Baselines.} Our baselines contain several models in the settings of single modality retrieval, divide-and-conquer, and universal multi-modal retrieval.
+
+\textit{Single modality retrieval}. In this setting, we represent image documents with captions and employ text retrievers, BM25 and DPR~\citep{karpukhin2020dense} as baselines. DPR is trained with NQ~\citep{kwiatkowski2019natural}, which is similar to the textual source of WebQA. Then we continuously train DPR with in-batch and hard negatives to implement NQ-DPR and NQ-ANCE models. 
+\textit{Divide-and-conquer.} We first employ three widely used retrievers, BM25, VinVL-DPR, and CLIP-DPR, to conduct text-text retrieval and text-image retrieval. Then the multi-modality retrieval results are fused according to their uni-modal rank reciprocals or oracle modality routing. The latter one shows the upper bound of the retrieval performance of our divide-and-conquer models. 
+\textit{Multi-modal retrieval.} In our experiments, we also build two multi-modal retrieval baselines: VinVL-DPR and CLIP-DPR. VinVL-DPR and CLIP-DPR represent image documents with caption and picture features. And then they optimize VLP models, VinVL~\citep{zhang2021vinvl} and CLIP~\citep{radford2021learning}, with in-batch negatives to learn universal representations for multi-modal retrieval.
+
+\textbf{Implementation Details.01$.
+In our experiments, we retrieve Top 100 documents using CLIP-DPR and sample two hard negatives of different modalities ($k=1$) from these candidates. All models are tuned with AdamW optimizer, are evaluated per 500 steps, and set early stop step as 5.
+
+
+Evaluation Results
+In this section, we study the performance of UniVL-DR, its advantages in multi-modal retrieval, the effectiveness of our modality-balanced hard negative training strategies, and how our image verbalization methods bridge the modality gap between texts and images.
+
+\input{Table/overall_new}
+
+\subsection{Overall Performance}
+The multi-modal retrieval performance of different models is shown in Table~\ref{tab:overall}.
+Our UniVL-DR outperforms all baselines with more than 7\% improvement on ranking evaluation, recalls more than 6\% relevant multi-modality documents, and even outperforms the divide-and-conquer model guided by oracle modality routing. Such significant improvements illustrate the effectiveness of UniVL-DR in building a multi-modal retrieval system.
+
+Similar to UniVL-DR, BM25 learns universal textual representations for image/text documents and shows strong ranking effectiveness. To build a divide-and-conquer system, we use BM25 and CLIP-DPR to implement text-text and text-image retrievers and then fuse the results from different retrievers. With the help of oracle modality routing, the divide-and-conquer system shows better ranking results and recalls more relevant documents than BM25. Nevertheless, this system shows a distinct performance when using the uni-modal rank reciprocals to route queries, showing the challenge of fusing retrieval results in divide-and-conquer. CLIP-DPR and UniVL-DR can deal with this problem by learning universal representations for queries and multi-modality documents, which unifies the multi-modality relevance modeling and retrieval result fusion. Thanks to our multi-modality training strategies, UniVL-DR achieves more than 10\% improvement on multi-modal retrieval than CLIP-DPR. The following experiments further explore how UniVL-DR learns universal representations for multi-modal retrieval and bridges the gap between images and texts.
+
+\subsection{Ablation Studies}\label{sec:ablation}
+The ablation studies are conducted to study model performance on multi-modal retrieval. And we also evaluate the effectiveness of UniVL-DR on both text-text and text-image retrieval tasks, which aims at showing the influence of multi-modal learning on these single/cross modality retrieval tasks. 
+
+As shown in Table~\ref{tab:ablation}, we evaluate the retrieval effectiveness of different vision-language models, VinVL-DPR and CLIP-DPR. They are trained with in-batch negatives on text-text/image and multi-modal retrieval tasks. In the single/cross modality setting, we fine-tune vision-language models with a group of queries that only contain related documents in text modality or image modality. Our multi-modality training setting uses all queries to train these vision-language models and equally samples in-batch negatives from the documents of different modalities. 
+For both CLIP-DPR and VinVL-DPR, image captions are usually more effective to represent image documents than figure features, which demonstrates the difficulty in understanding figure semantics with only figure pixels. Thus, UniVL-DR tries to verbalize the figure features by extracting the objects that appear in the figure and describing the figure facts among detected objects~\citep{zhang2021vinvl}. The image verbalization results paraphrase picture pixel facts in natural language and help to enhance the textual representations of images by expanding image verbalization results to image captions. As a result, UniVL-DR uses such an enhanced text representation for image documents and then employs the same module to encode text information of image documents and text documents. It helps to build universal representations for multi-modality documents by breaking the modality boundary and fully using additional training signals from different modalities, making UniVL-DR achieve the best retrieval performance on multi-modal retrieval among all baseline models.
+
+\begin{table}
+\begin{minipage}[c]{0.48\textwidth}
+\resizebox{\linewidth}{!}{
+    \begin{tabular}{l|ccc}
+    \hline
+    \multirow{2}[0]{*}{\textbf{Model}}  & \multicolumn{3}{c}{\textbf{Retrieval Performance}} \\ \cline{2-4}
+     & Text & Image & Multi \\\hline
+    \multicolumn{4}{l}{\textit{Single/Cross Modality Retrievers}} \\\hline
+    BERT-DPR  & 37.09 & 52.34 & - \\
+    VinVL-DPR w/o caption & - & 3.67  & - \\
+    VinVL-DPR w/o fig feature  & - & 51.56 & - \\
+    VinVL-DPR & 25.00 & 48.68 & - \\
+    CLIP-DPR w/o caption & - & 17.74 & - \\
+    CLIP-DPR w/o fig feature  & - & 58.17 & - \\
+    CLIP-DPR & 52.57 & 59.95 & - \\\hline
+    \multicolumn{4}{l}{\textit{Universal Multi-Modal Retrievers}} \\\hline
+    VinVL-DPR w/o fig feature & 29.01 & 46.55 & 36.13 \\
+    VinVL-DPR & 29.95 & 49.65 & 38.14 \\
+    CLIP-DPR w/o fig feature & 51.47 & 57.36 & 50.33 \\
+    CLIP-DPR & 51.75 & 60.61  & 48.83  \\
+    UniVL-DR & \textbf{60.72} & \textbf{65.57}  & \textbf{62.40} \\\hline
+
+    \end{tabular}}
+    \caption{Retrieval Performance of Different Ablation Models. MRR@10 is used as the evaluation metric.}
+  \label{tab:ablation}
+\end{minipage}
+\hfill
+\begin{minipage}[c]{0.49\textwidth}
+\centering
+\resizebox{\linewidth}{!}{
+    \begin{tabular}{l|ccc|r}
+    \hline
+    \multirow{2}{*}{\textbf{Sampling}}  & \multicolumn{3}{c|}{\textbf{Retrieval Performance}}  & \textbf{Retrieved} \\\cline{2-4}
+     & Text & Image & Multi & \textbf{Image} (\%) \\\hline
+    \multicolumn{5}{l}{\textit{In-batch Training}} \\\hline
+    CLIP-DPR (Random) & 51.75 & 60.61  & 48.83 & 26.82 \\
+    Balanced In-batch & 52.24  & 59.99  & 49.88 & 30.35 \\\hline
+    \multicolumn{5}{l}{\textit{Hard Negative Training}} \\\hline
+    Only Texts   & 54.92 & 52.88  & 36.26  &  91.74\\
+    Only Images    & 55.85 & \textbf{66.51}  & 33.49  & 1.97 \\
+    2 Texts \& 1 Image   & 59.18 & 65.15  & 61.64  &  49.53  \\
+    1 Text \& 2 Images   & 57.86 & 66.23 & 61.20  &  47.88 \\
+    ANCE (Random) & 59.85 & 64.80 & 61.72 & 50.01 \\\hline
+    Balanced In-batch   &  \textbf{60.58} & 65.21 & \textbf{62.29} & 49.11 \\\hline
+    \end{tabular}}
+     \caption{Effectiveness of Different Hard Negative Training Strategies. These hard negative trained models start from in-batch trained ones and are continuously fine-tuned with different numbers of hard negatives. The MRR@10 score and the image ratio of the Top 10 retrieved candidates are shown to evaluate the modality preference.}
+  \label{tab:hardneg}
+\end{minipage}
+\end{table}
+
+UniVL-DR also shows its advantages by outperforming all baseline models on both text-text and text-image retrieval tasks, demonstrating that multi-modality modeling indeed benefits single/cross modality retrieval. In the multi-modal retrieval setting, CLIP-DPR is converted from a text-text retriever to a multi-modal retriever after adding figure features. CLIP-DPR achieves better performance on the text-image retrieval task than CLIP-DPR w/o figure feature, which illustrates that image features provide additional signals to help multi-modality models distinguish related image documents. On the contrary, the multi-modal retrieval performance of CLIP-DPR is decreased, showing that CLIP-DPR fails to fuse retrieval results from different modalities. UniVL-DR uses a modality-balanced hard negative training strategy to learn universal representations for queries and documents, which deals with the challenge of fusing retrieval results, helps to achieve more gains on the multi-modal retrieval task, and enhances the modality disambiguation ability.
+
+\subsection{Effectiveness of Balanced Hard Negative Sampling}
+
+\input{Figure/hard_neg_space}
+In this experiment, we study the training strategies of UniVL-DR that are used in learning universal multi-modality representations and show the effectiveness of different negative sampling methods.
+
+As shown in Table~\ref{tab:hardneg}, we start from the multi-modal retriever CLIP-DPR, continuously fine-tune it with different hard negative sampling methods, and show their performance on different retrieval tasks. Our experimental results show that the in-batch trained models prefer to return text documents than image documents as the ranking results, even the image-answerable queries take a larger portion (about 51.6\%) in the training data. It illustrates that training multi-modality retrievers with modality-unbalanced negatives usually leads to undesired modality bias during retrieval. 
+Then we continuously train CLIP-DPR with hard negatives sampled from top-retrieved multi-modality results from CLIP-DPR and significantly improve its retrieval performance in all testing scenarios. Our modality-balanced hard negative sampling strategy achieves the best retrieval performance among all negative sampling methods, showing its important role in building a universal multi-modal retrieval model. Compared with ANCE (Random), our modality-balanced sampling strategy mitigates the modality variance during contrastive training and provides more useful signals to train the modality disambiguation ability of universal multi-modal retrievers.
+
+Finally, we visualize the embedding space of different retrieval models in Figure~\ref{fig:tsne}. After training with modality-balanced hard negatives, UniVL-DR learns a more uniform and effective embedding space for multi-modal retrieval. In this embedding space, both text and image documents are assigned in different areas of the embedding space, and queries are routed to different areas for returning documents from corresponding modalities. As shown in Figure~\ref{fig:tsne:text} and Figure~\ref{fig:tsne:image}, when the retrieval models are only trained with hard negatives of text and image documents, the query embeddings are concentrated and respectively assigned closer to the areas of image and text documents. It demonstrates that multi-modality retrieval mo
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

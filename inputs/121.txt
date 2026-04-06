@@ -1,0 +1,193 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+With the development of deep learning, the number of model parameters and the quantity of training data have become increasingly large~\cite{Zagoruyko2016WRN,kdsurvey}. Researchers have tried to minimize the training overhead while preventing a decline in the generalization ability. Data condensation (DC), also known as Dataset distillation, first introduced by Wang \textit{et al.}~\cite{dd_begin}, aims to alleviate the training burden by synthesizing a small yet informative distilled dataset derived from the complete training dataset, while ensuring that the behavior of the distilled dataset on the target task remains consistent with that of the complete dataset. The extremely compressed distilled dataset contains sufficiently valuable information and have the potential for fast model training, and have been become a popular choice for different downstream application, like federated learning~\cite{dd_federated_learning_1,dd_continual_learning_2}, continual learning~\cite{dd_continual_learning_1,dd_continual_learning_2,dd_continual_learning_3}, neural architecture search~\cite{dd_nas_1,dd_dist_matching,dd_gradient_matching} and 3D point clouds~\cite{Wang3dpoint}.
+\begin{figure*}[!t]
+\begin{center}
+\includegraphics[width=0.9\linewidth,trim={0cm 0.7cm 0cm 0cm},clip]{figure/dataset_distillation_total_framework.pdf}
+\end{center}
+   \caption{The overview of G-VBSM on the full 224$\times$224 ImageNet-1k, which ensures the consistency between the distilled and the complete datasets across various backbones, layers and statistics via ``generalized matching''.}
+\label{fig:total_framework}
+\end{figure*}
+
+A persistent problem that researchers have been working to solve~\cite{dd_efficient_parameterization,dd_gradient_matching,dd_dream,dd_tesla} in DC is the substantial data synthesis overhead~\cite{dd_survey,dd_comprehensive_review}, which hinders its application in real-world large-scale datasets (\textit{e.g.}, ImageNet-1k) training. Typical performance matching~\cite{dd_begin,dd_FRePo,dd_kip} and trajectory matching~\cite{dd_mtt,dd_minimizing_acc_traj_error} unroll recursive computation graphs, requiring substantial GPU memory and resulting in prohibitive training costs. Zhao \textit{et al.}~\cite{dd_gradient_matching} proposed gradient matching to address this, synthesizing distilled datasets by matching gradients from synthetic and real data in a single step. However, gradient computation and matching remain time-consuming~\cite{dd_efficient_parameterization}, leading to the proposal of distribution matching~\cite{dd_dist_matching}. This method and its variants~\cite{dd_CAFE} employ a network-based feature extractor to embed both synthetic and real data into a high-dimensional Hilbert space, then perform distribution matching. The training load for this direct, single-step process stems only from one gradient update of the synthetic data and the feature extractor~\cite{dd_comprehensive_review}. Unfortunately, all of the above mentioned improved methods still have extremely large training overheads on the full 224$\times$224 ImageNet-1k.
+
+
+Recently, SRe2L~\cite{dd_sre2l} accomplished data condensation for the first time on the full 224$\times$224 ImageNet-1k~\cite{ILSVRC15}, achieving Top-1 validation accuracy 21.3\% with ResNet18 under IPC 10. This method outperformed the latest state-of-the-art TESLA~\cite{dd_tesla}, which conducted on a low-resolution version of ImageNet-1k, by being 16$\times$ faster and improved performance by a margin of 13.6\%. SRe2L is inspired by DeepInversion~\cite{deepinversion} and aims to match statistics in BatchNorm generated from synthetic and real data. We reevaluate the success of SRe2L through the lightweight ``local-match-global'' essentially. The ``local-match-global'' refers to utilizing more comprehensive information (\textit{e.g.}, statistics in BatchNorm), generated from the model using the complete dataset (global), to guide the parameter update of the distilled dataset (local).
+
+\hll{However, such lightweight and effective matching in SRe2L is singular, depending on the particular layer (\textit{i.e.}, BatchNorm), model (\textit{i.e.}, ResNet18), and statistics (\textit{i.e.}, channel mean/variance). Intuitively, sufficient ``local-match-global'' matching can result in more accurate and rational supervision than a single one, further enhancing the generalization of the distilled dataset. We call this perspective ``generalized matching'' and suggest that the distilled dataset is likely to perform consistent with the complete dataset on the evaluation model, provided that there is sufficient variety in backbones, layers, and statistics used for matching.}
+
+Inspired by \hll{this}, we propose \textbf{G}eneralized \textbf{V}arious \textbf{B}ackbone and \textbf{S}tatistical \textbf{M}atching (\textbf{G-VBSM}) to \hll{fulfill ``generalized matching''}. G-VBSM comprises three integral and effective parts named data densification (DD), generalized statistical matching (GSM), and generalized backbone matching (GBM). \hll{DD is utilized to ensure that the images within each class are linearly independent, thereby enhancing the (intra-class) diversity of the distilled dataset. This ultimately guarantees that ``generalized matching'' preserves the rich and diverse information within the synthetic data. GBM and GSM are designed to implement ``generalized matching''. Among them, GSM traverses the complete dataset without computing and updating the gradient, to record the statistics of Convolution at both the patch and channel levels. These statistics are subsequently utilized for matching during the data synthesis phase, in conjunction with the channel-level statistics in BatchNorm. Furthermore, GBM aims to ensure consistency between distilled and complete datasets across various backbones, enhancing matching sufficiency and leading to strong generalization in the evaluation phase.} In particular, G-VBSM also ensures the efficiency of dataset condensation through a series of strategies, as mentioned in Sec.~\ref{sec:method}.
+
+Extensive experiments on CIFAR-10, CIFAR-100, Tiny-ImageNet, and the full 224$\times$224 ImageNet-1k, demonstrating that G-VBSM is the first algorithm that performs well on both small-scale and large-scale datasets. Specifically, we not only verify through ablation studies that GSM, GBM and DD are consistently reliable, but also achieve the highest 38.7\%, 47.6\% and 31.4\% on CIFAR-100 (128-width ConvNet), Tiny-ImageNet (ResNet18), and the full 224$\times$224 ImageNet-1k (ResNet18) under images per class (IPC) 10, 50 and 10, respectively, which outperforms all previous state-of-the-art (SOTA) methods by 3.9\%, 6.5\% and 10.1\%, respectively.
+
+
+Background
+\label{sec:background}
+Dataset condensation (DC) represents a data synthesis procedure that aims to compress a complete, large dataset $\mathcal{T} = \{(X_i,y_i)\}_{i=1}^{|\mathcal{T}|}$ into a smaller, distilled dataset $\mathcal{S} = \{(\tilde{X}_i,\tilde{y}_i)\}_{i=1}^{|\mathcal{S}|}$, subject to ${|\mathcal{S}|} \ll {|\mathcal{T}|}$, while ensuring that an arbitrary evaluation model $f_\textrm{eval}(\cdot)$ trained on $\mathcal{S}$ yields similar performance to one trained on $\mathcal{T}$. Classical data distillation algorithms invariably require the candidate model $f_\textrm{cand}(\cdot)$ to execute one or more steps on 
+$\mathcal{S}$ to update its parameter $\theta_\textrm{cand}$, subsequently achieving matching in terms of performance~\cite{dd_begin,dd_kip}, gradient~\cite{dd_gradient_matching}, trajectory~\cite{dd_mtt,dd_tesla}, or distribution~\cite{dd_dist_matching,dd_CAFE}. The process $\theta_\textrm{cand} - \alpha \nabla_{\theta_\textrm{cand}}\ell (f_\textrm{cand}(\tilde{X}),\tilde{y})$, where $\ell(\cdot,\cdot)$ and $(\tilde{X},\tilde{y})$ represent the loss function and a batch sampled from $\mathcal{S}$, respectively, is notably time-consuming. Consequently, even the relatively swiftest distribution matching~\cite{dd_CAFE,dd_datadam} is slower than the recent proposed SRe2L~\cite{dd_sre2l}. In fact, SRe2L is the only workable way to achieve DC on the full 224$\times$224 ImageNet-1k, as it requires updating the parameters of the synthetic data only once per iteration.
+
+SRe2L~\cite{dd_sre2l} encompasses three incremental subprocesses: Squeeze, Recover, and Relabel. Squeeze is designed to train $f_\textrm{cand}(\cdot)$ containing BatchNorm in a standard manner, aiming to record the global channel mean ${\textbf{\textrm{BN}}_l^\textrm{CM}}$ and channel variance ${\textbf{\textrm{BN}}_l^\textrm{CV}}$ ($l$ refers to the index of the $l$-th layer) via exponential moving average (EMA), extracted from $\mathcal{T}$, for subsequent matching in Recover. In Recover after that, given the channel mean $\mu_l(\tilde{X})$ and channel variance $\sigma^2_l(\tilde{X})$ in $l$-th BatchNorm obtained from $\mathcal{S}$, the statistical matching loss function can be formulated as
+\begin{equation}
+\footnotesize
+\begin{aligned}
+& \mathcal{L}_\textrm{BN}(\tilde{X}) = \sum_l \left|\left|\mu_l(\tilde{X}) - {\textbf{\textrm{BN}}_l^\textrm{CM}}\right|\right|_2 + \left|\left|\sigma^2_l(\tilde{X}) - {\textbf{\textrm{BN}}_l^\textrm{CV}}\right|\right|_2.\\
+\end{aligned}
+\label{eq:sre2l_bn_function}
+\end{equation}
+Based on this, we can give the entire optimization objective in Recover as
+\begin{equation}
+\footnotesize
+\begin{aligned}
+& \operatorname*{arg\,min}_{\tilde{X}} \mathcal{L}_\textrm{BN}(\tilde{X}) + \ell (f_\textrm{cand}(\tilde{X}),y),\\
+\end{aligned}
+\label{eq:sre2l_entire_function}
+\end{equation}
+where $y$ denotes the ground truth label. Moreover, SRe2L assigns soft labels $\tilde{y}$ to the synthetic data, utilizing the logit-based distillation~\cite{DIST,vanillakd} to improve the generalization ability of the distilled dataset. This can be denoted as
+\begin{equation}
+\small
+\begin{aligned}
+& \tilde{y} = \textrm{softmax}(f_\textrm{cand}(\tilde{X})/\tau),\\
+\end{aligned}
+\label{eq:sre2l_relabel_function}
+\end{equation}
+where $\tau$ denotes the temperature to regulate the smoothness of the soft labels, thereby enhancing the distilled dataset's potential for generalization to unseen evaluation models. The generated soft label can be stored on disk using FKD~\cite{shen2022fast} so as not to defeat the purpose of DC. A crucial point of SRe2L is that BatchNorm calculates the statistics of the entire dataset using EMA, thereby providing a comprehensive and representative matching for the distilled dataset. Encouraged by this, \hll{our research focuses on applying sufficient ``local-match-global'' matching to achieve ``generalized matching''}.
+
+
+Method
+\label{sec:method}
+
+The comprehensive and detailed framework of our proposed \textbf{G}eneralized \textbf{V}arious \textbf{B}ackbone and \textbf{S}tatistical \textbf{M}atching (\textbf{G-VBSM}) is illustrated in Fig.~\ref{fig:total_framework}. \hll{In essence, G-VBSM employs the lightweight regularization strategy data densification (DD) to ensure both the diversity and density of the distilled dataset, ensuring that the potential of ``generalized matching'' can be fully exploited. Moreover, generalized backbone matching (GBM) and generalized statistical matching (GSM) are utilized to achieve ``generalized matching'' by performing ``local-match-global'' matching across various backbones, layers, and statistics.} In particular, the efficiency and effectiveness of DD, GBM, GSM, SRe2L, and TESLA are illustrated in Fig.~\ref{fig:efficiency_vs_effectiveness}.
+
+\subsection{Data Densification}
+\label{sec:method_dd}
+\begin{figure}[!h]
+\begin{center}
+\includegraphics[width=0.95\linewidth,trim={0cm 0.2cm 0cm 0cm},clip]{figure/motivation_dd/class_similarity.pdf}
+\end{center}
+   \caption{\hll{Visualization of the mean cosine similarity between pairwise samples within the same class on ImageNet-1k under IPC 10.}}
+\label{fig:motivation_of_dd}
+\end{figure}
+
+\hll{As illustrated in Fig.~\ref{fig:motivation_of_dd}, the synthetic data generated by SRe2L exhibit excessive similarity within the same class, leading to a lack of diversity. Consequently, even if ``generalized matching'' preserves sufficient valuable information within a single image, the aggregate information content across all images within the same class does not increase effectively, which ultimately prevents ``generalized matching'' from being sufficiently advantageous. Data densification (DD) is proposed to address this by ensuring the data $\tilde{X}$ has full rank in the batch dimension, thereby guaranteeing that samples in each class are linearly independent, and ultimately ensuring that the data is diverse and abundant to fully exploit the potential of ``generalized matching''.}
+
+To execute this pipeline, $\tilde{X}$ first needs to be downsampled to reduce the computational cost of eigenvalue decomposition:
+\begin{equation}
+\small
+\begin{aligned}
+& \hat{X} = \textrm{AvgPool2d}(\tilde{X}),\ s.t.\ \hat{X} \in \mathbb{R}^{B\times C \times 32 \times 32},\\
+\end{aligned}
+\label{eq:dd_1}
+\end{equation}
+where $B$ and $C$ represent the batch size and the number of channels, respectively. Afterward, we reshape $\hat{X}$ from ${B\!\times\! C\!\times\! 32 \!\times\! 32}$ to ${B \!\times\! (1024C)}$ and perform matrix multiplication in each class $y$ to obtain the set of the Gram matrix $\{\hat{X}_y\hat{X}_y^T\}_{y\in \mathcal{Y}}$, where $\mathcal{Y}$ refers to a set of all classes existing in this batch. And $\hat{X}_y$ is a subbatch with class $y$. Note that the alternative form $\{\hat{X}_y^T\hat{X}_y\}_{y\in \mathcal{Y}}$ is not desirable, as it is applicable only for dimensionality reduction in feature dimensions, which is why we do not consider singular value decomposition (SVD). To render $\hat{X}_y\hat{X}^T_y$ as full-rank as possible, we introduce the data densification loss in Eq.~\ref{eq:dd_2}.
+\begin{equation}
+\small
+\begin{aligned}
+& \mathcal{L}_\textrm{DD}(\tilde{X}) = \sum_{y\in \mathcal{Y}} D_\textrm{KL}(\textrm{stop\_grad}(p(\Sigma_y/\tau))||p(\Sigma_y)),\\
+\end{aligned}
+\label{eq:dd_2}
+\end{equation}
+where $\Sigma_y$, $\tau$, $\textrm{stop\_grad}(\cdot)$ and $p(\cdot)$ refer to the eigenvalues of $\hat{X}_y\hat{X}^T_y$, the temperature, the stop gradient operator and the softmax function, respectively. And $D_\textrm{KL}(\cdot||\cdot)$ denotes Kullback-Leibler divergence. As demonstrated in Sec.~\ref{sec:add_dd_explan}, the diversity of the data is significantly enhanced by the employment of Eq.~\ref{eq:dd_2}. In our experiment, $\tau$ is set as $4$ in default and we do not assign a deliberate weight (set to 1 by default) to $\mathcal{L}_\textrm{DD}$ because $\mathcal{L}_\textrm{DD} \equiv 0$ at the early 10\% of the iterations. In other words, DD is quite stable and the optimization objective $\operatorname*{arg\,min}_{\{\Sigma_y\}_{y\in \mathcal{Y}}} \mathcal{L}_\textrm{DD}$ is equivalent to $\operatorname*{arg\,min}_{\{\Sigma_y\}_{y\in \mathcal{Y}}}\sum_{y}\sigma^2(\Sigma_y)$.
+
+\paragraph{Technical Detail.} A problem that warrants attention is that in the SRe2L's implementation~\cite{dd_sre2l}, having merely a single sample in each class of a batch indicates insufficient to execute DD under the order of the original loop, as depicted in Fig.~\ref{fig:reorder_loop} (Left). A simple solution is to translate the original loop to the reorder loop, as shown in Fig.~\ref{fig:reorder_loop} (Right). However, our experiment on ResNet50 (\textit{i.e.}, the evaluation model) substantiates that this solution suffers a 2.6\% accuracy degradation (details can be found in Sec.~\ref{sec:ablation_studies}) on ImageNet-1k under IPC 10. The reason is that the number of classes in each iteration within the reorder loop is insufficient, preventing a batch
+have the ability to match the global statistics in BatchNorm (\textit{i.e.}, ${\textbf{\textrm{BN}}_l^\textrm{CM}}$ and ${\textbf{\textrm{BN}}_l^\textrm{CV}}$). Motivated by score distillation sampling (SDS)~\cite{iclr2023_dreamfusion}, we update the statistics during data synthesis via EMA to solve this issue, so that the statistics of all past batches can assist the statistics of the current batch match ${\textbf{\textrm{BN}}_l^\textrm{CM}}$ and ${\textbf{\textrm{BN}}_l^\textrm{CV}}$:
+\begin{equation}
+\footnotesize
+\begin{aligned}
+& \mu_l^\textrm{total} = \alpha \mu_l^\textrm{total} + (1 - \alpha) \mu_l(\tilde{X}),\sigma^{2,\textrm{total}}_l= \alpha \sigma^{2,\textrm{total}}_l + (1 - \alpha) \sigma^2_l(\tilde{X}),\\
+& \mathcal{L}_{\textrm{BN}}^{\prime}(\tilde{X}) = \sum_l || \mu_l(\tilde{X}) - {\textbf{\textrm{BN}}_l^\textrm{CM}} - \textrm{stop\_grad}(\mu_l(\tilde{X}) - \mu_l^\textrm{total})||_2 \\
+& +|| \sigma^2_l(\tilde{X}) - {\textbf{\textrm{BN}}_l^\textrm{CV}} - \textrm{stop\_grad}(\sigma^2_l(\tilde{X}) - \sigma^{2,\textrm{total}}_l)||_2. \\
+\end{aligned}
+\label{eq:dd_3}
+\end{equation}
+\begin{figure}[!t]
+\begin{center}
+\includegraphics[width=0.85\linewidth,trim={0.0cm 0.0cm 0cm 0cm},clip]{figure/reorder_loop.pdf}
+\end{center}
+   \caption{The illustration of the original loop and the reorder loop.}
+\label{fig:reorder_loop}
+ We call this lightweight strategy as ``match in the form of score distillation sampling'' and have demonstrated its effectiveness and feasibility in our ablation studies.
+
+\subsection{Generalized Backbone Matching}
+\label{sec:method_gbm}
+\hll{Performing data synthesis only on a single pre-trained model is not able to enjoy ensemble gains from various backbones. Meanwhile, classical DC algorithms such as MTT~\cite{dd_mtt} and FTD~\cite{dd_minimizing_acc_traj_error} obtain performance improvements from  multiple randomly initialized backbones. Therefore, introducing generalized backbone matching (GBM) to apply various backbones for data synthesis is a desirable choice for ``generalized matching''.} It ensures a number of ``local-match-global'' matching nearly $N_\textrm{b}\times$ higher compared to just depending on a single backbone, where $N_\textrm{b}$ denotes the number of backbones. Regrettably, unrolling various backbone computational graphs in parallel for data synthesis is extremely expensive at the computational cost level. A solution is to randomly sample a backbone from the candidates in per iteration. This simple yet effective strategy not only ensures computational efficiency but also allows the data synthesis process to benefit from the diverse and multifaceted matching that the various backbones provide. We denote this pipeline as
+\begin{equation}
+\footnotesize
+\begin{aligned}
+& f_\textrm{cand}(\cdot) \sim \mathcal{U}(\mathbb{S}),\ \mathbb{S} = \{\textrm{ResNet18},\ \cdots,\ \textrm{ShuffleNetV2-0.5}\}.\\
+\end{aligned}
+\label{eq:gbm_1}
+\end{equation}
+To maintain backbone consistency in both the data synthesis and soft label generation phases, we introduce a backbone ensemble during soft label generation:
+\begin{equation}
+\tilde{z}\!=\!\left\{
+\fontsize{8pt}{11pt}\selectfont\begin{aligned}
+\sum_{f_\textrm{cand}\in\mathbb{S}}\frac{\sum_{g\in\mathbb{S}} ||g(\tilde{X})||_\textrm{F}}{|\mathbb{S}|||f_\textrm{cand}(\tilde{X})||_\textrm{F}}\frac{f_\textrm{cand}(\tilde{X})}{|\mathbb{S}|}&,\ & \textrm{w/ LN}, \\
+\sum_{f_\textrm{cand}\in\mathbb{S}}\frac{f_\textrm{cand}(\tilde{X})}{|\mathbb{S}|}&,\ & \textrm{w/o LN}, \\
+\end{aligned}
+\right.
+\label{eq:gbm_2}
+\end{equation}
+where $||\cdot||_\textrm{F}$ and LN refer to the Frobenius norm and Logit Normalization, respectively. Thus, we can obtain the soft label by $\tilde{y} = \textrm{softmax}(\tilde{z}/\tau)$. Particularly, the use of LN is optional, as demonstrated by our ablation studies; it is beneficial for ResNet18 but not for ResNet50 or ResNet101. Moreover, it's important to highlight that we apply a parallel mechanism for soft label generation since it provides a significantly lower computational cost, less than $1/30$ of that required for data synthesis, thus making the computational overhead negligible.
+\subsection{Generalized Statistical Matching}
+\label{sec:method_gsm}
+
+Only ensuring backbone diversity is insufficient to fully exploit the potential of ``generalized matching''. In this subsection, we aim to introduce additional statistics for matching during the data synthesis phase. Prior methods~\cite{deepinversion,dd_sre2l} only utilize BatchNorm since the presence of global information statistics within the pre-trained model, with no apparent solution ready for other layers (\textit{e.g.}, Convolution). Retraining the model is the simplest way to address this problem, followed by updating the other layers' parameters through EMA. This approach is obviously impractical, as it defeats the purpose of using gradient descent. By contrast, we propose to allow the pre-trained model $f_\textrm{eval}(\cdot)$ to loop through the training dataset $\mathcal{T}$ once without calculating the gradient to obtain the global statistics of Convolution, thus serving ``local-match-global'':
+\begin{equation}
+\footnotesize
+\begin{aligned}
+&  \textbf{\textrm{Conv}}_l^\textbf{\textrm{CM}} = \frac{1}{|\mathcal{T}|}\sum_i^{|\mathcal{T}|} \textbf{\textrm{CM}}^l_i,\ \textbf{\textrm{Conv}}_l^\textbf{\textrm{CV}} = \frac{1}{|\mathcal{T}|} \sum_i^{|\mathcal{T}|}\textbf{\textrm{CV}}^l_i,\\
+&  \textbf{\textrm{Conv}}_l^\textbf{\textrm{PM}} = \frac{1}{|\mathcal{T}|}\sum_i^{|\mathcal{T}|} \textbf{\textrm{PM}}^l_i,\ \textbf{\textrm{Conv}}_l^\textbf{\textrm{PV}} = \frac{1}{|\mathcal{T}|} \sum_i^{|\mathcal{T}|}\textbf{\textrm{PV}}^l_i.\\
+\end{aligned}
+\label{eq:gsm_1}
+\end{equation}
+Here, $\textbf{\textrm{CM}}^l_i\in \mathbb{R}^{C_l}$, $\textbf{\textrm{CV}}^l_i \in \mathbb{R}^{C_l}$, $\textbf{\textrm{PM}}^l_i \in \mathbb{R}^{\lceil \frac{H}{N^p_l} \rceil\!\times\!\lceil \frac{W}{N^p_l} \rceil }$ and $\textbf{\textrm{PV}}^l_i \in \mathbb{R}^{\lceil \frac{H}{N^p_l} \rceil\!\times\!\lceil \frac{W}{N^p_l} \rceil }$ refer to the channel mean, the channel variance, the patch mean and the patch variance, respectively, for the $l$-th Convolution when the input to $f_\textrm{cand}(\cdot)$ is the $i$-th batch, where $C_l$ and $\lceil \frac{H}{N^p_l} \rceil\!\times\!\lceil \frac{W}{N^p_l} \rceil $ denote the number of channels and patches of the $l$-th Convolution, respectively. We define $N^p_l$ as 4, 4, 4 and 16 by default on CIFAR-10, CIFAR-100, Tiny-ImageNet and ImageNet-1k, respectively. After obtaining the global channel mean $\textbf{\textrm{Conv}}_l^\textbf{\textrm{CM}}$, the global channel variance $\textbf{\textrm{Conv}}_l^\textbf{\textrm{CV}}$, the global patch mean $\textbf{\textrm{Conv}}_l^\textbf{\textrm{PM}}$ and the global patch variance $\textbf{\textrm{Conv}}_l^\textbf{\textrm{PV}}$, we can store them in a disk thus avoiding secondary calculations. In the data synthesis phase, we introduce $\mathcal{L}_\textrm{Conv}^{\prime}(\tilde{X})$ in Eq.~\ref{eq:gsm_2} to accomplish joint matching with $\mathcal{L}_\textrm{BN}^{\prime}(\tilde{X})$.
+\begin{equation}
+\fontsize{8pt}{10pt}\selectfont
+\begin{aligned}
+& \mathcal{L}_{\textrm{Conv}}^{\prime}(\tilde{X}) = \sum_l || \mu^c_l(\tilde{X}) - {\textbf{\textrm{Conv}}_l^\textrm{CM}} - \textrm{stop\_grad}(\mu^c_l(\tilde{X}) - \mu_l^{c,\textrm{total}})||_2 \\
+&+ || \sigma^{c,2}_l(\tilde{X}) - {\textbf{\textrm{Conv}}_l^\textrm{CV}} - \textrm{stop\_grad}(\sigma^{c,2}_l(\tilde{X}) - \sigma^{c,2,\textrm{total}}_l)||_2, \\
+ & + || \mu^p_l(\tilde{X}) - {\textbf{\textrm{Conv}}_l^\textrm{PM}} - \textrm{stop\_grad}(\mu^p_l(\tilde{X}) - \mu_l^{p,\textrm{total}})||_2 \\
+ &+ || \sigma^{p,2}_l(\tilde{X}) - {\textbf{\textrm{Conv}}_l^\textrm{PV}} - \textrm{stop\_grad}(\sigma^{p,2}_l(\tilde{X}) - \sigma^{p,2,\textrm{total}}_l)||_2, \\
+\end{aligned}
+\label{eq:gsm_2}
+\end{equation}
+where $\mu_l^{c,\textrm{total}}$, $\sigma^{c,2,\textrm{total}}_l$, $\mu_l^{p,\textrm{total}}$, and $\sigma^{p,2,\textrm{total}}_l$ are each updated from the channel mean $\mu^c_l(\tilde{X})$, channel variance $\sigma^{c,2}_l(\tilde{X})$, patch mean $\mu^p_l(\tilde{X})$, and patch variance $\sigma^{p,2}_l(\tilde{X})$ respectively, all obtained via EMA from the current batch. In experiments, we discovered that Eq.~\ref{eq:gsm_2} causes a sightly larger computational burden, so we randomly drop the matching of statistics with a probability of $\beta_\textrm{dr}$ to ensure the efficiency of GSM.
+\paragraph{Loss Function in the Evaluation Phase.} \hll{Unlike DD, GBM and GSM are designed to create a distilled dataset that is enriched with information. Here, we introduce an enhancement to the loss function tailored specifically for the evaluation phase. Essentially, the evaluation phase is a knowledge distillation framework for transferring knowledge from a pre-trained model to the evaluation model.} SRe2L utilizes $D_\textrm{KL}(\tilde{y}||\textrm{softmax}(f_\textrm{eval}(\tilde{X})/\tau))$ as the loss function and experimentally illustrates that it improves performance by roughly 10\%. As established in SRe2L, an increase in temperature $\tau$ correlates with enhanced performance of the evaluation model. Inspired by this and $\tau^2 D_\textrm{KL}(\textrm{softmax}(p)/\tau||\textrm{softmax}(q)/\tau)$ is equivalent to $\frac{1}{2C}||p-q||_2^2$ when $\tau \rightarrow +\infty$~\cite{kim2021comparing}, we introduce a novel loss function MSE+$\gamma$$\times$GT to avoid numerical error caused by the large $\tau$ and improve the generalization of the distilled dataset without any additional overhead (ignore the weights $\tau^2$ and $\frac{1}{2C}$):
+\begin{equation}
+\footnotesize
+\begin{aligned}
+& \mathcal{L}_\textrm{eval}(\tilde{X},\tilde{y},y) = ||f_\textrm{eval}(\tilde{X})-\tilde{z}||_2^2 - \gamma \textbf{y}\log(\textrm{softmax}(f_\textrm{eval}(\tilde{X}))),\\
+\end{aligned}
+\label{eq:gbm_3}
+\end{equation}
+where $\textrm{y}$ represents the one-hot encoding (\textit{w.r.t.} the ground truth label $y$). As illustrated in Fig.~\ref{fig:efficiency_vs_effectiveness}, simply replacing the loss function with MSE+0.1$\times$GT ($\gamma$ is set as 0.1) in SRe2L improves the performance of ResNet18 (\textit{i.e.}, the evaluation model) by a margin of 0.9\% on ImageNet-1k under IPC 10.
+
+
+Experiment
+\label{sec:experiment}
+\begin{figure}[!t]
+\begin{center}
+\includegraphics[width=0.95\linewidth,trim={0cm 0.2cm 0cm 0cm},clip]{figure/trade_off.pdf}
+\end{center}
+   \caption{Comparison of the effectiveness and efficiency of G-VBSM components. Among them, ``DD+GBM+GSM ($\beta_\textrm{dr}$=0.0)+(MSE+GT)'' represents the comprehensive G-VBSM.}
+\label{fig:efficiency_vs_effectiveness}
+\end{figure}
+
+We perform comparison experiments on the large-scale dataset including the full 224$\times$224 ImageNet-1k~\cite{ILSVRC15} and the small-scale datasets including Tiny-ImageNet~\cite{tiny_imagenet}, CIFAR-10/100~\cite{CIFAR}. To highlight that our proposed G-VBSM \hll{is designed for} large-scale datasets, all ablation experiments are performed on ImageNet-1k.
+\paragraph{Hyperparameter Settings.} We prioritize selecting various convolution-based backbone, ensuring the maximal difference in architecture, while also adhering to the criterion of minimizing the number of parameters, an approach empirically demonstrated to be superior~\cite{dd_sre2l,dd_model_augmentation}. On ImageNet-1k, we skip the model pre-training phase by directly using Torchvision's open source pre-training weights~\cite{pytorch} of \{ResNet18~\cite{ResNet}, MobileNetV2~\cite{mobilenetv2}, EfficientNet-B0~\cite{EfficientNetV2}, ShuffleNetV2-0.5~\cite{shufflenet}\}. For the remaining dataset, we all train \{128-width ConvNet~\cite{shufflenet}, WRN-16-2~\cite{Zagoruyko2016WRN}, ResNet18~\cite{ResNet}, ShuffleNetV2-0.5~\cite{shufflenet}, MobileNetV2-0.5~\cite{mobilenetv2}\} from scratch with few epoch in the model pre-training phases. Gray \colorbox{gray!25}{cells} in all tables represent the highest performance. Meanwhile, (R18), (R50), etc. in all tables, represent the evaluation models.
+
+\subsection{Ablation Studies}
+\label{sec:ablation_studies}
+
+\paragraph{The Trade-off between Efficiency and Effectiveness.} The performance improvements and increased GPU latency for components of G-VBSM in comparison to the \baseline{baseline} SRe2L, are illustrated in Fig.~\ref{fig:efficiency_vs_effectiveness}. Clearly, DD, GBM, and GSM are highly effective in enhancing the generalization of distilled datasets. Compared with GSM, both DD and GBM are slightly lightweight and efficient. With DD and GBM alone \mbox{--} \textit{i.e.}, DD+GBM+GSM ($\beta_\textrm{dr}$=1.0)+(MSE+GT) \mbox{--} the accuracy of this approach surpasses that of SRe2L by a significant margin of 6.5\%. Additionally, the comprehensive G-VBSM, DD+GBM+GSM ($\beta_\textrm{dr}$=0.0)+(MSE+GT), further enhances the performance of DD+GBM+GSM ($\beta_\textrm{dr}$=1.0)+(MSE+GT) by a notable margin of 3.6\%. Note that MSE+$\gamma$$\times$GT ($\gamma$ is set as 0.1) is also extremely critical, for SRe2L and DD+GBM boosting 0.9\% and 2.7\%, respectively.
+\input{table/ablation_studies/match_in_sds}
+\paragraph{Matching in the Form of SDS.} Benefiting from this matching form, G-VBSM can achieve the best performance with small batch sizes (\textit{e.g.}, 40 in ImageNet-1k and 50 in CIFAR-100) in different settings, as demonstrated in our comparative experiments. Table~\ref{table:ab_alpha} demonstrates the impact of the factor $\alpha$ for performing the EMA update on the final performance achieved by G-VBSM, where $\alpha$=0 indicates that $\mathcal{L}^\prime_\textrm{BN}$ degenerates to $\mathcal{L}_\textrm{BN}$. We can conclude that the SDS matching form is feasible and the generalization of the distilled dataset improves with increasing $\alpha$.
+\input{table/ablation_studies/cross_architecture}
+\paragraph{Cross-Architecture Generalization.} The evaluation of cross-architecture generalization is crucial in assessing the quality of distilled datasets. Unlike traditional methods~\cite{dd_mtt,dd_kip,dd_datadam} which focus on CIFAR-100, our approach evaluates the effectiveness of the distilled dataset on ImageNet-1k, employing a suite of models wit
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

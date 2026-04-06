@@ -1,0 +1,245 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/compare_prompt.pdf}
+    \caption{\textbf{Comparison of different prompts in computer vision.} (a) Extracting textual prompts from a text encoder to perform image-text alignment \cite{Zhou2021LearningTP}. (b) Prepend learnable prompts to the embeddings of image patches \cite{jia2022visual}. (c) Visual exemplar driven prompts for multi-task learning (ours). The generated task prompts encode high-quality task-specific knowledge for downstream tasks.}
+    \label{fig:prompt}
+\end{figure}
+
+Multi-task learning (MTL) has been the source of a number of breakthroughs in autonomous driving over the last few years \cite{kokkinos2017ubernet,Yang2018EndtoendMM,wu2021yolop} and general vision tasks recently \cite{Fifty2021EfficientlyIT,Likhosherstov2021PolyViTCV,marfoq2021federated,bruggemann2021exploring,xu2022multi}.
+As the foundation of autonomous driving, a robust vision perception system is required to provide critical information, including the position of traffic participants, traffic signals like lights, signs, lanes, and obstacles that influence the drivable space, to ensure driving safety and comfort.
+These tasks gain knowledge from the same data source and present prominent relationships between each other, like traffic participants, are more likely to appear within drivable spaces and traffic signs may appear near traffic lights, etc. Training these tasks independently is time costing and fails to mine the latent relationship among them.
+Therefore, it is crucial to solve these multiple tasks simultaneously, which can improve data efficiency and reduce training and inference time.
+
+Some recent works have attempted to apply unified training on multiple tasks in autonomous training. Uncertainty \cite{Kendall2018Multi} trains per-pixel depth prediction, semantic segmentation, and instance segmentation in a single model. CIL \cite{ishihara2021multi} introduces an extra traffic light classifier to learn different traffic patterns following traffic light changes. CP-MTL \cite{chen2018multi} learns object detection and depth prediction together to identify dangerous traffic scenes. However, these works differ in task types, evaluation matrix, and dataset, making it hard to compare their performances. For example, most of them are developed upon dense prediction \cite{bruggemann2021exploring,xu2022multi} and natural language understanding \cite{wang2018glue,clark2019bam}, rather than being tailored for more common perception tasks for autonomous driving, thus these methods may produce poor results when applied to a self-driving system. As a result, there is an emerging demand for a thorough evaluation of existing multi-task learning methods covering common tasks in autonomous driving.
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/benchmark_settings.pdf}
+    \caption{\textbf{The multi-task architecture and settings in our investigation.} We follow the common multi-task architecture where each task shares the same encoder and has its specific head. The multi-task settings focus on three types of task scheduling, four task balancing methods, and two partial-label learning techniques and cover three common data split settings.}
+    \label{fig:benchmark}
+\end{figure*}
+
+In this paper, we focus on heterogeneous multi-task learning in common scenarios of autonomous driving and cover popular self-driving tasks, i.e., object detection, semantic segmentation, drivable area segmentation, and lane detection.
+We provide a systematic study of present MTL methods on large-scale driving dataset BDD100K \cite{yu2020bdd100k}.
+Specifically, we find that task scheduling \cite{Likhosherstov2021PolyViTCV} is better than zeroing loss \cite{Xiao2018UnifiedPP}, but worse than pseudo labeling \cite{Ghiasi2021Multi} on most tasks. Interestingly, in task-balancing methods, Uncertainty \cite{Kendall2018Multi} produces satisfactory results on most tasks, while MGDA \cite{sener2018multi} only performs well on lane detection. This indicates that negative transfer \cite{Crawshaw2020MultiTaskLW}, which is a phenomenon that increasing the performance of a model on one task will hurt the performance on another task with different needs, is common among these approaches.
+
+To mitigate the negative transfer problem, we introduce the visual exemplar-driven task-prompting (shorten as \textbf{VE-Prompt}) based on the following motivations:
+(1) Given the visual clues of each task, the model can extract task-related information from the pre-trained model.
+Different from current prompting methods which introduce textual prompts \cite{Zhou2021LearningTP,zhou2022conditional,rao2022denseclip,chen2022obj2seq} or learnable context \cite{jia2022visual}, we leverage exemplars containing information of target objects to generate  task-specific prompts by considering that the visual clues should represent the specific task to some extent, and give hints for learning task-specific information;
+(2) Transformer has achieved competitive performance on many vision tasks but usually requires long training time, thus tackling four tasks simultaneously on a pure transformer is resource-intensive. To overcome this challenge, we efficiently bridge transformer encoders and convolutional layers to build the hybrid multi-task architecture.
+Extensive experiments show that VE-Prompt surpasses multi-task baselines by a large margin.
+
+We summarize the main contributions of our work below:
+\begin{itemize}[topsep=-2pt,leftmargin=8pt]
+    \item We provide an in-depth analysis of current multi-task learning approaches under multiple settings that comply with real-world scenarios, consisting of three common multi-task data split settings, two partial-label learning approaches, three task scheduling techniques, and three task balancing strategies.
+    \item We propose an effective framework VE-Prompt, which utilizes visual exemplars to provide task-specific visual clues and guide the model toward learning high-quality task-specific representations.
+    \item The VE-Prompt framework is constructed in a computationally efficient way and outperforms competitive multi-task methods on all tasks.
+\end{itemize}
+
+
+Related Work
+\textbf{Multi-task Learning} Multi-task learning jointly trains shared parameters on multiple tasks, mining latent information among them to improve efficiency and accuracy.
+Famous multi-task learning models include Mask R-CNN \cite{He2017Mask}, which applies Faster R-CNN \cite{Ren2015Faster} as the backbone and conducts instance segmentation and object detection at the same time.
+Other methods like Eigen \emph{et al.}~\cite{Eigen2015Predicting} address depth prediction, surface normal estimation, semantic labeling tasks, and MultiNet~\cite{teichmann2016multinet} provide prediction on classification, detection, semantic segmentation tasks within a single model.
+YOLOP~\cite{wu2021yolop} leverages CSPDarknet as the backbone, which branches out three task-specific heads for object detection, drivable area segmentation, and lane detection prediction. 
+Standley \emph{et al.} \cite{Standley2020WhichTS} and Christopher \emph{et al.} \cite{Fifty2021EfficientlyIT} improves previous multi-task training schema by grouping proper tasks together rather than naively training all tasks together.
+In this paper, we focus on developing general and effective approaches for multi-task learning in autonomous driving scenarios. 
+
+\textbf{Visual Perception for Autonomous Driving} Autonomous driving relies on a perception system to gather information and understand the environment. Visual perception, as the most similar sensing modality to humans, provides high-resolution images that satisfy almost all tasks required for autonomous driving. Some of the tasks have long been studied beyond autonomous driving scenarios. Chen \emph{et al.}~\cite{chen2019learning} predicts 2D object detection from images while Semantic FPN~\cite{kirillov2019panoptic} performs semantic segmentation and Lanenet~\cite{wang2018lanenet} implements lane detection respectively using visual inputs. Though these models are designed for different tasks, they all adopt the backbone-header architecture, some of which even share the same backbone structure like ResNet~\cite{he2016deep} or transformer~\cite{dosovitskiy2020image}. Running independent models for perception tasks separately is a waste of time and computation resources, making an emerging call for the development of a unified perception system. 
+\textbf{Prompt-based Learning} Prompt-based learning \cite{liu2021pre,he2022hyperprompt,wang2022dualprompt} is put forward to bridge the gap between pre-training and model tuning in the field of natural language processing.
+GPT-3 \cite{brown2020language} first designs various text prompts according to the property of tasks and treats the downstream task as a masked language modeling problem. Meanwhile, other approaches like \cite{li2021prefix,liu2021gpt,zhong2021factual} train learnable continuous prompts in the embedding space of the model and achieve competitive performance compared with finetuning.
+Recently, CLIP \cite{Radford2021LearningTV}, which is trained on multi-modality vision-language pairs data, achieved impressive performance on zero-shot image classification by injecting visual categories into the text input as prompts. Subsequent works \cite{Zhou2021LearningTP,yao2021cpt,Gao2021CLIPAdapterBV} further tune CLIP with learnable soft prompts by few-shot supervisions in the field of computer vision, or leverage text features from CLIP to enhance visual representations \cite{rao2022denseclip,chen2022obj2seq}. Prompt tuning without textual information is introduced by injecting learnable vectors in the input space \cite{jia2022visual} or inserting lightweight blocks to learn prompts \cite{nie2022pro}.
+However, these approaches are tailored for solving downstream tasks independently and are inapplicable to heterogeneous multi-task learning. In this work, we design the visual exemplar-driven task-prompting to inject task-specific knowledge for heterogeneous multi-task learning.
+
+
+
+Empirical Study
+
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/main_architecture.pdf}
+    \caption{\textbf{The architecture of the proposed VE-Prompt.} VE-Prompt consists of (1) the image encoder to extract image features; (2) a shared transformer encoder for feature enhancement; (3) task-specific prompts generated by the prompt generator with visual exemplars; (4) a task-prompting block to integrate the visual representation with task-specific prompts; and (5) task-specific heads for different tasks.}
+    \label{fig:framework}
+\end{figure*}
+
+\noindent\textbf{Multi-task Architectures}
+Multi-task learning (MTL) architectures apply parameter sharing to learn shared information between different tasks. MTL architectures can be divided into encoder-focused architectures \cite{misra2016cross,ruder2019latent,liu2019end,gao2019nddr} and decoder-focused ones \cite{xu2018pad,zhang2018joint,vandenhende2020mti} according to parameter sharing scope. Encoder-focused architectures can be further categorized into hard and soft parameter sharing. In this paper, we select the hard parameter-sharing structure as our backbone due to its simplicity and stability. Parameters are only shared in the encoder part of the model followed by task-specific heads. As Figure \ref{fig:benchmark} shows, the image inputs first go through the shared encoder, and then the feature map is fed into different heads to produce corresponding predictions.
+\noindent\textbf{Task Scheduling} Task scheduling is the process of choosing which task or tasks to train on at each training step. Some scheduling methods arrange the task orders during the training process in a fixed order like Round-Robin~\cite{yu2020bdd100k}, while others may sample tasks following specific distributions~\cite{likhosherstov2021polyvit}, like Uniform sampler and Weighted sampler. 
+Specifically, Uniform sampler samples tasks from a uniform distribution and Weighted sampler samples tasks with weight proportional to the number of training epochs of each task.
+We test the above three task scheduling methods in our investigation and compare their performances.
+
+\noindent\textbf{Task Balancing} Task balancing is designed to deal with the gradients between tasks for the shared parameters in the network. When dealing with multiple tasks, the shared parameters are likely to be dominated by the one with a large gradient magnitude or confused by conflict gradients. It is intuitive to apply weights over these gradients to balance among tasks, and several methods have been proposed, including 1) Fixed weighting, which fixes all loss weights during training;
+2) Uncertainty weighting~\cite{Kendall2018Multi}, introducing the task-dependent Homoscedastic uncertainty as the basis for weighting losses by maximizing the Gaussian likelihood of the uncertainty;
+3) GradNorm~\cite{chen2018gradnorm}, calculating the product of $L2$ norm of task gradient and the relative inverse learning rate as the indicator of the task learning pace, and then setting task weights to minimize the learning pace difference among tasks to balance the training process;
+4) MGDA \cite{sener2018multi}, treating the Multi-Task Learning problem as a multi-objective optimization problem by using multiple gradient descent algorithm \cite{desideri2012multiple};
+5) ParetoMTL \cite{lin2019pareto}, which finds a solution called Pareto optimal solution where all task losses can decrease without increasing the loss on other tasks.
+
+\noindent\textbf{Learning on Partial Labels} Image segmentation task requires annotations of labels to every pixel of the image, which costs a great time, and as a result hard to get enough annotations.
+To process the missing annotation problem, two different methods are introduced, including Zeroing loss~\cite{kokkinos2017ubernet,xiao2018unified} and Pseudo labeling~\cite{Ghiasi2021Multi}.
+Zeroing loss~\cite{kokkinos2017ubernet,xiao2018unified} simply zero losses for a particular task if the input image does not have the corresponding annotation. 
+Pseudo labeling~\cite{Ghiasi2021Multi} first trains a teacher model on fully labeled data. Then the teacher model is used to label the missing annotations to create a multitask pseudo-labeled dataset.
+
+We focus on four major tasks in autonomous driving, i.e., object detection, semantic segmentation, drivable area segmentation, and lane detection. The in-depth analysis of current multi-task methods is shown in Section \ref{sec:multi_task_methods}.
+
+
+
+VE-Prompt
+The key to multi-task learning is to learn high-quality task-specific representations among tasks, which can explore relationships between tasks. Therefore, a good multi-task learning framework should take full advantage of task-specific priors, and guide the model to learn better representations.
+To this end, we introduce our proposed multi-task framework with VE-Prompt, which consists of five components: (1) an image feature encoder to extract image features; (2) a lightweight shared transformer encoder for feature enhancement; (3) task-specific prompts which encodes task-specific information from visual exemplars; (4) a visual exemplar driven task-prompting block to integrate the visual representation with task-specific prompts; (5) task-specific heads for predicting results simultaneously.
+
+The whole pipeline of the proposed multi-task framework is shown in Figure \ref{fig:framework}. In the following sections, we first delve into the overall multi-task framework in Section \ref{sec:framework} and elaborate on the visual exemplar-driven prompt in Section \ref{sec:prompt_gen} and the task-prompting module in Section \ref{sec:prompting} respectively.
+
+\subsection{Bridging CNN and Transformer}
+\label{sec:framework}
+The multi-task framework aims to learn more effective representations for all tasks via bridging CNN and Transformer efficiently. The neck of the image encoder and segmentation heads of the framework are CNN-based, reducing the overall training time. The shared transformer encoder is built upon the transformer architecture to capture the long-range dependency \cite{xie2021cotr}.
+
+\noindent\textbf{Image Encoder}
+The image encoder consists of a backbone network and a neck network. We choose the Swin transformer \cite{liu2021swin} as the backbone to extract features of the input image. The output of the backbone is denoted as $\{ C_2, C_3, C_4, C_5 \}$. Then we adopt Feature Pyramid Network (FPN) \cite{lin2017feature} module for the neck network to fuse features generated by the backbone. The pyramidal features are of 5 scales, and the detection head only processes the last four-scale features for reducing the computation cost. Here we denote the output of the neck as $\{ P_2, P_3, P_4, P_5, P_6 \}$, which have strides of \{4, 8, 16, 32, 64\} pixels.
+
+\noindent\textbf{Shared Transformer Encoder}
+The shared transformer encoder TransEncoder receives multi-scale outputs from the neck and enhances features for following task-specific heads. We first flatten the feature maps from $\{ P_3, P_4, P_5, P_6 \}$ and concatenate them to obtain a 1D sequence $P$. Since flattening the features leads to losing the spatial information critical for segmentation, we supplement positional embeddings $p_l$ to the flattened features. For the model not considering prompts, we obtain the enhanced feature as follows:
+\begin{equation}
+    O = \text{TransEncoder}(P + p_l).
+\label{equ:trans_encoder}
+\end{equation}
+After feature enhancement, $O$ is passed to the detection head directly, while unflattened to multi-scale features $\{ z_3, z_4, z_5, z_6 \}$ for segmentation heads.
+
+\noindent\textbf{Detection Head}
+The detection head consists of 4 multi-scale deformable decoder layers which are elaborated in DINO \cite{zhang2022dino}.
+Following DINO, we adopt the mixed query selection strategy to initialize anchors as positional queries for the decoder and use the contrastive denoising training approach by taking into account hard negative samples.
+
+\noindent\textbf{Segmentation Head}
+For segmentation-based tasks, we choose Semantic FPN \cite{kirillov2019panoptic} as the segmentation head. In the model without considering prompts, segmentation heads take in multi-layer features from both the neck and shared transformer encoder $\{ P_2, z_3, z_4, z_5 \}$. The resolution of $P_2$ is larger and thus provides more image information for the following heads. Then the multi-layer features are up-sampled and summed element-wisely. This merged feature map is again upsampled $4\times$ followed by softmax to produce the classification score for every pixel at the original resolution.
+
+\subsection{Prompt Generation with Visual Exemplar}
+\label{sec:prompt_gen}
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/task_prompt_detail.pdf}
+    \caption{\textbf{Process of generating visual exemplar-driven prompts.} For the box-wise task, we crop class-related image regions to generate visual exemplars. For pixel-wise tasks, we mask class-related image regions with colored segmentation masks to produce exemplars. Then the fixed CLIP image encoder is adopted to extract task-specific prompts.}
+    \label{fig:prompt}
+\end{figure}
+
+In order to motivate the model to learn more high-quality task-specific knowledge and handle all tasks better, VE-Prompt is introduced to provide more task-specific information with visual clues.
+The process of generating visual exemplar-driven prompts is shown in Figure \ref{fig:prompt}.
+The key idea of task-specific prompts is to let the model know how to solve different tasks and what categories to focus on in advance of each task. Therefore, task-specific prompts should contain object-level information which helps the model understand tasks better, and we leverage visual exemplars to generate prompts.
+
+We first sample a few examples from the training set to generate object-level image regions and segmentation masks as in Figure \ref{fig:prompt}. There are a few generated exemplars for each category in each task, thus the generated prompts cover all classes.
+Then we adopt CLIP \cite{Radford2021LearningTV} to generate task-specific prompts since it is a robust feature extractor pre-trained with a huge amount of image-text data pairs. For visual perception, the ground-truth annotations can provide hints of the shapes and sizes of different objects, motivating the model to learn high-quality task-specific representations.
+The task-specific prompt is object-level for object detection and aims to represent relevant image regions.
+Only the generated prompts are used during training and inference, and no new exemplars will be included, thus it will not lead to training data leakage.
+
+For the box-wise task (object detection), we use the annotated bounding boxes to crop sampled images and obtain raw object-level image regions for generating prompts. We choose the image encoder with ViT \cite{dosovitskiy2020image} backbone and pass $n$ image regions $\{r_i^k\}$ of $K$ classes to get the initial prompt as follows:
+\begin{equation}
+\begin{aligned}
+    \hat{\{p_i^k\}} = \text{L2\_NORM}(\text{IE}(\{r_i^k\})) \in \mathbb{R}^{K \times n \times D}, \\
+    p = \frac{1}{n}\sum\limits_{i}^{n} \hat{\{p_i^k\}} \in \mathbb{R}^{K \times D}, i = 1, 2, ..., n,
+\end{aligned}
+\label{equ:prompt}
+\end{equation}
+where IE and $D$ represent the image encoder of CLIP and the feature dimension respectively. $n$ stands for the number of visual exemplars for each category. $\hat{\{p_i^k\}}$ and $p$ indicate all prompts from image regions and the averaged version respectively. Specifically, class numbers for detection, semantic segmentation, drivable area segmentation, and lane detection are denoted as $K_1$, $K_2$, $K_3$, and $K_4$. The number of visual exemplars for different tasks is further denoted as $n_1$, $n_2$, $n_3$, and $n_4$.
+
+For pixel-wise tasks (i.e., semantic segmentation, drivable area segmentation, and lane detection), image regions of specific classes are marked with colored segmentation masks, and different colors indicate different object categories of different tasks. Similar to object detection, after obtaining $n$ images with colored segmentation masks of $K$ classes, we adopt CLIP to extract features by Equation \ref{equ:prompt}.
+In this way, we get task-specific prompts $p_{\text{det}}$, $p_{\text{sem}}$, $p_{\text{driv}}$, $p_{\text{lane}}$ for object detection, semantic segmentation, drivable area segmentation, and lane detection, respectively.
+
+\subsection{Visual Exemplar Driven Task Prompting}
+\label{sec:prompting}
+Task prompting aims to integrate the image features with task-specific prompts to obtain high-quality task-specific representations.
+It receives additional task-specific prompts as inputs and generates task-specific features for following task-specific heads.
+
+Here we design two prompting methods to improve task-specific representations.
+The first strategy is pre-head prompting. The last feature map $P_6$ from the neck and task-specific prompt $p$ are fused via a transformer decoder:
+\begin{equation}
+    f_{pre} = \text{TransDecoder}(q=P_6, k=p, v=p),
+\end{equation}
+where $q$, $k$ and $v$ stand for query, key and value. In this way, we get task-specific features $f_{pre}^{det}$, $f_{pre}^{sem}$, $f_{pre}^{driv}$, and $f_{pre}^{lane}$ for object detection, semantic segmentation, drivable area segmentation, and lane detection, respectively. For object detection, we flatten $\{  P_3, P_4, P_5, f_{pre}^{det} \}$ to a 1D sequence and combine it with positional embeddings. Following Equation \ref{equ:trans_encoder}, we obtain features for the detection head $O_{det}$.
+For segmentation-based tasks, we first flatten $\{  P_3, P_4, P_5 \}$ to a 1D sequence and get the enhanced features through Equation \ref{equ:trans_encoder}.
+Then unflatten the output features as $\{ z_3', z_4', z_5' \}$, and pass $\{ P_2, z_3', z_4', z_5', f_{pre}]$ to specific segmentation-based heads. Note that $f_{pre}$ is marked as $f_{pre}^{sem}$, $f_{pre}^{driv}$, or $f_{pre}^{lane}$ according to the task type.
+
+Another choice is to refine predicted results with task-specific prompts, namely post-head prompting. In this variant, we obtain class-related features ($\mathbb{R}^{K \times D}$) similar as follows:
+\begin{equation}
+    f_{post} = \text{TransDecoder}(q=p, k=P_6, v=P_6).
+\end{equation}
+Here class-related outputs from task-specific heads are denoted as $v$. Then the final output is calculated as:
+\begin{equation}
+    v' = \text{MLP}(v \cdot f_{post}).
+\end{equation}
+
+Empirical results of these two strategies are presented in Section \ref{sec:ablation} and show that pre-head prompting performs better than post-head prompting.
+\begin{table*}[t]
+    \centering
+    \caption{Comparisons of popular task scheduling strategies and partial-label learning methods.}
+    \resizebox{1.0\linewidth}{!}{
+    \begin{tabular}{c|c|ccc|c|c|c|c|c}
+        \toprule
+        Setting & Methods & mAP & AP50 & AP75 & mIoU (SS) & mIoU (DA) & IoU (LD) & Avg. & $\Delta_{MTL}(\%)$ \\
+        \midrule
+        \multirow{3}{*}{Full} & Zeroing loss \cite{Xiao2018UnifiedPP} & 36.2 & 61.6 & 35.9 & 58.6 & 89.3 & 23.8 & 52.0 & -2.68 \\
+         & Pseudo labeling \cite{Ghiasi2021Multi} & 36.3 & 61.6 & 36.1 & 60.9 & 89.3 & 23.8 & 52.6 & -1.65 \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{39.2} & \tfbestfirst{64.9} & \tfbestfirst{39.0} & \tfbestfirst{63.2} & \tfbestfirst{89.4} & \tfbestfirst{24.0} & \tfbestfirst{54.0} & \tfbestfirst{+1.52} \\
+        \midrule
+        \multirow{6}{*}{Disjoint-normal} & Zeroing loss \cite{Xiao2018UnifiedPP} & 31.1 & 54.3 & 30.2 & 55.7 & 88.0 & 22.2 & 49.3 & -2.64 \\
+         & Uniform sampler \cite{Likhosherstov2021PolyViTCV} & 30.1 & 52.8 & 29.0 & 60.6 & 88.6 & 23.4 & 50.7 & -0.10 \\
+         & Weighted sampler \cite{Likhosherstov2021PolyViTCV} & 29.3 & 51.9 & 28.7 & 58.5 & \tfbestfirst{88.9} & \tfbestfirst{23.8} & 50.1 & -1.19 \\
+         & Round-robin \cite{Likhosherstov2021PolyViTCV} & 30.2 & 53.1 & 29.7 & 61.0 & 88.7 & 23.5 & 50.9 & +2.87 \\
+         & Pseudo labeling \cite{Ghiasi2021Multi} & 32.6 & 54.6 & 32.3 & 59.7 & 88.2 & 23.0 & 50.9 & +1.19 \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{34.2} & \tfbestfirst{56.9} & \tfbestfirst{33.9} & \tfbestfirst{62.2} & 88.3 & 23.3 & \tfbestfirst{52.0} & \tfbestfirst{+3.95} \\
+        \midrule
+        \multirow{5}{*}{Disjoint-balance} & Zeroing loss \cite{Xiao2018UnifiedPP} & 29.7 & 52.3 & 29.2 & 57.5 & 86.7 & 21.4 & 48.8 & -1.61 \\
+         & Uniform sampler \cite{Likhosherstov2021PolyViTCV} & 28.1 & 50.2 & 27.5 & 60.4 & 87.1 & \tfbestfirst{22.6} & 50.0 & -0.44 \\
+         & Round-robin \cite{Likhosherstov2021PolyViTCV} & 28.4 & 50.8 & 27.8 & 60.0 & 87.1 & \tfbestfirst{22.6} & 49.5 & -0.34 \\
+         & Pseudo labeling \cite{Ghiasi2021Multi} & 31.3 & 52.8 & 30.8 & 60.2 & 87.0 & 22.2 & 50.2 & +1.87 \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{33.9} & \tfbestfirst{56.6} & \tfbestfirst{33.7} & \tfbestfirst{61.2} & \tfbestfirst{87.4} & 22.2 & \tfbestfirst{51.2} & \tfbestfirst{+4.72} \\
+        \bottomrule
+    \end{tabular}}
+    \label{tab:multi_task_baselines}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \caption{Comparisons of task balancing strategies with pseudo labels. $^*$ means using the full image encoder to compute the gradient norm.}
+    \resizebox{1.0\linewidth}{!}{
+    \begin{tabular}{c|c|ccc|c|c|c|c|c}
+        \toprule
+        Setting & Method & mAP & AP50 & AP75 & mIoU (SS) & mIoU (DA) & IoU (LD) & Avg. & $\Delta_{MTL}(\%)$ \\
+        \midrule
+        \multirow{4}{*}{Full} & Fixed \cite{Ghiasi2021Multi} & 36.3 & 61.6 & 36.1 & 60.9 & 89.3 & 23.8 & 52.6 & -1.65 \\
+         & Uncertainty \cite{Kendall2018Multi} & 36.2 & 61.6 & 35.5 & 61.2 & \tfbestfirst{89.5} & \tfbestfirst{24.6} & 52.9 & -0.76 \\
+         & GradNorm \cite{chen2018gradnorm} & 23.4 & 40.9 & 22.8 & 25.8 & 51.3 & 13.0 & 28.4 & -46.24  \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{39.2} & \tfbestfirst{64.9} & \tfbestfirst{39.0} & \tfbestfirst{63.2} & 89.4 & 24.0 & \tfbestfirst{54.0} & \tfbestfirst{+1.52} \\
+        \midrule
+        \multirow{5}{*}{Disjoint-normal} & Fixed \cite{Ghiasi2021Multi} & 32.6 & 54.6 & 32.3 & 59.7 & 88.2 & 23.0 & 50.9 & +1.19 \\
+         & Uncertainty \cite{Kendall2018Multi} & 32.2 & 54.1 & 31.5 & 59.8 & \tfbestfirst{88.6} & 23.8 & 51.1 & +1.79 \\
+         & GradNorm \cite{chen2018gradnorm} & 25.9 & 43.2 & 26.1 & 39.2 & 39.6 & 3.7 & 27.1 & -46.18 \\
+         & MGDA \cite{sener2018multi} & 25.9 & 44.6 & 26.0 & 50.1 & 85.4 & \tfbestfirst{25.2} & 46.7 & -7.26 \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{34.2} & \tfbestfirst{56.9} & \tfbestfirst{33.9} & \tfbestfirst{62.2} & 88.3 & 23.3 & \tfbestfirst{52.0} & \tfbestfirst{+3.95} \\
+        \midrule
+        \multirow{5}{*}{Disjoint-balance} & Fixed \cite{Ghiasi2021Multi} & 31.3 & 52.8 & 30.8 & 60.2 & 87.0 & 22.2 & 50.2 & +1.87 \\
+         & Uncertainty \cite{Kendall2018Multi} & 31.2 & 53.1 & 30.9 & 59.9 & 87.0 & 22.2 & 50.1 & +1.66 \\
+         & GradNorm \cite{chen2018gradnorm} & 28.9 & 49.0 & 28.7 & 46.8 & 57.4 & 19.6& 38.2 & -17.26 \\
+         & GradNorm$^*$ \cite{chen2018gradnorm} & 30.7 & 51.8 & 30.4 & 56.6 & 86.9 & 21.7 & 49.0 & -0.73 \\
+         & MGDA \cite{sener2018multi} & 21.0 & 38.0 & 20.3 & 45.5 & 82.7 & \tfbestfirst{24.3} & 43.4 & -12.48 \\
+        \cmidrule{2-10}
+         & VE-Prompt (Ours) & \tfbestfirst{33.9} & \tfbestfirst{56.6} & \tfbestfirst{33.7} & \tfbestfirst{61.2} & \tfbestfirst{87.4} & 22.2 & \tfbestfirst{51.2} & \tfbestfirst{+4.72} \\
+        \bottomrule
+    \end{tabular}}
+    \label{tab:multi_task_optimize}
+\end{table*}
+
+\subsection{Optimization}
+Since there are four different perception
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

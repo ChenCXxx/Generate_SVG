@@ -1,0 +1,196 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+\begin{figure}[!t]
+	\centering
+	\includegraphics[width=0.99\linewidth]{images/fig1-v4.pdf}
+	\caption{Semantic segmentation can be considered as partitioning an image into classification units (regions), then classifying the units. The units can range from pixels to large masks. Intuitively, mask classification is more robust than per-pixel classification, as \textit{masks} allow to aggregate features over large image regions of the same class to predict a `global' label. Despite this promise, the process of grouping pixels into \textit{whole-level} masks directly from pixels is very challenging under the distribution shift (\eg, Gaussian Noise). In order to tackle this problem, we present a hierarchical grouping paradigm to group pixels to \emph{part-level masks} first and then to group \emph{part-level masks} to \emph{whole-level masks} to get reliable masks. Then we combine both part-level and whole-level mask classification for robust semantic segmentation, given that the masks at the two levels capture complementary information.       
+	}
+	\label{fig:partitions}
+\end{figure}
+
+Research in semantic image segmentation has leaped forward in the past years due to the development of deep neural network. However, most of these models assume that the training and testing data follow the same distribution. In the real-world, we frequently encounter testing data that is out of distribution. The generalization ability of models under distribution shift is crucial for applications related to safety, such as self-driving.  
+In domain generalization setting, models are trained only on source domains and tested on target domains, where the distributions of source domains and target domains are different. Unlike the domain adaptation~\cite{DDA,hoyer2022daformer},  target data is not accessible / needed during training, making the task challenging but practically useful. 
+Recently, Vision Transformers have been shown to be significantly more robust than traditional CNNs in the out-of-distribution generalization~\cite{segformer,FAN,vitrobust,assyingood,hoyer2022daformer,guo2023improving}. 
+Some works interpret self-attention as a kind of \textit{visual grouping}~\cite{emergingvit,intriguingvit}, and believe that it \textit{is related to robustness}~\cite{FAN}. However, these works mainly focus on classification. Although FAN~\cite{FAN} and Segformer~\cite{segformer} have been evaluated on segmentation, they do not explicitly introduce visual grouping in their networks. Since grouping is naturally aligned with the task of semantic segmentation, we would like to ask the question: \textit{can we improve the robustness of semantic segmentation by introducing an explicit grouping mechanism into semantic segmentation networks?}
+
+Most deep learning based segmentation models directly conduct per-pixel classification without the process of grouping. Some recent segmentation models introduced \textit{flat grouping}~\cite{maskformer,kmasktransformer} into the segmentation decoder, where pixels are grouped into a set of binary masks directly and classification on masks is used to make label prediction. By using a one-to-one matching similar to DETR~\cite{detr}, the loss between predicted masks and ground truth masks is computed. Therefore the network is trained to directly predict \textit{whole-level masks}, as shown in Fig.~\ref{fig:partitions}. Intuitively, if whole-level masks are accurate, mask classification will be more robust than per-pixel classification due to its information aggregation over regions of the same class. But we find that using the \emph{flat grouping} to generate whole-level masks is susceptible to errors, especially under cross-domain settings. This is shown by the example in Fig.~\ref{fig:partitions} - bottom. 
+
+Different from the \textit{flat grouping} works~\cite{mask2former,kmasktransformer}, we propose a \textit{hierarchical grouping} in the segmentation decoder, where the pixels are first grouped into \textit{part-level masks}, and then grouped into \emph{whole-level masks}. Actually, the hierarchical grouping is inspired by the pioneer works of image segmentation~\cite{contour,imageparsing,Chen_2016_CVPR} and is further supported by strong psychological evidence that humans parse scenes into part-whole hierarchies~\cite{hinton2021represent}. We find that grouping pixels to part-level masks and then to whole-level masks is more robust than grouping pixels directly to whole-level masks. Part-level masks and whole-level masks segment images at different scales such as \emph{parts} and \emph{a whole} of classes. Therefore, part-level and whole-level masks are complementary, and combining mask classification results at those different scales improves the overall robustness. %and react differently to the domain shifts. The combination of classification on different levels can further improve the generalization. 
+ 
+
+
+To instantiate a hierarchical grouping idea, we propose a hierarchical grouping transformer (HGFormer) in the decoder of a segmentation model. The diagram is shown in Fig.~\ref{fig:pipeline}. We first send the feature maps to the part-level grouping module. In the part-level grouping module, the initialization of cluster centers is down sampled from feature maps. Then we compute the \textit{pixel-center similarities} and assign pixels to cluster centers according to the similarities. To get the part-level masks, we only compute the similarities between each pixel feature and its nearby center features. We then aggregate information of the part-level masks and generate whole-level masks by using cross-attention, similar to how previous methods aggregate pixels information to generate whole-level masks~\cite{mask2former,kmasktransformer}. Finally, we classify masks at different levels, and average the semantic segmentation results of all the scales. 
+We evaluate the method under multiple settings, which are assembled by using seven challenging semantic segmentation datasets. In each of the setting, we train the methods on one domain and test them on other domains. Extensive experiments show that our model is significantly better than previous \textit{per-pixel classification based}, and \textit{whole-level mask based} segmentation models for out-of-distribution generalization. 
+
+
+To summarize, our contributions are: 1) We present a hierarchical grouping paradigm for robust semantic segmentation; 2) based on the hierarchical grouping paradigm, we propose a hierarchical grouping transformer (HGFormer), where the pixels are first grouped into part-level masks, and then grouped into whole-level masks. Final semantic segmentation results are obtained by making classifications on all masks; 3) HGFormer outperforms previous semantic segmentation models on domain generalized semantic segmentation across various experimental settings. We also give detailed analyses of the robustness of grouping-based methods under distribution shift. 
+
+
+
+Related Work
+\subsection{Semantic Segmentation}
+Semantic segmentation is a classic and fundamental problem in computer vision. It aims to segment the objects and scenes in images and give their classifications.
+In the deep learning era, semantic segmentation is usually formulated as a pixel-level classification problem~\cite{FCN,segformer,Deeplab,Deeplabv2,Deeplabv3,Deeplabv3plus} since FCN~\cite{FCN}. Recently, it is becoming popular to use whole-level mask classification to formulate the semantic segmentation problem~\cite{kmasktransformer,maxdeeplab,cmtdeeplab,mask2former,maskformer}. In contrast to pixel-level and mask-level classification, to our best knowledge, there are very few works on learning part-level masks~\cite{SSN,superpixelFCN}, and using part-level mask classification~\cite{regionproxy,superpixelbi} for semantic segmentation in deep learning era. Among them, SSN~\cite{SSN} and super pixel FCN~\cite{superpixelFCN} mainly focus on part-level mask learning instead of part-level classification for the semantic segmentation results. BI~\cite{superpixelbi} is not an end-to-end model, which needs extra part-level masks as input. RegProxy~\cite{regionproxy} is a recent work that closes to our work, which uses convolutions to learn part-level masks, and is only evaluated on the i.i.d. condition. In contrast, we use similarity-based grouping to learn part-level masks, and are the first to validate the effectiveness of using part-level mask classification for domain generalized semantic segmentation. Besides, Regproxy~\cite{regionproxy} is customized with \textit{plain} ViT~\cite{vit}, while our work is applicable to pyramid transformers~\cite{swin,pvt} and CNNs. Our work is also different for the hierarchical segmentation design.
+
+
+\subsection{Domain Generalization}
+Domain generalization (DG) assumes that the target data (even unlabelled) is not accessible during training. 
+Methods for DG in classification includes domain alignment~\cite{muandet2013domain,li2018domain}, meta-learning~\cite{li2018learning,balaji2018metareg}, data augmentation~\cite{volpi2019addressing,xu2020robust}, ensemble learning~\cite{liu2020ms,cha2021domain,crossensemble}, self-supervised learning~\cite{bucci2021self,carlucci2019domain}, and regularization strategies~\cite{wang2019learning,huang2020self}. 
+The ensemble of mask classification at different levels is related to the ensemble methods for domain generalization. The drawback of the previous ensemble-based methods~\cite{yeo2021robustness,lakshminarayanan2017simple} is that they will largely increase the runtime. Some ensemble methods~\cite{wortsman2022model, rame2022diverse} focus on the averaging of model weights, which do not increase the runtime, but increase the training time. Our method does not introduce extra FLOPS due to the efficient hierarchical grouping design, and does not introduce extra training time.
+
+While the DG in classification is widely studied in the previous works, there are only several works that study the DG in semantic segmentation. The previous methods for DG in semantic segmentation includes: (1) Domain Randomization~\cite{DRPC, GTR} and (2) Normalization and Whitening~\cite{ISW, IBN, SW, SAN}.
+Although not designed specifically for domain generalization tasks, the Vision Transformers~\cite{dosovitskiy2020image} have shown their robustness~\cite{FAN} in the out-of-distribution setting. The robustness of Vision Transformer was explained to be related to the grouping property of self-attention~\cite{FAN}. However, there are no works that study the effect of explicit grouping in the segmentation decoder for semantic segmentation in DG. Motivated by these results, we study the different levels of grouping and mask classification for semantic segmentation in DG.      
+\begin{figure*}[!t]
+	\centering
+	\includegraphics[width=0.86\linewidth]{images/pipeline-v9.pdf}
+	\caption{The pipeline of our proposed method. We first pass an image to a backbone network and get feature maps at different resolutions. The largest feature map $\mathbf{K}_0$ is projected to $\mathbf{K}$ for part-level grouping. The other three feature maps are fused to form a new feature map $V$ for part-level mask feature extraction used for later classification. The details of part-level grouping can be seen in Algorithm~\ref{alg:training}. The grouping process is repeated $L$ iterations. At the end of each iteration, there are $N_p$ part-level masks, and their tokens. Combining part-level classifications and part-level masks, we can get the semantic segmentation results $\mathbf{O}_1$. The part-level tokens from the last iteration of part-level grouping are aggregated to whole-level masks by whole-level grouping (which are actually cross-attention layers). Similarly, there are also $L$ iterations in the whole-level grouping. At the end of each iteration, there are $N_o$ whole-level tokens. Whole-level masks are computed by a matrix multiplication between $\mathbf{K}_0$ and projected whole-level mask tokens. Similarly, we can get semantic segmentation results $\mathbf{O}_2$ by combining whole-level masks and their classifications. The final results $\mathbf{O}$ are the sum of $\mathbf{O}_1$ and $\mathbf{O}_2 $.} 
+	\label{fig:pipeline}
+\end{figure*}
+
+
+
+Methods
+
+ Given an image $I \in \mathbb{R}^{H\times W \times 3}$, an image partition is defined as $S=\{R_1, ..., R_N\}$, such that  $\cup^N_{i=1} R_i = \Omega$ and $R_i \cap R_j = \O$, if $i \neq j$. After mapping each region $R_i$ to a class by $L_i$, we get $C=\{L_1(R_1), ..., L_N(R_N)\}$. Semantic segmentation can then be defined as:
+\begin{equation}
+\label{seg} 
+Y = \{S, C\}.
+\end{equation}
+According to the scales, we can roughly divide the image partitions into three levels: pixels, part-level masks, and whole-level masks. The \textit{pixel} partition, where each element in $S$ is a pixel, is widely used by all per-pixel classification methods \cite{FCN,Deeplabv2}. The \textit{whole-level masks} partition, where each element in $S$ represents a whole mask of a class, is used by a few recent approaches \cite{maskformer,mask2former}. The \textit{part-level mask} partition, where each element aims to cover a class part, is proposed by this work and used along with \emph{whole-level masks} to enhance robustness. 
+
+Intuitively, mask classification is more robust than per-pixel classification, as \textit{masks} allow to aggregate features over large image regions of the same class to predict a `global' label. Despite of this promise, generating whole-level masks directly from pixels is a very challenging task. While SOTA methods~\cite{maskformer,mask2former} can generate reasonable \emph{whole-level masks} directly from pixels, the \emph{flat grouping} methods used are not robust to domain changes -- when tested on a different domain, the generated masks are of poor quality, leading to low semantic segmentation performance (see Fig.~\ref{fig:partitions}). In order to tackle this problem, this work proposes using hierarchical grouping in the segmentation transformer architecture to group pixels to \emph{part-level masks} first and then to group \emph{part-level masks} to \emph{whole-level masks}. The advantages are 1) the grouping task becomes less challenging; 2) mask classification can be performed at both scales and their results can be combined for more robust label prediction, given that the \emph{masks} at the two scales capture complementary information; 3) global self-attention to aggregate long-range context information can be performed directly at both part-level and whole-level now, which is not possible at pixel-level due to the huge computation cost.
+
+\begin{algorithm}[t]
+\caption{Part-level grouping
+}
+\label{alg:training}
+    \begin{algorithmic}[1]
+    	\REQUIRE
+    	\textit{Pixel} feature map $\mathbf{K}\in \mathbb{R}^{(H\times W)\times d}$, classification feature map $\mathbf{V}\in \mathbb{R}^{(H\times W)\times d}$ \\
+    	\STATE Initialize the cluster \textit{center} features $\mathbf{Q^1}\in \mathbb{R}^{N_p\times d}$ by down sampling $\mathbf{K}$
+        \FOR{$t=1, \cdots, L$}
+        \STATE Compute assignment matrix $\mathbf{A^t}$ by $\mathbf{Q^t}$ and $\mathbf{K}$  
+        \STATE Update the cluster center features $\mathbf{Q^{t+1}} = \mathbf{A^t}\times \mathbf{K}$
+        
+        \STATE Update the part-level tokens $\mathbf{Z^{t}} = \mathbf{A^t}\times \mathbf{V}$
+                
+        \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+\subsection{HGFormer}
+To efficiently implement a model which can predict semantic segmentation at different scales, we adopt a hierarchical grouping process, which consists of two stages. The first is to group pixels into part-level masks by similarity-based local clustering. The second is to group part-level masks into whole-level masks by cross-attention. Then we make classification on partitions at different scales. The framework can be seen in Fig.~\ref{fig:pipeline}. We will introduce the details in the following. 
+
+\pparagraph{Part-level grouping.} The goal of part-level grouping is to compute a partition $S_m=\{R_1,...,R_{N_p}\}$, with $N_p$ the number of part-level masks. $S_m$ can be represented by a \textit{hard assignment} matrix $\tilde{\mathbf{A}}\in \{0, 1\}^{N_p\times (HW)}$ such that $\tilde{\mathbf{A}}_{ij}=1$ if the $j$-th pixel is assigned to mask $i$ and 0 otherwise. Since the hard assignment is not differentiable, we compute a \textit{soft assignment} matrix $\mathbf{A}\in [0, 1]^{N_p\times (HW)}$ such that $\sum_{i=1}^{N_p}\mathbf{A}_{ij}=1$. $\mathbf{A}_{ij}$ represents the probability of assigning the $j$-th pixel to mask $i$. 
+To compute $\mathbf{A}$, we perform an iterative grouping algorithm (see Algorithm~\ref{alg:training}). It takes a feature map $\mathbf{K}\in \mathbb{R}^{(H\times W) \times d}$ as input to compute \textit{assignment matrix}.
+We partition an image feature map $\mathbf{K}$ into regular grid cells with size $(r\times r)$ as the initialization of part-level masks, which is a common strategy in super pixel learning~\cite{SSN,SLIC,superpixelFCN}. Then we average the features inside regular grid cells to get the features of part-level masks (or called cluster center) features $\mathbf{Q}\in \mathbb{R}^{N_p \times d}$, where $N_p=H/r\times W/r$. Then we compute the cosine similarities between pixel-center pairs and get $\mathbf{D}\in \mathbb{R}^{N_p\times (HW)}$. For efficiency, we do not compute the similarities between all pixel-center pairs. Instead, we only compute the similarities between pixels and their 9 nearby centers (see Fig.~\ref{fig:spixgrid}). As a result, we get $\mathbf{D}'\in \mathbb{R}^{9\times (HW)}$. But for the convenience of describing, we still use the $\mathbf{D}$ in the following. Due to the local constraint, each cluster center can only aggregate the nearby pixels, so we can get the \textit{part-level masks}. 
+
+The similarities between the $i$-th center feature and $j$-th pixel feature are written as:
+\begin{equation}
+\label{eq:affinity} 
+\mathbf{D}_{i,j} = \left\{\begin{matrix} f(\mathbf{Q}_i, \mathbf{K}_{j}) & \text{if } ~i \in N_j
+\\  -\infty& \text{if } ~i \notin N_j,
+\end{matrix}\right.
+\end{equation}
+where $\mathbf{Q}_i \in \mathbb{R}^{d}$ is the $i$-th cluster center feature, and $\mathbf{K}_j \in \mathbb{R}^{d}$ is the $j$-th pixel feature. $f(\bf \mathbf{x}, \mathbf{y})=\frac{1}{\tau} \frac{\bf \mathbf{x}\cdot \bf \mathbf{y}}{|\mathbf{x}| \cdot |\mathbf{y}|}$ computes the cosine similarity between $\mathbf{x}$ and $\mathbf{y}$, where $\tau$ is the temperature to adjust the scale of similarities. $N_j$ is the set of nearby regular grid cells of $j$-th pixel, which can be viewed in Fig.~\ref{fig:spixgrid}. Then we can compute the soft assignment matrix as:
+\begin{equation}
+\mathbf{A}_{i,j} = \text{softmax}(\textbf{D})(i,j) = \frac{ \exp(\textbf{D}_{i,j})}{\sum_{i=1}^{N_p}\exp(\textbf{D}_{i,j})}, 
+\end{equation}
+\begin{figure}[!t]
+	\centering
+	\includegraphics[width=0.45\linewidth]{images/spixgrid.pdf}
+	\caption{Explanation of the similarities between pixel features and its nearby center features. The grouping process is to assign each pixel to one of $N_p$ center features. However, due to the computation cost of the \textit{global} comparisons, we only compute the similarities between pixels and their nearby center features to perform \textit{local} comparisons. For example, we only assign each pixel in the green box to one of its 9 nearby center features.
+	}
+	\label{fig:spixgrid}
+\end{figure}
+Then we can update the cluster center features by 
+\begin{equation}
+\label{updatespixfeature} 
+\mathbf{Q}_{new} = \mathbf{A}\times \mathbf{K}.
+\end{equation}
+After we get the new center features, we can compute the new assignment matrix by using updated center features $\mathbf{Q}_{new}$ and feature map $\mathbf{K}$. The process is repeated $L$ times, as shown in Algorithm~\ref{alg:training}. To get the part-level mask tokens for classification, we use the assignment matrix to extract part-level tokens from another feature map $\mathbf{V}$ by
+\begin{equation}
+\label{updatespixfeature} 
+\mathbf{Z} = \mathbf{A}\times \mathbf{V}.
+\end{equation}
+To strengthen the part-level mask features, we pass $\mathbf{Z}$ to a self-attention layer and a feed forward network (FFN) layer and get $\mathbf{Z}'$. 
+Then we use a linear classifier layer and a softmax activation layer to map $\mathbf{Z}'\in \mathbb{R}^{N_p\times d}$ to part-level class predictions $\mathbf{P}_{m}\in \mathbb{R}^{N_p\times K}$, where $K$ is the number of classes. 
+
+Note that we use different feature maps for part-level grouping and classification to decouple these two kinds of tasks, since the shallow layers are usually used for localization while the deep layers benefit the classification~\cite{fpn}. 
+
+
+\pparagraph{Whole-level grouping.}
+The aim of this stage is to group part-level masks into whole-level masks. Our framework is agnostic to the detailed grouping method. But for a fair comparison, we use the transformer decoders for grouping, following~\cite{mask2former}. Each transformer decoder layer consists of one multi-head cross-attention, one self-attention, and an FFN layer. Firstly, we perform cross-attention between $N_o$ learnable positional embeddings $\mathbf{E}\in \mathbb{R}^{N_o\times d}$ and part-level tokens $\mathbf{Z}'\in \mathbb{R}^{N_p\times d}$ to get the output features:
+\begin{equation}
+\label{updatespixfeature} 
+\mathbf{E}_{out} = \text{Softmax}((\mathbf{E}\mathbf{W}_q) \times (\mathbf{Z}'\mathbf{W}_k)^{T})\times (\mathbf{Z}' \mathbf{W}_v ),
+\end{equation}
+where $W_q\in \mathbb{R}^{d\times d}$, $W_k\in \mathbb{R}^{d\times d}$, $W_v\in \mathbb{R}^{d\times d}$ are projection heads for queries, keys, and values, respectively.
+For simplicity, the multi-head mechanism is ignored in the formulation. The cross-attention layer is followed by self-attention, and $\mathbf{E}_{out}$ and FFN layers. Similar to the process in part-level mask learning, the transformer decoder operation is also repeated $L$ times. At the end of each transformer decoder layer, there are two MLP layers. The first MLP layer maps the out features $\mathbf{E}_{out}\in \mathbb{R}^{N\times d}$ to mask embedding $\varepsilon\in \mathbb{R}^{N\times d}$. Then the whole-level masks $\mathbf{M}\in [0, 1]^{N\times (H_0\times W_0)}$ can be computed as
+\begin{equation}
+\label{sigma}
+\mathbf{M} = \sigma(\varepsilon\times \mathbf{K}_0^{T}),
+\end{equation}
+where $\mathbf{K}_0^{T} \in \mathbb{R}(H\times W)\times d$ is a feature map before $\mathbf{K}$ (see Fig.~\ref{fig:pipeline}). The second MLP layer maps the out features to class logits. Then we apply a softmax activation on the class logits to get the probability predictions $\mathbf{P}_{h}\in \mathbb{R}^{N\times (K+1)}$, where $K$ is the number of classes. There is an extra dimension representing the ``no object'' category ($\varnothing$).
+ The difference between our work and the previous counterparts~\cite{mask2former,kmasktransformer} is: the \textit{keys} and \textit{values} in previous works are pixel features, while our \textit{keys} and \textit{values} are features of part-level masks. Our hierarchical grouping design reduces the computation complexity, since the number of part-level masks is much smaller than the pixels. 
+\pparagraph{Multi-scale semantic segmentation.}
+We conduct classification at two levels: part-level mask classification and whole-level mask classification. The semantic segmentation results from the part-level mask classification can be computed as
+\begin{equation}
+\mathbf{O}_1 = \mathbf{P}_{m}^{T} \times \mathbf{A}
+\end{equation}
+The semantic segmentation results form the whole-level mask classification can be computed as 
+\begin{equation}
+\mathbf{O}_2 = \mathbf{P}_{h}^{T} \times \mathbf{M}
+\end{equation}
+The final semantic segmentation result is an ensemble of two results by a simple addition.
+
+\pparagraph{Loss design.}
+The challenge in part-level mask learning is that we do not have the ground truth for the part-level partition. The partition at the part-level stages is not unique. Therefore, we design two kinds of losses. First, we directly add a \textit{cross-entropy} loss $\mathcal{L}_{\text{part,cls}}$ on $\mathbf{O}_1$. Given that the \textit{cross-entropy} loss is also affected by classification accuracy, which does not have a strong constraint on the mask quality, we also add a \textit{pixel-cluster contrastive loss}. The core idea of the contrastive loss is to learn more discriminative feature maps, which can the be used for similarity-based part-level grouping.
+Given ground truth masks $\mathbf{M_G}\in \mathbb{R}^{g\times(H\times W)}$, where $g$ is the number of masks in an image, we first average the features within each ground truth mask and get $\mathbf{T}\in \mathbb{R}^{g\times d}$. Then the contrastive loss~\cite{moco,maxdeeplab,van2021unsupervised} for each pixel in $\mathbf{K}$ is computed as:
+\begin{equation}
+\mathcal{L}_{\text{contrast}}^i = -\log \frac{\sum_{j=1}^{K}\mathbf{M}_{G,j,i} \exp(f(\mathbf{K}_i, \mathbf{T}_j))}{\sum_{j=1}^{K}\exp(f(\mathbf{K}_i, \mathbf{T}_j))},  
+\end{equation}
+where $f(\mathbf{x}, \mathbf{y})$ is a function to measure the similarity between two feature vectors. 
+The losses for the whole-level learning mainly follow previous works~\cite{mask2former}. There is a one-to-one matching between predictions and ground truths. For the matched prediction, a dice loss $\mathcal{L}_{\text{dice}}$, a mask loss $\mathcal{L}_{\text{mask}}$, and a mask classification loss $\mathcal{L}_{\text{mask,cls}}$ are computed.
+
+\subsection{Implementation Details}
+
+We set the weights for $\mathcal{L}_{\text{part,cls}}$, $\mathcal{L}_{\text{contrast}}$, $\mathcal{L}_{\text{dice}}$, $\mathcal{L}_{\text{mask}}$, and $\mathcal{L}_{\text{mask,cls}}$ to 2, 6, 5, 5, and 2, respectively. The temperature $\tau$ in contrastive loss is 0.1, and the down sample rate $r$ is 4. We set the number of refining stages $L$ in part-level and whole-level grouping to 6. We use the deformable attention Transformer (MSDeformAttn)~\cite{deformabledetr} layers to strengthen the features before we project the feature maps to $\mathbf{K}$ and $\mathbf{V}$. The output strides for $\mathbf{K}$ and $\mathbf{V}$ are 1/8. 
+We conduct a multi-scale augmentation and then crop a $512\times 1,024$ patch for training. During testing, we send the images with the original size to models. By default, models are trained with 20k iterations with a batch size of 16. We use the ADAMW as our optimizer
+with an initial learning rate of 0.0001 and 0.05 weight decay.
+
+
+Experiments
+
+\subsection{Datasets}
+
+\pparagraph{Real-world datasets.}
+Cityscapes contains 5,000 urban scene images collected from 50 cities primarily in Germany. The image size of Cityscapes images is $2,048\times1,024$. BDD is another real-world dataset, which contains 7,000 images for training, and 1,000 images for testing. The images of BDD is mainly collected from US. The image size of BDD is $1,280\times720$. Mapillary~\cite{mapillary} is a large-scale dataset, which contains 18,000 images for training, 2,000 images for validation, and 5,000 images for testing. The images of Mapillary are captured from all over the world, at various conditions regarding weather and season, which makes the dataset very diverse. ACDC \cite{ACDC} collects the images with a resolution of $1,920\times1,080$ under adverse conditions, including night, fog, rain, and snow. ACDC contains 1,600 images for training, 406 images for validation, and 2,000 images for testing. 
+
+\pparagraph{Synthetic datasets.}
+GTAV is a synthetic dataset collected from GTAV game, which contains 12,403, 6,382, and 6,181 images with a resolution of $1,914\times1,052$ for training, validation, and testing, respectively. SYNTHIA~\cite{synthia} is another synthetic dataset, which consists of 9,400 photo-realistic images with a size of $1,280\times 760$.
+
+\pparagraph{Common corruption dataset.}
+We follow the previous works~\cite{city_c,segformer} to expand the Cityscapes validation set with 16 type of generated corruptions. The corruptions can be divided into 4 categories: noise, blur, weather, and digital. There are 5 severity levels for each kind of corruption. 
+
+
+\subsection{Main Results}
+We evaluate models on 4 kinds of generalization settings. 
+\pparagraph{Normal-to-adverse generalization.}
+In this experimental setting, all the models are trained on Cityscapes~\cite{cityscapes} (images at normal conditions) and tested on ACDC~\cite{ACDC} (images at 4 kinds of adverse conditions). Although not specifically designed for domain generalization, transformer-based methods have been shown to be more robust than traditional CNN methods. Therefore, we compare our proposed HGFormer with two representative transformer-based segmentation methods in Tab.~\ref{tab:norm-to-acdc}. Among them, all CNN-based methods and Segformer~\cite{segformer} are based on \textit{per-pixel} classification. Mask2former~\cite{mask2former} is based on \textit{whole-level} classification. We can see that our method outperforms the previous CNN-based methods by a large margin, and also significantly outperforms the competitive transformer-based segmentation models.
+\begin{table}[]
+\centering
+\caption{\textbf{Cityscapes-to-ACDC generalization.} The models are trained on Cityscapes~\cite{cityscapes} only, and tested on ACDC~\cite{ACDC}. The results of Mask2former~\cite{mask2former}, Segformer~\cite{segformer}, and HGFormer are implemented by us. Others are from ACDC paper~\cite{ACDC}.
+The results of models trained by us are an average of 3 times. The results of Segformer~\cite{segformer} are obtained by their officially released model. }
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|c|cccc|c}
+\toprule
+Method      & backbone & Fog  & Night & Rain  & Snow & All   \\ \hline
+RefineNet~\cite{refinenet}   & R101     & 46.4 & 29    & 52.6  & 43.3 & 43.7  \\
+DeepLabv2~\cite{Deeplabv2}   & R101     & 33.5 & 30.
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

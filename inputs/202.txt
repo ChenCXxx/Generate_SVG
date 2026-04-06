@@ -1,0 +1,306 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+\begin{figure}[htbp]
+	\centering
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4hr.pdf}
+		\subcaption*{\makebox[9em][c]{HR} \\ \makebox[9em][c]{PSNR$\uparrow$/SSIM$\uparrow$}}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4dasr.pdf}
+		\subcaption*{\makebox[9em][c]{DASR\cite{wang2021unsupervised}} \\ \makebox[9em][c]{19.22/0.745}}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4kdsr.pdf}
+		\subcaption*{\makebox[9em][c]{KDSR\cite{xia2022knowledge}} \\ \makebox[9em][c]{19.90/0.778}}
+	\end{subfigure}
+	
+	
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4dcls2.pdf}
+		\subcaption*{\makebox[9em][c]{DCLS\cite{9879171}} \\ \makebox[9em][c]{21.34/0.851}}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4stablesr.pdf}
+		\subcaption*{\makebox[9em][c]{StableSR\cite{wang2023exploiting}} \\ \makebox[9em][c]{13.03/0.278}}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.15\textwidth}
+		\centering
+		\includegraphics[width=1.0\textwidth]{images/4cdformer.pdf}
+		\subcaption*{\makebox[9em][c]{CDFormer(Ours)} \\ \makebox[9em][c]{22.66/0.878}}
+	\end{subfigure}	
+	
+	\caption{Blind image Super-Resolution for scale 4 on kernel width 1.2. Our proposed CDFormer with CDP is capable of producing sharp and clean textures and outperforms previous state-of-the-art approaches DASR, KDSR, DCLS, and StableSR.}
+	\label{fig:4}
+\end{figure}
+Image Super-Resolution (SR), which aims to reconstruct high-resolution (HR) images from their low-resolution (LR) counterparts, is a long-standing low-level vision problem in the research community. Advanced methods based on deep learning networks start from the assumption that the LR image is degraded from the HR image by a specific process, which can be formulated as follows:
+\begin{equation}
+\label{eq:1}
+I_{LR} = (I_{HR} \ast k_h){\downarrow_s} + n.
+\end{equation}
+where $k_h$ is a blur kernel, $\downarrow_s$ is a downsampling operation with scale factor $s$, $n$ is additive Gaussian noise. 
+In practice, however, the transformation from HR image to LR image is complicated and usually difficult to formulate simply as \cref{eq:1}. As a result, previous works \cite{7115171, 8954252, 8954253, dong2016accelerating, 9578528, 9857155, liang2021swinir, lim2017enhanced, li2021efficient} explore non-blind image Super-Resolution, where the kernel and downsampling are assumed to be known as the prior, have faced great challenges in real-world scenarios, thus extending to Blind image Super-Resolution (BSR). 
+
+Existing BSR methods can be divided into two categories: Kernel Prediction (KP) \cite{liang2021mutual,9879171,bell2019blind,gu2019blind} and Degradation Prediction (DP) \cite{DSAT, wang2021unsupervised, xia2022knowledge}. KP methods produce desirable SR results in most cases, but still face severe performance drops when it has to deal with complex degradations. This inevitable limitation is subject to the unavailability of real-word kernels as well as training distribution mismatch. Furthermore, KP methods have to be limited to blur kernel-based degradation and cannot address other types of degradation (\eg, noise). In contrast, DP methods that DASR \cite{wang2021unsupervised} exemplify, explore degradation representations in an unsupervised manner. However, although DASR can outperform some KP methods \cite{bell2019blind,gu2019blind} for simple degradation, a gap remains between DP and state-of-the-art KP methods \cite{liang2021mutual,9879171} for more complex cases.
+
+More recently, the advances in Diffusion Models (DMs) \cite{sohl2015deep, ho2020denoising, rombach2022high} have revolutionized the community of image synthesis \cite{dhariwal2021diffusion, ho2022cascaded, song2020score} as well as image restoration tasks, such as inpainting \cite{9880056,9879691} and Super-Resolution \cite{9887996, kawar2022denoising}. 
+Several works \cite{9887996, li2022srdiff, luo2023refusion, wang2023exploiting} have explored the powerful generative ability of DMs for Super-Resolution and attracted extensive attention. We argue that although these works provide novel viewpoints and solutions for image SR, they suffer from two main drawbacks: (1) treating DMs as the main SR net requires numerous inference steps ($\sim$ $50$ to $1000$ steps), which will be computationally expensive and not suitable for real-time applications. Although the former issue can be alleviated by reducing iteration number \cite{wang2022zero}, it will lead to quality deterioration of the SR results. (2) undesirable artifacts such as joint misalignment or texture distortion have been introduced as a result of the error propagation inherent in single-step noise prediction models.
+
+As shown in \cref{fig:4}, DCLS \cite{9879171}, a state-of-the-art KP method, exhibits significant improvements compared to DP methods, DASR \cite{wang2021unsupervised} and KDSR \cite{xia2022knowledge}, in terms of PSNR and SSIM. Despite being on the leading edge of DM-based SR approaches, StableSR \cite{wang2023exploiting} suffers from incorrect textures (an ellipse is reconstructed as a square) and loss of detail (the person in the mirror disappears). We suspect that the erroneous texture results via StableSR may be blamed on the diversity in the pre-trained DMs which is excessive for SR task. Due to the low quality of given image, the priors in pre-trained DMs may misinterpret the given LR images and reconstruct them in a wrong context.
+
+In this paper, we rethink the existing DP methods that concentrate on estimating degradation representations from LR images while neglecting the essential content information. We propose CDFormer, a Content-aware Degradation-driven Transformer network for BSR. Instead of employing the DM as the whole SR network, we design a Content Degradation Prior (CDP) generation module $CDFormer_{diff}$, where the DM is treated as an estimator to recreate CDP from LR images.
+The Content-aware Degradation-driven Transformer SR module $CDFormer_{SR}$ further utilizes the estimated CDP via several injection modules to adaptively refine features and benefit reconstruction.
+Our main contributions are as follows:
+\begin{itemize}
+    \item We introduce a Content Degradation Prior (CDP) generation module. The CDP is learned from the pairs of HR and LR images in the first stage, while recreated from the LR images solely via a diffusion-based estimator in the second stage.
+    \item We propose a CDP-guided SR network where CDP is injected via learnable affine transformations as well as interflow mechanisms to improve the representation of both high- and low-frequency details.
+    \item Experiments demonstrate the superiority of CDFormer, leading to a new state-of-the-art performance. With content estimation, CDFormer achieves unprecedented SR results even for severely degraded images.
+\end{itemize}
+
+
+
+Related Work
+\label{sec:related}
+
+\subsection{Image Super-Resolution}
+\textbf{Non-blind Image Super-Resolution} algorithms, pioneered by SRCNN \cite{8954253}, mostly start with an assumption in the degradation process (\eg bicubic downsampling and specific blur kernels) and can produce appealing SR results for the synthetic cases, employing either recurrent neural networks (RNNs) \cite{7780550,8099781}, adversarial learning \cite{ledig2017photo,9607421,9878729} or attention mechanisms \cite{8954252,liu2018non,9578003,niu2020single}. To meet the real-world challenges with multiple degrading effects, SRMD \cite{8954253} proposes to incorporate an LR image with a stretched blur kernel, and UDVD \cite{9156922} utilizes consecutive dynamic convolutions and multi-stage loss to refine image features.  Recently, Transformer-based networks \cite{9577359,liang2021swinir,chen2023dual} have emerged and achieved state-of-the-art results. Nevertheless, most non-blind image Super-Resolution methods fail to cope with complicated degradation cases.
+\\
+\textbf{Blind Image Super-Resolution} then emerged to deal with real-world scenarios where the degradation kernels are complicated. Previous methods based on Kernel Prediction (KP) utilize explicit \cite{9156619, gu2019blind, 9578133, 9157144, 9157092} or implicit \cite{bell2019blind, 9879171} techniques to predict blur kernels, and then guide non-blind SR networks through kernel stretching strategies. DCLS \cite{9879171} presents a least squares deconvolution operator to produce clean features using estimated kernels. While KP methods require the ground truth labels of the degradation kernels, Degradation Prediction (DP) methods further encourage learning degradation representation. DASR \cite{wang2021unsupervised} extracts degradation representation in an unsupervised manner. KDSR \cite{xia2022knowledge} takes full advantage of knowledge distillation to distinguish different degradations. 
+
+Although the above DP methods can handle real-world degradations to some extent, we do emphasize that only degradation representation has been utilized in previous works, which may render the network agnostic to the texture information. In contrast, our proposed CDFormer explicitly takes both degradation and content representations into consideration and can achieve remarkable improvement. 
+
+\subsection{Diffusion Models for Super-Resolution}
+Diffusion models (DMs) \cite{ho2020denoising, kingma2021variational, dhariwal2021diffusion} have been proving to be a powerful generative engine. Compared to other generative models like Generative Adversarial Networks (GANs), DMs define a parameterized Markov chain to optimize the lower variational bound on the likelihood function, allowing it to fit all data distributions. DMs for the super-resolution task have been investigated in several papers. SR3 \cite{9887996} and SRDiff \cite{li2022srdiff} adopt DDPM \cite{ho2020denoising} for SR to reconstruct the LR image via iterative denoising, StableSR \cite{wang2023exploiting} further explore the Latent Diffusion Model (LDM) \cite{rombach2022high} to enhance efficiency. However, as discussed above, the use of DMs as SR net can induce error propagation and consequently incorrect textures in SR results. Moreover, DMs are known for being quite expensive in terms of time and computation, which is crucial for real-time applications. 
+
+The solution of generating particular information by diffusion models has provided a new perspective to enhance accuracy and stability. DiffIR \cite{10377629} that trains the DM to estimate prior representation achieves state-of-the-art performance in image restoration. More than DiffIR, we encourage the diffusion process as an estimator to recover both degradation and content representations from the LR images, therefore improving reconstruction in textural details.
+
+
+Methodology
+\begin{figure*}[t]
+	\centering
+	\includegraphics[width=1.0\linewidth]{images/network.pdf}
+	\caption{Overall architecture of our proposed CDFormer. In the first stage (blue line), we train the GT encoder to learn Content Degradation Prior (CDP) from both HR and LR images to guide the SR network $CDFormer_{SR}$. In the second stage (red line), only LR images are input into LR encoder to produce conditional vectors, which helps the diffusion model to recreate CDP.}
+	\label{fig:main}
+\end{figure*}
+\subsection{Motivation}
+Previous BSR methods based on KP have been observed to be ineffective when dealing with complex degradations. DP approaches instead estimate degradation representation, while still in a content-independent manner. To address these limitations, we propose to predict both degradation and content representations, thus reconstructing images with more harmonious textures. 
+
+The content detail is supposed to be rich in high-resolution images. However, SR task given only low-resolution images naturally lacks such information. In this case, we adopt the diffusion model to retrace content and degradation representations from LR images. The diffusion module in CDFormer is to estimate high-level information rather than reconstruct low-level images, thus we can overcome the limitations of low efficiency and excessive diversity that existed in previous diffusion-based SR approaches. 
+
+Moreover, recent research has shown the robust modeling capabilities of Transformers compared with pure CNN architectures, however, still lacks an inductive bias for modeling low-frequency information \cite{chen2023dual}. We are motivated to redesign an adaptive SR network that takes the full advantage of the estimated CDP to model both high- and low-frequency information for accurate reconstruction.
+\subsection{Our Method}
+As illustrated in \cref{fig:main}, our proposed method is composed of a Content Degradation Prior generation module $CDFormer_{diff}$ and a Content-aware Degradation-driven Transformer SR module $CDFormer_{SR}$. We apply a two-stage training strategy to steer the diffusion model. \cref{stage1} describes the training of ground-truth encoder $E_{GT}$ that learns CDP from both LR and HR images. \cref{stage2} presents the pipeline to generate CDP from LR images by encoder $E_{LR}$ with the diffusion process. In both stages, $CDFormer_{SR}$ is trainable, which is stacked by some residual groups and a reconstruction net. Each residual group introduces several Content-aware Degradation-driven Refinement Blocks (CDRBs), where Content Degradation Injection Module (CDIM) is applied to infuse the estimated CDP. 
+For simplicity, we provide a brief background of the diffusion model in the supplementary material and the following will focus on our approach.
+\subsubsection{STAGE 1: Learn CDP from $I_{LR}$ and $I_{HR}$}
+\label{stage1}
+In this stage, $E_{GT}$  will be trained to construct the real data distribution under the supervision of both HR and LR images, and $CDFormer_{SR}$ will also be trained to ensure that estimated representations have been efficiently used.
+
+The estimator $E_{GT}$ is designed to extract the degradation information from LR and HR images pair, as well as the content details from the HR images, which is the so-called CDP, denoted as:
+\begin{equation}
+	Z_{0}=E_{GT}(Concat((I_{HR})\downarrow_s, I_{LR}), I_{HR}),
+	\label{eq:Encoder_GT}
+\end{equation}
+where the CDP $Z_{0}\in \mathbb{R}^{C_z}$, $\downarrow_s$ denotes a Pixel-Unshuffle operation with scale $s$. Specifically, $E_{GT}$ is implemented by several residual blocks and an MLP layer, as depicted in the right of \cref{fig:main}. The fusion of CDP with features in $CDFormer_{SR}$ is accomplished in the injection module CDIM through channel-wise affine transformations which are learnable during training, formulated as:
+\begin{equation}
+	F^{'}=Linear(Z_{0})\odot Norm(F)+Linear(Z_{0}),
+	\label{eq:CDIM_ori}
+\end{equation}
+where $F,F^{'}\in \mathbb{R}^{H\times W\times C}$ are input and output feature maps respectively, $\odot$ is a element-wise multiplication, $Norm(\cdot)$ denotes Layer Normalization.
+
+The goal of SR network $CDFormer_{SR}$ is to reconstruct high-resolution images with the guidance of CDP.  
+To enhance the representation ability, CDRB combines spatial attention and channel attention mechanisms, and further incorporates CNN and Transformer features via interflow mechanism, enabling the CDRB module to adaptively refine both high and low-frequency information.
+
+As depicted in \cref{fig:details}, $i$-th CDRB involves four CDIMs to inject CDP into the feature maps $F^{j}_{i} \in\mathbb{R}^{H\times W\times C}$ by:
+\begin{equation}
+	\hat{F}^{j}_{i}=CDIM_{i,j}(F^{j}_{i}, Z_{0}),i=1,...,N_{2}, j=1,2,3,4
+	\label{eq:CDIM}
+\end{equation}
+where $Z_{0}$ is the CDP predicted by $E_{GT}$, $CDIM_{i,j}$ is the $j$-th CDIM in $i$-th CDRB. 
+
+To ensure effective learning of representations, we apply two kinds of self-attention and deep convolution operations. To be specific, we first utilize Spatial Window Self-Attention (SW-SA) that calculates attention scores within non-overlapping windows. Given the input features $\hat{F}^{1}_{i}=CDIM_{i,1}(F^1_i,Z_0)$, we first obtain query, key, and value elements through linear projection: 
+\begin{equation}
+	Q=\hat{F}^{1}_{i} W_{Q},K=\hat{F}^{1}_{i} W_{K},V=\hat{F}^{1}_{i} W_{V},
+\end{equation}
+where $W_Q,W_K,W_V\in \mathbb R^{C\times C}$ are learnable parameter matrices, with no bias appended. Window partition is then applied to divide $Q,K,V$ into $\frac{HW}{N_{w}}$ non-overlapping windows, each window with $N_w$ length. These flattened and reshaped elements are denoted as $Q_s,K_s$, and $V_{s}$. Finally, the output features are obtained as follows:
+\begin{equation}
+    F^{S}_i=Softmax({Q_{s}K_{s}^T}/{\sqrt{d_k}}) V_{s},
+	\label{eq:SWSA}
+\end{equation}
+where $d_k$ is the variance of the attention score.
+
+Moreover, we introduce an interflow mechanism that utilizes two kinds of distiller between two branches to adaptively modulate the CNN and Transformer features. Specifically, for feature maps in $\mathbb{R}^{H\times W\times C}$, Channel Distiller $\Tilde{C}$ transforms to $\mathbb{R}^{1\times 1\times C}$, while Spatial Distiller $\Tilde{S}$ changes to $\mathbb{R}^{H\times W\times 1}$. We formulate the above process as:
+\begin{equation}
+\begin{aligned}
+	&F^{S}_i=SW\mbox{-}SA(\hat{F}^{1}_{i}), F^{W}_i=DConv(\hat{F}^{1}_{i}), \\
+	&F^{2}_{i}=F^{S}_i \odot \Tilde{S}(F^{W}_i) + F^{W}_i \odot \Tilde{C}(F^{S}_i)+F^1_{i},\\
+    &F^{3}_{i}=FFN(\hat{F}^{2}_{i})+F^{2}_{i}
+\label{eq:FAS}
+\end{aligned}
+\end{equation}
+where $DConv(\cdot)$ denotes a depth-wise convolution layer, $\hat{F}^{2}_{i}=CDIM_{i,2}(F_i^2,Z_0)$, $FFN(\cdot)$ is a feed-forward network with GELU activation.
+
+\begin{figure*}[t]
+	\centering
+	\includegraphics[width=0.98\linewidth]{images/Details.pdf}
+	\caption{Details of Content-aware Degradation-driven Refinement Block (CDRB).}
+	\label{fig:details}
+\end{figure*}
+Different from SW-SA which learns pixel-wise relations, Channel-wise Self-Attention (CW-SA) focuses on understanding relationships between channels. Given feature maps after injection operation as $\hat{F}^{3}_{i}=CDIM_{i,3}(F^3_i,Z_0)$, query, key, and value elements $Q_c, K_c, V_c$ are projected from $\hat{F}^{3}_{i}$. Channel-wise relationship is computed by:
+\begin{equation}
+F^{C}_i=Softmax({Q_{c}^TK_{c}}/{\alpha})V_{c},
+	\label{eq:CASA}
+\end{equation}
+where $\alpha$ is a learnable temperature parameter.
+
+Again, feature aggregation is achieved by introducing the interflow between channel-wise self-attention and deep convolution operations. This technique allows the network to capture both global and local dependencies. This process is formulated as follows:
+\begin{equation}
+\begin{aligned}
+	&F^{C}_i= CW\mbox{-}SA(\hat{F}^{3}_{i}),\dot{F}^{W}_i=DConv(\hat{F}^{3}_{i}), \\
+	&F^{4}_{i}= F^{C}_i \odot \Tilde{C}(\dot{F}^{W}_i)+\dot{F}^{W}_i \odot \Tilde{S}(F^{C}_i)+F^3_{i},\\
+    &F_{i+1}=FFN(\hat{F}^{4}_{i})+F^{4}_{i}
+	 \label{eq:FAC}
+\end{aligned}
+\end{equation}
+where $\Tilde{C}$ and $\Tilde{S}$ denote the channel distiller and spatial distiller, respectively. $\hat{F}^{4}_{i}=CDIM_{i,4}(F^4_i,Z_0)$.
+
+Finally, we jointly optimize $E_{GT}$ and $CDFormer_{SR}$ by reconstruction loss between HR images and reconstructed SR images as the training objective for the first stage:
+\begin{equation}
+	\mathcal {L}_{rec}=\|I_{HR}-I_{SR}\|_{1},
+	\label{eq:S1loos}
+\end{equation}
+
+
+
+
+\subsubsection{STAGE 2: Generate CDP from $I_{LR}$}
+\label{stage2}
+Theoretically, $I_{HR}$ is full of content details. However, for the SR task, such high-resolution images are unknown during inference. In the second stage, we therefore propose to treat the diffusion model as an estimator and generate CDP from LR images, exploiting the capability of diffusion models to approximate the real data distribution.
+
+Specifically, we reuse the pre-trained encoder $E_{GT}$ in the first stage to produce the initial CDP $Z_{0}\in \mathbb{R}^{C_z}$, which is supposed to be the ground truth representation of content and degradation. Following the normal routine to train a diffusion model, we add Gaussian noise to $Z_0$ in the forward diffusion process to produce a noisy representation:
+\begin{equation}
+	Z_T = \sqrt{\bar \alpha_T} Z_0 + \sqrt{1-\bar\alpha_T} \epsilon
+\end{equation}
+where $T$ is the total number of time steps, $\bar\alpha_T=\prod_{i=1}^T{\alpha_i}$ is predefined schedule, and added noise $\epsilon \sim \mathcal{N}(0,1)$.
+
+During the reverse process, $E_{LR}$ that is a replicate of $E_{GT}$ with the degradation branch only, will be trained to produce a one-dimensional condition vector $c\in \mathbb{R}^{C_z}$ from the LR images. This conditional vector will then be fused into each reverse step, guiding the diffusion model to generate a great representation of CDP based on the LR images. Notice that each training step $CDFormer_{diff}$ performs the whole sampling process with $T$ iterations, which is different from the traditional DMs that minimize $||\epsilon-\epsilon_\theta(x_t,t,c)||$ for a single diffusion step. Instead, we compute $\hat{Z}_0$ in every training step as follows:
+\begin{equation}
+\begin{aligned}
+    \hat{Z}_{t-1}=\dfrac{1}{\sqrt{\alpha_{t}}}(\hat{Z}_{t}-\dfrac{1-\alpha_{t}}{\sqrt{1-\bar\alpha_{t}}}\epsilon_\theta(\hat{Z}_t,t,c))+\sigma_t\epsilon,\\
+    t=T,...,1
+\label{eq:reverse}
+\end{aligned}
+\end{equation}
+where the one-dimensional condition vector $c=E_{LR}(I_{LR})$ is concatenated with $\hat{Z}_t$, variance $\sigma_t=\sqrt{1-\alpha_{t}}$.
+
+The generated representation $\hat{Z}_0$ is expected to recreate the lost information in LR images, thus we compute the $L_1$ distance between the CDP from $E_{GT}$ and from diffusion as:
+\begin{equation}
+	\mathcal {L}_{diff}=\|Z_{0}-\hat{Z_{0}}\|_{1}	\label{eq:loss}
+\end{equation}
+
+To ensure efficient learning, $CDFormer_{diff}$ and $CDFormer_{SR}$ will be trained jointly, by minimizing the loss function $\mathcal {L}= \mathcal L_{diff}+ \alpha_{rec} \mathcal L_{rec}$. Notice that in the second stage, we inject CDP $\hat{Z}_0$ predicted by diffusion model into $CDFormer_{SR}$, instead of $Z_0$ in the first stage. The algorithm is detailed in the supplementary material.
+
+During training, $\hat{Z}_T$ is actually given from $I_{HR}$, while for inference we exclusively perform the reverse diffusion process from a Gaussian noise, i.e., $\hat{Z}_T \sim \mathcal{N}(0,1)$. The conditional vector $c$ obtained from LR images will also participate in. Utilizing the denoising ability of the diffusion model, CDFormer is able to generate CDP from LR images, with abundant content and degradation representations to guide $CDFormer_{SR}$ to reconstruct both high- and low-frequency information. Moreover, $CDFormer_{diff}$ achieves plausible results with fewer sampling iterations ($T=4$ in our experiments) and parameters ($\sim 3$M).
+
+
+Experiments
+\begin{table*}[t]
+	\caption{Comparison with diffusion-based SR models test on $192\times192$ resolution for $\times 4$ scale. KP method DCLS for reference.}
+	\centering
+	\label{table:dms}
+	\resizebox{\textwidth}{!}{
+		\begin{tabular}{|c|ccc|cccc|cccc|}
+			\hline
+			\multirow{2}{*}{Method} & 	\multirow{2}{*}{Params(M)} & 	\multirow{2}{*}{FLOPs(T)} &	
+			\multirow{2}{*}{Time(s)} &	  \multicolumn{4}{c}{Set14 / kernel width=0}&  \multicolumn{4}{|c|}{Urban100 / kernel width=0}  \\
+			&&&& PSNR $\uparrow$ & SSIM $\uparrow$  & FID $\downarrow$ & LPIPS $\downarrow$ & PSNR $\uparrow$ & SSIM $\uparrow$  & FID $\downarrow$ & LPIPS $\downarrow$   \\
+			\hline
+			SR3\cite{9887996}   & 187.65 & 6601 & 532 &
+			25.41 & 0.7462 & 83.63 & \textbf{\textcolor{red}{0.246}} & - & - & - & -  \\
+			StableSR \cite{wang2023exploiting}  & 1409.11 & - & 71 &
+			19.66 & 0.5406 & 97.84 & 0.282 & 20.56 & 0.6753 & 54.21 & \textbf{\textcolor{red}{0.195}}  \\
+   		DCLS\cite{9879171}  & 13.63 & 0.279 & 0.04 &
+			28.61 & 0.7816 & \textcolor{blue}{\underline{78.21}} & 0.293 & 26.50 & 0.7973 & 43.25 & 0.220  \\
+			CDFormer-S  & 11.09 & 0.355 & 0.14 &
+			\textcolor{blue}{\underline{28.80}} & \textcolor{blue}{\underline{0.7876}} & 78.69 & 0.287 & \textcolor{blue}{\underline{26.56}} & \textcolor{blue}{\underline{0.8023}} & \textcolor{blue}{\underline{26.40}} & 0.214 \\ 
+			CDFormer  & 24.46 & 0.725 & 0.39 &
+			\textbf{\textcolor{red}{29.00}} & \textbf{\textcolor{red}{0.7918}} & \textbf{\textcolor{red}{75.43}} & \textcolor{blue}{\underline{0.280}} & \textbf{\textcolor{red}{27.21}} & \textbf{\textcolor{red}{0.8189}} & \textbf{\textcolor{red}{23.94}} & \textcolor{blue}{\underline{0.197}}  \\
+			\hline
+	\end{tabular}}
+\end{table*}
+\begin{table*}[t]
+	\caption{Quantitive evaluation by PSNR ($\uparrow$) on noise-free degradations with isotropic Gaussian kernels. Best in \textbf{\textcolor{red}{red}} and second in \textcolor{blue}{\underline{blue}}.}
+	\centering
+	\label{table:iso}
+	\resizebox{\textwidth}{!}{
+		\begin{tabular}{|c|c|cccc|cccc|cccc|cccc|}
+			\hline
+			Method&
+			Scale&
+			\multicolumn{4}{c|}{Set5}& \multicolumn{4}{c|}{Set14}& \multicolumn{4}{c|}{B100}& \multicolumn{4}{c|}{Urban100} \\
+            \hline
+			\multicolumn{2}{|c|}{Kernel Width} &  0   &  0.6  &  1.2  &  1.8  &   0   &  0.6  &  1.2  &  1.8  &   0   &  0.6  &  1.2  &  1.8  &   0   &  0.6  &  1.2  &  1.8   \\
+			\hline
+			Bicubic & \multirow{5}{*}{$\times$2}      & 33.66 & 32.30 & 29.28 & 27.07 & 30.24 & 29.21 & 27.13 & 25.47 & 29.56 & 28.76 & 26.93 & 25.51 & 26.88 & 26.13 & 24.46 & 23.06  \\
+			RCAN \cite{zhang2018image} &              & \textbf{\textcolor{red}{38.27}} & 35.91 & 31.20 & 28.50 & 
+			\textbf{\textcolor{red}{34.12}} & 32.31 & 28.48 & 26.33 & \textbf{\textcolor{red}{32.41}} & 31.16 & 28.04 & 26.26 & 
+			\textbf{\textcolor{red}{33.34}} & 29.80 & 25.38 & 23.44  \\
+			DASR \cite{wang2021unsupervised} &              & 
+			37.87 & 37.47 & 37.19 & 35.43 & 
+			33.34 &32.96 & 32.78 &31.60 & 
+			32.03 & 31.78 & 31.71 & 30.54 &
+			31.49 & 30.71 & 30.36 & 28.95  \\
+			DCLS \cite{9879171} &              & 
+			38.06 & \textcolor{blue}{\underline{38.04}} & \textcolor{blue}{\underline{37.66}} & \textcolor{blue}{\underline{36.06}} & 
+			33.62 & \textcolor{blue}{\underline{33.52}} & \textcolor{blue}{\underline{33.52}} & \textcolor{blue}{\underline{32.27}} & 
+			32.23 & \textcolor{blue}{\underline{32.25}} & \textcolor{blue}{3\underline{2.12}} & \textcolor{blue}{\underline{30.93}} & 
+			32.36 & \textcolor{blue}{\underline{32.17} }& \textcolor{blue}{\underline{31.81}} & \textcolor{blue}{\underline{30.23}}  \\ 
+			\multirow{1}{*}{CDFormer (Ours)}    &          &
+			\textcolor{blue}{\underline{38.25}} & \textbf{\textcolor{red}{38.25}} & \textbf{\textcolor{red}{37.88}} & \textbf{\textcolor{red}{36.32}} &
+			\textcolor{blue}{\underline{34.10}} & \textbf{\textcolor{red}{34.01}} & \textbf{\textcolor{red}{33.88}} & \textbf{\textcolor{red}{32.57}}&
+			\textcolor{blue}{\underline{32.40}} & \textbf{\textcolor{red}{32.39}} & \textbf{\textcolor{red}{32.25}} & \textbf{\textcolor{red}{31.03}} &
+			\textcolor{blue}{\underline{33.11}} & \textbf{\textcolor{red}{32.62}} & \textbf{\textcolor{red}{32.08}} & \textbf{\textcolor{red}{30.47}}     \\
+			\hline
+			\multicolumn{2}{|c|}{Kernel Width} &   0   &  0.8  &  1.6  &  2.4  &   0   &  0.8  &  1.6  &  2.4  &   0   &  0.8  &  1.6  &  2.4  &   0   &  0.8  &  1.6  &  2.4   \cr\hline
+			Bicubic & \multirow{5}{*}{$\times$3}      & 30.39 & 29.42 & 27.24 & 25.37 & 27.55 & 26.84 & 25.42 & 24.09 & 27.21 & 26.72 & 25.52 & 24.41 & 24.46 & 24.02 & 22.95 & 21.89  \\
+			RCAN \cite{zhang2018image} &              & \textcolor{blue}{\underline{34.74}} & 32.90 & 29.12 & 26.75 & 
+			\textcolor{blue}{\underline{30.65}} & 29.49 & 26.75 & 24.99 & \textcolor{blue}{2\underline{9.32}} & 28.56 & 26.55 & 25.18 & 
+			\textcolor{blue}{\underline{29.09}} & 26.89 & 26.89 & 22.30  \\
+			DASR \cite{wang2021unsupervised} &              &
+			34.06 &34.08 & 33.57 & 32.15& 
+			30.13 &29.99 &28.66 & 28.42 & 
+			28.96 &28.90 &28.62 & 28.13 &
+			27.65 & 27.36 & 26.86 & 25.95 \\
+			DCLS \cite{9879171} &              & 
+			34.62 & \textcolor{blue}{\underline{34.68}} & \textcolor{blue}{\underline{34.53}} & \textcolor{blue}{\underline{33.55}} & 
+			30.33 & \textcolor{blue}{\underline{30.39}} & \textcolor{blue}{\underline{30.42}} & \textcolor{blue}{\underline{29.76}} & 
+			29.16 & \textcolor{blue}{\underline{29.21}} & \textcolor{blue}{\underline{29.20}} & \textcolor{blue}{\underline{28.68}} & 
+			28.53 & \textcolor{blue}{\underline{28.50}} & \textcolor{blue}{\underline{28.29}} & \textcolor{blue}{\underline{27.47}}  \\
+			\multirow{1}{*}{CDFormer (Ours)}    &             &
+			\textbf{\textcolor{red}{34.79}} & \textbf{\textcolor{red}{34.85}} & \textbf{\textcolor{red}{34.61}} & \textbf{\textcolor{red}{33.73}} &
+			\textbf{\textcolor{red}{30.73}} & \textbf{\textcolor{red}{30.70}} & \textbf{\textcolor{red}{30.60}} & \textbf{\textcolor{red}{29.94}} &
+			\textbf{\textcolor{red}{29.34}} & \textbf{\textcolor{red}{29.36}} & \textbf{\textcolor{red}{29.30}} & \textbf{\textcolor{red}{28.79}} &
+			\textbf{\textcolor{red}{29.20}} & \textbf{\textcolor{red}{29.01}} & \textbf{\textcolor{red}{28.68}} & \textbf{\textcolor{red}{27.86}}     \\		
+			
+            \hline
+			\multicolumn{2}{|c|}{Kernel Width} &   0   &  1.2  &  2.4  &  3.6  &   0   &  1.2  &  2.4  &  3.6  &   0   &  1.2  &  2.4  &  3.6 &   0   &  1.2  &  2.4  &  3.6    \cr \hline
+			Bicubic & \multirow{7}{*}{$\times$4}      & 28.42 & 27.30 & 25.12 & 23.40 & 26.00 & 25.24 & 23.83 & 22.57 & 25.96 & 25.42 & 24.20 & 23.15 & 23.14 & 22.68 & 21.62 & 20.65  \\
+			RCAN \cite{zhang2018image} &              & \textcolor{blue}{\underline{32.63}} & 30.26 & 26.72 & 24.66 & 
+			28.87 & 27.48 & 24.93 & 23.41 & 27.72 & 26.89 & 25.09 & 23.93 & 26.61 & 24.71 & 22.25 & 20.99  \\
+			DASR \cite{wang2021unsupervised} &              & 31.99 & 31.92 & 31.75 & 30.59 & 
+			28.50 & 28.45 & 28.28 & 27.45 & 
+			27.51 & 27.52 & 27.43 & 26.83 &
+			25.82 &25.69 & 25.44 & 24.66  \\
+			KDSR \cite{xia2022knowledge} &              &
+			32.4
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

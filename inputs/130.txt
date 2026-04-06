@@ -1,0 +1,269 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\cutsectionup
+\cutparagraphup
+
+Dense prediction tasks constitute a fundamental class of computer vision problems, where the goal is to learn a mapping from an input image to a pixel-wise annotated label.
+Examples include semantic segmentation, depth estimation, edge detection, and keypoint detection, to name a few~\citep{taskonomy2018, cai2019flattenet}.
+While supervised methods achieved remarkable progress, they require a substantial amount of manually annotated pixel-wise labels, leading to a massive and often prohibitive per-task labeling cost~\citep{kang2019few, liu2020part, ouali2020semi}.
+Prior work involving transfer and multi-task learning have made efforts to generally relieve the burden, but they often assume that relations between tasks are known in advance, and still require a fairly large amount of labeled images of the task of interest (\emph{e.g.}, thousands)~\citep{taskonomy2018, standley2020tasks, o2020unsupervised, wang2021dense}.
+This motivates us to seek a \emph{few-shot learning} solution that can \textbf{\emph{universally} learn arbitrary dense prediction tasks from \emph{a few} (\emph{e.g.}, ten) labeled images}.
+
+However, existing few-shot learning methods for computer vision are specifically targeted to solve a restricted set of tasks, such as classification, object detection, and semantic segmentation~\citep{vinyals2016matching, kang2019few, min2021hypercorrelation}.
+As a result, they often exploit prior knowledge and assumptions specific to these tasks in designing model architecture and training procedure, therefore not suited for generalizing to arbitrary dense prediction tasks~\citep{snell2017prototypical, fan2022self, iqbal2022msanet, hong2022cost}.
+To our knowledge, no prior work in few-shot learning provided approaches to solve arbitrary dense prediction tasks in a universal manner.
+
+We argue that designing a universal few-shot learner for arbitrary dense prediction tasks must meet the following desiderata.
+First, the learner must have a unified architecture that can handle arbitrary tasks by design, and share most of the parameters across tasks so that it can acquire generalizable knowledge for few-shot learning of arbitrary unseen tasks.
+Second, the learner should flexibly adapt its prediction mechanism to solve diverse tasks of unseen semantics, while being efficient enough to prevent over-fitting.
+Designing such a learner is highly challenging, as it should be general and unified while being able to flexibly adapt to any unseen task without over-fitting few examples.
+
+In this work, we propose \textbf{Visual Token Matching (VTM)}, a universal few-shot learner for arbitrary dense prediction tasks.
+We draw inspiration from the cognitive process of analogy making~\citep{mitchell2021abstraction}; given a few examples of a new task, humans can quickly understand how to relate input and output based on a \emph{similarity} between examples (\emph{i.e.}, assign similar outputs to similar inputs), while flexibly changing the notion of similarity to the given context.
+In VTM, we implement analogy-making for dense prediction as patch-level non-parametric matching, where the model learns the similarity in image patches that captures the similarity in label patches.
+Given a few labeled examples of a novel task, it first adapts its similarity that describes the given examples well, then predicts the labels of an unseen image by combining the label patches of the examples based on image patch similarity.
+Despite the simplicity, the model has a unified architecture for arbitrary dense prediction tasks since the matching algorithm encapsulates all tasks and label structures (\emph{e.g.}, continuous or discrete) by nature.
+Also, we introduce only a small amount of task-specific parameters, which makes our model robust to over-fitting as well as flexible.
+
+Our contributions are as follows.
+\textbf{(1)} For the first time to our knowledge, we propose and tackle the problem of universal few-shot learning of arbitrary dense prediction tasks.
+We formulate the problem as episodic meta-learning and identify two key desiderata of the learner -- unified architecture and adaptation mechanism.
+\textbf{(2)} We propose Visual Token Matching (VTM), a novel universal few-shot learner for dense prediction tasks.
+It employs non-parametric matching on tokenized image and label embeddings, which flexibly adapts to unseen tasks using a tiny amount of task-specific parameters.
+\textbf{(3)} We implement VTM as a powerful hierarchical encoder-decoder architecture, where token matching is performed at multiple feature hierarchies using attention mechanism.
+We employ ViT image and label encoders~\citep{dosovitskiy2020image} and a convolutional decoder~\citep{ranftl2021vision}, which seamlessly works with our algorithm.
+\textbf{(4)} We demonstrate VTM on a challenging variant of Taskonomy dataset~\citep{taskonomy2018} and observe that it robustly few-shot learns various unseen dense prediction tasks.
+Surprisingly, it is competitive to or outperforms fully supervised baselines given extremely few examples~($0.1\%$), \textbf{sometimes using only 10 labeled images~($<0.004\%$)}.
+\cutparagraphup
+
+
+Problem Setup
+\cutparagraphup
+We propose and tackle the problem of universal few-shot learning of arbitrary dense prediction tasks.
+In our setup, we consider any arbitrary task $\mathcal{T}$ that can be expressed as follows:
+\begin{equation}\label{eqn:dense_task}
+    \mathcal{T}: \mathbb{R}^{H \times W \times 3} \to \mathbb{R}^{H \times W \times C_\mathcal{T}}, \quad C_\mathcal{T} \in \mathbb{N}.
+\end{equation}
+This subsumes a wide range of vision tasks including semantic segmentation, depth estimation, surface normal prediction, edge prediction, to name a few, varying in structure of output space, \emph{e.g.}, dimensionality ($C_\mathcal{T}$) and topology (discrete or continuous), as well as the required knowledge.
+
+Our goal is to build a universal few-shot learner $\mathcal{F}$ that, for \emph{any} such task $\mathcal{T}$, can produce predictions $\hat{Y}^{q}$ for an unseen image (\emph{query}) $X^{q}$ given a few labeled examples (\emph{support set}) $\mathcal{S}_\mathcal{T}$:
+\begin{equation}\label{eqn:universal_few_shot_learner}
+    \hat{Y}^{q} = \mathcal{F}(X^{q}; \mathcal{S}_\mathcal{T}), \quad \mathcal{S}_\mathcal{T} = \{(X^i, Y^i)\}_{i\leq N}.
+\end{equation}
+To build such a universal few-shot learner $\mathcal{F}$, we adopt the conventional episodic training protocol where the training is composed of multiple \emph{episodes}, each simulating a few-shot learning problem.
+To this end, we utilize a meta-training dataset $\mathcal{D}_\text{train}$ that contains labeled examples of diverse dense prediction tasks.
+Each training episode simulates a few-shot learning scenario of a specific task $\mathcal{T}_\text{train}$ in the dataset -- the objective is to produce correct labels for query images given a support set.
+By experiencing multiple episodes of few-shot learning, the model is expected to learn general knowledge for fast and flexible adaptation to novel tasks.
+At test time, the model is asked to perform few-shot learning on arbitrary \emph{unseen} tasks $\mathcal{T}_\text{test}$ not included in the training dataset ($\mathcal{D}_\text{train}$).
+An immediate challenge in handling arbitrary tasks in Eq.~\ref{eqn:dense_task} is that each task in both meta-training and testing has different output structures (\emph{i.e.}, output dimension $C_{\mathcal{T}}$ varies per task), making it difficult to design a single, unified parameterization of a model for all tasks. 
+As a simple yet general solution, we cast a task $\mathcal{T}: \mathbb{R}^{H \times W \times 3} \to \mathbb{R}^{H \times W \times C_\mathcal{T}}$ into $C_\mathcal{T}$ \emph{single-channel} sub-tasks $\mathcal{T}_1, \cdots, \mathcal{T}_{C_\mathcal{T}}$ of learning each channel, and model each sub-task $\mathcal{T}_c: \mathbb{R}^{H \times W \times 3} \to \mathbb{R}^{H \times W \times 1}$ independently using the shared model $\mathcal{F}$ in Eq.~\ref{eqn:universal_few_shot_learner}.
+Although multi-channel information is beneficial in general, we observe that its impact is negligible in practice, while the channel-wise decomposition introduces other useful benefits such as augmenting the number of tasks in meta-training, flexibility to generalize to arbitrary dimension of unseen tasks, and more efficient parameter-sharing within and across tasks.
+Without loss of generality, the rest of the paper considers that every task is of single-channel label.
+\cutparagraphup
+\subsection{Challenges and Desiderata}
+\cutparagraphup
+The above problem setup is universal, potentially benefiting various downstream vision applications.
+Yet, to our knowledge, no prior work in few-shot learning attempted to solve it.
+We attribute this to two unique desiderata for a universal few-shot learner that pose a challenge to current methods.
+
+\cutparagraphup
+\paragraph{Task-Agnostic Architecture}
+As any arbitrary unseen task $\mathcal{T}_\text{test}$ can be encountered in test-time, the few-shot learner must have a unified architecture that can handle all dense prediction tasks by design.
+This means we cannot exploit any kind of prior knowledge or inductive bias specific to certain tasks.
+For example, we cannot adopt common strategies in few-shot segmentation such as class prototype or binary masking, as they rely on the discrete nature of categorical labels while the label space of $\mathcal{T}_\text{test}$ can be arbitrary (continuous or discrete).
+Ideally, the unified architecture would allow the learner to acquire generalizable knowledge for few-shot learning any unseen tasks, as it enables sharing most of the model parameters across all tasks in meta-training and testing.
+
+\cutparagraphup
+\paragraph{Adaptation Mechanism}
+On top of the unified architecture, the learner should have a flexible and efficient adaptation mechanism to address highly diverse semantics of the unseen tasks $\mathcal{T}_\text{test}$.
+This is because tasks of different semantics can require distinct sets of \emph{features} -- depth estimation requires 3D scene understanding, while edge estimation prefers low-level image gradient.
+As a result, even with a unified architecture, a learner that depends on a fixed algorithm and features would either underfit to various training tasks in $\mathcal{D}_\text{train}$, or fail for an unseen task $\mathcal{T}_\text{test}$ that has a completely novel semantics.
+Thus, our few-shot learner should be flexibly adapt its features to a given task $\mathcal{T}$ based on the support set $\mathcal{S}_\mathcal{T}$, \emph{e.g.}, through task-specific parameters.
+At the same time, the adaptation mechanism should be parameter-efficient (\emph{e.g.}, using a tiny amount of task-specific parameters) to prevent over-fitting to training tasks $\mathcal{T}_\text{train}$ or test-time support set $\mathcal{S}_{\mathcal{T}_\text{test}}$.
+
+
+
+Visual Token Matching
+\cutparagraphup
+We introduce \textbf{Visual Token Matching (VTM)}, a universal few-shot learner for arbitrary dense prediction tasks that is designed to flexibly adapt to novel tasks of diverse semantics.
+We first discuss the underlying motivation of VTM in Section~\ref{sec:motivation} and discuss its architecture in Section~\ref{sec:architecture}.
+
+\cutparagraphup
+\subsection{Motivation}
+\cutparagraphup
+\label{sec:motivation}
+We seek for a general function form of Eq.~\ref{eqn:universal_few_shot_learner} that produces structured labels of arbitrary tasks with a unified framework.
+To this end, we opt into a non-parametric approach that operates on patches, where the query label is obtained by weighted combination of support labels.
+Let $X = \{\mathbf{x}_j\}_{j\leq M}$ denote an image (or label) on patch grid of size $M = h\times w$, where $\mathbf{x}_j$ is $j$-th patch.
+Given a query image $X^q=\{\mathbf{x}^q_j\}_{j\leq M}$ and a support set $\{(X^i, Y^i)\}_{i\leq N} = \{(\mathbf{x}_k^i,\mathbf{y}_k^i)\}_{k\leq M, i\leq N}$ for a task $\mathcal{T}$, we project all patches to embedding spaces and predict the query label $Y^q = \{\mathbf{y}_j^q\}_{j\leq M}$ patch-wise by,
+\begin{align}
+    g(\mathbf{y}^q_j)=\sum_{i\leq N}\sum_{k\leq M} \sigma\left( f_\mathcal{T}(\mathbf{x}^q_j), f_\mathcal{T}(\mathbf{x}^i_k) \right) g(\mathbf{y}^i_k),
+    \label{eqn:matching}
+\end{align}
+where $f_\mathcal{T}(\mathbf{x})=f(\mathbf{x};\theta, \theta_\mathcal{T})\in\mathbb{R}^{d}$ and $g(\mathbf{y})=g(\mathbf{y};\phi)\in\mathbb{R}^{d}$ correspond to the image and label encoder, respectively, and $\sigma: \mathbb{R}^d \times \mathbb{R}^d \to [0, 1]$ denotes a similarity function defined on the image patch embeddings.
+Then, each predicted label embedding can be mapped to a label patch $\hat{\mathbf{y}}^q_j=h(g(\mathbf{y}^q_j))$ by introducing a label decoder $h\approx g^{-1}$.
+
+Note that Eq.~\ref{eqn:matching} generalizes the Matching Network (MN)~\citep{vinyals2016matching}, and serves as a general framework for arbitrary dense prediction tasks\footnote{While MN performs image-level classification, we consider its extension to patch-level embeddings.}.
+First, while MN interpolates raw categorical labels $\mathbf{y}$ for classification (\emph{i.e.}, $g$ is an identity function), we perform matching on the general embedding space of the label encoder $g(\mathbf{y})$; it encapsulates arbitrary tasks (\emph{e.g.}, discrete or continuous) into the common embedding space, thus enabling the matching to work in a consistent way agnostic to tasks.
+Second, while MN exploits a fixed similarity of images $\sigma(f(\mathbf{x}^q), f(\mathbf{x}^i))$, we modulate the similarity $\sigma(f_\mathcal{T}(\mathbf{x}^q), f_\mathcal{T}(\mathbf{x}^i))$ adaptively to any given task by switching the task-specific parameters $\theta_\mathcal{T}$.
+Having adaptable components in the image encoder $f_\mathcal{T}$ is essential in our problem since it can adapt the representations to reflect features unique in each task.
+Finally, our method employs an additional decoder $h$ to project the predicted label embeddings to the output space. 
+
+Once trained, the prediction mechanism in Eq.~\ref{eqn:matching} can easily adapt to \emph{unseen} tasks at test-time.
+Since the label encoder $g$ is shared across tasks, we can use it to embed the label patches of unseen tasks with frozen parameters $\phi$.
+Adaptation to a novel task is performed by the image encoder $f_\mathcal{T}$, by optimizing the task-specific parameters $\theta_\mathcal{T}$ which take a small portion of the model.
+This allows our model to robustly adapt to unseen tasks of various semantics with a small support set.
+In experiments, our model becomes competitive to supervised method using less than 0.1\% of labels.
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=\textwidth]{figure_files/Architecture.pdf}
+    \caption{
+    Overall architecture of VTM.
+    Our model is a hierarchical encoder-decoder with four main components: the image encoder $f_\mathcal{T}$, label encoder $g$, label decoder $h$, and the matching module.
+    See the text for more detailed descriptions.
+    }
+    \label{fig:model_architecture}
+\end{figure}
+
+\subsection{Architecture}
+\cutparagraphup
+\label{sec:architecture}
+Figure~\ref{fig:model_architecture} illustrates our model.
+Our model has a hierarchical encoder-decoder architecture that implements patch-level non-parametric matching of Eq.~\ref{eqn:matching} in multiple hierarchies with four components: image encoder $f_\mathcal{T}$, label encoder $g$, label decoder $h$, and the matching module.
+Given the query image and the support set, the image encoder first extracts patch-level embeddings (\emph{tokens}) of each query and support image independently.
+The label encoder similarly extracts tokens of each support label.
+Given the tokens at each hierarchy, the matching module performs non-parametric matching of Eq.~\ref{eqn:matching} to infer the tokens of query label, from which the label decoder forms the raw query label.
+
+\cutparagraphup
+\paragraph{Image Encoder}
+We employ a Vision Transformer (ViT)~\citep{dosovitskiy2020image} for our image encoder.
+The ViT is applied to query and each support image independently while sharing weights, which produces tokenized representation of image patches at multiple hierarchies.
+Similar to \citet{ranftl2021vision}, we extract tokens at four intermediate ViT blocks to form hierarchical features.
+To aid learning general representation for a wide range of tasks, we initialize the parameters from pre-trained BEiT~\citep{bao2021beit}, which is self-supervised thus less biased towards specific tasks.
+
+As discussed in Section~\ref{sec:motivation}, we design the image encoder to have two sets of parameters $\theta$~and~$\theta_\mathcal{T}$, where $\theta$ is shared across all tasks and $\theta_\mathcal{T}$ is specific to each task $\mathcal{T}$.
+Among many candidates to design an adaptation mechanism through $\theta_\mathcal{T}$, we find that \emph{bias tuning}~\citep{cai2020tinytl,zaken2022bitfit} provides the best efficiency and performance empirically.
+To this end, we employ separate sets of biases for each task in both meta-training and meta-testing, while sharing all the other parameters.
+
+\cutparagraphup
+\paragraph{Label Encoder}
+The label encoder employs the same ViT architecture as the image encoder and extracts token embeddings of the support labels.
+Similar to the image encoder, the label encoder is applied to each support label independently, with a major difference that it sees one channel at a time since we treat each channel as an independent task as discussed in Section~\ref{sec:proposed_problem_setup}.
+Then the label tokens are extracted from multiple hierarchies that matches the image encoder.
+Contrary to the image encoder, all parameters of the label encoder are trained from scratch and shared across tasks.
+\cutparagraphup
+\paragraph{Matching Module}
+We implement the matching module at each hierarchy as a multihead attention layer~\citep{vaswani2017attention}.
+At each hierarchy of the image and label encoder, we first obtain the tokens of the query image $X^q$ as $\{\mathbf{q}_j\}_{j\leq M}$ and support set $\{(X^i, Y^i)\}_{i\leq N}$ as $\{(\mathbf{k}_k^i, \mathbf{v}_k^i)\}_{k\leq M,i\leq N}$ from the intermediate layers of image and label encoders, respectively.
+We then stack the tokens to row-matrices, $\mathbf{q}\in\mathbb{R}^{M\times d}$ and $\mathbf{k},\mathbf{v}\in\mathbb{R}^{NM\times d}$.
+Then, the query label tokens at the hierarchy are inferred as output of a multihead attention layer, as follows:
+\begin{align}
+    \text{MHA}(\mathbf{q},\mathbf{k},\mathbf{v}) &= \text{Concat}(\mathbf{o}_1, ..., \mathbf{o}_H)w^O,\label{eqn:multihead_attention} \\
+    \text{where }\mathbf{o}_h &= \text{Softmax}\left(\frac{\mathbf{q}w_h^Q(\mathbf{k}w_h^K)^\top}{\sqrt{d_H}}\right)\mathbf{v}w_h^V,\label{eqn:single_head_attention}
+\end{align}
+where $H$ is number of heads, $d_H$ is head size, and $w_h^Q,w_h^K,w_h^V\in\mathbb{R}^{d\times d_H}$, $w^O\in\mathbb{R}^{Hd_H\times d}$.
+
+Remarkably, each attention head in Eq.~\ref{eqn:single_head_attention} implements the intuition of the non-parametric matching in Eq.~\ref{eqn:matching}.
+This is because each query label token is inferred as a weighted combination of support label tokens $\mathbf{v}$, based on the similarity between the query and support image tokens $\mathbf{q}$, $\mathbf{k}$.
+Here, the similarity function $\sigma$ of Eq.~\ref{eqn:matching} is implemented as scaled dot-product attention.
+Since each head involves different trainable projection matrices $w_h^Q,w_h^K,w_h^V$, the multihead attention layer in Eq.~\ref{eqn:multihead_attention} is able to learn multiple branches (heads) of matching algorithm with distinct similarity functions.
+
+\cutparagraphup
+\paragraph{Label Decoder}
+The label decoder $h$ receives the query label tokens inferred at multiple hierarchies, and combines them to predict the query label of original resolution.
+We adopt the multi-scale decoder architecture of Dense Prediction Transformer~\citep{ranftl2021vision} as it seamlessly works with ViT encoders and multi-level tokens.
+At each hierarchy of the decoder, the inferred query label tokens are first spatially concatenated to a feature map of constant size ($M\to h\times w$).
+Then, (transposed) convolution layers of different strides are applied to each feature map, producing a feature pyramid of increasing resolution.
+The multi-scale features are progressively upsampled and fused by convolutional blocks, followed by a convolutional head for final prediction.
+
+Similar to the label encoder, all parameters of the label decoder are trained from scratch and shared across tasks.
+This lets the decoder to meta-learn a generalizable strategy of decoding a structured label from the predicted query label tokens.
+Following the channel split in Section~\ref{sec:proposed_problem_setup}, the output of the decoder is single-channel, which allows it to be applied to tasks of arbitrary number of channels.
+\cutsubsectionup
+\subsection{Training and Inference}\label{sec:learning_and_inference}
+\cutparagraphup
+We train our model on a labeled dataset $\mathcal{D}_\text{train}$ of training tasks $\mathcal{T}_\text{train}$ following the standard episodic meta-learning protocol.
+At each episode of task $\mathcal{T}$, we sample two labeled sets $\mathcal{S}_\mathcal{T}, \mathcal{Q}_\mathcal{T}$ from $\mathcal{D}_\text{train}$.
+Then we train the model to predict labels in $\mathcal{Q}_\mathcal{T}$ using $\mathcal{S}_\mathcal{T}$ as support set.
+We repeat the episodes with various dense prediction tasks in $\mathcal{D}_\text{train}$ so that the model can learn a general knowledge about few-shot learning.
+Let $\mathcal{F}(X^{q}; \mathcal{S}_\mathcal{T})$ denote the prediction of the model on $X^{q}$ using the support set $\mathcal{S}_\mathcal{T}$.
+Then the model ($f_\mathcal{T}, g, h, \sigma$) is trained by the following learning objective in end-to-end:
+\begin{equation}
+    \underset{f_\mathcal{T}, g, h, \sigma}{\text{min}}~ \mathbb{E}_{\mathcal{S}_\mathcal{T}, \mathcal{Q}_\mathcal{T} \sim \mathcal{D}_\text{train}} \left[
+    \frac{1}{|\mathcal{Q}_\mathcal{T}|} \sum_{(X^{q}, Y^{q}) \in \mathcal{Q}_\mathcal{T}} \mathcal{L}\left(
+    Y^{q}, \mathcal{F}(X^{q}; \mathcal{S}_\mathcal{T}))
+    \right)
+    \right],
+    \label{eqn:training_objective}
+\end{equation}
+where $\mathcal{L}$ is the loss function. 
+We use cross-entropy loss for semantic segmentation task and $L1$~loss for the others in our experiments.
+Note that the objective~(Eq.~\ref{eqn:training_objective}) does not explicitly enforce the matching equation~(Eq.~\ref{eqn:matching}) in token space, allowing some knowledge for prediction to be handled by the label decoder $h$, since we found that introducing explicit reconstruction loss on tokens deteriorates the performance in our initial experiments.
+During training, as we have a fixed number of training tasks $\mathcal{T}_\text{train}$, we keep and train separate sets of bias parameters of the image encoder $f_\mathcal{T}$ for each training task (which are assumed to be channel-splitted).
+
+After training on $\mathcal{D}_\text{train}$, the model is few-shot evaluated on novel tasks $\mathcal{T}_\text{test}$ given a support set $\mathcal{S}_{\mathcal{T}_\text{test}}$.
+We first perform adaptation of the model by fine-tuning bias parameters of the image encoder $f_\mathcal{T}$ using the support set $\mathcal{S}_{\mathcal{T}_\text{test}}$.
+For this, we simulate episodic meta-learning by randomly partitioning the support set into a sub-support set $\tilde{\mathcal{S}}$ and a sub-query set $\tilde{\mathcal{Q}}$, such that $\mathcal{S}_{\mathcal{T}_\text{test}}=\tilde{\mathcal{S}}\mathop{\dot{\cup}}\tilde{\mathcal{Q}}$.
+\begin{equation}
+    \underset{\theta_\mathcal{T}}{\text{min}}~ \mathbb{E}_{\tilde{\mathcal{S}}, \tilde{\mathcal{Q}} \sim \mathcal{S}_{\mathcal{T}_\text{test}}} \left[
+    \frac{1}{|\tilde{\mathcal{Q}}|} \sum_{(X^{q}, Y^{q}) \in \tilde{\mathcal{Q}}} \mathcal{L}\left(
+    Y^{q}, \mathcal{F}(X^{q}; \tilde{\mathcal{S}})
+    \right)
+    \right],
+\end{equation}
+where $\theta_\mathcal{T}$ denotes bias parameters of the image encoder $f_\mathcal{T}$.
+The portion of parameters to be fine-tuned is negligible so the model can avoid over-fitting on the small support set $\mathcal{S}_{\mathcal{T}_\text{test}}$.
+After fine-tuned, the model is evaluated by predicting the label of unseen query image using the support set $ \mathcal{S}_{\mathcal{T}_\text{test}}$.
+
+\cutparagraphup
+
+
+Related Work
+\cutparagraphup
+
+To the best of our knowledge, the problem of universal few-shot learning of dense prediction tasks remains unexplored.
+Existing few-shot learning approaches for dense prediction are targeted to specific tasks that require learning unseen \emph{classes} of objects, such as semantic segmentation~\citep{shaban2017one, wang2019panet, iqbal2022msanet}, instance segmentation~\citep{michaelis2018one, fan2020fgn}, and object detection~\citep{fan2020few, wang2020frustratingly}, rather than general tasks.
+As categorical labels are discrete in nature, most of the methods involve per-class average pooling of support image features, which cannot be generalized to regression tasks as there would be infinitely many "classes" of continuous labels.
+Others utilize masked correlation between support and query features~\citep{min2021hypercorrelation, hong2022cost}, learn a Gaussian Process on features~\citep{johnander2021dense}, or train a classifier weight prediction model~\citep{kang2019few}.
+In principle, these architectures can be extended to more general dense prediction tasks with slight modification~(Section~\ref{sec:experiment}), yet their generalizability to unseen dense prediction tasks, rather than classes, has not been explored.
+
+As our method involves task-specific tuning of a small portion of parameters, it is related to transfer learning that aims to efficiently fine-tune a pre-trained model to downstream tasks.
+In natural language processing (NLP), language models pre-trained on large-scale corpus~\citep{kenton2019bert, brown2020language} show outstanding performance on downstream tasks with fine-tuning a minimal amount of parameters~\citep{houlsby2019parameter, zaken2022bitfit, lester2021power}.
+Following the emergence of pre-trained Vision Transformers~\citep{dosovitskiy2020image}, similar adaptation approaches have been proven successful in the vision domain~\citep{li2021benchmarking, jia2022visual, chen2022vision}.
+While these approaches reduce the amount of \emph{parameters} required for state-of-the-art performance on downstream tasks, they still require a large amount of \emph{labeled images} for fine-tuning (\emph{e.g.}, thousands).
+In this context, our method can be seen as a few-shot extension of the adaptation methods, by incorporating a general few-shot learning framework and a powerful architecture.
+
+
+Experiments
+\subsection{Experimental Setup}
+\paragraph{Dataset}
+We construct a variant of the Taskonomy dataset~\citep{taskonomy2018} to simulate few-shot learning of unseen dense prediction tasks.
+Taskonomy contains indoor images with various annotations, where we choose ten dense prediction tasks of diverse semantics and output dimensions: semantic segmentation (SS), surface normal (SN), Euclidean distance (ED), Z-buffer depth (ZD), texture edge (TE), occlusion edge (OE), 2D keypoints (K2), 3D keypoints (K3), reshading (RS), and principal curvature (PC),\footnote{We choose all dense prediction tasks defined on RGB images with pixel-wise loss functions.}.
+We partition the ten tasks to construct a $5$-fold split, in each of which two tasks are used for few-shot evaluation ($\mathcal{T}_\text{test}$) and the remaining eight are used for training ($\mathcal{T}_\text{train}$).
+To perform evaluation on tasks of novel semantics, we carefully construct the partition such that tasks for training and test are sufficiently different from each other \emph{e.g.}, by grouping edge tasks (TE, OE) together as test tasks.
+The split is shown in Table~\ref{tab:main_table}.
+We process some single-channel tasks (ED, TE, OE) to multiple channels to increase task diversity, and standardize all labels to $[0, 1]$.
+\paragraph{Baselines}
+We compare our method (VTM) with two classes of learning approaches.
+\begin{itemize}[leftmargin=0.5cm]
+    \item \textbf{Fully supervised baselines} have an access to the full supervision of test tasks $\mathcal{T}_\text{test}$ during training, and thus serve as upper bounds of few-shot performance.
+    We consider two state-of-the-art baselines in supervised learning and multi-task learning of general dense prediction tasks -- DPT~\citep{ranftl2021vision} and InvPT~\citep{ye2022inverted}, respectively, where DPT is trained on each single task independently and InvPT is trained jointly on all tasks.
+    
+    \item \textbf{Few-shot learning baselines} do not have an access to the test tasks $\mathcal{T}_\text{test}$ during training, and are given only a few labeled images at the test-time.
+    As there are no prior few-shot method developed for universal dense prediction tasks, we adapt state-of-the-art few-shot segmentation methods to our setup.
+    We choose three methods, DGPNet~\citep{johnander2021dense}, HSNet~\citep{min2021hypercorrelation}, and VAT~\citep{hong2022cost}, whose architectures are either inherently task-agnostic (DGPNet) or can be simply extended (HSNet, VAT) to handle general label spaces for dense prediction tasks.
+
+\end{itemize}
+
+\cutparagraphup
+\paragraph{Implementation}
+For models based on ViT architecture (Ours, DPT, InvPT), we use BEiT-B~\citep{bao2021beit} backbone as image encoder, which is pre-trained on ImageNet-22k~\citep{deng2009imagenet} with self-supervision.
+For the other baselines (DPGNet, HSNet, VAT), as they rely on convolutional encoder and it is nontrivial to transfer them to ViT, we use ResNet-101~\citep{h
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

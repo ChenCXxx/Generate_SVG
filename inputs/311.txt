@@ -1,0 +1,186 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}[t!]
+  \centering
+    \includegraphics[width=0.47\textwidth]{figure/fenmian_camready_1.pdf}
+  \caption{\textbf{Images in the first column:} the sample images in the KonIQ dataset. \textbf{Images in the medium column:} DEIQT~\cite{DEIQT} suffers from feature aliasing that focuses excessively on semantic-level noise that is less relevant to quality perception~(e.g., the human in the yellow box). \textbf{Images in the last column:} Our QFM-IQAM is not sensitive to semantic noise and can clearly distinguish between image pairs with similar semantic content but different quality scores. As a result, our model's predictions are more aligned with the \emph{Mean Opinion Scores} (MOS).}
+  \label{fig1}
+\end{figure}
+    \emph{No-Reference Image Quality Assessment} (NR-IQA) is a fundamental research area~\cite{ding2020image,gu2020giqa,zhang2015som,hu2,hu3}, which simulates the human subjective system to estimate distortion of the given image.
+    Current state-of-the-art methods~\cite{zhang2023blind,song2023active} generally leverage pre-trained upstream backbone to extract semantic features, and then, finetuning on NR-IQA datasets.
+    This pipeline provides an effective and efficient training procedure while reducing the requirement of data volume.
+   Since the semantic features obtained from the pre-trained upstream backbone have no direct correlation with the image quality representation~\cite{yang2020ttl}, many researchers focus on the optimization of semantic features in IQA research.
+    For instance, 
+    \cite{talebi2018nima} proposed a model based on Deep Convolutional Neural Networks pre-trained on the ImageNet~\cite{imagenet} and end-to-end training to optimize semantic features. ~\cite{hypernet} integrated NR-IQA tasks with semantic recognition networks, enabling the network to assess image quality after identifying content. ~\cite{DEIQT} refined the abstract semantic information obtained from the pre-trained model by introducing a transformer decoder.
+    
+    However, we empirically find that many image pairs with small feature spatial distances have vastly different quality scores (see \ref{challenge}). We attribute this result to feature aliasing, where semantic noise unrelated to quality confuses the quality-aware features.
+    Specifically, due to the sensitivity of upstream backbone networks to semantic features~\cite{zhao2023quality,zhang2023blind}, they tend to extract similar features for semantically similar image pairs, despite these pairs having distinctly different quality scores. This may mislead the network to overly focus on semantic details rather than true indicators of image quality, resulting in poor quality prediction. We provide an example in Fig.\ref{fig1}(b) to illustrate this issue. For a pair of images with obvious quality differences, the baseline overly focuses on similar semantic information in the distorted image (e.g., the person in the yellow box), while ignoring some distorted areas in the red box (e.g., the racket's movement and the flower's overexposure), causing the model to be misled into making a close quality predictions.
+    These findings motivate us to explore a critical problem: how to distinguish images with similar semantic information but different quality scores.
+    
+    We believe the key to addressing this challenge is to reduce the model's sensitivity to semantic noise. Inspired by adversarial learning~\cite{goodfellow2014explaining,madry2017towards}, which aims to learn adversarial noise that maximizes prediction loss, and reduces the model's sensitivity to this noise by minimizing the model's loss when facing noisy inputs. 
+    In this paper, we treat samples with similar quality scores but significantly different semantic features as adversarial noise to maximally mislead the model's quality prediction. This approach is based on our hypothesis that the model is highly sensitive to semantics. Therefore, introducing maximal semantic perturbation can greatly impact its quality predictions, while similar quality scores ensure that the misprediction is mainly influenced by the semantic perturbation rather than the quality perturbation.
+           
+   To achieve this, we propose a novel approach called Quality-Aware Feature    Matching Image Quality Metric (QFM-IQM), as shown in Fig.~\ref{fig1}(c). 
+    Concretely, our QFM-IQM comprises three primary modules. Firstly, the Semantic Noise Feature Matching (SNM) Module is developed to pair each distorted sample with noise samples that have similar quality scores but significantly different semantic features. The Quality Consistency Constraint (QCC) Module uses noise samples as the adversarial feature perturbation to maintain quality information while disrupting semantics and ensures consistent quality predictions for distorted samples before and after semantic changes. 
+    The core objective is to enhance the model’s robustness to semantic noise by minimizing the loss of quality prediction when faced with semantic noise perturbation.  
+    Lastly, the Distilled Label Expansion (DLE) Module utilizes knowledge distillation to provide pseudo-labels for unlabeled samples, enriching the dataset for QCC's adversarial learning. 
+    Our contributions include:
+    \begin{itemize}    
+        \item We address a common challenge in IQA: how to distinguish between images that have similar semantic information but different quality scores. To solve this problem, we propose a novel model that can effectively capture the subtle differences in quality among similar images and make accurate judgments based on them.
+        \item We introduce a novel feature adversarial learning mechanism to isolate the quality-related attributes from the semantic content of an image. This way, the model can focus on the most relevant attributes for image quality and avoid being distracted by irrelevant ones.
+        \item Our model employs distillation learning to augment the dataset with authentic images that have varying quality levels. This not only improves the model’s generalization ability but also reduces the need for human annotation efforts, which are time-consuming.
+    \end{itemize}
+
+\begin{figure*}[t]
+	\centering{\includegraphics[width=1\textwidth]{figure/framework_final_icml.pdf}}
+	\caption{The overview of our QFM-IQM.We begin by extracting image semantic-related features from the student network. Simultaneously, we indirectly augment our training set by introducing a distillation framework and storing the image features and labels in pairs in temporary memory~(Sec.~\ref{DLE}). We use Semantic Noisy Matching to select features in the temporary memory with similar quality scores but different semantic features as noise disturbance~(Sec.~\ref{SNM}) and add them to our original features as decoder input to predict image quality, forcing our model to learn to focus on quality-aware features~(Sec.~\ref{QCC}). During inference, scores are directly predicted using the encoder and decoder, while the above three modules are discarded to avoid any additional computational overhead.
+ }
+ \label{modelStructure}
+\end{figure*}
+
+
+Related Works
+Image Quality Assessment (IQA)~\cite{hu1} is broadly classified into full-reference (FR)~\cite{cao2022incorporating}, reduced-reference (RR)~\cite{tao2009reduced}, and no-reference (NR) methods~\cite{zhang2021uncertainty}. NR-IQA assesses quality independently, offering significant application potential.
+
+\subsection{NR-IQA with Vision Transformer}
+Vision Transformer (ViT)~\cite{ViT} showed promising results on several downstream vision tasks. There were mainly two types of ViT-based NR-IQA methods, including hybrid Transformer ~\cite{TReS} and pure ViT-based Transformer ~\cite{musiq, yang2022maniqa,TIQA}. The hybrid architecture generally combined the CNNs with the Transformer, which was responsible for the local and long-range feature characterization, respectively. For instance, \cite{TReS} proposed to use the multi-scale features extracted from ResNet-50, which were fed to the transformer encoder to produce a non-local representation of the image. 
+\cite{musiq} designed a multi-scale ViT-based IQA model to handle the arbitrary size of input images. 
+Such a feature was initially designed to describe the image content, and thus the preserved features were mainly related to the higher-level visual abstractions which were not adequate in characterizing the quality-aware 
+\subsection{NR-IQA with Contrastive Learning}
+A new learning paradigm, contrastive learning, emerged for learning discriminative representations among samples~\cite{caron2020unsupervised,he2020momentum}. This method aimed to learn an embedding space where similar samples were attracted, and dissimilar ones were repelled~\cite{jaiswal2020survey,zhao2023quality}. Recently, contrastive learning in IQA primarily focused on unsupervised approaches, as seen in key studies like QPT~\cite{zhao2023quality}, which introduced a self-supervised method with quality-aware contrastive learning for BIQA. Re-IQA~\cite{saha2023re} employed a mixture of experts to train separate encoders for content and quality features, and CONTRIQUE~\cite{contrastive} used a deep CNN with a contrastive pairwise objective for IQA. These methods achieved promising results by leveraging self-supervised training, but the cost of pre-training models was often high. In contrast to contrastive learning aimed at constructing discriminative embedding spaces, we leveraged adversarial learning to reduce the model's sensitivity to semantic noise. This enhanced the model's ability to distinguish between images that were semantically similar but had different quality scores.
+\begin{figure}[t]
+  \centering
+    \includegraphics[width=0.47\textwidth]{figure/query_match_final_0201.pdf}
+  \caption{The Semantic Noise Matching~(SNM) pipeline takes in pairs of features and labels as input and returns matching features from the dataset as output. Firstly, we flatten the input features and then normalize both the features and labels using layer norm. We then calculate the Feature Similarity Matrix and the Score Distance Matrix using the cosine similarity function and the $\mathcal L_2$ norm. Next, we obtain the final Feature-Score Matrix by element-wise multiplication of the computed matrices. We select the features that correspond to the index of the minimum K values of the Feature-Score Matrix in our memory as matched features.}
+  \label{select}
+\end{figure}
+
+
+
+Methodology
+\subsection{Preliminaries}
+In the context of No-Reference Image Quality Assessment (NR-IQA), we define some common notations.
+We use bold formatting to denote vectors (e.g., $\boldsymbol{x}$, $\boldsymbol{y}$) and matrices (e.g., $\boldsymbol{X}$, $\boldsymbol{Y}$).
+Specifically, $\boldsymbol F$ denotes the feature map of the network output, $\mathcal F$ denotes the vision transformer's class token (CLS token), and {Y} denotes the quality score.
+\subsection{Overview}
+In this paper, we present Quality-Aware Feature Matching Image Quality Metric~(QFM-IQM), a novel framework that can effectively distinguish between images with similar semantic features but different quality scores. As depicted in Fig.~\ref{modelStructure}, QFM-IQM seamlessly integrates three main components: {Semantic Noise Matching (SNM)}, {Quality Consistency Constraint (QCC)} and {Distillation Label Extension (DLE)}.
+Initially, the input distorted image is fed into a transformer encoder to obtain feature $\boldsymbol F_o \in \mathbb{R}^{(M+1)\times D}$ from the final layer. Subsequently, the SNM module matches these features with those that have similar quality scores but different semantics~(Sec.~\ref{SNM}). Next, the matched semantic noise is introduced as feature perturbation into feature $\boldsymbol F_o$ to obtain $\hat{\boldsymbol F_o}$ and the QCC module constraints between the quality prediction of the $\boldsymbol F_o$ and $\hat{\boldsymbol F_o}$ to remain consistent, forcing the model to be robust to quality-unrelated semantic noise during adversarial learning~(Sec.~\ref{QCC}). Additionally, the DLE module uses knowledge distillation to generate pseudo-labels for unlabeled samples, thereby enriching the adversarial learning dataset of QCC~(Sec.~\ref{DLE}). These components collectively contribute to a more effective and accurate NR-IQA process. 
+It's worth noting that during the inference process, scores are predicted directly using the encoder and decoder, discarding the above three modules, and avoiding any additional computational overhead.
+\subsection{Architecture Design}\label{backbone}
+\noindent \textbf{Transformer Encoder.}
+Our model uses a Transformer encoder to process input image patches. These patches are first transformed into D-dimensional embeddings, including a class token and position embeddings for spatial information. Three linear projection layers transform patch embedding into matrices ${\boldsymbol Q, \boldsymbol K, \boldsymbol V} \in \mathbb{R}^{(M+1)\times D}$ for query, key, and value. This operation, combined with Multi-Head Self-Attention~(MHSA), layer normalization, and a Multi-Layer Perceptron (MLP), produces the output feature $\boldsymbol F_o$.
+
+\noindent \textbf{Transformer Decoder.}
+Previous works~\cite{DEIQT} found that CLS token cannot build an optimal representation for image quality. we utilize a quality-aware decoder that further interprets the CLS token. The decoder uses Multi-Head Cross-Attention (MHCA) with a set of queries $Q_d$, interacting with encoder outputs to calculate the final quality score $\boldsymbol{\hat Y}$. This method improves the learning and generalization capabilities of our NR-IQA model.
+\subsection{Distillation Label Extension}\label{DLE}
+Considering the challenges transformer-based models face in learning sufficient downstream task knowledge with insufficient training data, leading to overfitting and performance degradation, this paper proposes a new distillation strategy. This strategy employs an extra unlabeled dataset \(\mathcal{B}\) for feature adversarial learning during training, effectively using information from samples in the expanded dataset with similar quality scores but different features. Specifically, we first use a teacher model generating pseudo labels for each image in \(\mathcal{B}\) and then store in a temporary memory \(\mathcal{B}\). Then, labeled datasets \(\mathcal{A}\) and \(\mathcal{B}\) are input into the student model together, identifying features with similar quality scores but different semantics (Sec.~\ref{SNM}). These features, treated as noise, are added to the image features, enabling the model to learn from both labeled and unlabeled data and improve its generalization ability for images with different quality.
+\subsection{Semantic Noise Matching}\label{SNM}
+The Semantic Noise Matching (SNM) Module, comprising Temporary Memory and Semantic Noise Feature Matching components, functions by aligning input image features with Temporary Memory samples in each training batch, efficiently matching noise samples.
+
+\noindent \textbf{Temporary Memory.}
+The objective of the Temporary Memory is to store features and labels of each mini-batch of data, serving as a queryable resource for the SNM module. Specifically, the student feature extractor conducts forward propagation to extract features of distorted images from labeled dataset \(\mathcal{A}\) and stores these features alongside the ground truth of the distorted images in Temporary Memory \(\mathcal{A}\). Concurrently, the student extracts features of distorted images from unlabelled dataset \(\mathcal{B}\), storing them with the pseudo labels of these images in Temporary Memory \(\mathcal{B}\). It is important to note that during the training process, the original memory data is overwritten in each iteration of every mini-batch to reset the Temporary Memory.
+
+\noindent \textbf{Semantic Noise Feature Matching.}
+This process involves selecting images with similar quality but different semantics to use as semantic noise features. Then, these noise features are employed as feature perturbations to disrupt semantics while largely preserving quality information. Finally, under the constraint of quality consistency (referenced in Section \ref{QCC}), this effectively reduces sensitivity to semantic noise.
+Fig. \ref{select} overviews our Semantic Noise Matching (SNM) module. For a mini-batch of distorted input images, Temporary Memory $\mathcal{A}$ and $\mathcal{B}$ store collections of features and labels, then QFM-IQM leverages Semantic Noise Matching to select noise samples that have similar quality scores but different semantic features from both labeled and unlabeled datasets, as depicted in Fig. \ref{select}. Specifically, the process begins by flattening the feature $\boldsymbol{F}_o$ of the input image, obtained from the encoder, into a feature vector $\boldsymbol{f}_o$. Subsequently, another feature vector $\hat{\boldsymbol{f}}_o$ is matched from the Temporary Memory $\mathcal{A}$ or $\mathcal{B}$ based on the matching strategy. The evaluation metric for the matching strategy is formulated as the product of feature similarity and score distance. Feature similarity is calculated using cosine distance, while score distance is determined using the $\mathcal{L}_2$ norm. The mathematical expression is as follows:
+\begin{equation}
+    \mathcal{S}((\boldsymbol{{f}}_o, \rm{{y}}_o), (\boldsymbol{\hat{{f}}_o}, \rm{\hat{{y}}_o})) = \frac{\boldsymbol{{f}}_o \cdot \hat{\boldsymbol{f}}_o}{\|\boldsymbol{{f}}_o\| \cdot \|\boldsymbol{\hat{{f}}_o}\|} \cdot \|\rm{{y}}_o - \rm{\hat{{y}}_o}\|.
+\end{equation}
+Here, $\cdot$ represents the dot product between the vectors, and $\|\cdot\|$ represents their $\mathcal{L}_2$ norms. This score is then used as a criterion for the final selection strategy, choosing the top K minimum score features selected as matching samples for the following QCC module's input.
+
+\subsection{Quality Consistency Constraint}\label{QCC}
+Existing studies have not addressed the challenge of differentiating between images with similar semantic features but different quality scores and eliminating quality-irrelevant features from high-level pre-trained features. To address this, we introduce the Quality Consistency Constraint~(QCC) module to isolate quality-related attributes from an image's semantic content. 
+In contrast to previous contrastive learning approaches, this paper introduces a straightforward yet effective adversarial method to enhance a model's robustness to features unrelated to image quality. This is accomplished by strengthening the consistency of the model's predictions for image quality before and after introducing noise to distorted images. This method reduces the model's sensitivity to semantic noise and compels it to exhibit robustness to subtle variations, ultimately increasing the separation between feature representations of noise samples.
+Concretely, we initially extract the CLS tokens of the minimum K features matched in the SNM module and incorporate them as feature perturbations into the original CLS token. Since we perform feature selection twice in labeled dataset \(\mathcal{A}\) and unlabelled dataset \(\mathcal{B}\), the expression of this process is:
+\begin{equation}\label{contrast}
+        {\mathcal F} = (1-{\lambda _1}-{\lambda _2}){{{\mathcal F}}_o} + \frac{\lambda_1}{K}\sum_{j=1}^{K} {\mathcal {\hat{F}}^{\mathcal{A}}_{o,j}}  + \frac{\lambda_2}{K}\sum_{j=1}^{K} {\mathcal {\hat{F}}^{\mathcal{B}}_{o,j}},
+\end{equation}%
+where the weight $\lambda _1$ and $\lambda _2$ controls the strength of the perturbation. ${\mathcal {\hat{F}}^\mathcal{A}_{o,j}}$ and ${\mathcal {\hat{F}}^{\mathcal{B}}_{o,j}}$ represent the $j^{th}$ smallest matching feature's CLS token from the datasets \(\mathcal{A}\) and datasets \(\mathcal{B}\). 
+After that, we feed the feature ${\mathcal F}$ which is obtained by the Eq.~\ref{contrast} into the decoder to estimate the quality. 
+Notably, even after adding noise, the predicted quality is still supervised using the ground truth of the original image. By minimizing the prediction loss on samples with semantic noise, the model's robustness to the semantic noise is improved.
+\begin{table*}[t]
+\setlength\tabcolsep{0.7pt}
+    \centering
+      \caption{Performance comparison of average SRCC and PLCC, with bold indicating the best results and \underline{underlines} for the second-best.}  
+      
+    \resizebox{1\textwidth}{!}{
+        \begin{tabular}{lcccccccc||cccccccc}
+      \toprule[1.5pt]
+    & \multicolumn{2}{c}{LIVE} & \multicolumn{2}{c}{CSIQ} & \multicolumn{2}{c}{TID2013} & \multicolumn{2}{c||}{KADID} & \multicolumn{2}{c}{LIVEC} & \multicolumn{2}{c}{KonIQ} & \multicolumn{2}{c}{LIVEFB} & \multicolumn{2}{c}{SPAQ}\\
+    \cmidrule{2-17}    Method & \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC} & \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC} & \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC}& \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c||}{SRCC}& \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC}& \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC}& \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC}& \multicolumn{1}{c}{PLCC} & \multicolumn{1}{c}{SRCC}\\
+    \midrule
+    DIIVINE ~\cite{saad2012blind} & 0.908 & 0.892 & 0.776 & 0.804 & 0.567 & 0.643 & 0.435 & 0.413 & 0.591 & 0.588 & 0.558 & 0.546 & 0.187 & 0.092 & 0.600 & 0.599 \\
+    BRISQUE ~\cite{BRISQUE} & 0.944 & 0.929 & 0.748 & 0.812 & 0.571 & 0.626 & 0.567 & 0.528 & 0.629 & 0.629 & 0.685 & 0.681 & 0.341 & 0.303 & 0.817 & 0.809 \\
+    ILNIQE ~\cite{ILNIQE} & 0.906 & 0.902 & 0.865 & 0.822 & 0.648 & 0.521 & 0.558 & 0.534 & 0.508 & 0.508 & 0.537 & 0.523 & 0.332 & 0.294 & 0.712 & 0.713 \\
+    BIECON ~\cite{BIECON} & 0.961 & 0.958 & 0.823 & 0.815 & 0.762 & 0.717 & 0.648 & 0.623 & 0.613 & 0.613 & 0.654 & 0.651 & 0.428 & 0.407 & {-} & {-} \\
+    MEON ~\cite{MEON} & 0.955 & 0.951 & 0.864 & 0.852 & 0.824 & 0.808 & 0.691 & 0.604 & 0.710  & 0.697 & 0.628 & 0.611 & 0.394 & 0.365 & {-} & {-} \\
+    WaDIQaM ~\cite{bosse2017deep} & 0.955 & 0.960  & 0.844 & 0.852 & 0.855 & 0.835 & 0.752 & 0.739 & 0.671 & 0.682 & 0.807 & 0.804 & 0.467 & 0.455 & {-} & {-} \\
+    DBCNN ~\cite{zhang2018blind} & 0.971 & 0.968 & {0.959} & {0.946} & 0.865 & 0.816 & 0.856 & 0.851 & 0.869 & 0.851 & 0.884 & 0.875 & 0.551 & 0.545 & 0.915 & 0.911 \\
+    MetaIQA ~\cite{zhu2020metaiqa} & 0.959 & 0.960  & 0.908 & 0.899 & 0.868 & 0.856 & 0.775 & 0.762 & 0.802 & 0.835 & 0.887 & 0.850 & 0.507 & 0.54  & {-} & {-} \\
+    P2P-BM ~\cite{ying2020patches} & 0.958 & 0.959 & 0.902 & 0.899 & 0.856 & 0.862 & 0.849 & 0.84  & 0.842 & 0.844 & 0.885 & 0.872 & 0.598 & 0.526 & {-} & {-} \\
+    HyperIQA ~\cite{hypernet} & 0.966 & 0.962 & 0.942 & 0.923 & 0.858 & 0.840  & 0.845 & 0.852 & 0.882 & 0.859 & 0.917 & 0.906 & 0.602 & 0.544 & 0.915 & 0.911 \\
+    TReS  ~\cite{TReS} & 0.968 & 0.969 & 0.942 & 0.922 & 0.883 & 0.863 & 0.858 & 0.859 & 0.877 & 0.846 & {0.928} & 0.915 & 0.625 & 0.554 & {-} & {-} \\
+    MUSIQ ~\cite{ke2021musiq} & 0.911 & 0.940  & 0.893 & 0.871 & 0.815 & 0.773 & 0.872 & 0.875 & 0.746 & 0.702 & {0.928} & {0.916} & {0.661} & {0.566} & {0.921} & {0.918} \\
+    DACNN ~\cite{pan2022dacnn} & {0.980}  & {0.978} & {0.957} & {0.943} & {0.889} & {0.871} & \underline {0.905} & \underline{0.905} & {0.884} & {0.866} & 0.912 & 0.901 & {-} & {-} & {0.921} & 0.915 \\
+    DEIQT ~\cite{DEIQT} & \underline{0.982} & \underline{0.980} & \underline{0.963} & {0.946} & \underline{0.908} & \underline{0.892} & 0.887 & 0.889 & \underline{0.894} & \underline{0.875} & \underline{0.934} & \underline{0.921} & {0.663} & \underline{0.571} & {0.923} & \underline{0.919} \\
+    Re-IQA ~\cite{saha2023re} & {0.971}  & {0.970} & {0.960} & \underline{0.947} & {0.861} & {0.804} &  {0.885} & {0.872} & {0.854} & {0.840} & 0.923 & 0.914 & \textbf{0.733} & \textbf{0.645} & \textbf{0.925} & 0.918 \\
+    \midrule
+    QFM-IQM(ours) & \textbf{0.983} & \textbf{0.981} & \textbf{0.965} & \textbf{0.954} & \textbf{0.932} & \textbf{0.916} & \textbf{0.906} & \textbf{0.906} & \textbf{0.913} & \textbf{0.891} & \textbf{0.936} & \textbf{0.922} & \underline{0.667} & {0.567} & \underline{0.924} & \textbf{0.920} \\
+    \bottomrule
+    \end{tabular}}
+  \label{tab:booktabs}
+\end{table*}
+
+\begin{table}[t]
+\small
+\setlength\tabcolsep{3.5pt}
+  \centering
+    \caption{SRCC on the cross datasets validation. The best performances are highlighted in boldface.}
+    
+    \begin{tabular}{ccccccc}
+    \toprule
+    Training & \multicolumn{2}{c}{  LIVEFB } & \multicolumn{1}{c}{LIVEC} & \multicolumn{1}{c}{KonIQ} & \multicolumn{1}{c}{LIVE} & \multicolumn{1}{c}{CSIQ} \\
+    \midrule
+    Testing & \multicolumn{1}{c}{KonIQ} & \multicolumn{1}{c}{LIVEC} & \multicolumn{1}{c}{KonIQ} & \multicolumn{1}{c}{LIVEC} & \multicolumn{1}{c}{CSIQ} & \multicolumn{1}{c}{LIVE} \\
+    \midrule
+    DBCNN & 0.716 & 0.724 & 0.754 & 0.755 & 0.758 & 0.877 \\
+    P2P-BM &0.755 & 0.738 & 0.74  & 0.77  & 0.712 & {-} \\
+    HyperIQA & 0.758 & 0.735 & {0.772} & 0.785 & 0.744 & 0.926 \\
+    TReS  & 0.713 & 0.74  & 0.733 & 0.786 & 0.761 & {-} \\
+    Re-IQA & - & - & 0.769 & 0.791 & 0.808 & 0.929 \\
+    DEIQT & 0.733 & 0.781 & 0.744 & 0.794 & 0.781 & 0.932 \\
+    \midrule
+    QFM-IQM   & \textbf{0.768} & \textbf{0.791} & \textbf{0.775} & \textbf{0.796} & \textbf{0.820} & \textbf{0.941} \\
+    \bottomrule
+    \end{tabular}%
+  \label{cross}%
+\end{table}%
+
+
+
+Experiments
+\subsection{Benchmark Datasets and Evaluation Protocols}
+We evaluate the QFM-IQM on 8 standard NR-IQA datasets. These include four synthetic datasets: LIVE~\cite{sheikh2006statistical}, CSIQ~\cite{larson2010most}, TID2013~\cite{ponomarenko2015image}, and KADID~\cite{lin2019kadid}; and four authentic datasets: LIVEC~\cite{ghadiyaram2015massive}, KonIQ~\cite{hosu2020koniq}, LIVEFB~\cite{ying2020patches}, and SPAQ~\cite{fang2020perceptual}.
+Synthetic datasets are generated by applying distortions like JPEG compression and Gaussian blur to original images. LIVE and CSIQ contain 779 and 866 images with five and six distortion types, respectively, while TID2013 and KADID have 3000 and 10,125 images with 24 and 25 distortion types.
+The authentic datasets contain images captured by different photographers using various mobile devices, with LIVEC comprising 1162 images, SPAQ 11,125 images, and KonIQ 10,073 images sourced from public multimedia resources. LIVEFB is the largest authentic dataset with 39,810 images.
+The performance of the QFM-IQM model, in terms of prediction accuracy and monotonicity, is assessed using Spearman's Order Correlation Coefficient (SRCC) and Pearson's Linear Correlation Coefficient (PLCC). Both SRCC and PLCC values range from -1 to 1, with values near 1 denoting higher performance in both metrics.
+\subsection{Implementation Details}
+\noindent\textbf{Pre-trained Teacher.} 
+Our teacher network, comprising a VIT-S and a decoder, is pre-trained on the largest authentic dataset LIVEFB for offline knowledge distillation on students trained on the IQA dataset. The pre-trained strategy follows the \cite{DEIQT}. 
+Notably, when the student model is trained on the LIVEFB dataset, the teacher model is pre-trained on KonIQ to ensure fairness.
+
+\noindent\textbf{Student Training.} 
+To train the student network, we follow the standard approach of cropping input images into ten patches of 224 $\times$ 224 resolution, reshaped into smaller 16 $\times$ 16 patches with a 384-dimensional input token. Using a Transformer encoder based on ViT-S from DeiT III~\cite{touvron2022deit}, our model has 12 layers and 6 heads, coupled with a single-layer decoder. Training is conducted over 9 epochs with a learning rate of $2 \times 10^{-4}$, reducing by a factor of 10 every 3 epochs, using the Adamw optimizer~\cite{loshchilov2017decoupled}. The batch size depends on the size of the dataset, which ranges from 16 to 128. For each dataset, 80\% of the images are used for training and the remaining 20\% of the images are used for testing. This process is repeated ten times to minimize bias. For synthetic distortion datasets, training and testing sets are divided by reference images for content independence. The model's performance is quantified by the average SRCC and PLCC, measuring prediction accuracy and monotonicity.
+\subsection{Overall Prediction Performance Comparison}
+The results of the comparison between QFM-IQM and 15 classical or state-of-the-art~(SOTA) NR-IQA methods, which include hand-crafted feature-based NR-IQA methods like ILNIQE ~\cite{ILNIQE} and BRISQUE ~\cite{BRISQUE}, as well as deep learning-based methods such as MUSIQ ~\cite{ke2021musiq} and DEIQT ~\cite{DEIQT}, are presented in Table \ref{tab:booktabs}. It can be observed on six of the eight datasets that QFM-IQM outperforms all other methods in terms of performance. Achieving competitive performance on all of these datasets is a challenging task due to the wide range of image content and distortion types. Therefore, these observations confirm the effectiveness of QFM-IQM in accurately characterizing image quality.
+\subsection{Generalization Capability Validation}
+To assess the generalization capabilities of QFM-IQM, we conduct a series of cross-dataset validation experiments. In these tests, QFM-IQM is trained on one dataset and then evaluated on different datasets without any adjustments to its parameters. The results, presented in Table \ref{cross}, demonstrate QFM-IQM's superior performance over SOTA models across six datasets. This includes notable gains on the LIVEC dataset and strong results on the KonIQ dataset. These results, benefiting from the noise-resistant training provided by the SNM and QCC, as well as the extensive semantic noise of various distortions provided by the DLE, underscore QFM-IQM's exceptional ability to generalize.
+\begin{figure*}[t!]
+\centering{\includegraphics[width=1\textwidth]{figure/zhuzhuan_icml.pdf}}
+	\caption{Qualitative analysis on image pairs have similar semantic features but differe
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

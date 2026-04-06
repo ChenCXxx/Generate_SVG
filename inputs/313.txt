@@ -1,0 +1,263 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+Finding visual correspondences between images is a central problem in computer vision, with numerous applications including simultaneous localization and mapping (SLAM)~\citep{bailey2006simultaneous}, augmented reality (AR)~\citep{peebles2021gan}, and structure from motion (SfM)~\citep{schonberger2016structure}. Given visually or semantically similar images, sparse correspondence approaches~\citep{lowe2004distinctive} first detect a set of sparse points and extract corresponding descriptors to find matches across them. In contrast, dense correspondence~\citep{philbin2007object} aims at finding matches for all pixels. Dense correspondence approaches typically follow the classical matching pipeline of feature extraction and aggregation, cost aggregation, and flow estimation~\citep{scharstein2002taxonomy,philbin2007object}. 
+
+
+Much recent correspondence research~\citep{sarlin2020superglue,sun2021loftr,jiang2021cotr,xu2021gmflow,li2021revisiting,cho2021semantic,min2021convolutional,huang2022flowformer,9933865} have utilized a means to benefit from either feature aggregation or cost aggregation. Feature aggregation, as illustrated in Fig.~\ref{intuition} (a), is a process that aims to not only integrate self-similar features within an image but also align similar features between the two images for matching. The advantages of feature aggregation have been made particularly evident in several attention- and Transformer-based matching networks~\citep{vaswani2017attention,sarlin2020superglue,sun2021loftr,xu2021gmflow,jiang2021cotr}. Their accuracy in matching can be attributed to, as we show in Fig.~\ref{PCA} (e-f) and supported by previous studies~\citep{sun2021loftr,amir2021deep}, the learned position-dependent semantic features. While the visualization exhibits consistency among parts with the same semantics, dense matching often requires features with even greater discriminative power for more robust pixel-wise correspondence estimation, which is typically challenged by repetitive patterns and background clutters. 
+
+To compensate for, on the other hand, cost aggregation, as illustrated in Fig.~\ref{intuition} (b), has been adopted by numerous works~\citep{Rocco18b,min2021convolutional++,cho2021semantic,huang2022flowformer,9933865} for its favorable generalization ability~\citep{song2021adastereo,liu2022graftnet} and robustness to repetitive patterns and background clutter, which can be attributed to the matching similarities encoded in the cost volumes. These works can leverage the matching similarities to enforce smoothness and coherence in the disparity or flow estimates across neighboring pixels. However, it is important to note that, as highlighted in Fig.~\ref{fig:multi-cost} (c-h), cost volumes often lack semantic context and exhibit relatively less consideration of spatial structure. This disparity arises due to the fact that the information encapsulated within cost volumes is established on the basis of pixel pairs, which could potentially lead to challenges in scenarios where such contextual cues play a pivotal role. 
+In this paper, we tackle the dense correspondence task by first performing a thorough exploration of feature aggregation and cost aggregation and their distinct characteristics. We then propose a simple yet effective architecture that can benefit from the potential advantages stemming from a more judicious use of both aggregation processes. The proposed architecture is a Transformer-based aggregation network, namely Unified Feature and Cost Aggregation Transformers (UFC), that models an integrative aggregation of feature descriptors and the cost volume, as illustrated in Fig.~\ref{intuition} (c). 
+ 
+
+\begin{figure*}
+  \renewcommand{\thesubfigure}{}
+\subfigure[(a) Feature Aggregation]
+{\includegraphics[width=0.35\linewidth]{figure/intuition1.pdf}}\hfill
+    \subfigure[(b) Cost Aggregation]
+{\includegraphics[width=0.25\linewidth]{figure/intuition2.pdf}}\hfill
+    \subfigure[(c) Integrative Aggregation (Ours)]
+
+  \caption{\textbf{Intuition of the proposed method:} (a) feature aggregation methods that aggregate feature descriptors, (b) cost aggregation methods that aggregate a cost volume, and (c) our integrative feature and cost aggregation method, which jointly performs both aggregations to find highly accurate correspondences. }
+\end{figure*}
+
+This network consists of two stages, the first of which employs a self-attention layer to aggregate the descriptors and cost volume jointly. In this stage, the descriptors can help to disambiguate the noisy cost volume similarly to cost volume filtering~\citep{hosni2012fast,sun2018pwc}, and the cost volume can encourage the features to account for matching probabilities as an additional factor for alignment.   For the subsequent step, we design a cross-attention layer that enables further aggregation aided by the outputs from earlier aggregations. This aggregated cost volume can guide the alignment with its sharpened matching distribution. These attention layers are interleaved. We further propose hierarchical processing to enhance the benefits one aggregation gains from the other. Finally, at inference time, our method estimates multi-scale predictions and their confidence scores to recover highly accurate flow. %
+
+We first evaluate the proposed method on the tasks of semantic matching and subsequently, we also substantiate that our framework achieves appreciable performance when applied to geometric matching. Our framework clearly outperforms prior works on all the major dense matching benchmarks, including   HPatches~\citep{balntas2017hpatches}, ETH3D~\citep{schops2017multi}, SPair-71k~\citep{min2019spair}, PF-PASCAL~\citep{ham2017proposal} and PF-WILLOW~\citep{ham2016proposal}. We provide extensive ablation and analysis to validate our design choices. %
+
+
+
+Related Work
+\paragraph{Feature Extraction and Aggregation.}
+Feature extraction involves detecting interest points and extracting the descriptors of the corresponding points. In traditional methods~\citep{liu2010sift,bay2006surf,dalal2005histograms,tola2009daisy}, the matching performance mostly relies on the quality of the feature detection and description methods, and outlier rejection across matched points is typically determined by RANSAC~\citep{fischler1981random}.%
+
+Learning-based feature extraction methods~\citep{detone2018superpoint,ono2018lf,dusmanu2019d2,revaud2019r2d2} obtain dense deep features tailored for matching. These works have demonstrated that the quality of feature descriptors contributes substantially to matching performance. In accordance with this, recent matching networks~\citep{sarlin2020superglue,min2019hyperpixel,lee2019sfnet,Hong_2021_ICCV,min2020learning,jiang2021cotr,sun2021loftr,xu2021gmflow} proposed effective means for feature aggregation. 
+Notable sparse correspondence works include SuperGlue~\citep{sarlin2020superglue} and LOFTR~\citep{sun2021loftr}, which employ graph- or Transformer-based self- and cross-attention for aggregation. Other methods are PUMP~\citep{revaud2022pump} and ECO-TR~\citep{tan2022eco}, which are follow-up works of COTR~\citep{jiang2021cotr}. These methods evaluate on dense correspondence benchmarks in a different way from previous works, using only the sparse and quasi-dense correspondences above certain confidence levels. We refer the readers to the supplementary material for a detailed discussion. 
+
+
+For dense correspondence, SFNet~\citep{lee2019sfnet} and DMP~\citep{Hong_2021_ICCV} introduce adaptation layers after feature extraction to learn feature maps well-suited to matching and are evaluated on dense semantic and geometric matching. DKM~\citep{edstedt2023dkm} adopts Gaussian Processing Kernels for dense correspondence, and it demonstrates its effectiveness in pose estimation. In optical flow,   GMFlow~\citep{xu2021gmflow} leverages Transformer for feature aggregation, and its extension~\cite{xu2023unifying} applies the method to stereo matching and depth estimation. In semantic correspondence, notable works include SCorrSAN~\citep{huang2022learning} proposes an efficient spatial context encoder to aggregate spatial context and feature descriptors, and MMNet~\cite{zhao2021multi} proposes a multi-scale matching network to learn discriminative pixel-level features. 
+\paragraph{Cost Aggregation.}
+In the dense correspondence literature, many works have designed their architectures for effective cost aggregation, which brings strong generalization power~\citep{song2021adastereo,liu2022graftnet}. Recent works~\citep{truong2020glu,Hong_2021_ICCV,jeon2020guided,truong2021learning} use 2D convolutions to establish correspondence while aggregating the cost volume with learnable kernels,  while some works~\citep{min2019hyperpixel,min2020learning,liu2020semantic} utilize handcrafted methods, which include RHM~\citep{cho2015unsupervised} and the OT solver~\citep{sinkhorn1967diagonal}. NC-Net~\citep{Rocco18b} was the first to propose 4D convolutions for cost aggregation, and numerous works~\citep{li2020correspondence,yang2019volumetric,huang2019dynamic,rocco2020efficient,min2021convolutional,min2021convolutional++} leveraged or extended 4D convolutions. 
+
+Among Transformer-based networks, CATs~\citep{cho2021semantic} recently proposed to use Transformer~\citep{vaswani2017attention} for cost aggregation, and its extension CATs++~\citep{9933865} combined convolutions and Transformer for an enhanced cost aggregation.  VAT~\citep{hong2022cost} proposed 4D convolutional Swin transformer for cost aggregation that benefits from  better generalization power and showed its effectiveness for semantic correspondence. NeMF~\citep{hong2022neural} incorporates an implicit neural representation into semantic correspondence and implicitly represents the cost volume to infer correspondences defined at arbitrary resolution. FlowFormer~\citep{huang2022flowformer} and STTR~\citep{li2021revisiting} are Transformer-based cost aggregation networks specifically designed for optical flow or stereo matching. 
+
+
+
+
+
+Feature and Cost Aggregation
+In this section, we examine the characteristics of feature and cost aggregation, which will later be verified empirically in Section~\ref{quan}. Fig.~\ref{PCA} and Fig.~\ref{fig:multi-cost} present visualizations of feature maps and cost volumes at different stages of aggregation. Although there may be different types of aggregations, throughout this work, we focus on attention-based aggregations. From the visualizations, the following observations can be made. 
+
+\textbf{The information encoded by features and cost volumes differ.} Feature aggregation and cost aggregation thus exploit different information, which is exemplified in Fig.~\ref{PCA} (c-d) and Fig.~\ref{fig:multi-cost} (c-e) where the spatial structure is preserved in the features while sparse spatial locations with higher similarity to the query point is highlighted in the cost volume. Due to the different information encoded in their inputs, \textbf{the outputs of both aggregations have different characteristics.} In Fig.~\ref{PCA}, compared to raw features in (c-d), the feature aggregation in (e-f) makes the features of semantic parts, \textit{e.g.,} legs/claws and head, more consistent between the two birds. This is in agreement with observations in previous studies~\citep{amir2021deep,sun2021loftr}. On the other hand, compared to noisy cost volumes visualized in Fig.~\ref{fig:multi-cost} (c-e), the aggregated cost volume in (h) is less noisy and more clearly highlights the most probable region for matching while less probable regions are suppressed. We additionally observe that \textbf{each type of aggregation can have apparent effects on the other.} Naturally, more robust descriptors can construct a less noisy cost volume as shown in Fig.~\ref{fig:multi-cost} (f-g), and ease the subsequent cost aggregation process to promote more accurate correspondences. However, without a special model design, cost aggregation would not affect feature aggregation since it is performed after feature aggregation.  Motivated by this, we  proposed integrative aggregation, and its effects on feature maps are shown in Fig.~\ref{PCA} (g-h), where salient features become more distinguishable from each other, \textit{i.e.,} the left and right claws. 
+This exemplifies that more discriminative feature representations that are more focused  and that also preserve semantics and spatial structure can be learned and reveals that potential benefits from their integration can be realized.
+
+From these observations, we propose in the following a simple yet effective architecture that makes prudent use of both feature and cost aggregation.
+
+\begin{figure*}
+  \centering
+  \renewcommand{\thesubfigure}{}
+    \subfigure[ ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/orig_img1.png}}\hfill
+    \subfigure[ ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/orig_img2.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/feat/raw1.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/feat/raw2.png}}\hfill
+    \subfigure[  ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/feat_agg1.png}}\hfill
+    \subfigure[ ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/feat_agg2.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/feat/integ_agg1.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/feat/integ_agg2.png}}\hfill
+    \subfigure[(a) ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/orig_img1_2.png}}\hfill
+    \subfigure[(b) ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/orig_img2_2.png}}\hfill
+    \subfigure[(c) ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/raw_21.png}}\hfill
+    \subfigure[(d)]
+{\includegraphics[width=0.12\linewidth]{figure/feat/raw_22.png}}\hfill
+    \subfigure[(e)  ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/feat_agg_21.png}}\hfill
+    \subfigure[(f) ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/feat_agg_22.png}}\hfill
+    \subfigure[(g)]
+{\includegraphics[width=0.12\linewidth]{figure/feat/integ_agg_21.png}}\hfill
+    \subfigure[(h) ]
+{\includegraphics[width=0.12\linewidth]{figure/feat/integ_agg_22.png}}\hfill
+  \caption{\textbf{\textbf{PCA} visualizations of feature maps:} (a-b) source and target images. (c-d) raw feature maps. (e-f) feature maps that have undergone feature aggregation.  (g-h) feature maps that have undergone  integrative aggregation. Our integrative aggregation methodology enables the acquisition of more discerning feature representations while preserving both semantic and spatial structural aspects, resulting in the estimation of highly accurate correspondences. }
+\end{figure*}
+
+\begin{figure*}
+  \centering
+  \renewcommand{\thesubfigure}{}
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/src_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/trg_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/self_raw_cost_0_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/self_raw_cost_1_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/self_raw_cost_2_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/self_feat_cost_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/cross_feat_cost_07.png}}\hfill
+    \subfigure[]
+{\includegraphics[width=0.12\linewidth]{figure/attn/cross_agg_cost_07.png}}\hfill
+    \subfigure[(a)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/src_05.png}}\hfill
+    \subfigure[(b)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/trg_05.png}}\hfill
+    \subfigure[(c)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/self_raw_cost_0_05.png}}\hfill
+    \subfigure[(d)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/self_raw_cost_1_05.png}}\hfill
+    \subfigure[(e)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/self_raw_cost_2_05.png}}\hfill
+    \subfigure[(f)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/self_feat_cost_05.png}}\hfill
+    \subfigure[(g)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/cross_feat_cost_05.png}}\hfill
+    \subfigure[(h)]
+{\includegraphics[width=0.12\linewidth]{figure/attn2/cross_agg_cost_05.png}}\hfill
+
+  \caption{\textbf{Visualizations of cost volumes:} (a-b) source and target images. (c-e) \textbf{2D slices} of raw cost volumes at different levels $l$. (f) cost volumes constructed using feature maps that have undergone self-attention. (g) with feature maps that have undergone both self-attention and cross-attention, and (h) the cost volume that have undergone cost aggregation. From (c-e), the noises are suppressed in (h), while (f-g) shows aggregated features help to construct less noisy cost volumes. Note that the visualizations are obtained with respect to the circled point in the target image.}
+\end{figure*}
+
+
+Methodology
+
+
+\subsection{Problem Formulation}
+Let us first denote a pair of visually or semantically similar images, i.e., the source and target, as $I_{s}$ and $I_{t}$, the feature descriptors extracted from $I_{s}$ and $I_{t}$ as $D_{s}$ and $D_{t}$, respectively, and the cost volume computed between the feature maps as $C$. Given $I_s$ and $I_t$, we aim to establish a dense correspondence field ${F}(i)$ that is defined at all pixels $i$ and warps $I_s$ towards $I_t$. Given features extracted from deep CNNs~\citep{he2016deep} or Transformers~\citep{dosovitskiy2020image}, we can construct and store a cost volume that consists of all pairwise feature similarities $C \in \mathbb{R}^{h \times w \times h \times w}$ with height $h$ and width $w$: $C(i,j)=D_{s}(i)\cdot {D}_{t}(j)$,
+where $i$ and $j$ index the source and target features, respectively. The dense correspondence field, ${F}(i)$, can then be determined from $C(i,j)$ considering all $j$.
+\subsection{Preliminaries: Self- and cross-attention}
+We briefly explain the attention mechanism, a core component we extend from. Given a sequence of tokens as an input, Transformer~\citep{vaswani2017attention} first linearly projects tokens to obtain query, key and value embeddings. These are then fed into a scaled dot product attention layer, followed by Layer Normalization (LN)~\citep{ba2016layer} and a feed-forward network or MLP, to produce an output with the same shape as the input. Each token is attended to by all the other tokens. This projections are formulated as:
+\begin{equation}
+\begin{split}
+        Q = \mathcal{P}_Q(X),\quad
+        K = \mathcal{P}_K(X), \quad
+        V = \mathcal{P}_V(X),
+\end{split}
+\end{equation}
+where $\mathcal{P}_Q$, $\mathcal{P}_K$ and $\mathcal{P}_V$ denote query, key and value projections, respectively, and $X$ denotes a token with a positional embedding. Subsequently, they pass through an attention layer: 
+\begin{equation}
+    \mathrm{Attention}(X) = \mathrm{softmax}(\frac{QK^T}{\sqrt{d_K}})V,
+    \label{eq:2}
+\end{equation}
+where $d_K$ is the dimension of the key embedding. Note that the $\mathrm{Attention}(\cdot)$ function can be defined in various ways~\citep{wang2020linformer,liu2021swin,katharopoulos2020transformers,lu2021soft,wu2021fastformer}. Self- and cross-attention are distinguished by their input to the key and value projections. Given a pair of input tokens, e.g., $X_s$ and $X_t$, the input to the key and value projections of self-attention for  $X_s$ is the same input, $X_s$, but for cross-attention across $X_s$ and $X_t$, the inputs to the key and value projection are $X_t$. 
+
+
+\begin{figure*}
+ \renewcommand{\thesubfigure}{}
+\subfigure[(a) Integrative self-attention]
+{\includegraphics[width=0.57\linewidth]{figure/attentions1.pdf}}\hfill
+    \subfigure[(b) Cross-attention with matching distribution]
+{\includegraphics[width=0.40\linewidth]{figure/attentions2.pdf}}\hfill
+
+  \caption{\textbf{Illustration of the proposed self- and cross-attention:} (a) joint feature aggregation and cost aggregation, and (b) cross-attention layer with matching distribution. }
+\end{figure*}
+
+
+\subsection{Unified Feature and Cost Aggregation}
+
+\paragraph{Integrative Self-Attention.}
+
+Toward more judicious use of both aggregations, we first leverage the fact that  both feature descriptors $D_s,$ $D_t$ and cost volume $C$ encode different information. To this end, in the proposed integrative self-attention layer, as shown in Fig.~\ref{attention}, we first obtain a feature cost volume $[D,C]$ by concatenating $D$ and $C$, where $[\cdot,\cdot]$ denotes concatenation. 
+
+This concatenation brings benefits from two perspectives. From the cost aggregation point of view, the feature map of the feature cost volume can disambiguate the initial noisy cost volume by referring to semantic-aware features as demonstrated in the stereo matching literature~\citep{yoon2006adaptive,hosni2012fast,he2011global},~\textit{i.e.,} 
+cost volume filtering. From the feature aggregation point of view, the cost volume explicitly represents the similarity of features in one image with respect to the features in the other, and accounting for it drives the features in each image to become more compatible with those of the other. As the iterations unfold, this process will encourage both aggregations to benefit each other. In the end, the resultant feature representations will be more robust and discriminative as shown in Fig.~\ref{PCA} (g-h).   
+
+To compute self-attention, we take a different approach from other works~\citep{sun2021loftr,cho2021semantic} to define the query, key and value embeddings. Concretely, we define two independent value embeddings, specifically one for feature projection and the other for cost volume projection. Formally, we define the query, key and values as:
+\begin{equation}
+    \begin{split}
+&Q = \mathcal{P}_{Q}([D , C]), \quad K = \mathcal{P}_{K}([D , C]), \\ &V_{D} = \mathcal{P}_{V_D}(D), \quad V_{C} = \mathcal{P}_{V_C}(C),
+    \end{split}
+\label{eq:cost_volume}
+\end{equation}    
+where $V_D$ and $V_C$ denote the value embeddings of feature descriptors and the cost volume, respectively. After computing an attention map by applying softmax over the query and key dot product, we use it to aggregate feature $D$ and cost volume $C$ with $V_D$ and $V_C$ using Eq.~\ref{eq:2} as follows:
+\begin{equation}
+    \begin{split}
+    \mathrm{Attention}_\mathrm{self-D}(C,D) = \mathrm{softmax}(\frac{QK^T}{\sqrt{d_K}})V_D, \\
+    \mathrm{Attention}_\mathrm{self-C}(C,D) = \mathrm{softmax}(\frac{QK^T}{\sqrt{d_K}})V_C.
+    \end{split}
+\end{equation}
+Note that any type of attention computation can be utilized,~\textit{i.e.,} additive~\citep{bahdanau2014neural} or dot product~\citep{vaswani2017attention}, while in practice we use the linear kernel dot product with the associative property of matrix products~\citep{katharopoulos2020transformers}. The outputs of this self-attention are denoted as $D'_s$, $D'_t$, and $C'$.
+\paragraph{Cross-Attention with Matching Distribution.}
+In the proposed cross-attention layer, the aggregated features and cost volume are explicitly used for further aggregation, and we condition both feature descriptors on both input images via this layer. By exploiting the outputs of the self-attention layer, the cross-attention layer performs cross-attention between feature descriptors for further feature aggregation using the improved feature descriptors $D'_s$, $D'_t$ and enhanced cost volume $C'$ from earlier aggregations. 
+
+As shown in Fig.~\ref{attention}, we first apply convolution to the input cost volume and treat the output as a cross-attention map, since applying a softmax function over the cost volume is tantamount to obtaining an attention map. 
+In this way, an enhanced aggregation is enabled, as the input cost volume is transformed to represent a sharpened matching distribution. With a cross-attention map and value for the attention score defined as $QK^T = C'$ and $V_{D'} = \mathcal{P}_{V_D}(D')$, respectively, the subsequent attention process for cross-attention is then defined as follows:
+\begin{equation}
+    \mathrm{Attention}_\mathrm{cross}(C',D') = \mathrm{softmax}(\frac{C'}{\sqrt{d_K}})V_{D'}.
+    \label{2}
+\end{equation}
+The outputs of this cross-attention are denoted as $D''_s$ and $D''_t$, and $C''$ is constructed using  $D''_s$ and $D''_t$. The proposed attention layers are interleaved, and they are stacked $N$ times to facilitate the aggregations and increase the model capacity. 
+
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=1\linewidth]{figure/overall.pdf}\hfill\\
+    \caption{\textbf{Overall architecture of the proposed method.} Given feature maps $D_s$ and $D_t$ and the cost volume $C$ as inputs, our method employs self- and cross-attention specifically designed to conduct joint feature aggregation and cost aggregation in a coarse-to-fine manner.}
+\end{figure*}
+\subsection{Coarse-to-Fine Formulation }\label{coarse-to-fine}
+To improve the robustness of fine-scale estimates and enhance the benefits one aggregation gains from the other, we extend our architecture to a coarse-to-fine approach through pyramidal processing, as done in~\citep{jeon2018parn,melekhov2019dgc,truong2020glu,Hong_2021_ICCV}. 
+We first use a coarse pair of refined feature maps and aggregated cost volume, and similar to~\cite{zhao2021multi} that learns complementary correspondence by adding the cost volume of the previous scale, we progressively learn complementary descriptors and correspondences and encourage the coarser outputs to enhance the subsequent aggregations.  
+
+Formally, given the outputs of the attention block at each level, ${D}''^{,l}_s, {D}''^{,l}_t$ and ${C}''^{,l}$, where $l$ denotes the $l$-th level, we upsample the aggregated features using bilinear interpolation and add them to the raw feature descriptors extracted from $I_s$ and $I_t$ defined at the next level: ${D}^{{l+1}}_s = {D}^{{l+1}}_s + \mathrm{up}({D}''^{,l}_s)$, where ${D}^{{l+1}}_t$ is defined similarly.  Note that we let the output cost volumes of self- and cross-attention at each level, ${C}'^{,l}$ and ${C}''^{,l}$, undergo convolution and residual connections, \textit{i.e.,} ${C}''^{,l} = {C}'^{,l} + \mathrm{Conv4d}({C}''^{,l}),$ to facilitate the training process. Then, we define the next-level cost volume as ${C}^{l+1} = {C}^{l+1} + {C}''^{,l} $.
+
+Finally, given the features ${D}''_s$ and ${D}''_t$ at each level, we compute the cost volume, and the sum of all cost volumes across all levels are added up to obtain the final output ${C}^*$ that is used to estimate the final flow field, as shown in the bottom of Fig.~\ref{fig:overall}.
+\subsection{Inference: Dense Zoom-in}
+At the inference phase, we leverage multi-scale predictions to predict highly accurate correspondences. The goals of this approach are two-fold: to prevent a large memory increase when processing high-resolution input image pairs, \textit{e.g.,} HD or Full HD, and to capture possible fine-grained correspondences missed by the coarse-to-fine design. 
+
+Dense zoom-in consists of three stages. For the first stage, UFC takes an input image pair and uses the output flow to coarsely align the source image to the target image as similarly done in~\citep{shen2020ransac}. Unlike RANSAC-Flow~\citep{shen2020ransac}, we do not resort to finding a homography transformation, but rather rely on the output flow itself. We empirically find that for images with extreme geometric deformations, reliable homography transformations may not be found.
+
+Subsequently, we evenly partition the coarsely aligned source image and the target image into $k \times k $ local windows, where $k$ is a hyperparameter. Each pair of partitioned local windows at the same location is then used to find more fine-grained correspondences by feeding them into UFC to obtain local flow fields. Note that in this stage, we also compute a cycle-consistency confidence score~\citep{jiang2021cotr} that will be used in the final decision-making process. To enable multi-scale inference, we choose multiple $k$, for which we provide an ablation study in the supplementary material.  We then perform transitive composition~\citep{zhou2016learning} using the coarse flow and each of the multi-scale flows. Finally, using the confidence values of composited flows at each pixel, we select the flow with the highest confidence score. This selection is performed for every pixel and results in a final dense flow map. 
+
+
+
+Experiments
+
+\begin{table*}[!t]
+    \begin{center}
+
+    \scalebox{0.54}{
+    \begin{tabular}{l|cc|cc|ccccc|ccc|cc|cc}
+            \hlinewd{0.8pt}
+             \multirow{3}{*}{Methods}&{Train}&{Keypoint}&\multirow{3}{*}{Feat. Agg.} & \multirow{3}{*}{Cost Agg.}&  \multicolumn{5}{c|}{SPair-71k} & \multicolumn{3}{c|}{PF-PASCAL} & \multicolumn{4}{c}{PF-WILLOW} \\
+          
+              &Image&Annotation&& &\multicolumn{5}{c|}{PCK @ $\alpha_{\text{bbox}}$} & \multicolumn{3}{c|}{PCK @ $\alpha_{\text{img}}$}  & \multicolumn{2}{c}{PCK @ $\alpha_{\text{bbox}}$} & \multicolumn{2}{c}{PCK @ $\alpha_{\text{bbox-kp}}$} \\ 
+        
+             &Reso.&Reso.& &&0.01&0.03 &0.05&0.1&0.15 & 0.05 & 0.1 & 0.15 & 0.05 & 0.1 & 0.05 &0.1 \\ 
+             \midrule\midrule
+           
+         
+            
+           
+            
+
+             
+             
+             DHPF &240$\times$ 240&240 &-&RHM &1.74&11.0&20.9&37.3 &47.5&75.7 &90.7 &95.0 &49.5 &77.6 &- &71.0\\
+             SCOT&-&Max 300 &-&OT-RHM &-&-&-&35.6& -&63.1 &85.4 &92.7 &- &- &{47.8}&\underline{76.0}\\
+             CHM&240$\times$ 240&240 & 2D Conv.& 6D Conv. &2.25&14.9&27.2&46.3&57.5 &80.1 &91.6 &94.9 &{52.7} &{79.4} &-&69.6\\
+             
+         
+             
+           
+             
+             CATs &256$\times$ 256&256&-&Trans.&1.90&13.8&27.7&49.9&61.7 &75.4 &{92.6} &{96.4} &50.3 &79.2& 40.7&69.0\\
+                  MMNet-{FCN} &224$\times$ 320&224$\times$ 320&Conv. + Trans.&-&2.80&18.8  &33.3& 5
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

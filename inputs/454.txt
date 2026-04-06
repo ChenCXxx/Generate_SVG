@@ -1,0 +1,333 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% CVPR 2024 Paper Template; see https://github.com/cvpr-org/author-kit
+
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+%%%%%%%%% PAPER TYPE  - PLEASE UPDATE FOR FINAL VERSION
+\usepackage{cvpr}              % To produce the CAMERA-READY version
+% \usepackage[review]{cvpr}      % To produce the REVIEW version
+% \usepackage{natbib}
+% \setcitestyle{authoryear,round}
+\usepackage{amsmath}
+\usepackage{amssymb}% http://ctan.org/pkg/amssymb
+\usepackage{pifont}% http://ctan.org/pkg/pifont
+\newcommand{\cmark}{\ding{51}}%
+\newcommand{\xmark}{\ding{55}}%
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{graphicx}
+\usepackage{makecell}
+\usepackage{color}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage[accsupp]{axessibility}
+\usepackage{xcolor}
+\usepackage{bm}
+\graphicspath{{images/}}
+
+\usepackage{ algorithmic}
+% \usepackage[ruled,vlined]{algorithm2e}
+\usepackage[linesnumbered,boxed,ruled,commentsnumbered]{algorithm2e}
+
+% \usepackage[pagenumbers]{cvpr} % To force page numbers, e.g. for an arXiv version
+
+% Import additional packages in the preamble file, before hyperref
+\input{preamble}
+
+% It is strongly recommended to use hyperref, especially for the review version.
+% hyperref with option pagebackref eases the reviewers' job.
+% Please disable hyperref *only* if you encounter grave issues, 
+% e.g. with the file validation for the camera-ready version.
+%
+% If you comment hyperref and then uncomment it, you should delete *.aux before re-running LaTeX.
+% (Or just hit 'q' on the first LaTeX run, let it finish, and you should be clear).
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,citecolor=cvprblue]{hyperref}
+
+%%%%%%%%% PAPER ID  - PLEASE UPDATE
+\def\paperID{3748} % *** Enter the Paper ID here
+\def\confName{CVPR}
+\def\confYear{2024}
+
+%%%%%%%%% TITLE - PLEASE UPDATE
+\title{Decoupled Pseudo-labeling for Semi-Supervised Monocular 3D Object Detection}
+
+%%%%%%%%% AUTHORS - PLEASE UPDATE
+\author{Jiacheng Zhang$^{1}$\thanks{Equally-contributed authors. Work done during an internship at Baidu.} \quad
+Jiaming Li$^{1*}$ \quad
+Xiangru Lin$^{2*}$ \quad
+Wei Zhang$^{2}$ \quad \\
+Xiao Tan$^{2}$ \quad
+Junyu Han$^{2}$ \quad Errui Ding$^{2}$ \quad Jingdong Wang$^{2}$ \quad
+Guanbin Li$^{1,3}$\thanks{Corresponding author.} \\
+$^{1}$School of Computer Science and Engineering, Sun Yat-sen University, Guangzhou, China\\
+$^{2}$Department of Computer Vision Technology (VIS), Baidu Inc., China\\
+$^{3}$GuangDong Province Key Laboratory of Information Security Technology\\
+{\tt\small \{zhangjch58,lijm48\}@mail2.sysu.edu.cn, \{liguanbin\}@mail.sysu.edu.cn } \\
+{\tt\small \{linxiangru,zhangwei99,tanxiao01,hanjunyu,dingerrui,wangjingdong\}@baidu.com}
+% For a paper whose authors are all at the same institution,
+% omit the following lines up until the closing ``}''.
+% Additional authors and addresses can be added with ``\and'',
+% just like the second author.
+% To save space, use either the email address or home page, not both
+}
+
+
+\begin{document}
+\maketitle
+\input{sec/0_abstract}    
+\input{sec/1_intro}
+\input{sec/2_related_work}
+\input{sec/3_method}
+\input{sec/4_experiment}
+\input{sec/5_conclusion}
+
+\section*{Acknowledgments}
+This work was supported in part by the National Natural Science Foundation of China (NO.~62322608), in part by the CAAI-MindSpore Open Fund, developed on OpenI Community, in part by the Open Project Program of the Key Laboratory of Artificial Intelligence for Perception and Understanding, Liaoning Province (AIPU, No.~20230003). 
+
+{
+    \small
+    \bibliographystyle{ieeenat_fullname}
+    \bibliography{main}
+}
+
+\clearpage
+\appendix
+
+
+\section{Geometric Relationship in Monocular 3D Object Detection}
+In contrast to 2D object detection, detecting objects in 3D space often involves a wide range of geometric relationships, and these relationships can be utilized to enhance visual perceptual performance significantly\cite{yang2023geometry}. The primary geometric prior between 2D and 3D space is the pinhole model that describes the correspondence between the location of 3D points and 2D points. With the pinhole camera model, the mapping of a 3D point $P$ with $\bm{c^\omega}=(x,y,z)$ location under the LiDAR coordinate system and its corresponding 2D location $\bm{c^i}=(u,v)$ within image can be described as:
+
+\begin{equation}
+z[u \enspace v \enspace 1]^{T}=\mathbf{K}\cdot[\mathbf{R} | \mathbf{T}]\cdot [x \enspace y \enspace z]^{T}
+\end{equation}
+
+where matrix $K$ is the \textbf{camera intrinsic matrix}. $z$ is the depth value at point $P$, $R$ and $T$ is the rotation and transformation matrix of the \textbf{camera extrinsic matrix}. In this equation,  the camera extrinsic matrix $[\mathbf{R} | \mathbf{T}]$ is responsible for the transformation between the LiDAR coordinate system and the camera coordinate system. The camera intrinsic matrix $K$ is used to transform the point from the camera coordinate to the image plane.
+
+\section{Extended Details of Homography-based Pseudo-label Mining}
+The complete procedure of the proposed Homography-based Pseudo-label Mining(HPM) algorithm is summarized in Algorithm~\ref{hpm}. Several key components of this algorithm are explained below.
+
+\noindent\textbf{Model Prediction}. Formally, the outputs of the teacher model $F$ for a  unlabeled image $I^{u}$ contains the 2D and 3D attributes for each predicted object:
+\begin{equation}
+ [Cls, BBox]_{2D}, [Points, Depth, Size, Ori]_{3D} = \boldsymbol{F}(\boldsymbol{I}^{u}).
+\label{eq:outputs}
+\end{equation}
+where $Cls$ is the classification confidence, $BBox$ is the 2D bounding box of the object. $Points$ is the predicted projected points of the 3D bounding box in the image plane. In our main paper, we predict 10 points of the 3D box in total following MonoFlex\cite{monoflex}, which includes eight corner points and top and bottom center points. $Depth$ refers to the depth value of the bottom center point. $Size$ represents the 3D size and contains the length, width, and height of the object. $Ori$ represents the orientation of the object. \par
+\noindent\textbf{2D-3D Transformation}. Homography-based Pseudo-label Mining involves the geometric transformation of the pseudo-labels between 2D and 3D space. Specifically, we take the four bottom corner points plus the bottom center point as the candidate points for each object to estimate the homography transformation. Specifically, the location of these candidate points in the image plane is directly obtained via Eq.\ref{eq:outputs}. To estimate the BEV coordinate of these points, the bottom center point is first transformed from the image plane to the camera coordinate system as:
+\begin{equation}
+ P_{center} = K^{-1}\cdot[zu, zv, z].
+\label{eq:img_to_cam}
+\end{equation}
+Then, we apply the local transformation to the $P_c$ with the orientation and 3D size(length, width, and height) prediction in Eq.\ref{eq:outputs} to get the camera coordinates $P_{corner}$ of the candidate corner points. Such local transformation involves simply translation and rotation. Finally, the inversion of camera extrinsic matrix $[R|T]$ is further applied to obtain their BEV coordinates. 
+\begin{equation}
+ B_{\cdot} = [\mathbf{R} | \mathbf{T}]^{-1}\cdot P_{\cdot}
+\label{eq:cam_to_bev}
+\end{equation}
+Where $P_{\cdot}$ refers to the camera coordinates of bottom corner points and bottom center point, and $B_{\cdot}$ denotes their corresponding BEV coordinates.\par
+Note that the 3D BEV coordinate of these candidate points is not directly transformed by their 2D location in the image plane, instead, they are estimated based on the model's 3D attributes prediction such as depth, orientation, etc. Therefore, the homography matrix solved from these coordinates via DLT\cite{dlt} is not a trivial solution. 
+\begin{algorithm*}[h]
+	\caption{$\mathbf{DLT}$ indicates solving the homography matrix by Direct Linear Transform\cite{dlt}. $\mathbf{ImageCoord}_{\cdot}$ and $\mathbf{BEVCoord}_{\cdot}$ refers to the operation to obtain the coordinates of the point in the image plane and BEV plane. $\mathbf{ImageCoord}_{\cdot}$ relies on Eq.\ref{eq:outputs} and $\mathbf{BEVCoord}_{\cdot}$ relies on Eq.\ref{eq:img_to_cam},Eq.\ref{eq:cam_to_bev}.
+ '$\mathbf{all}$' indicates all candidate points(5 points each object), '$\mathbf{bc}$' indicates the bottom center point. } 
+	\label{hpm} 
+ \SetKwInOut{Input}{\textbf{Input}}\SetKwInOut{Output}{\textbf{Output}}
+         \Input{ \\
+    $m^0 $: Initial set of pseudo-labels generated by uncertainty filtering; \\
+    $\theta_h$: Localization error threshold; \\
+    $ p = \{p_1, ..., p_N\}$: $N$ candidate predicted 3D bounding box}
+    \Output{
+        \\
+        $m^{3D}$: The final pseudo-labels for 3D attributes \\}
+
+
+\begin{algorithmic}[1]
+\BlankLine
+
+
+
+\FOR{$t=1,\cdots,t_{max}$}
+    \STATE  $\tilde{C}_I^t = \mathbf{ImageCoord_{all}}( m^{t-1})$; // Image coordinates of all pseudo-labels' bottom corner and center points
+    \STATE  $\tilde{C}_B^t = \mathbf{BEVCoord_{all}}( m^{t-1})$;  // BEV coordinates of all pseudo-labels' bottom corner and center points
+    \STATE   $\tilde{M} \leftarrow \mathbf{DLT}(\tilde{C}_I^t, \tilde{C}_B^t)$;
+    \STATE $m^{t} \leftarrow m^{t-1}$;
+    \FOR{$j=1,\cdots,N$}
+        \STATE $\hat{c}^b \leftarrow \tilde{M} [\mathbf{ImageCoord_{bc}}(p_j), 1]^T$;   // Obtain BEV coordinates of the bottom center points via homography transformation
+        \STATE $\epsilon_j^t  \leftarrow ||\mathbf{BEVCoord_{bc}}(p_j) - \hat{c}^b ||_2$; // Compute loc error of bottom center point
+        \IF{$\epsilon_j^t < \theta_h$}
+            % \STATE $m^t(j) \leftarrow 1$; 
+          \STATE $m^{t} \leftarrow$ add $b_j$ into  $m^{t}$;
+        \ENDIF
+    \ENDFOR  
+    \IF {$m^{t} = m^{t - 1}$}
+        \STATE break;
+    \ENDIF
+\ENDFOR
+\STATE  $m^{3D}  \leftarrow m^t$
+\STATE return $m^{3D}$
+ 
+	\end{algorithmic}
+
+
+
+\end{algorithm*}
+\par
+\noindent\textbf{Feasibility of Flat Ground Assumption}. We check the feasibility of the flat ground assumption used in the homography-based pseudo-label mining algorithm. Actually, the KITTI dataset does exhibit some micro-unevenness in the ground, which also leads to minor localization errors in ground truth objects when utilizing the homography solved from the ground truth bounding box as shown in Tab.\ref{tab:localization_error}. However, these errors are minimal when compared to the localization errors in pseudo-labels caused by inaccurate depth. With this obvious gap between the ground truth bounding box and the pseudo-labels with inaccurate 3D attribute prediction, our method remains applicable to distinguish the reliable pseudo-labels. But it's worth noting that on a severely uneven road surface, where the homography constraint is substantially violated by the ground truth object, our approach may struggle to distinguish between reliable and unreliable pseudo-labels.
+
+\section{Extended Implementation Details}
+ Our experiments are conducted based on the MonoFlex\cite{monoflex} with the official code provided by the authors. For the \textbf{KITTI} dataset, we first pre-train the model on the labeled data for 140 epochs with a batch size of 8 following the default setting. After that, we copy the pre-trained model weight into the student and teacher models for end-to-end semi-supervised fine-tuning. For each iteration of semi-supervised fine-tuning, we randomly select 8 labeled images and 8 unlabeled images as the batched data and pad the images to the size of [1280, 384]. We utilize the AdamW optimizer with a learning rate of 3e-4, and weight decay of 1e-5, and fine-tune the model with semi-supervised learning for 20 epochs, in which the learning rate is decayed at the 10th and 15th epochs by a factor of 0.1, respectively. To demonstrate the generality of our approach, we also conduct experiments on the \textbf{nuScenes} dataset~\cite{nuscenes}, which is another large-scale autonomous driving dataset. Since~\cite{pgd,fcos3d} are the only M3OD works that provide the results on this benchmark, we choose to conduct experiments with these two base detectors. For the nuScenes dataset, we follow the default setting of FCOS3D\cite{fcos3d} and PGD\cite{pgd} implemented in MMDetection3D. We first pre-train the model on the labeled data for 12 epochs with a batch size of 16 and input size of [1600,900]. We utilize the SGD optimizer with a learning rate of 2e-3 and weight decay of 1e-4. For each iteration of semi-supervised fine-tuning, we randomly select 8 labeled images and 8 unlabeled images as the batched data and conduct fine-tuning for 5 epochs, in which the learning rate is decayed at the 2nd and 4th epochs by a factor of 0.1, respectively.
+ For the experiments on Other M3OD Detectors, given that the pseudo-label mining algorithm based on homograph in DPL relies on key point prediction of the 3D bounding box. For the monocular 3D object detector \cite{monodetr,monodle,gupnet} without key point prediction, we add the key point prediction branch head to the original head. All experiments are conducted with 8$\times$ 32G NVIDIA Tesla V100 GPUs.
+
+\section{More Experiment Results}
+\begin{figure*}[ht]
+    \centering
+    \includegraphics[width=0.9\linewidth]{images/cvpr2024_ssm3od_supp_diversity.pdf}
+    \caption{KITTI raw data spans five scene types. Bottom: Object class distribution across scenes. Accordingly, We divide the unlabeled data into two groups: (1) Car-dominated (city, residential, road), and (2) Person-dominated (campus, person).
+    }
+    \label{fig:kitti_diversity}
+\end{figure*}
+
+\noindent\textbf{Effect of Diversity of Unlabeled Data}. We analyze the impact on the SSM3OD performance of the distribution of the unlabeled data.
+The KITTI raw data were collected from five diverse scenes: city, residential, road, campus, and person, as depicted in the right of Fig.\ref{fig:kitti_diversity}. Analyzing the object class distribution in each scene revealed significant differences. For example, in residential and road scenes, the car object dominates, with few pedestrians and cyclists. Conversely, campus and personal scenes mainly consist of pedestrians. To investigate the effect of unlabeled data diversity, the images were roughly divided into two groups: car-oriented, and person-oriented according to their object class distribution. We randomly chose 5K images for each group as the unlabeled data. We further constructed a more comprehensive unlabeled data set by combining the images randomly selected from both two groups, with 2.5K images selected for each group. The results are reported in Tab.\ref{diversity_performance}. It clearly shows that the diversity of these classes affects performance. Specifically, car-dominated unlabeled images boost the performance of the car category, while resulting in a slight performance decrease for the pedestrian and cyclist category. There is an opposite trend when training with person-dominated unlabeled images, in which the performance of pedestrian and cyclist categories are improved and no obvious performance gain for the car category is observed. The main reason behind these results is the confirmation bias caused by the class imbalance. By contrast, the unlabeled data combined images from both groups, containing rich objects, improve the performance of all three object categories. These results underscore the importance of unlabeled data diversity in semi-supervised learning for M3OD.
+
+
+\noindent\textbf{Performance on Large Scale Dataset}.  The nuScenes Dataset is a large dataset for multi-view 3D object detection~(MVOD), and some M3OD methods~\cite{fcos3d,pgd} can be extended to achieve MVOD by conducting monocular detection in every single view and then fusing the multi-view detection results. To demonstrate the generality of our method, we conducted further experiments on this large-scale dataset based on FCOS3D and PGD with the official codes from MMDetection3D. Note MVC-MonoDet~\cite{mvc-monodet} is the only SSM3OD work that reports the results on the nuScenes dataset, but they only present some partial metrics. Our results, detailed in Tab.\ref{nuscense}, showcase substantial performance improvements through our proposed pseudo-labeling method. Specifically, we achieve gains of \textbf{3.1} in mAP and \textbf{2.2} in NDS for FCOS3D, \textbf{1.8} in mAP, and \textbf{1.2} in NDS for PGD. Our method also outperforms MVC-MonoDet in both mAP and mATE metrics.  These results verify the efficacy of our method, demonstrating its potential for extending to multi-view 3D object detection and generalization. Note that MVOD focuses on feature intersection between different views or temporal frames which is beyond the scope of this article. Therefore, we \textit{not aim to surpass the state-of-the-art methods~\cite{bevformer,bevdet} on this benchmark} 
+, and instead just to show the generalization ability of our method.
+
+\begin{table}[H]
+\centering
+\caption{The effect of the diversity of unlabeled data. For each group, we randomly select 5K images as the corresponding unlabeled data, respectively. We further construct a comprehensive unlabeled data set by combining both images randomly selected from Car-dominated and person-dominated groups, with 2.5K images randomly chosen for each group.}
+\footnotesize
+\label{diversity_performance}
+\setlength\tabcolsep{2pt} 
+\begin{tabular}{c|ccc|ccc|ccc}
+\hline \multirow{3}{*}{ Unlabeled Data } & \multicolumn{9}{|c}{ Val, $A P_{3 D}|R_{40}$} \\
+\cline{2-10}
+ &\multicolumn{3}{|c}{Car}& \multicolumn{3}{|c}{ Pedestrian} &\multicolumn{3}{|c}{Cyclist}  \\
+ \cline{2-10}
+& Easy & Mod & Hard& Easy & Mod & Hard & Easy & Mod & Hard  \\
+\hline
+Sup-baseline &22.80& 17.51 & 14.90& 7.30& 5.53 & 4.24 & 4.67 & 2.23  &1.93\\
+Car-dominated & \textbf{24.54}&18.44 & 15.68& 6.91& 5.43 & 4.51 & 3.52 &  2.04 &1.65\\
+Person-dominated &22.76& 17.23 & 14.71&8.23& 6.66  & 5.02 & 4.87  &2.32 & 2.11\\
+Combined &24.32& \textbf{18.56} & \textbf{16.12}&\textbf{8.45}& \textbf{6.72} & \textbf{5.07}& \textbf{5.35} & \textbf{2.89}  &\textbf{2.43}\\
+\hline
+\end{tabular}
+\end{table}
+
+
+
+\begin{table*}[h]
+\centering
+
+\caption{The performance comparison in the \textbf{nuScenes validation set}. Note that the MVC-MonoDet only provides the mAP and mATE metrics in this dataset.}
+\setlength\tabcolsep{2pt} 
+
+\begin{tabular}{c|c|c|c|c|c|c|c|c}
+\hline
+\label{nuscense}
+\multirow{2}{*}{Methods}  & \multirow{2}{*}{Extra Data}  & mAP $\uparrow$ & mATE $\downarrow$ & mASE $\downarrow$ & mAOE $\downarrow$ &mAVE $\downarrow$ & mAAE $\downarrow$ & NDS $\uparrow$ \\
+\cline{3-9}
+& & (\%)&(m)&(1-iou)&(rad)&(m/s)&(1-acc)&\%\\
+\hline MVC-MonoDet & Unlabeled & 0.349 & 0.640 & - & - & - & - & - \\
+ FCOS3D & None & 0.321 & 0.754 & 0.260 & 0.486 & 1.332 & 0.157 & 0.394 \\
+DPL$_{FCOS3D}$ & Unlabeled & 0.352 & 0.633 & \textbf{0.248} & 0.423 & 1.264 & \textbf{0.143} & 0.416 \\
+ PGD & None & 0.358 & 0.667 & 0.264 & 0.434 & 1.276 & 0.176 & 0.425 \\
+DPL$_{PGD }$&  Unlabeled & \textbf{0.376} & \textbf{0.577} & 0.250 & \textbf{0.412} & \textbf{1.258} & 0.161 & \textbf{0.437} \\
+\hline
+\end{tabular}
+\end{table*}
+
+
+
+
+\noindent\textbf{Ablation of Threshold}. We ablate the threshold of uncertainty threshold $\theta_u$, location error threshold $\theta_h$ in Tab.\ref{tab:ablation}. The best results achieve with $\theta_u = 0.10$ and $\theta_h = 2.0$.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}[c]{0.27\textwidth}
+    \begin{table}[H]
+        \centering
+        % 不建议在 minipage 中使用 table 环境，因此移除了 table 环境
+        \footnotesize
+        \label{different_base_detectors}
+        \setlength\tabcolsep{3pt} 
+        \begin{tabular}{cc|c|c|c}
+            \hline
+            \multirow{2}{*}{$\theta_u$} & \multirow{2}{*}{$\theta_h$} & \multicolumn{3}{|c}{Val, $AP_{3D}|R_{40}$} \\
+            \cline{3-5} & & Easy & Mod & Hard  \\
+            \hline 
+            0.10 & 1.0 & 25.68 & 19.39 & 17.06\\
+            0.20 & 2.0 & 24.94 & 19.15 & 16.82 \\
+            0.10 & 2.0 & \textbf{26.51} & \textbf{19.84} & \textbf{17.13}\\
+            \hline
+        \end{tabular}
+        \caption{Ablation of the threshold $\theta_u$ and $\theta_h$.}
+         \label{tab:ablation}
+        \end{table}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[c]{0.2\textwidth}
+        \centering
+        % \setlength\tabcolsep{2pt} 
+        \begin{table}[H]
+        \footnotesize
+        \begin{tabular}{c|c}
+            \hline
+            Labels & \makecell[c]{Loc Error(m)} \\
+            \hline
+            GTs  & 0.91 \\
+            PLs   & 2.29 \\
+            \hline
+        \end{tabular}
+        \caption{The average localization errors of pseudo labels(PL) and ground truth(GT) labels.}
+        \label{tab:localization_error}
+        \end{table}
+    \end{minipage}
+    % \caption
+\end{figure}
+\noindent\textbf{Performance on Pedestrian and Cyclist Categoriy}. We also report the detection performance on the Pedestrian and Cyclist categories on the KITTI test set in Tab.\ref{ped_and_cyclist}, where our method also provides a significant boost in detection performance for these categories with relatively few instances. 
+
+\begin{table}
+ \centering
+\setlength\tabcolsep{3pt} 
+\caption{Performance comparison on the \textbf{KITTI test} set of the Pedestrian and Cyclist category.}
+\begin{tabular}{c|c|c|c|c|c|c}
+\hline 
+\label{ped_and_cyclist}
+\multirow{3}{*}{ Methods } & \multicolumn{6}{|c}{ Test, $A P_{3 D}|R_{40}$} \\
+\cline { 2 - 7 } & \multicolumn{3}{|c|}{ Pedestrian } & \multicolumn{3}{c}{ Cyclist } \\
+\cline { 2 - 7 } & Easy & Mod & Hard & Easy & Mod & Hard \\
+\hline M3D-RPN & 4.92 & 3.48 & 2.94 & 0.94 & 0.65 & 0.47 \\
+MonoPair& 10.02 & 6.68 & 5.53 & 3.79 & 2.12 & 1.83 \\
+MonoFlex † & 9.02 & 6.13 & 5.14 & 2.36& 1.44 &1.07 \\
+\hline DPL$_{FLEX }$ & $\mathbf{11.66}$ & $\mathbf{7.52}$ & $\mathbf{6.16}$ & $\mathbf{8.41}$ & $\mathbf{4.51}$ & $\mathbf{3.59}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Detection Results Visualization}. We visualize the detection results of our method compared to the supervised baseline method on the KITTI validation set in Fig.\ref{fig:kitti_vis}. It clearly shows that our method not only detects objects more accurately, as observed in 1st, 2nd, and 3rd images but also exhibits higher prediction recall, as presented in 4th and 5th images. These results once again demonstrate the superiority of our method.
+\begin{figure*}[ht]
+    \centering    \includegraphics[width=0.7\linewidth]{images/cvpr2024_ssm3od_supp_vis_1.pdf}
+\includegraphics[width=0.7\linewidth]{images/cvpr2024_ssm3od_supp_vis_2.pdf}
+\includegraphics[width=0.7\linewidth]{images/cvpr2024_ssm3od_supp_vis_3.pdf}
+\captionsetup{font=footnotesize}
+    \caption{Visualization of the detection results on the KITTI validation set. For each image, the first and second rows are the detection results of the supervised baseline and our method, respectively. The box in \textcolor{red}{red} and \textcolor{green}{green} on the BEV plane are the ground truth box and detection bounding box, respectively.}
+    \label{fig:kitti_vis}
+\end{figure*}
+
+
+
+\section{Limitations}
+Our method significantly improves the performance of monocular 3D detection methods with only image input. Compared with other 3D object detection methods, for example, LiDAR-based method, BEV-based method, etc, monocular 3D object exhibits a great advantage in the practical application.  With single-camera setups, it is more cost-effective and adaptable to numerous practical scenarios such as robotics, autonomous driving, and mobile augmented reality. However, due to the fundamental difficulty in estimating depth from a single RGB image, current performance still lags behind some methods using extra inputs (such as LiDAR). This limitation motivates us to explore the use of unlabeled data from other complementary sensor modalities such as LiDAR point clouds and stereo images. Actually, such kind of cross-modal learning has already validated its effectiveness in various tasks\cite{peng2021sparse}. For SSM3OD, these unlabeled data in other modalities contain more reliable object depth information, which can greatly ease the difficulty of accurately detecting 3D objects in real-world scenarios. We leave this exploration for our future work.
+
+% WARNING: do not forget to delete the supplementary pages from your submission 
+% \input{sec/X_suppl}
+
+
+
+\end{document}
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

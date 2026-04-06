@@ -1,0 +1,211 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+In recent years, autonomous driving has become an active research topic due to the enormous progress of deep learning. A traditional pipeline of an autonomous driving system is usually composed of object detection~\cite{li2022bevformer}, motion prediction~\cite{9363585,pmlr-v205-jia23a}, trajectory planning~\cite{Renz2022CORL}, \textit{etc}. To fully unleash the power of deep learning and big data and avoid cumulative errors, the concept of end-to-end autonomous driving is proposed~\cite{pomerleau1988alvinn,muller2005off,hu2023_uniad,chen2023e2esurvey} which aims to build a fully differentiable model directly mapping the raw sensor data into planned trajectories or control signals. 
+
+One difficulty of end-to-end autonomous driving is that the noisy and redundant raw sensor inputs make it hard to directly learn a good policy. 
+For example, raw sensor inputs based reinforcement learning (RL) agent MaRLn~\cite{toromanoff2020end} requires 20 million steps (around 20 days) to converge even equipped with their pretraining techniques. 
+To this end, in Roach~\cite{zhang2021roach}, they decouple the learning process into two steps: (i) conduct the RL algorithm based on privileged inputs - rasterizing the ground-truth location of surrounding agents and traffic signs into 2D bird's-eye-view (BEV) tensors. The trained RL model is called the \emph{teacher model} as it uses privileged inputs and thus performs well. (ii) conduct behavior cloning with raw sensor inputs on the data collected by the teacher model. This model only with access to raw sensor data is called the \emph{student model} since they are supervised by the teacher model.  By decoupling the perception noise from the driving strategy learning process, Roach could achieve much better performance on more challenging benchmarks in 10 million steps. 
+Besides the benefits of efficient RL training, in LBC~\cite{chen2020learning} and PlanT~\cite{Renz2022CORL}, they demonstrate that training a teacher model from rule-based expert and then using the teacher model to provide extra supervision for the student model could bring significant performance gains as well.
+Due to the aforementioned advantages of the decoupled planning and perception learning, the teacher-student paradigm has been widely adopted by the state-of-the-art (SOTA) works~\cite{chen2020learning,chen2022lav,wu2023PPGeo,Renz2022CORL,hu2022model}.
+
+However, there are still issues under the existing paradigm. The student model still needs to train a planning head from scratch by behavior cloning, which could result in the causal confusion issue~\cite{wen2020fighting}.
+Specifically, the causal confusion issue here refers to the phenomenon that the student model learns the visual clue of the results instead of the cause of the desired actions. For example, the well-known inertia problem~\cite{wen2020fighting} is that the agent sometimes keeps still forever at the intersection. It is because, during behavior cloning, the student model might learn the improper causal correlation that the ego vehicle should copy behaviors of its surrounding vehicles at the intersection. In fact, the behaviors are determined by the traffic light. However, since the traffic light is smaller in images compared to vehicles, the student tends to find the shortcut~\cite{wen2020fighting}. As a result, during evaluation, if there are no vehicles nearby or all vehicles are behind the ego vehicle, it might get stuck.
+The causal confusion issues could be solved by techniques such as reweighting the distribution of training data~\cite{ross2011reduction,prakash2020exploring,wen2020fighting} or a causal prior structure/network~\cite{wen2022fighting,chuang2022resolving}.
+Inspired by the fact that we already have a strong teacher model trained by RL without any causal confusion issue, in this work, we aim to explore the way to \emph{utilize the teacher model to conduct planning directly instead of training a planning head for the student model from scratch}.
+In this way, the learning process of perception and planning is completely decoupled and thus the disadvantage of behavior cloning could be avoided, as demonstrated in Fig.~\ref{fig:teaser}. As a result, we could directly benefit from the driving knowledge inside the teacher model learned by RL.
+One intuitive implementation of this idea is to train a student model to generate the required privileged inputs for the frozen teacher model, \textit{e.g.}, a BEV segmentation student model for the Roach teacher model.
+However, we find that even equipped with the SOTA perception model: BEVFusion~\cite{liu2022bevfusion} + Mask2former~\cite{Cheng_2022_CVPR}, its final driving performance is still unsatisfying. The issue comes from the large distribution gap between the predicted BEV segmentation and ground-truth. It could be formulated as a domain transfer problem since the teacher model has only seen the ground-truth BEV segmentation during the training process. 
+
+Inspired by the usage of adapters in the natural language processing (NLP)~\cite{houlsby2019parameter} and computer vision~\cite{gao2021clip} field to adopt huge foundation models for downstream tasks, we propose \textbf{DriveAdapter}, which connects the output of the student model (perception) and the input of the teacher model (planning). Specifically, we add a learnable adapter module after each part of the teacher model and apply feature alignment objective functions on each adapter.  In this way, the adapter could learn to transfer the imperfect feature from the student model's domain to the teacher model's domain in a layer-by-layer supervised way.
+
+Additionally, we observe that the pure learning-based teacher model itself is imperfect and it is a common practice to add extra hand-crafted rules during the final decision process~\cite{wu2022trajectoryguided,zhang2022mmfn,hu2022model}.}. 
+Thus, even if the student with adapters could losslessly generate the required inputs for the teacher model, it is still upper-bounded by the imperfect performance of the teacher. To this end, we propose to backpropagate an action loss to all adapters and mask all feature alignment loss if the teacher model is overridden by the rule. In this way, we force adapters to directly learn the feature required to generate good actions instead of just mimicking the teacher.
+By combining the two proposed techniques, DriveAdapter achieves state-of-the-art performance on two closed-loop evaluation benchmarks of the CARLA simulator. Moreover, we conduct thorough ablation studies and give results of other related attempts such as directly generating intermediate features of the teacher.
+
+In summary, this work has the following contributions:
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=4pt]
+    \item To the best of our knowledge, we are the first to thoroughly explore the paradigm of directly utilizing the teacher head to conduct planning for the end-to-end autonomous driving task. Under such decoupled paradigm, the disadvantages of behavior cloning such as causal confusion could be avoided.
+    
+     \item The intermediate output form of BEV segmentation between the perception and planning modules has strong interpretability, shedding insights into the typically black-box pipeline of end-to-end autonomous driving. The decoupled perception model could enjoy the recent rapid progress of BEV perception and semantic segmentation.
+    
+    \item To deal with the imperfect perception issue as well as the imperfect teacher model issue, we propose DriveAdapter along with a masked feature distillation strategy. By combining the two techniques, it could achieve state-of-the-art performance on two public benchmarks.
+    \item We give thorough ablation studies and other related attempts to provide more insights and understanding regarding the new decoupled paradigm. 
+\end{itemize}
+
+\emph{We believe that the rich driving knowledge within an RL expert model learned by millions of steps of exploration should be utilized more extensively instead of only for behavior cloning. We hope the proposed decoupled paradigm,  our failing attempts, and our working techniques could all provide useful insights for this line of study}.
+
+
+
+Related Works
+\subsection{End-to-End Autonomous Driving}
+The concept of end-to-end autonomous driving could date back to 1980s~\cite{pomerleau1988alvinn}. In the era of deep learning, early works conduct behavior cloning from a rule-based expert. CIL~\cite{codevilla2018cil} adopts a simple CNN to directly map the front-view image from a camera to control signals. Further, in the extending work CILRS~\cite{codevilla2019exploring}, they add an auxiliary task to predict the ego vehicles' current speed to alleviate the inertia issue. Later, in MaRLn~\cite{toromanoff2020end}, they explore the way to apply reinforcement learning to obtain a driving policy to surpass the rule-based expert. However, their method suffers from the high-dimensional raw sensor inputs for urban driving. In LBC~\cite{chen2020learning}, they propose to first train a teacher model with privileged inputs and then utilize this teacher model to provide supervision signals for all high-level commands, which significantly boosts the performance of the student model and thus the teacher-student paradigm has dominated the field. Roach~\cite{zhang2021roach} trains the teacher model with reinforcement learning, which demonstrates strong robustness and diversity compared to imitation learning-based teacher models and has been adopted by multiple most recent SOTA works~\cite{wu2022trajectoryguided,hu2022model}. In PlanT~\cite{Renz2022CORL}, they propose to adopt Transformer for the teacher model on the states of the environment instead of CNN on the rasterized images, which demonstrates good scalability and interpretability. As for the student models, NEAT \cite{chitta2021neat} transfers representations to BEV space. Transfuser~\cite{Prakash2021CVPR,Chitta2022PAMI} adopts Transformer for camera and LiDAR fusion. LAV~\cite{chen2022lav} adopts PointPainting~\cite{vora2020pointpainting} and proposes to predict all agents' future trajectories to augment the dataset. TCP~\cite{wu2022trajectoryguided} combines the trajectory prediction~\cite{10192373,pmlr-v164-jia22a} with the control signal prediction. Interfuser~\cite{shao2022interfuser} injects safety-enhanced rules during the decision-making of the student models. MMFN~\cite{zhang2022mmfn} adopts VectorNet for map encoding and MILE~\cite{hu2022model} proposes to learn a world model for the student model. Among concurrent works, ThinkTwice~\cite{jia2023thinktwice} proposes a DETR-like scalable decoder paradigm for the student model. CaT~\cite{zhang2023coaching} designs a knowledge distillation framework for the Teacher-Student paradigm. ReasonNet proposes specific modules for student models to better exploit temporal and global information. In \cite{Jaeger2023ICCV}, they propose to formulate the output of the student as classification problems to avoid averaging. 
+
+We could observe that state-of-the-art works all use behavior cloning for student models. In this work, we explore the way to further decouple perception and planning learning by directly adopting the frozen teacher model for planning, while keeping the system end-to-end differentiable.
+
+\subsection{Adapter for Deep Learning Models}
+In recent days, huge foundation models~\cite{bommasani2021opportunities} pretrained on an enormous amount of data have demonstrated strong transfer ability on downstream tasks. Since finetuning the whole model is computationally expensive and tends to overfit on downstream tasks with limited data, 
+Adapter~\cite{houlsby2019parameter} is first proposed in the NLP field where they fix the parameters of the original model and add extra learnable parameters between blocks of the original model so that it could keep the generalization ability of the original model while having task-specific changes. 
+Later, the Adapter is also shown to be effective in the computer vision field~\cite{gao2021clip,zhang2021tip}.
+
+In this work, we adopt the idea of Adapter to keep the knowledge in the teacher model while filling the gap between the predicted privileged inputs and the ground-truth.
+
+
+
+Method
+
+\subsection{Student Model for Perception Learning}
+Suppose we have a teacher model with privileged information as inputs. One popular form of encoding the privilege information is the 2D bird's-eye-view (BEV) tensors~\cite{chen2020learning,zhang2021roach} composed of the rasterized position of surrounding agents, lanes, and traffic signs, where the value of each channel could be either 0 or 1 to represent the existence of the corresponding type of object at certain locations (In PlanT~\cite{Renz2022CORL}, they propose to encode the scene into discrete tokes so that Transformer could be adopted). Here, we choose Roach to match with SOTA works~\cite{wu2022trajectoryguided,hu2022model}.
+ 
+
+The student model takes raw sensor data as inputs (in this paper, images from four cameras and the point cloud from one LiDAR) and generates the desired input for the teacher model. For Roach, it could be formulated as a semantic segmentation task under BEV space~\cite{pan2020cross}. Here, we adopt the BEVFusion~\cite{liu2022bevfusion} to convert raw sensor data into BEV features. Specifically, we adopt LSS~\cite{philion2020lift} to scatter the image features from cameras into their corresponding BEV grid based on their location and depth~\cite{li2022bevdepth}. For LiDAR, we adopt the commonly used SECOND~\cite{yan2018second} backbone to convert the point cloud into a BEV feature map. By concatenating the BEV feature maps of cameras and LiDAR, we obtain the 2D BEV representation of the scene. To conduct the semantic segmentation task, we adopt the state-of-the-art Mask2former~\cite{Cheng_2022_CVPR} head.
+
+\begin{table}[]
+\centering
+\scalebox{0.9}{
+\begin{tabular}{ccc}
+\toprule
+\textbf{Method}                                                          & \textbf{Input}          & \textbf{Driving Score} $\uparrow$ \\ \midrule
+Transfuser~\cite{Prakash2021CVPR,Chitta2022PAMI} & Camera + LiDAR & 31.0 \\
+LAV~\cite{chen2022lav} & Camera + LiDAR & 46.5 \\
+\begin{tabular}[c]{@{}c@{}}Student Model\\ + Frozen Roach\end{tabular} & Camera + LiDAR     &   8.9                     \\ \midrule
+Roach~\cite{zhang2021roach}                                                                  & Privileged Info. & 74.2                   \\
+Roach + Rule~\cite{wu2022trajectoryguided}                                                            & Privileged Info. & \textbf{87.0}                   \\
+\bottomrule
+\end{tabular}}
+\caption{{\textbf{Performance comparison among different teacher and student models on Town05 Long.} 
+ Refer to Sec.~\ref{sec:exp} for details of methods and metrics.}
+\label{tab:teacher-student}
+}
+\end{table}
+
+Nevertheless, even equipped with the most advanced perception module as of today, we find that directly feeding the predicted BEV segmentation (mIoU 0.35 on test unseen scenes) to the teacher model does no work, \textit{i.e.}, much worse driving performance compared to SOTA works as shown in Table~\ref{tab:teacher-student}.% (Please refer to Sec.~\ref{sec:exp} for experiment details)
+
+\begin{figure}[!tb]
+		\centering
+  \includegraphics[width=0.99\linewidth]{images/domain_gap.pdf}
+\label{fig:vis-bev-seg}
+\end{figure}
+\begin{figure*}[th!]
+    \centering
+    \includegraphics[width=\textwidth]{images/model_adjusted.pdf}
+    \caption{\textbf{Overall architecture of DriveAdapter.} (a) The student model takes raw sensor data as inputs and extracts BEV features for the usage of BEV segmentation and adapter module. (b) The predicted BEV segmentation is fed into the frozen teacher model and the plug-in adapter module. (c)  The adapter module receives supervision from the feature alignment objective with the ground-truth teacher feature. For cases the teacher model is taken over by rules, a mask is applied on the alignment loss and the supervision of all adapter modules is from the backpropagation of action loss.
+    \label{fig:overall}}
+\end{figure*}
+
+There are two factors that impede the performance of the student model + frozen Roach:
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=4pt]
+    \item \emph{Imperfect perception results}. Though we have carefully tuned the BEVFusion + Mask2former on the CARLA scene, the predicted BEV segmentation still has a relatively large gap compared to the ground-truth. As illustrated in Fig.~\ref{fig:vis-bev-seg}, the predicted surrounding agents' location and lanes are incomplete and blurry. Worse still, the states of traffic lights could also be wrong. As a result, the teacher model could not handle such inputs since it has only seen the ground-truth during its training process.
+    \item \emph{Imperfect teacher model.} It is a common practice in the community~\cite{zhang2022mmfn,wu2022trajectoryguided,hu2022model} to apply hand-crafted rules on top of the teacher models' outputs for situations such as emergency braking as the learning-based teacher model would make mistakes as well. As shown in Table.~\ref{tab:teacher-student}, after adding rules to the Roach, we observe its performance is boosted by a large margin. Therefore, even if the student model could generate perfect BEV segmentation, its performance is still upper bounded.
+\end{itemize}
+
+
+\subsection{Adapter Module}
+
+Since the teacher model has only been trained by the BEV segmentation ground-truth, it is sensitive to the noise in the predicted BEV segmentation because of the large distribution gap. Inspired by the usage of the Adapter~\cite{houlsby2019parameter,gao2021clip,zhang2021tip} on foundation models~\cite{bommasani2021opportunities} to adopt them into downstream tasks with lower cost and less overfitting, we propose to add Adapters between the student and teacher model. The overall architecture of DriveAdapter is shown in Fig.~\ref{fig:overall}.  
+
+Formally, denote the predicted BEV segmentation as $\bm{H}_0$ where the subscript $0$ means that they could be the initial input of the teacher model. Suppose the teacher model has $N$ modules in a sequential order\footnote{For more complex teacher models, specific adapter module could be designed accordingly.}, where $\text{Teacher}_i$ denotes its $i^{\text{th}}$ module and $\bm{H}_{i-1}$ and $\bm{H}_i$ denote the original input and output of $\text{Teacher}_i$ respectively: $\bm{H}_i = \text{Teacher}_i(\bm{H}_{i-1})$. Besides, since we want the adapter to have access to the raw sensor inputs so that the model could enjoy the benefits of end-to-end learning, we denote the raw BEV feature from the student model %(feature from BEVFusion, in this work)
+as $\bm{F}$ and we use a series of convolutional layers to downsample $\bm{F}$ so that $\bm{F}_i$ could have the same resolution with $\bm{H}_i$.
+
+\begin{figure}[th!]
+    \centering
+    \includegraphics[width=\linewidth]{images/adapter_detail.pdf}
+    \caption{\textbf{Details of Adapter Modules wtih Roach.}}
+    \label{fig:adapter}
+\end{figure}
+
+\hspace{-13pt}\textbf{Adapter:} The forward process of the frozen teacher model with adapter modules is:
+\begin{align}
+   \bm{H}_{i-1}^\text{Adpt} &= \text{Adapter}_{i-1}([\bm{H}_{i-1};\bm{F}_{i-1}]),  \label{equ:adapter1} \\
+   \bm{H}_i &= \text{Teacher}_i(\bm{H}_{i-1}^\text{Adpt}), \label{equ:adapter2}
+\end{align}
+where $\text{Adapter}_{i-1}$ in 
+Eq.~\ref{equ:adapter1} denotes the adapter module for $i^{th}$ module of the teacher model which takes the feature from the previous layer $\bm{H}_{i-1}$  and the raw feature $\bm{F}_{i-1}$ as inputs and outputs the adapted feature for the next layer $\bm{H}_{i-1}^\text{Adpt}$ which has exactly the same tensor shape with $\bm{H}_{i-1}$. The  $\text{Adapter}_{i-1}$ is implemented as CNN layers for 2D feature maps and as multi-layer perceptrons (MLPs) for 1D feature maps. Specifically, with Roach as the teacher model, after each layer of Roach’s network (both convolutional layers and linear layers), there is a
+corresponding adapter module and we apply feature alignment loss on each output. There are two exceptions: (i) the measurement encoder because it takes the state of the ego vehicle as inputs which is provided directly by the sensor and thus there is no error; (ii) the output linear layer since it generates actions instead of features. Fig.~\ref{fig:adapter} gives the details of the adapter modules.
+
+
+\hspace{-13pt}\textbf{Feature Alignment:} To fill the gap between the student's prediction and the ground-truth inputs for the teacher model, we apply a \emph{feature alignment objective function} for each adapter module:
+\begin{equation}
+    \mathcal{L}_i = \text{Reg}( \bm{H}_{i-1}^\text{Adpt}, \bm{H}_{i-1}^\text{gt}), \label{equ:feature-alignment}
+\end{equation}
+where $\bm{H}_{i-1}^\text{gt}$ denotes the feature from $(i-1)^{th}$ module of the teacher model (without the adapter module) when the input is the ground-truth BEV segmentation. \text{Reg} denotes the regression loss function and we simply adopt smooth L1 loss here. The intuition behind this design is that we want each adapter module to recover the ground-truth feature required by the teacher model with an additional information source - the raw BEV feature. In this way, the distribution gap between the prediction and the ground-truth feature could be reduced gradually in a layer-by-layer supervised way.
+
+\hspace{-13pt}\textbf{Mask \& Action Guidance:} As for the imperfect teacher model issue, we inject the priors of the hand-crafted rules into the training process in two ways: (i) \emph{Mask for Feature Alignment}: For the cases where the teacher model is wrong and is taken over by the rules, masks are applied on all feature alignment losses since the original features in the teacher model lead to wrong decisions and thus we did not want the adapter module to recover them. (ii) \emph{Action Guided Feature Learning}:  In order to let the adapter module transform the features of the original teacher model into the features leading to the final decision by rules, we calculate the loss between the model prediction and the actual decision and make it backpropagate all the way through the frozen teacher model and adapter modules. In this way, for those cases, the adapter module is able to turn the final output of the model into the right decision. Experiment results show that the mask and the action guidance could explicitly improve driving performance. 
+
+
+
+Experiments
+\subsection{Dataset and Benchmark} We use the widely adopted CARLA simulator (version 0.9.10.1) for data collection and closed-loop driving performance evaluation. 
+
+As for the data collection, we collect data with the teacher model \emph{Roach}~\cite{zhang2021roach} + \emph{rules} to match with SOTA works~\cite{wu2022trajectoryguided,hu2022model}. Following the common protocol, we collect data at 2Hz on Town01, Town03, Town04, and Town06 for training and the total number of frames is 189K which is similar to~\cite{Prakash2021CVPR,Chitta2022PAMI,chen2022lav,wu2022trajectoryguided}. At each frame, we collect raw sensor data from 4 cameras and 1 LiDAR and we store the labels including depth, segmentation, control signals, ground-truth features, and the states of the ego vehicle. Additionally, recent works have collected more data and even on more towns for training:~\cite{shao2022interfuser} (3 million frames, 8 towns) and ~\cite{hu2022model} (2. To this end, we collect a dataset with 2 million frames on 8 towns and we denote all models trained with extra data with *.
+As for the evaluation process, we conduct closed-loop running under two public benchmarks: Town05Long (most widely used) and Longest6 (36 challenging routes selected by \cite{Chitta2022PAMI}). Both benchmarks are composed of tens of routes while each route contains a series of target points to indicate the destination of driving. In addition, there are manually defined challenging events randomly happening during driving to evaluate the driving agent's ability to deal with long-tail problems. For example, jaywalking pedestrians might suddenly appear. At the intersection, an opposite vehicle might illegally run a red traffic light. Thus, the model should have comprehensive knowledge about driving instead of simple lane following. Note that during the evaluation process, the model only has access to the raw sensor data and the use of privileged information is prohibited. For implementation details of the simulation and the model, please refer to supplemental materials.
+
+\subsection{Metrics}
+Official metrics of CARLA are used. \textbf{Infraction Score (IS)} measures the number of infractions made along the route, with pedestrians, vehicles, road layouts, red lights, \textit{etc}. %\footnote{Please refer to \url{https://leaderboard.CARLA.org/get_started_v1/} for details.} 
+\textbf{Route Completion (RC)} is the percentage of the route completed by the autonomous agent.  \textbf{Driving Score (DS)} is the \textbf{main metric} which is the product of Route Completion and Infraction Score.
+
+\begin{table*}[!ht]
+\centering
+\scalebox{0.9}{
+\begin{tabular}{c|cc|c|ccc}
+\toprule
+\textbf{Method} & \textbf{Teacher} & \textbf{Student}      & Reference          & \textbf{DS}$\uparrow$            & RC$\uparrow$           & IS$\uparrow$           \\ \midrule
+CILRS~\cite{codevilla2019exploring} & Rule-Based  &   Behavior Cloning     & CVPR 19         & 7.8    & 10.3  & 0.75 \\
+LBC~\cite{chen2020learning} & Imitation Learning  &   Behavior Cloning + DAgger     & CoRL 20         & 12.3   & 31.9  & 0.66 \\
+Transfuser~\cite{Prakash2021CVPR,Chitta2022PAMI} & Rule-based & Behavior Cloning & TPAMI 22 & 31.0   & 47.5  & \textbf{0.77} \\
+Roach~\cite{zhang2021roach} & Reinforcement Learning & Behavior Cloning + DAgger      & ICCV 21         & 41.6   & 96.4  & 0.43 \\
+LAV~\cite{chen2022lav}    & Imitation Learning & Behavior Cloning     & CVPR 22         & 46.5   & 69.8  & 0.73 \\
+TCP~\cite{wu2022trajectoryguided}   & Reinforcement Learning & Behavior Cloning      & NeurIPS 22      & 57.2  & 80.4 & 0.73 \\
+ThinkTwice~\cite{jia2023thinktwice} &   Reinforcement Learning & Behavior Cloning   &  CVPR 23            &  65.0  & 95.5  & 0.69 \\ 
+\textbf{DriveAdapter}    & Reinforcement Learning & Frozen Teacher + Adapter   &  Ours            &  61.7  & 92.3  & 0.69 \\ 
+\textbf{DriveAdapter} + TCP    & Reinforcement Learning & Frozen Teacher + Adapter   &  Ours            & \textbf{65.9}  &  94.4  & 0.72  \\ 
+
+\midrule
+MILE*\dag~\cite{hu2022model}  & Reinforcement Learning &  Model-Based Imitation Learning     & NeurIPS 22      & 61.1  & \textbf{97.4}  & 0.63 \\
+Interfuser*~\cite{shao2022interfuser} & Rule-Based & Behavior Cloning + Rule  & CoRL 22         & 68.3 & 95.0 & -            \\
+ThinkTwice*~\cite{jia2023thinktwice} &   Reinforcement Learning & Behavior Cloning   &  CVPR 23            &  70.9  & 95.5  & 0.75 \\ 
+\textbf{DriveAdapter} + TCP*   & Reinforcement Learning &     Frozen Teacher + Adapter     & Ours              &  \textbf{71.9} & 97.3 & 0.74 \\ 
+
+\bottomrule%\hline
+\end{tabular}}
+\caption{\textbf{Performance on Town05 Long benchmark.} $\uparrow$ means the higher the better. * denotes using extra data. $\dag$ denotes no scenarios are used, which is a much easier benchmark. \emph{+TCP} means we adopt its dual output technique by adding an additional trajectory prediction head ~\cite{wu2022trajectoryguided}. 
+\label{tab:town05-long}}
+\end{table*}
+
+\begin{table}[!h]
+\centering
+\begin{tabular}{c|ccc}
+\toprule
+\textbf{Method}      & \textbf{DS}$\uparrow$            & RC$\uparrow$            & IS$\uparrow$            \\ \midrule
+WOR~\cite{chen2021learning}         & 23.6          & 52.3          & 0.59          \\
+LAV~\cite{chen2022lav}         & 34.2          & 73.5          & 0.53          \\ 
+Transfuser~\cite{Prakash2021CVPR,Chitta2022PAMI}  & 56.7          &  \textbf{92.3} & 0.62          \\
+PlanT with Perception~\cite{Renz2022CORL} &  57.7 & 88.2 & 0.65 \\
+ThinkTwice~\cite{jia2023thinktwice} &  61.3 & 73.0 & 0.81 \\
+ThinkTwice*~\cite{jia2023thinktwice} &  66.7 & 77.2 & 0.84 \\
+\midrule
+\textbf{DriveAdapter}  &  59.4    &    82.0      & 0.68 \\
+\textbf{DriveAdapter} + TCP  &  62.0        &      82.3     &  0.70      \\ 
+\textbf{DriveAdapter} + TCP* &  \textbf{71.4}  &    88.2      &  \textbf{0.85} \\ \bottomrule
+\end{tabular}
+\caption{\textbf{Performance on Longest6 benchmark.}\label{tab:longest6}}
+\end{table}
+\subsection{Comparison with State-of-the-Art Works}
+
+We compare with SOTA works on two widely used public benchmarks: Town05 Long and Longest6 as shown in Table~\ref{tab:town05-long} and Table~\ref{tab:longest6} respectively.  We could observe that DriveAdapter performs the best under the limited data setting and after adopting the dual outputs trick in \cite{wu2022trajectoryguided} to improve safety, it even performs on par with competitors trained on 10$\times$ data. After feeding more data to the model, DriveAdapter sets new records on both benchmarks. After investigation, we find that the major gain of 10$\times$ data comes from better detection of the red light - a \emph{perception} issue. This demonstrates the benefit of having an explainable intermediate representation of BEV segmentation. There are also some common issues happening under both limited and 10$\times$ data settings. We give more thorough investigations about failure cases in supplemental materials.%Sec.~\ref{sec:failure}.
+
+\subsection{Ablation Study}
+In this section, we conduct ablation studies to verify the effectiveness of each design of DriveAdapter. All experiments are conducted on Town05 Long benchmark with 189K training data.
+
+\begin{table}[!h]
+\centering
+\begin{tabular}{c|ccc}
+\toprule
+\textbf{Method}      & \textbf{DS}$\uparrow$            & RC$\uparrow$            & IS$\uparrow$            \\ \midrule
+DriveAdapter         & 61.7          & 92.3          & 0.69          \\ \midrule
+w/o
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

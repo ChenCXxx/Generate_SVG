@@ -1,0 +1,170 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}[!t]
+  \centering
+\includegraphics[width=1.0\linewidth]{motivation.pdf}
+  \caption{Our approach learns generative-to-discriminative representations for masked face recognition, which combines the advantages of generative representations and discriminative representations, providing general and robust solution to recover missing clues and capture identity-related characteristics.}
+  \label{fig:motivation}
+\end{figure}
+
+Deep face recognition models have delivered impressive performance on public benchmarks~\cite{wen2016discriminative,cao2018vggface2,deng2019arcface} and realistic scenarios~\cite{anwar2020masked}. In general, these models are designed for recognizing unmasked faces and often suffer from sharp accuracy drop in recognizing masked faces~\cite{ngan2020a,ngan2020b}, which hinders real-world applications~\cite{ge2017detecting,delphine2022tip,zhang2023tmm,wang2023tbbis,alnabulsi2023sensors}. Unlike normal face recognition, masked face recognition is challenged by \emph{insufficient or inaccurate representations}. Masks often occlude some important facial features, causing key information loss. With the occluded regions growing larger, the unmasked regions may become less sufficient for accurate identity prediction. Moreover, the ill-posed mapping between observation and possible groundtruth faces makes representations inaccurate. Therefore, an effective solution for masked face recognition should learn representations that could recover missing facial clues and calibrate inaccurate identity clues. Accordingly, many masked face recognition approaches have been proposed, which are based on generative or discriminative idea~\cite{deng2021cvprw}.
+
+``Generative'' approaches aim to reconstruct the missing facial clues then perform recognition on completed faces.  Deep generative models~\cite{zheng2023icml,choi2023icml} can provide general representations to noisy images~\cite{chen2020icml,he2022masked,li2023mage}. Generative face inpainting~\cite{pathak2016context,li2017generative,yu2018generative,zhao2018tip,yu2019iccv,wan2021high,dey2022cvpr,yang2023tmm} has successfully enabled recovery of high-quality visual contents. While it is very robust to generate consistent results to different masks, the benefit of face inpainting for masked face recognition is limited~\cite{joe2019icb} since they ignore the regularization on identity preservation, and the information about intra-identity and inter-identity relationships are lost during the process. Some attempts are made to enforce identity preservation via introducing face recognizer for regularization~\cite{zhang2017demeshnet,ge2020tcsvt}, yet the help is limited, since the recognizers in these approaches cannot provide the upstream inpainting network with direct feedback and enough regularization on identity awareness.
+
+In contrast, ``discriminative'' approaches aim to extract robust representations by reducing the effect of masked regions~\cite{wen2016discriminative,he2022tip,song2019iccv}. They usually adopt part detection~\cite{ding2020masked}, compositional models~\cite{kortylewski2021compositional}, knowledge transfer~\cite{huber2021fg,boutros2022self,zhao2022spl} or complementary attention~\cite{cho2023fg}, to localize or remove masked regions. However, the unmasked regions often hardly provide enough information for accurate recognition. Thus, some approaches propose to finetune existing face recognizers~\cite{neto2021focusface} or design powerful networks~\cite{qiu2021end2end,boutros2022self,zhu2023tifs,zhao2024tift} to extract more information. Generally, directly finetuning general face recognizers may increase the accuracy on masked faces, while on the sacrifice of discriminative and generalization ability on the recognition of unmasked faces. Moreover, since the occlusions contain diverse mask types, these approaches usually show poor robustness on masked faces. In real-world masked face recognition scenarios, diverse masks could cause semantic divergences while the representations are expected to be consistent. Therefore, a key issue that needs to be carefully addressed in masked face recognition is the coordination between reconstructing general representations and enhancing their identity discrimination.
+
+To facilitate masked face recognition, we propose learning generative-to-discriminative representations which combines the advantages from generative and dicriminative representations (Fig.~\ref{fig:motivation}). Specially, we cascade three modules and learn them in a greedy manner. First, generative encoder takes the encoder of a pretrained face inpainting model, and represents masked faces into category-aware descriptors with rich general information of masked faces to distinguish human faces from other objects. Then, discriminative reformer incorporates a 22-layer convolutional network and is learned to convert the category-aware descriptors into identity-aware vectors for enhancing recognition. Finally, feature classifier cascades a fully-connected layer and a softmax layer to identify the reformed vectors. In the approach, generative encoder and discriminative reformer are combined together, which serves as backbone for masked facial feature extraction and is progressively pretrained in a self-supervised manner, while feature classifier serves as recognition head. Finally, the backbone is frozen and feature classifier is finetuned on labeled masked faces.
+
+Our main contributions can be summarized as: 1) we propose to learn generative-to-discriminative representations for masked face recognition, which combines the advantages of generative and discriminative representations to extract general and discriminative features for identifying masked faces; 2) we cascade generative encoder and discriminative reformer as the backbone and present a greedy module-wise pretraining strategy to improve representation learning via distillation in a self-supervised manner; and 3) we conduct extensive experiments and comparisons to demonstrate the effectiveness of our approach.
+
+
+
+Approach
+
+\begin{figure*}[!t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{framework.pdf}
+  \caption{The framework of the proposed approach. It cascades three modules into a unified network and learns generative-to-discriminative representations on synthetic masked faces in a progressive manner. The approach first finetunes a generative encoder to represent a masked face into category-aware descriptors by initializing with a pretrained face inpainting model and finetuning via self-supervised pixel reconstruction. Then, it learns a CNN-based discriminative reformer to convert the category-aware descriptors into an identity-aware vector by distilling a general pretrained face recognizer via self-supervised relation-based feature approximation. Finally, it learns a feature classifier on identity-aware vectors by optimizing supervised classification task.}
+  \label{fig:architecture}
+\end{figure*}
+
+\subsection{Problem Formulation}
+Our objective is learning a deep model $\phi(\bl{x},\bl{m};\bl{w})$ for discriminative representations to identify a masked face $\bl{x}$. Here, the binary map $\bl{m}$ indicates whether a pixel $p$ is occluded ($\bl{m}(p)=1$) or not ($\bl{m}(p)=0$), and $\bl{w}$ are model parameters. Let $\hat{\bl{x}}$ denote the groundtruth but generally unavailable unmasked face, having $\bl{x}(p)=\hat{\bl{x}}(p)$ when $\bl{m}(p)=0$. Unlike the recognition of $\hat{\bl{x}}$, masked face recognition needs to learn representations from partly occluded faces where some informative clues are missing. Thus the key is to address the recovery of the missing clues from $\bl{x}$ to approximate the latent representations of $\hat{\bl{x}}$, ideally having:
+\begin{equation}
+\begin{aligned}
+  \phi(\bl{x},\bl{m};\bl{w}) \doteq \Phi(\hat{\bl{x}};\hat{\bl{w}}),
+\end{aligned}
+\label{eq:formulation}
+\end{equation}
+where $\Phi(\cdot)$ is a deep face recognizer well-trained on unmasked faces with parameters $\hat{\bl{w}}$. The symbol $\doteq$ means ``equivalence'' in some metric (\eg, similarity of representations or consistency of predictions). To solve Eq.~\eqref{eq:formulation}, there are {three main challenges}: 1) \emph{greater complexity} due to the consideration of the joint distribution of $\bl{x}$ and $\bl{m}$, 2) \emph{consistency requirement} that expects to extract consistent representations even when masked faces originated from the same $\hat{\bl{x}}$ have diverse $\bl{m}$, and 3) \emph{insufficient data} due to difficulty of collecting real-world pairs $\{\hat{\bl{x}},\bl{x}\}$. To sum up, an effective solution for modeling masked faces is to learn representations through recovery, solving information reconstruction and representation clustering regularization in a unified and implicit way on synthetic data. 
+
+As shown in Fig.~\ref{fig:architecture}, we address masked face recognition by learning generative-to-discriminative representations. The unified network $\phi$ consists of generative encoder $\phi_e$, discriminative reformer $\phi_r$ and feature classifier $\phi_c$ with parameters $\bl{w}_e$, $\bl{w}_r$ and $\bl{w}_c$, respectively. Given synthesized triplets $\{\hat{\bl{x}}_i,\bl{m}_i,\bl{x}_i\}_{i=1}^{n}$ with $n$ samples, $\phi_e$ and $\phi_r$ are first learned by progressively reconstructing appearance and latent features, which are solved by minimizing the appearance reconstruction loss $\mc{L}_{r}$ and latent loss $\mc{L}_{d}$, separately:
+\begin{equation}
+  \mc{L}_{r}(\bl{w}_e,\bl{w}_d)=\sum_{i=1}^{n}\ell(\psi(\phi(\bl{x}_i,\bl{m}_i;\bl{w}_e);\bl{w}_d),\hat{\bl{x}}_i),
+\label{eq:rec}
+\end{equation}
+\begin{equation}
+  \mc{L}_{d}(\bl{w}_r) = \sum_{i=1}^{n}\ell(\phi(\bl{x}_i,\bl{m}_i;\{\bl{w}_e,\bl{w}_r\}),\Phi(\hat{\bl{x}};\hat{\bl{w}})),
+\label{eq:rel}
+\end{equation}
+where $\psi(\cdot)$ is inpainting decoder for training the encoder parameters $\bl{w}_e$ only. $\bl{w}_d$ are the decoder parameters. The trained $\bl{w}_e$ are then fixed and used in training the reformer parameters $\bl{w}_r$ by minimizing $\mc{L}_{d}$. $\Phi(\cdot)$ is a pretrained face recognizer used to guide the feature reconstruction of $\phi_r$, with $\hat{\bl{w}}$ as its model parameters. $\ell(\cdot)$ denotes the distance function. Finally, $\bl{w}_e$ and $\bl{w}_r$ are frozen and all three modules are cascaded for finetuning classification loss $\mc{L}_c$ to learn the feature classifier in a supervised way:
+\begin{equation}
+  \mc{L}_{c}(\bl{w}_c)=\sum_{i=1}^{n}\ell(\phi(\bl{x}_i,\bl{m}_i;\{\bl{w}_e,\bl{w}_r,\bl{w}_c\}),c_i),
+\label{eq:cls}
+\end{equation}
+where $c_i$ denotes the groundtruth identity label for $\bl{x}_i$.
+
+This architecture design can well address the {three main challenges} mentioned above in masked face recognition. First, the generative encoder and discriminative reformer are cascaded for the backbone, which decouples the burden of modeling \emph{greater complexity} by jointly handling information reconstruction and representation clustering regularization in a progressive way. Second, the encoder aims to output a consistent reconstruction for the given masked faces originated from a same unmasked face regardless of diverse masks, that meets the \emph{consistency requirement} of extracted representations. Third, it is easy to train the backbone on synthetic data in a self-supervised manner, alleviating the issue of \emph{insufficient data} to avoid expensive and time-consuming annotation of training samples.
+
+\subsection{Generative Encoder}
+Generative encoder is responsible for extracting {general} face representations under mask occlusion. It is derived from ICT~\cite{wan2021high} pretrained on FFHQ~\cite{karras2019cvpr}, one of the state-of-the-art Transformer-based inpainting method. It consists of a Transformer network for face representations and a CNN for upsampling faces. We extract generative representations from the middle residual block of the upsample network. Given an input image and a binary mask of size $256\times256$, the encoder computes a $64\times64\times256$ generative representation. To better adapt to the synthetic masked faces, we fix the Transformer and finetune the generative encoder on our training data with pixel reconstruction loss $\mc{L}_{r}$ as well as adversarial loss $\mc{L}_{a}$:
+\begin{equation}
+\begin{aligned}
+  \mc{L}_{r}(\bl{w}_e,\bl{w}_r)&=\sum_{i=1}^n\|\tilde{\bl{x}}_i-\hat{\bl{x}_i}\|^2,\\
+  \mc{L}_{a}=E_{\hat{\bl{x}}~\mb{R}}[\zeta(\hat{\bl{x}}_i)]-E_{\hat{\bl{x}}~\mb{G}}&[\zeta(\tilde{\bl{x}}_i)]+ E_{\check{\bl{x}}}(\|\nabla_{\check{\bl{x}}}\zeta(\check{\bl{x}})\|^2),
+\end{aligned}
+\label{eq:Lrec}
+\end{equation}
+where adversarial loss is defined using modified WGAN-GP~\cite{gulrajani2017improved}, $\mb{R}$ is the real face distribution, $\mb{G}$ is the distribution implicitly defined by $\psi(\phi(*))$,  $\Tilde{\bl{x}}=\psi(\phi(\bl{x}_i,\bl{m}_i;\bl{w}_e);\bl{w}_d)$ is the inpainted face, $\zeta$ denotes the discriminators, $\check{\bl{x}}$ is sampled from the straight line between $\mb{G}$ and $\mb{R}$, having $\nabla_{\check{\bl{x}}}\zeta(\check{\bl{x}})={(\tilde{x}-\check{\bl{x}})}/{\|\tilde{x}-\check{\bl{x}}\|}$.
+
+We visualize the learned generative representations to check the consistency over diverse masks and clustering behaviors 
+with t-SNE~\cite{maaten2008visualizing} in \figref{fig:representations}, finding high-overlapping among the same groundtrue faces and scatters among  different groundtrue faces. It implies that the generative representations can eliminate mask effect and are robust towards diverse masks, but can not well describe inter- and intra-identity characteristics. 
+
+\subsection{Discriminative Reformer}
+Discriminative reformer aims to turn the encoded generative representations into discriminative representations, so that the identity attributes can be better recovered and described. We cascade encoder and reformer as the backbone, which has several advantages. First, it reduces the accumulation of deviations. The reformer can shift the mapping from image space to latent space, avoiding the re-mapping loss during encoding of the completed faces. Second, latent space of higher level in neural network is proved to have flatter landscape~\cite{bengio2013better}, so the reformation in latent manifold is more understandable for face representations. Third, it can make better use of the information that high-level representations contains, such as long-distance dependence. Finally, feature reformation can be seamlessly integrated with the recognition head, allowing more efficient end-to-end optimization. We apply a Resnet-like network due to its effectiveness in face representation~\cite{cao2018vggface2,deng2019arcface} to construct the reformer, which consists of a convolutional layer, 4 residual blocks following by a pooling and a fully-connected layers, outputs 512$d$ vectors, as shown in~\figref{fig:architecture}. We have experimentally found that shallower structures are poor in converting generative representations into discriminative ones, while deeper or Transformer-based networks are effective but greatly increase model complexity.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=0.49\linewidth]{tsne_result_g.png}
+  \includegraphics[width=0.49\linewidth]{tsne_result_d.png}
+  \includegraphics[width=0.98\linewidth]{mask.png}
+  \caption{The t-SNE visualization of representations. We randomly sample five identities, use all sample images with these identities to synthesize masked faces with five random mask types, and extract generative and discriminative representations of masked faces. Generative representations are robust towards diverse mask occlusions but short in inter- and intra-identity discriminablility, while discriminative representations show good identity discriminablility. Bottom: some synthetic masked faces.}
+  \label{fig:representations}
+\end{figure}
+
+Inspired by previous success in integrating external knowledge to facilitate optimization of neural networks~\cite{hinton2015distilling,wonpyo2019rkd,li2020mm}, we take a pretrained general face recognizer as teacher to guide the generative-to-discriminative representation reforming via knowledge distillation, and leverage essential guidance from unmasked faces for reforming and represent the teacher knowledge with two and three order structural relations:
+\begin{equation}\label{eq:L_R2}
+\begin{aligned}
+  \mathcal{L}_{2} = \sum_{(i,j)\in \bl{S}_2} \ell_H(\frac{1}{\mu_\bl{t}} \|\bl{t}_i - &\bl{t}_j\|^2, \frac{1}{\mu_\bl{s}} \|\bl{s}_i - \bl{s}_j\|^2),
+\end{aligned}
+\end{equation}
+\begin{equation}\label{eq:L_R3}
+\begin{aligned}
+  \mathcal{L}_{3}=\sum_{(i,j,k)\in\bl{S}_3}\ell_H(&\langle\frac{\textbf{t}_i-\textbf{t}_j}{\|\textbf{t}_i-\textbf{t}_j\|^2},\frac{\textbf{t}_k-\textbf{t}_j}{\|\textbf{t}_k-\textbf{t}_j\|^2}\rangle,\\
+  &\langle\frac{\textbf{s}_i-\textbf{s}_j}{\|\textbf{s}_i-\textbf{s}_j\|^2},\frac{\textbf{s}_k-\textbf{s}_j}{\|\textbf{s}_k-\textbf{s}_j\|^2}\rangle),
+\end{aligned}
+\end{equation}
+where $\ell_H$ denotes Huber loss, $\bl{t}_i=\Phi(\hat{\bl{x}}_i;\hat{\bl{w}})$ is the representation extracted by teacher recognizer, $\bl{s}_i=\phi(\bl{x}_i,\bl{m}_i;\{\bl{w}_e,\bl{w}_r\})$ is the discriminative representation output by the reformer. $\mu_{\bl{v}\in[\bl{t},\bl{s}]} = \frac{1}{|\bl{S}_2|}\sum_{(i,j) \in \bl{S}_2 } \| \bl{v}_i - \bl{v}_j \|^2$ normalizes distances between teacher and student representations into the same scale, which enables relational structure transfer. $\bl{S}_2 = [(i,j) | 1 \leq i, j \leq n, i \neq j]$ and $\bl{S}_3=[(i,j,k)|1\leq i,j,k \leq n, i\neq j\neq k]$ are pairwise set and triplet set, respectively. $\langle\rangle$ denotes cosine angle. The reformer training loss is re-formulated as:
+\begin{equation}\label{hard}
+\mathcal{L}_{d}(\bl{w}_r)=\mathcal{L}_1+\alpha\mathcal{L}_2+\beta\mathcal{L}_3,
+\end{equation}
+where $\mc{L}_1 = \sum_{i=1}^n ||\bl{t}_i-\ell_0(\bl{s}_i)||$ measures one order structural relation. $\ell_0(\cdot)$ is a linear mapping to convert the dimension of reformer output by adding a $2048$-way linear layer on its top, which can facilitate the pretraining. The two factors $\alpha$ and $\beta$ are used for balancing the loss terms, and set as 0.01 and 0.02, respectively. As shown in  Fig.~\ref{fig:representations}, the reformed discriminative representations are effectively clustered according to identity and present clear separation between clustering of different identities, proving their identity discriminability. Thus, both encoder together with reformer plays an important role in representations for masked face recognition task,  where the representations keep consistent with different masks and strengthen identity clues. 
+
+\subsection{Feature Classifier}
+Feature classifier predicts a face identity from the reformed discriminative representation. It presents as a simple classification head, with a fully-connected layer and a softmax layer. The fully-connected layer uses 512-way to reduce the feature dimension and model parameters. We cascade feature classifier with the trained backbone and perform an end-to-end finetuning by minimizing the classification loss $\mathcal{L}_{c}$, which is defined as the cross-entropy loss between classifier output $p_{i}=\phi(\bl{x}_i,\bl{m}_i;\{\bl{w}_e,\bl{w}_r,\bl{w}_c\})$ and the groundtrue identity label $c_{i}$ on training samples:
+\begin{equation}\label{Lcls}
+  \mathcal{L}_{c}(\bl{w}_c)=-\frac{1}{n}\sum_{i=1}^{n}c_i\log(p_{i}).
+\end{equation}
+
+\subsection{Discussion}
+\myPara{Relationship with other approaches}~
+Our approach can be seen as the fusion of generative approach with encoder-decoder architecture~\cite{li2017generative,elyor2017cvpr} and discriminative approach focusing on knowledge transfer with two-stream framework~\cite{wonpyo2019rkd,zhang2021ekd}, which transforms the representations from masked and groundtrue faces into a discriminative feature space. It learns general face knowledge with generative representations via inpainting like masked image modeling~\cite{he2022masked,xie2022simmim} but focuses on more fine-grained inpainting where the input is masked face instead of complete one. Thus, generative representations can evaluate the relationship between masks and masked faces. Moreover, it converts generative representations into discriminative ones using a reformer and a pretrained face recognizer, where pairwise and triplet knowledge like~\cite{schroff2015facenet,song2019iccv,li2020mm,boutros2022self} are transferred to facilitate identity recovery, rather than mean squared error in MaskInv~\cite{huber2021fg} and cosine distance in CSN~\cite{zhao2022spl}. Specially, our approach is beyond learning two cascaded ``vanilla'' networks which is hard to ensure their roles, and our main novelty is the greedy module-wise pretraining that combines the advantages of generative and discriminative representations by: 1) generative encoder that is finetuned via reconstruction to ensure its role in mask-robust representations, and 2) discriminative reformer that is trained via distillation to ensure its role in identity-robust representations.
+
+\myPara{Network training} Due to greater complexity of masked face recognition and different learning objectives between generative encoder and discriminative reformer, training all modules altogether is hard to converge. Thus our network training includes finetuning generative encoder, learning discriminative reformer via distillation and finetuning feature classifier in a progressive manner. The main training cost comes from the learning of discriminative reformer and is similar to the training of general face recognition models~\cite{cao2018vggface2,deng2019arcface} even our entire network is larger.
+
+
+
+Experiments
+To verify the effectiveness of our generative-to-discriminative representation approach (\textbf{G2D}), we conduct experiments on both synthesized and realistic masked face datasets to provide comprehensive evaluations. 
+
+\myPara{Datasets~}We use Celeb-A~\cite{Liu2015CelebA} for generating synthetic training data, LFW~\cite{LFWTech} for synthetic masked face evaluation, and RMFD~\cite{RMFD}  and MLFW~\cite{wang2022ccbr} for real-world masked face evaluation. {Celeb-A} consists of 202,599 face images covering 10,177 celebrities. Each face image is cropped, aligned by similarity transformation and then scaled to $256\times256$. We randomly split it into training set and validation set with the ratio of $6:1$.
+{RMFD} consists of both synthetic and real-world masked faces with identity labels, covering various occlusion types and unconstrained scenarios. Our experiments only use the real-world masked face verification dataset, which contains 4,015 face images covering 426 subjects. The dataset is further organized to get 6,914 masked-unmasked pairs, including 3,457 positive and 3,457 negative pairs and serving as a valuable benchmark for cross-quality validation. 
+MLFW is a relatively more difficult database to evaluate the performance of masked face verification. The dataset maintains the data size and the face verification protocol of LFW, considers that two faces with the same identity wear different masks and two faces with different identities wear the same mask, and emphasizes both the large intra-class variance and the tiny inter-class variance simultaneously.
+
+For self-supervised backbone training, we synthesized massive masked faces via MaskTheFace~\cite{anwar2020masked}. For an input face, it detects the keypoints, applies affine transformation to a randomly selected mask, overlays the original image, and perform post-processing to obtain natural masked face.
+
+\myPara{Baselines~}We consider four kinds of baselines: I) four general face recognizers  (CenterLoss~\cite{wen2016discriminative} (CL), VGGFace~\cite{parkhi2015deep} (VGG), VGGFace2~\cite{cao2018vggface2} (VGG2) and ArcFace~\cite{deng2019arcface} (AF)), II) generative approaches that equip the four general face recognizers with four face inpainting approaches (GFC~\cite{li2017generative}, DeepFill~\cite{yu2018generative}, IDGAN~\cite{ge2020tcsvt} and ICT~\cite{wan2021high}) and replace masked faces with inpainted faces as input, III) finetuning-based masked face recognizers, and IV) models trained on masked faces from scratch. Baselines in kind III and Kind IV are discriminative approaches. Baselines in kind IV adopt DoDGAN~\cite{li2020mm} which first performs inpainting then learns a specialized recognizer with inpainted faces as input. To ensure fair comparisons, for each baseline, we use its published pretrained model to obtain the results and follow the same protocols for data preparation.
+
+\myPara{Evaluation~}We evaluate masked face verification under two settings: 1)~MR-MP denoting masked reference against masked probe for evaluating over masked face pairs, and 2)~UMR-MP standing for unmasked reference against masked probe, which is closer to real-world gallery-probe scenario. The evaluation is measured with 8 metrics, including verification accuracy (ACC), equal error rate (EER), Fisher discriminant ratio (FDR), false match rate (FMR), false non-match rate (FNMR), the lowest FNMR for a FMR $\leq1.0\%$ (FMR100), the lowest FNMR for a FMR $\leq0.1\%$ (FMR1000), and the average value calculated based on FMR100\_Th and FMR1000\_Th thresholds (AVG). The last 5 metrics are also used in~\cite{huber2021fg}.
+
+\myPara{Implementation details~}The experiments are implemented on Pytorch. To get facial masks, we perform simple segmentation based on Grabcut~\cite{rother2004tog} automatically initialized the seeds with classical image features like colors and shapes. For generative encoder, we finetune ICT inpainting network with a batch size of $16$ using Adam optimizer, where learning rate is $10^{-5}$ and $\beta_1=0.5, \beta_2=0.9$. For discriminative reformer, we employ pretrained VGGFace2~\cite{cao2018vggface2} as teacher since its input size is the same to generative encoder. All models are trained with a batch size of $64$ and SGD optimizer. The initial learning rate is $0.1$ and decreases to $0.5$ times every $16$ epochs. The momentum and weight decay are set as $0.9$ and $5\times 10^{-4}$, respectively. 
+
+\begin{figure}
+  \centering
+  \includegraphics[width=1.0\linewidth]{acc_lfw.pdf}
+  \caption{Evaluation on synthetic masked LFW. We report the accuracy of the proposed method (G2D), and make comparisons with combinations of general face recognizers (CenterLoss~\cite{wen2016discriminative} or CL, VGGFace~\cite{parkhi2015deep} or VGG, ArcFace~\cite{deng2019arcface} or AF, and VGGFace2~\cite{cao2018vggface2} or VGG2), and state-of-the-art generative face inpainting approaches (GFC~\cite{li2017generative}, DeepFill~\cite{yu2018generative}, IDGAN~\cite{ge2020tcsvt} and ICT~\cite{wan2021high}).}
+  \label{fig:lfw_results}
+\end{figure}
+
+\begin{table*}[t]
+\centering
+\caption{Verification Performance on LFW synthetic masked faces under MR-MP and UMR-MP settings.}\label{tab:stats-lfw}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{ccccccccccccc}
+\toprule
+&&&&&&&\multicolumn{3}{c}{FMR100\_Th}&\multicolumn{3}{c}{FMR1000\_Th}\\ \cmidrule{8-10} \cmidrule{11-13}
+Setting & Model & ACC$\uparrow$ & EER$\downarrow$  & FDR$\uparrow$ & FMR100$\downarrow$ & FMR1000$\downarrow$ & FMR$\downarrow$ & FNMR$\downarrow$ & AVG$\downarrow$ & FMR$\downarrow$ & FNMR$\downarrow$ & AVG$\downarrow$ \\ \midrule
+
+\multirow{15}{*}{MR-MP}&MFN~\cite{chen2018mobilefacenets} &81.53\%& 18.67\% & 1.53 & 61.23\%& 80.07\% & 2.63\% & 49.53\% & 26.08\% & 0.60\% & 69.13\% & 34.87\% \\ 
+&ResNet50~\cite{he2015resnet} &85.85\%& 14.73\% & 2.03 & 46.17\%& 64.00\% & 1.77\% & 39.73\% & 20.75\% & \underline{0.07\%} & 65.07\% & 32.57\% \\
+&ResNet100~\cite{he2015resnet} &92.27\%& 8.03\% & 3.42 & 21.53\%& 41.70\% & 2.53\% & 15.60\% & 9.07\% & 0.80\% & 24.27\% & 12.53\% \\
+&DeepFill~\cite{yu2018generative}+CL~\cite{wen2016discriminative} &87.48\%& 13.43\% & 2.61 & 46.43\%& 63.20\% & 0.70\% & 50.13\% & 25.42\% & \underline{0.07\%} & 70.40\% & 35.23\% \\
+&DeepFill~\cite{yu2018generative}+VGG~\cite{parkhi2015deep} &89.33\%& 11.00\% & 2.37 & 36.57\%& 57.43\% & 1.03\% & 36.57\% & 18.80\% & 0.10\% & 58.40\% & 29.25\% \\
+&DeepFill~\cite{yu2018generative}+AF~\cite{deng2019arcface} &90.93\%& 9.27\% & 3.44 & 27.73\%& 54.67\% & 1.33\% & 25.13\% & 13.23\% & 0.10\% & 54.90\% & 27.50\% \\
+&DeepFill~\cite{yu2018generative}+VGG2~\cite{cao2018vggface2} &91.80\%& 8.37\% & 4.42 & 27.40\%& 52.97\% & \underline{0.50\%} & 36.87\% & 18.68\% & \textbf{0.00\%} & 65.43\% & 32.72\% \\
+&ICT~\cite{wan2021high}+CL~\cite{wen2016discriminative} &91.05\%& 8.98\% & 3.91 & 34.50\%& 73.13\% & 0.68\% & 37.08\% & 18.88\% & 0.14\% & 57.06\% & 28.60\% \\
+&ICT+VGG~\cite{parkhi2015deep} &92.44\%& 7.59\% & 4.19 & 23.95\%& 45.86\% & 1.32\% & 21.37\% & 11.35\% & 0.17\% & 40.10\% & 20.13\% \\
+&ICT+AF~\cite{deng2019arcface} &\underline{96.01\%}& \underline{3.97\%} & \underline{6.66} & \textbf{7.53\%} & \textbf{15.03\%} & \textbf{0.24\%} & 12.79\% & \textbf{6.51\%} & \textbf{0.00\%} & 43.49\% & 21.74\% \\
+&ICT+VGG2~\cite{cao2018vggface2} &94.15\%& 6.00\% &  5.65 & 20.90\%& 38.36\% & 1.32\% & 18.89\% & 10.11\% & \textbf{0.00\%} & 49.39\% & 24.69\% \\
+&MFN (SRT)~\cite{boutros2022self} &78.23\%& 22.30\% & 1.23 & 68.40\%& 85.10\% & 4.60\% & 46.07\% & 25.33\% & 1.03\% & 67.57\% & 34.30\% \\
+&ResNet50 (SRT)~\cite{boutros2022self} &78.87\%& 21.70\% & 1.22 & 66.97\%& 79.17\% & 5.60\% & 44.27\% & 24.93\% & 0.90\% & 68.43\% & 34.67\% \\
+&ResNet100 (SRT)~\cite{boutros2022self} &92.80\%& 7.63\% & 3.54 & 20.97\%& 35.37\% & 2.03\% & 14.77\% & \underline{8.40\%} & 0.67\% & 23.23\% & 11.95\% \\
+&DoDGAN~\cite{li2020mm}&95.44\%& 6.12\% & 5.60 & 22.45\% & 58.97\% & 34.93\% & \textbf{0.46\%} & 17.70\% & 10.20\% & \textbf{3.52\%} & \underline{6.86\%} \\
+\cmidrule{2-13}
+&\textbf{Our G2D} &\textbf{97.58\%}& \textbf{3.27\%} & \textbf{7.01} & \underline{10.74\%}& \underline{33.44\%} & 20.94\% & \underline{5.83\%} & 13.39\% & 6.40
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

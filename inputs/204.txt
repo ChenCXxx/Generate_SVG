@@ -1,0 +1,253 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Recently, multilingual pre-trained language models (LMs) have significantly advanced natural language processing (NLP) tasks, narrowing the performance gap between English and various other languages. Multilingual pre-trained models such as XLM-R \citep{conneau-etal-2020-unsupervised} and mBERT \citep{devlin-etal-2019-bert} are currently strong models for effectively cross-lingual transfer \citep{hu2020xtreme, artetxe-etal-2020-cross, le-etal-2024-lampat}. However, these models pose a limitation that they are pre-trained on a limited set of approximately 100 languages, leaving a substantial void for the vast array of the world's nearly 7000 languages \citep{van-esch-etal-2022-writing}. The resultant disparity disproportionately affects low-resource languages that are not covered in their pre-trained corpora \citep{wu-dredze-2020-languages, pfeiffer-etal-2020-mad}, impeding their performance compared to their high-resource counterparts.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/unseen_motivation.png}
+    \caption{Some languages/scripts are not covered in the pre-trained corpora. Hence, the pre-trained tokenizer will eventually produce many unknown tokens which corrupts the sentence's meaning and results in poor performance.}
+    \label{fig:unseen_script}
+\end{figure}
+
+Recent efforts propose the use of adapters to mitigate the knowledge gap in low-resource languages prior to transferring knowledge for specific tasks \citep{pfeiffer-etal-2020-mad, ustun-etal-2020-udapter, ansell-etal-2021-mad-g}. These methods adapt the pre-trained LMs to a new language by utilizing monolingual data, enabling the model to acquire a robust representation of the target language before receiving knowledge from the source language. Despite enhanced performance in languages not included in the pre-trained corpora, these approaches still exhibit poor performance in languages with unseen scripts (i.e., the scripts that are not presented in the pre-training corpora; see Figure \ref{fig:unseen_script}). To address the issue of unseen scripts, existing studies \citep{artetxe-etal-2020-cross, pfeiffer-etal-2021-unks} propose acquiring a new vocabulary embedding for newly discovered languages. However, these methods heavily rely on manually configuring the vocabulary size and initializing the embedding matrix.
+
+Furthermore, recent Cross-Lingual Transfer Learning studies focus on English due to its abundant pre-trained data and impressive task performance, our experiments reveal that high performance in English tasks does not necessarily guarantee successful transfer to other languages, particularly low-resource languages. Therefore, we suggest an automated method utilizing the LMs to identify the most suitable set of source languages for knowledge aggregation, leading to notable performance improvements over single-source language transfer.
+
+Our research empirically tested the effectiveness of newly random initialized embeddings and fixed vocabulary size. We then introduce an efficient technique for determining the optimal vocabulary size for new languages, utilizing the syntactic and semantic insights from the pre-trained LMs. In addition, we present an innovative method for transferring knowledge from multiple sources, which allows the model to choose the best combination of source languages to improve the overall performance. Our results contribute to the ongoing discussion about managing linguistic diversity in NLP, particularly for languages with limited resources, emphasizing the importance of a detailed and inclusive strategy in creating multilingual pre-trained LMs.
+
+We evaluate our approach on sequence tagging tasks (e.g. NER, POS) and classification (e.g. In summary, our contributions are:
+\begin{itemize}
+    \item We propose a novel approach to automatic search for a suitable vocabulary size to adapt to a new language.
+    \item We propose a new strategy to initialize the embedding that leverages the syntactic and semantic knowledge encoded in the pre-trained LMs to address the missing tokens when adapting to low-resource languages.
+    \item We propose a method to aggregate multi-source transfer learning to enhance the performance on cross-lingual transfer tasks. We show that multi-source can outperform effective multi-language learning.
+\end{itemize}
+
+
+
+Methodology
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\linewidth]{images/pipeline.png}
+    \caption{Illustration of UniBridge: UniBridge represents an end-to-end framework for Cross-Lingual Transfer Learning. The framework encompasses various stages, including determining the appropriate vocabulary size, initializing language-specific embedding, adapting the model to new languages, and transferring task knowledge from multiple source languages. This approach aims to harness the power of a multilingual embedding space rather than relying on a single-source transfer language, such as English.}
+    \label{fig:pipeline}
+\end{figure*}
+
+Our proposed framework includes five stages as illustrated in Figure \ref{fig:pipeline}. In the following section we will detail each stage of the framework: \textbf{1)} Vocabulary size searching, \textbf{2)} Language-specific embedding initialization, \textbf{3)} Model adaptation to new languages not covered in the pre-training data, \textbf{4)} Downstream task training, \textbf{5)} Multi-source transfer downstream task inference.
+
+\subsection{Vocabulary size searching}
+Whether training from scratch or starting with a pre-trained language model, every NLP practitioner faces the task of determining the appropriate vocabulary size. Thus, choosing a suitable vocabulary size requires exhaustive searching (i.e., the whole training and testing process is required to determine the best vocabulary size). For UniBridge, the vocabulary is determined by using only CPU and is not time-consuming as it does not require any language model training phases. This is achieved by leveraging the average log probability (ALP, \citet{zheng-etal-2021-allocating}). The algorithm for vocabulary size searching is illustrated by Algorithm \ref{alg:vocab_size_search}.
+
+\begin{algorithm}
+\caption{Vocabulary size searching algorithm.}\label{alg:vocab_size_search}
+\begin{algorithmic}[1]
+\Require $\mathcal{D}$: monolingual data, contains a list of words sentences, $v_i$: initial vocabulary size, $v_m$: maximum vocabulary size that the system should not exceed, $\delta_v$: increased step of vocabulary size, $\epsilon_s$: a threshold for stopping the algorithm.
+\State $v \gets v_i$
+\State $t \gets $ build tokenizer with vocab size $v$ on $\mathcal{D}$
+\State $s_{prev} \gets ALP(\mathcal{D}, t)$
+\State $\Delta_s = \infty$
+\While{$\Delta_s > \epsilon_s$}
+    \State $v \gets v + \delta_v$
+    \If{$v > v_m$}
+        \State $v \gets v_m$
+        \State $t \gets $ build tokenizer with $v$ on $\mathcal{D}$
+        \State Break the loop
+    \Else
+        \State $t \gets $ build tokenizer with $v$ on $\mathcal{D}$
+        \State $s_{curr} \gets ALP(\mathcal{D}, t)$
+        \State $\Delta_s = s_{curr} - s_{prev}$
+        \State $s_{prev} \gets s_{curr}$
+    \EndIf
+\EndWhile
+\State \Return Tokenizer $t$ with vocab size $v$
+\end{algorithmic}
+\end{algorithm}
+
+The concept of Average Log Probability (ALP) was introduced by \citet{zheng-etal-2021-allocating}, who argue that ALP is related to the effectiveness of subsequent tasks.
+
+\begin{equation}
+    ALP(\mathcal{D}, t) = \dfrac{1}{|t(\mathcal{D})|}\sum_{j=1}^{|t(\mathcal{D})|}\sum_{k=1}^{|s_j|}\text{log}p_{uni}(s_j^k)
+\end{equation}
+For more details, readers are advised to refer to the work of \citet{zheng-etal-2021-allocating}. It is worth noting that although ALP has a high correlation with downstream tasks, the work did not provide a solution to find an optimal vocabulary size. Therefore, in this work, we propose using the `degree of changes' in the ALP score, e.g., $\Delta_s$. Initially, the starting vocabulary size is chosen and the ALP is calculated. Through a series of increases in the vocab size by $\delta_v$, we can calculate the difference between the current ALP and the previous one. Thus, the algorithm will stop when the difference reaches a specific threshold $\epsilon_s$. This threshold indicates that the optimal vocabulary size has been obtained. Continuing to increase the size will result in similar or worse performance. Therefore, we stop the algorithm to maintain the efficiency of training. 
+Additionally, our method stands out from traditional grid search by using the `degree of changes' of the ALP score indirectly, rather than directly as in grid search.
+
+\subsection{Language-specific embedding initialization}
+\label{sec:lang_embed_init}
+When training for a new language, using a randomly initialized embedding can lead to prolonged training times for optimal performance, especially in low-resource settings with a dataset size of around 10K samples. In such cases, strategically initializing the embedding proves to be more effective than a random approach. While FOCUS \citep{dobler-etal-2023-focus} demonstrates the use of a pre-trained LM's embedding for initialization, it depends heavily on a simple lexical overlapped alignment for subsequent stages, thus decreasing the downstream task performance. To address this gap, our approach initializes the new embedding by leveraging the pre-trained LMs in both syntactic and semantic aspects. In the initial stage, we obtain the target tokenizer $t_T$ for the new language, with $t_S$ being the source tokenizer of the pre-trained LMs. Representing the vocabulary sets as $V^T$ and $V^S$ for the target and source tokenizers respectively, and embedding matrices as $E^T[\cdot]$ and $E^S[\cdot]$, we copy the source embedding to the target embedding for the overlapping tokens $O^L = V^T \cap V^S$. This method ensures a seamless integration of knowledge from the pre-trained LMs, addressing both syntactic and semantic aspects of the new language's embedding initialization.
+
+\begin{equation}
+    \forall o \in O^L: E^T[o] = E^S[o]
+\end{equation}
+
+Although the number of lexical overlapping tokens can be substantial when utilizing the same script, such as Latin or Han, this phenomenon does not extend to unseen scripts. To address this challenge, we define the non-lexical alignment set as $A^L_T = V^T \setminus O^L$ and initiate a search for semantically aligned tokens within this set. Despite languages having different scripts, the underlying meanings often converge on similar definitions. To facilitate this alignment, we train two static embeddings—one for the source tokenizer ($F^S$) and another for the target tokenizer ($F^T$) —using the monolingual dataset $\mathcal{D}$. These embeddings are denoted as $F^S[\cdot]$ for the source tokenizer and $F^T[\cdot]$ for the target tokenizer. For each token $v_i$ in $A^L_T$, we calculate the cosine similarity with every token $v_j$ in $A^L_S = V^S \setminus O^L$, resulting in a matrix $S_{i,j} \in \mathbb{R}^{|A^L_T| \times |A^L_S|}$. A pair of semantically aligned tokens ($v_i$, $v_j$) is defined as a pair of source and target tokens whose embeddings exhibit the highest cosine similarity score to each other, or:
+
+\begin{equation}
+    i = \underset{l}{argmax}(S_{l, j})\;\;\text{ and }\;\; j = \underset{l}{argmax}(S_{i, l})
+    \label{eq:semantic_align}
+\end{equation}
+
+Refer to Equation \ref{eq:semantic_align}, we define $S = \{(i,j) | i = \underset{l}{argmax}(S_{l, j})\text{ and }j = \underset{l}{argmax}(S_{i, l})\}$. Each token that is semantically aligned will have the embedding copied from their counterpart from the source embeddings.
+
+\begin{equation}
+    \forall (i, j) \in S: E^T[i] = E^S[j]
+\end{equation}
+
+For the remaining non-aligned tokens, $A_T = A^L_T \setminus S_i$ and $A_S = A^L_S \setminus S_j$ where $S_i$, $S_j$ is the set of semantically aligned token of the target and source vocabulary (i.e. $S_i = \{i | (i, j) \in S\}$, $S_j = \{j | (i, j) \in S\}$), we initialize the target embedding using the weighted sum of the aligned target tokens. We compute the cosine similarity between each non-aligned token $a_T \in A_T$ and the set of aligned target tokens (comprising both lexical and semantically aligned tokens) $o_T \in O^L \cup S_i$.
+
+\begin{equation}
+    c_{a, o} = \dfrac{F^T[a_T] F^T[o_T]^{\top}}{\|F^T[a_T]\| \cdot \|F^T[o_T]\|}
+\end{equation}
+
+To obtain the most similar aligned symbols $o_T$ for a single symbol $a_T$, we use the same approach in \citet{dobler-etal-2023-focus}, using sparsemax \citep{martins-etal-2016-sparsemax} over $c_a$, where $c_a$ is a vector containing all similarity scores from $c_{a,o}$. Sparsemax is a variant softmax, but it assigns zero to low-probability element. By this, we can overcome the problem posted by skew distribution where some tokens has only one or two similar tokens while others have more. The weight $w_{a, o}$ for each aligned token $o_T$ as defined in Equation \ref{eq:init_weighted_sum}.
+
+\begin{equation}
+    w_{a, o} = \text{sparsemax}_o(c_a)
+    \label{eq:init_weighted_sum}
+\end{equation}
+
+We denote $S_a$ as a set of similar aligned tokens, which contains $o_T$ whose probability is non-zero assigned by sparesemax.
+
+\begin{equation}
+    S_a = \{o_T \in O^L \cup S_i | w_{a, o} > 0\}
+\end{equation}
+
+Using the set \(S_a\) and the weight \(w_{a, o}\), the embedding for the non-aligned token \(a_T\) is calculated as the weighted sum of its most similar aligned tokens.
+
+\begin{equation}
+    \forall a_T \in A_T: E^T[a_T] = \sum_{o_T \in S_a} w_{a_T, o_T} E^T[o_T]
+\end{equation}
+
+\subsection{Model adaptation to new languages \& Downstream task training}
+\label{sec:lang_adapt}
+
+Continual pre-training, also known as language adaptation, has proven to be an effective method for enhancing the downstream performance of zero-shot cross-lingual tasks, as demonstrated by studies such as \citet{ke-etal-2023-continual, alabi-etal-2022-adapting, ebrahimi-kann-2021-adapt}. To mitigate the environmental impact and reduce model storage requirements, we opt to pre-train only a portion of the model, aligning with the approach introduced in MAD-X \citep{pfeiffer-etal-2020-mad}.
+
+As in Figure \ref{fig:pipeline}, we made some modifications to the MAD-X configuration. Firstly, we initialize a new embedding for UniBridge which is achieved from previous stages and train the embedding together with adapters while still freezing all the pre-trained LMs' parameters. We see that although the frozen parameter in each layer of the pre-trained LMs helps guide the trainable adapters of the new language's embedding representation into the same pre-trained LM's embedding space, MLM is not sufficient as it only enforces the adapter to predict the mask token and this cannot guarantee the new language's representation is the same as multilingual embedding space encoded by the pre-trained LMs. This limitation prohibits the knowledge transferability of task adaptation since task adaptation takes a source language (usually high-resource languages such as English, Chinese, etc) and transfers the task knowledge directly to the target language without any alignment between the two languages. Therefore, we use KL divergence as a regularizer to guide the model not only to learn the language representation well, but also to maintain the same space as the source language in order to achieve better transferability.
+
+\begin{equation}
+    \begin{aligned}
+        \mathcal{L} &= \mathcal{L}_{MLM}(y, \hat{y}) \\
+        &+ \beta D_{KL}(\pi_{UniBridge}(h|x)\|\pi_{PLM}(h|x))    
+    \end{aligned}
+    \label{eq:main_loss}
+\end{equation}
+
+$y$ and $\hat{y}$ are the ground truth and prediction logits of the mask prediction task, respectively. $\pi_{UniBridge}(h|x)$ is the last hidden state of UniBridge, it is the output of the invertible adapter before goes to the linear classification head for masked predicting. $\pi_{PLM}(h|x)$ is the last hidden state of the pre-trained LMs, it is the output of the last Transformer layer, as in Figure \ref{fig:pipeline}, and is the input of the linear classification head for mask predicting.
+
+\subsection{Multi-source transfer downstream task inference}
+
+Instead of using one task adapter from one source language, we propose aggregating the knowledge from multiple source languages to derive a better result. For each target language, we compute the harmony weight or similarity distance between languages. Some libraries such as Lang2Vec \citep{malaviya-etal-2017-learning} provide a similarity score between languages. However it does not cover all the languages. To overcome this problem, we directly use the language model (that UniBridge produced from previous stages) to measure the similarity between languages. This analysis will highlight the differences and similarities between the two approaches, offering insights into their respective performances and effectiveness.
+
+For each target language, we collect $K$ samples of parallel sentences from datasets such as Tatoeba \citep{tiedemann-2020-tatoeba} or FLORES-200 \citep{guzman-etal-2019-flores, goyal-etal-2022-flores, nllbteam2022language} between the target language and a set of $N$ source languages.
+
+We denote $\mathcal{D}^T$ as a monolingual dataset extracted from the parallel dataset on the target side, $\mathcal{D}^{S_i}$ is the monolingual dataset extracted from the parallel dataset on the source side of the $i$-th source language. Each sentence is fed into the UniBridge with the corresponding language adapters and obtains a set of hidden states (i.e., output from the invertible adapter).
+
+\begin{equation}
+    H_l = \{\pi_{UniBridge}^l(s) | s \in \mathcal{D}^l\}
+\end{equation}
+
+$\pi_{UniBridge}^l$ is the UniBridge model which use the $l$ adapter; $\mathcal{D}^l$ is $\mathcal{D}^T$ for the target language and $\mathcal{D}^{S_i}$ for the $i$-th source languages. The inverse $L_2$ distance between the target hidden state $H_t$ for target language $t$ and source hidden state $H_s$ for source language $s$ will be computed.
+
+\begin{equation}
+    d_{t, s} = \dfrac{1}{\text{$L_2$-norm}(H_t, H_s)}
+\end{equation}
+
+After that, we compute the softmax over the inverse $L_2$ distance to gain the harmony weight between target language $t$ and set of source languages $S = \{s_i\}^N_{i=1}$. 
+
+\begin{equation}
+    w_t = \text{softmax}_s(d_{t, s})
+\end{equation}
+
+Using this harmony weight, instead of replacing the task adapter for each different source language during inference like MAD-X, we forward through all the task adapters in parallel. The last logit prediction will be the weighted sum of all the logits predicted by each source language weighted by the harmony weight.
+
+\begin{equation}
+    \hat{y} = \sum_{s \in S}w_{t, s}\hat{y}_s
+\end{equation}
+
+$\hat{y}_s$ is the logit prediction from source language $s$.
+
+The intuition behind the harmony weight is that given a pair of parallel sentence, each sentence is encoded by a different language model. The difference between the hidden states produced by this process turns out to be the difference between languages itself since the sentences convey the same meaning. Therefore, inversing the difference and applying softmax will result in the similarity that we can up-weight for languages, and they could be beneficial to the target language on downstream tasks and, at the same time, down-weight the languages that are distant from the target language. Through our experiment, we show that multi-source inference outperforms single-source transfer and multi-language learning settings.
+
+
+
+Experimental setup
+\label{sec:expr_setup}
+\textbf{Language set}: The set of source languages are: English, Chinese, Russian, Arabic and Japanese.  For the target languages, we evaluate \textbf{\textit{14}} low-resource languages from WikiANN \citep{rahimi-etal-2019-massively} whose training set consists of only 100 samples per language, \textbf{\textit{9}} low-resource languages from Universal Dependencies (UD) whose training set consists of just few thousands samples per language and \textbf{\textit{10}} languages from the AmericasNLI \citep{ebrahimi-etal-2022-americasnli}.
+
+\textbf{Monolingual data}: For the language adaptation part, we extract from the Wikipedia dataset from HuggingFace \footnote{\url{https://huggingface.co/datasets/graelo/wikipedia}} 10K samples for simulating the low-resource settings, each sample consists of 128 words, for each target language. For source languages, the number of samples is 50K per language to simulate the rich-resource languages. For languages in AmericasNLI, we use one side of the translation dataset from \citet{mager-etal-2021-findings}.
+
+\textbf{Tokenizer}: We use the SentencePiece \citep{kudo-richardson-2018-sentencepiece} to learn the token from the monolingual data with the vocab size determined by our Algorithm \ref{alg:vocab_size_search}.
+
+\textbf{Downstream data}: \textbf{\textit{NER}}: We train UniBridge on the train split of WikiANN for all the source language sets and perform inference for the target language on the test split. \textbf{\textit{POS}}: We train UniBridge from the train split of UD for all the source languages sets. \textbf{\textit{NLI}}: We train UniBridge from the train split of XNLI \citep{conneau-etal-2018-xnli} for English, Chinese, Arabic and Russia due to the missing Japanese set.
+
+\textbf{Baseline}: We evaluate UniBridge against the MAD-X framework and zero-shot cross-lingual fine-tuning using pre-trained language models (LMs). In the zero-shot approach, we fine-tune the entire pre-trained LM on the combined training data of all source languages and then directly infer on the target languages. With MAD-X, we adhere to its standard setup, training on monolingual data. To perform multi-language training, we combine training data from all source languages to train a ``universal'' task adapter. For inference, we swap the language adapter for each target language and integrate the ``universal'' task adapter. For UniBridge, we implement the language adaptation and task training stages as detailed in Section \ref{sec:lang_adapt}. During inference, we combine the task adapters from 5 source languages for multi-source transfer and report the F1 score for \textbf{\textit{NER}} and accuracy score \textbf{\textit{POS}}, \textbf{\textit{NLI}} on the target language's test split.  
+
+
+
+Results and Analysis
+
+\begin{table*}[t]
+    \centering
+    \resizebox{1\textwidth}{!}{
+    \begin{tabular}{l|cccccccccccccc|c}
+          & \textbf{amh} & \textbf{ang} & \textbf{cdo} & \textbf{crh} & \textbf{eml} & \textbf{frr} & \textbf{khm} & \textbf{kan} & \textbf{lij} & \textbf{pbt} & \textbf{san} & \textbf{snd} & \textbf{sin} & \textbf{som} & \textbf{Average}\\
+         \hline
+         XLM-R & \underline{43.31}& \textbf{52.71}& \underline{22.04}& \underline{44.62}& \underline{40}& \underline{44.17}& 40.69& \underline{45.34}& \underline{40.45}& \underline{46}& \textbf{41.28}& \underline{43.13}& \underline{50.03}& \underline{50.23}& \underline{43.14}\\
+         MAD-X (XLM-R) & 39.3& \underline{46.59}& 17.32& 36.63& 33.86& 39.51& \textbf{50}& 45.24& 38.13& 42.66& 19.93& 39.06& 39.55& 49.6& 38.38\\
+         UniBridge (XLM-R) & \textbf{49.6}& 43.24& \textbf{42.91}& \textbf{46.03}& \textbf{40.15}& \textbf{50.67}& \underline{42.67}& \textbf{48.72}& \textbf{45.16}& \textbf{46.09}& \underline{29.74}& \textbf{51.32}& \textbf{52.86}& \textbf{54.22}& \textbf{45.95}\\
+    \end{tabular}}
+    \caption{The results of the F1 Score for every setup with XLM-R as a backbone are showcased in 14 diverse languages of WikiANN. We highlight in \textbf{bold} the highest F1 score and \underline{underline} the second highest of each target language for each backbone model.}
+    \label{tab:main_result_xlm}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \resizebox{1\textwidth}{!}{
+    \begin{tabular}{l|cccccccccccccc|c}
+          & \textbf{amh} & \textbf{ang} & \textbf{cdo} & \textbf{crh} & \textbf{eml} & \textbf{frr} & \textbf{khm} & \textbf{kan} & \textbf{lij} & \textbf{pbt} & \textbf{san} & \textbf{snd} & \textbf{sin} & \textbf{som} & \textbf{Average}\\
+         \hline
+         mBERT & 12.87& \underline{52.24}& \underline{19.76}& \textbf{47.81}& \textbf{39.71}& \underline{51.3}& 18.46& \underline{42.86}& \underline{45}& 25.86& \textbf{30.71}& 13.61& 2.79& \underline{46.15}& \underline{32.08}\\
+         MAD-X (mBERT) & \underline{13.91}& 51.48& 16.22& \underline{46.22}& \underline{39.2}& 45.76& \underline{19.2}& 31.3& 37.35& \underline{29.25}& \underline{22.96}& \underline{20.31}& \underline{12.34}& 37.66& 30.23\\
+         UniBridge (mBERT) & \textbf{15.46}& \textbf{53.28}& \textbf{30.42}& 45.67& 36.15& \textbf{54.72}& \textbf{19.49}& \textbf{44.07}& \textbf{45.49}& \textbf{39.33}& 20.55& \textbf{42.36}& \textbf{13.68}& \textbf{62.28} & \textbf{37.35} \\
+    \end{tabular}}
+    \caption{The results of the F1 Score for every setup with mBERT as a backbone showcased in 14 diverse languages of WikiANN. We highlight in \textbf{bold} the highest F1 score and \underline{underline} the second highest of each target language for each backbone model.}
+    \label{tab:main_result_mbert}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \resizebox{0.8\textwidth}{!}{
+    \begin{tabular}{l|ccccccccc|c}
+          & \textbf{amh} & \textbf{lij} & \textbf{olo} & \textbf{san} & \textbf{snd} & \textbf{sin} & \textbf{tam} & \textbf{tgl} & \textbf{tat} & \textbf{Average}\\
+         \hline
+         XLM-R & \underline{46.02}& 39.15& 60.69& 32.9& 70.01& \textbf{76.25}& \textbf{85.53}& 67.45& 57.89& 59.54\\
+         MAD-X (XLM-R) & \textbf{47.72}& \underline{58.28}& \underline{69.48}& \underline{36.1}& \underline{71.2}& \underline{73.86}& 83.85& \underline{69.01}& \underline{65.83}& \underline{63.88}\\
+         UniBridge (XLM-R) & 40.88& \textbf{73.75}& \textbf{81.45}& \textbf{38.94}& \textbf{71.37}& 63.52& 83.5& \textbf{72.62}& \textbf{81.3} & \textbf{67.81}\\
+    \end{tabular}}
+    \caption{The results of the accuracy for every setup with XLM as a backbone are showcased in 9 diverse languages of UD. We highlight in \textbf{bold} the highest accuracy score and \underline{underline} the second highest of each target language for each backbone model.}
+    \label{tab:pos_xlm}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \resizebox{0.8\textwidth}{!}{
+    \begin{tabular}{l|ccccccccc|c}
+          & \textbf{amh} & \textbf{lij} & \textbf{olo} & \textbf{san} & \textbf{snd} & \textbf{sin} & \textbf{tam} & \textbf{tgl} & \textbf{tat} & \textbf{Average}\\
+         \hline
+         mBERT & 8.59& \underline{60.66}& \underline{61.49}& 9.35& 20.39& 11.47& \underline{72.93}& \underline{66.3}& \underline{83.2}& 37.82\\
+         MAD-X (mBERT) & \underline{13.31}& 50.47& 59.61& \underline{10.88}& \underline{24.93}& \underline{25.68}& 66.61& 55.56& 74.17& \underline{42.36}\\
+         UniBridge (mBERT) & \textbf{29.24}& \textbf{65.53}& \textbf{70.65}& \textbf{12.86}& \textbf{66.78}& \textbf{52.61}& \textbf{75.23}& \textbf{70.65}& \textbf{84.16}& \textbf{58.64}\\
+    \end{tabular}}
+    \caption{The results of the accuracy for every setup with mBERT as a backbone are showcased in 9 diverse languages of UD. We highlight in \textbf{bold} the highest accuracy score and \underline{underline} the second highest of each target language for each backbone model.}
+    \label{tab:pos_mbert}
+\end{table*}
+
+We present the result of our method and the baselines in Table \ref{tab:main_result_xlm} and \ref{tab:main_result_mbert} for NER task and Table \ref{tab:pos_xlm} and \ref{tab:pos_mbert} for POS tagging task. UniBridge outperforms strong baselines such as whole model fine-tuned (XLM-R, mBERT) and MAD-X framework by a large margin, i.e, for the XLM-R model, we outperform 11 over 14 languages. For POS tagging task, we outperform both baselines with two different backbone models. This highlights the effect of leveraging multiple source languages during inference to help make better decisions since each language contributes knowledge that benefits the model at prediction. Meanwhile, multi-training offers a more robust performance but also introducing more difficulties during training. The fact that UniBridge outperforms strong baselines such as whole fine-tuned model indicates that given a small monolingual and lightweight adaptation using adapters, we can significantly improve the cross-lingual tasks for uncovered languages. Compared to MAD-X, our approach differs from the use of a new embedding layer. For unseen languages, using a more specific layer of embedding can remarkably enhance the performance. Even though MAD-X already uses the invertible adapters as a component to adapt embedding layer to unseen languages, these components may not sufficient for rare languages with unseen scripts such as Amharic (\textbf{amh}), Khmer (\textbf{khm}), Kanada (\textbf{kan}). In addition, to evaluate UniBridge with large (decoder-style) Language Models (LLMs), we expanded our experiments beyond XLM-R and mBERT to include mGPT \citep{shliazhko-etal-2024-mgpt} and mBART \citep{liu-etal-2020-multilingual-denoising}. This extension provides a more robust assessment of UniBridge's effectiveness across different model types, demonstrating its versatility and potential in leveraging various LLM architectures for improved language representation.
+
+Although UniBridge can successfully improve cross-lingual generalization, there are still some inconsistencies in the performance of a language on different tasks, e.g., Amharic (\textbf{amh}), Ligurian (\textbf{lij}), and Sanskrit (\textbf{san}) on NER and POS tasks. We hypothesize that the inconsistency arises from the misalignment in the subspace between the language adapter and the task adapter. One approach to mitigate this misalignment is to regularize the representation so that the newly learned representation is shared between the source and target languages. UniBridge leverages KL divergence as a regularization
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

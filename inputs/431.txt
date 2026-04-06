@@ -1,0 +1,374 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Deep models are prone to forgetting previously learned knowledge when sequentially fine-tuned on different tasks.
+Severe performance degradation on the old tasks can be observed.
+It is also known as catastrophic forgetting~\cite{catastrophic,french2002using}.
+Class incremental learning (CIL) methods~\cite{continual,masana2020class} aim to handle this issue and equip deep models with the capacity to continuously learn new categories without forgetting the old ones.
+The rehearsal strategy~\cite{icarl,wa,rolnick2019experience,foster,der} has been widely used to achieve this goal. Specifically, a limited amount of exemplars from previous tasks are stored in a memory buffer and replayed when learning new tasks.
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figs/dynamic_data_imbalance.pdf}
+   \caption{
+   Data imbalance of CIL. With the exemplars of previous tasks buffered, the training data within each task is imbalanced.
+   As the task increment proceeds, more categories appear in a fixed-size memory. Such imbalance becomes more severe.
+   }
+   \label{fig:data_imba}
+\end{figure}
+
+Due to the relatively small size of the memory buffer, the training samples of a new class are far more than the old ones.
+Therefore, adopting the rehearsal strategy can introduce the data imbalance problem to CIL.
+Two kinds of long-tailed recognition techniques, the adjusted losses~\cite{menon2020long,cui2019class} and the data re-sampling~\cite{kang2019decoupling}, are exploited by many CIL methods~\cite{hou2019learning,foster,castro2018end,der} to learn the classifier  with less bias.
+These methods alleviate the data imbalance within each increment task independently.
+
+However, the data imbalance in CIL is dynamic and becomes more extreme as the task increment proceeds, as illustrated in~\cref{fig:data_imba}.
+A novel dynamic residual classifier (DRC) is proposed in this work to handle this challenging scenario.
+Inspired by the recent advance residual classifier (RC)~\cite{cui2022reslt}, a lightweight branch layer is inserted before the classifier to encode the task-specific knowledge.
+This new architecture enables the residual fusion of classifier outputs to alleviate the data imbalance effectively.
+However, directly applying RC for CIL leads to the model-growing problem, i.e., the growing overhead from the additional branch layers assigned to the new tasks.
+The proposed DRC handles this dynamic increment issue via the simple yet effective branch layer merging.
+
+
+
+DRC is directly applicable to different CIL pipelines by simply replacing the fully connected (fc) classifiers.
+Three typical CIL pipelines, i.e., the Model Direct Transfer (MDT)~\cite{icarl,podnet}, the Model Expansion and Compression (MEC)~\cite{foster,der} and the Model Adaptation and Fusion (MAF)~\cite{hou2018lifelong,choi2021dual}, as shown in \cref{fig:frame}, are chosen to be combined with DRC.
+They can consistently benefit from such combinations, with clear improvements observed.
+The details and comparisons on such combinations are given in \cref{sec:mafdrc}.
+More importantly, DRC is most compatible with MAF among the three pipelines. The resulting MAFDRC method achieves state-of-the-art performance under both conventional CIL and long-tailed CIL (LT-CIL) settings.
+Extensive analyzes are conducted to provide insights into each part.
+The main contributions
+are three-fold:
+\begin{itemize}[noitemsep]
+  \item We show the data imbalance issue in CIL rehearsal is dynamic across tasks rather than static within each task. The proposed dynamic residual classifier (DRC) aims to handle this challenging scenario from the perspective of classifier architecture, which is complementary to existing efforts in CIL;
+  \item The branch layer architecture and residual fusion mechanism from a recent long-tailed classifier (RC)~\cite{cui2022reslt} are adopted by DRC to alleviate the negative impact of data imbalance on CIL for the first time.
+  More importantly, the model-growing problem of the vanilla RC under the CIL setting is handled with the simple yet effective branch layer merging in DRC;
+  \item The proposed DRC is generalizable.
+  On the one hand, incorporating DRC brings clear improvements to different CIL pipelines.
+  On the other hand, the effectiveness of DRC is demonstrated in both the CIL and the LT-CIL settings.
+\end{itemize}
+
+
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\linewidth]{figs/three_framework.pdf}
+   \caption{
+   Illustrations of three CIL pipelines.
+   (a) is the Model Direct Transfer (MDT). (b) depicts the Model Expansion and Compression (MEC). (c) shows the Model Adaptation and Fusion (MAF).
+   $\Phi_t$ indicates the classification model of task $t$.
+   $D_t$ and $M_t$ represent the new data and memory data of task $t$ respectively.
+   Blue indicates old knowledge, yellow indicates new one and green represents a mixture of both.}
+   \label{fig:frame}
+\end{figure}
+
+
+
+
+Related Work
+\label{sec:relat}
+\noindent {\bf Class Incremental Learning} (CIL) is one of the major settings in continual learning~\cite{van2019three,de2021continual}. It aims to equip deep models with the capacity to continually learn from a sequence of tasks with disjoint classes and avoids the Catastrophic Forgetting~\cite{catastrophic} of previously learned knowledge.
+{\bf Rehearsal-based methods} ~\cite{icarl,gem,wa,wu2019large,rolnick2019experience,isele2018selective} preserve very limited exemplars from previous tasks and replaying them in the new task to defy forgetting.
+Exemplars are selected by different strategies.
+iCaRL~\cite{icarl} stores a subset of samples per class by selecting the good approximations to class means in the feature space.
+RWalk~\cite{chaudhry2018riemannian} selects exemplars with higher entropy or those close to the classification boundary. Instead of storing raw data samples, DGR~\cite{generative} exploits the synthetic instances from a generative model~\cite{goodfellow2020generative}.
+In this work, we use the rehearsal strategy as in~\cite{icarl}. %iCaRL
+The data imbalance caused by limited rehearsal memory is a challenge for \textbf{Classifier Learning in CIL}.
+To learn a less biased classifier, the adjusted losses~\cite{menon2020long,cui2019class} are exploited by existing CIL methods.
+A margin ranking loss proposed by \cite{hou2019learning} encourages the old and new classes to be better separated and avoid ambiguities.
+The adjusted classification loss of FOSTER~\cite{foster} aims to re-balance the logits of the rare (old) and dominant (new) classes.
+Based on a balanced training subset sampled \cite{kang2019decoupling}, an independent classifier learning stage is introduced to alleviate the impact of data imbalance.
+For example, EEIL~\cite{castro2018end} finetunes its classifier while DER~\cite{der} trains a new one from scratch with such balanced data.
+Moreover, different post-hoc corrections are applied to the classifiers learned from the imbalanced data.
+The output logits of the new classifier are rescaled by a simple affine function in BiC~\cite{wu2019large}.
+The norms of the classifier weight vectors for the new and old classes are aligned in WA~\cite{wa}.
+The proposed dynamic residual classifier (DRC) aims to handle the data imbalance of CIL with a new classifier of dynamic architecture.
+Therefore, it is complementary to the relevant CIL methods mentioned above.
+
+Besides the rehearsal strategy, distillation techniques~\cite{hinton2015distilling,zhao2022decoupled} are used by different CIL pipelines to transfer the discriminative knowledge of preceding categories from the old models to the new ones, resulting in the {\bf Distillation-based methods}~\cite{icarl,podnet,foster,hou2018lifelong,choi2021dual}.
+Under the Model Direct Transfer (MDT) pipeline, the model is finetuned with both the new data and the distilled knowledge from the retained old model. 
+The changes in attention maps between the new and old models are penalized via distillation in LwM~\cite{dhar2019learning}.
+Distillation also can be conducted on the prediction scores~\cite{icarl} or spatial features~\cite{podnet}.
+The Model Expansion and Compression (MEC) pipeline consists of two stages.
+In the first stage, the old model is retained and expanded with new modules for the learning of a new task. Such a model expansion stage is also known as the parameter isolation methods~\cite{learn,compacting,der,foster,dytox}.
+The feature representations from the old frozen model and the newly added one are concatenated and trained on the new task, as in DER~\cite{der} and FOSTER~\cite{foster}.
+A dynamic model expansion strategy based on the ViT architecture~\cite{dosovitskiy2020image} is proposed in DyTox~\cite{dytox}.
+In the next stage, the model compression, e.g., distillation~\cite{hinton2015distilling} or network pruning~\cite{hat}, is applied to control the size of the expanded model.
+Under the Model Adaptation and Fusion (MAF) pipeline, a model optimized on the new task only is obtained at the adaptation stage.
+The new knowledge within this adapted model together with the old knowledge from either the exemplars~\cite{hou2018lifelong} or the old model~\cite{choi2021dual} are integrated into a single model via distillation.
+A neural network is split into two partitions in~\cite{kim2021split} for training the new task separated from the old task and reconnecting them to fuse the knowledge across tasks.
+The proposed DRC is compatible with the three pipelines and clearly improves their performance.
+
+\noindent {\bf Long-tailed (LT) Recognition}~\cite{zhang2021deep, yang2022survey} is an active research topic under Data Imbalance~\cite{kaur2019systematic,he2009learning}.
+The adjusted losses~\cite{menon2020long,cui2019class,zhang2017range} and the data re-samling~\cite{buda2018systematic,byrd2019effect,devi2017redundancy,kang2019decoupling} are two kinds of important techniques for Long-tailed Recognition.
+They are adopted by many CIL methods~\cite{castro2018end,hou2019learning,wa,der,foster} to independently handle the data imbalance within each incremental task, as detailed above.
+In this work, we show the data imbalance of CIL can be more challenging than that of LT, as the former is dynamic across incremental tasks while the latter is static.
+Recently, a novel classifier architecture~\cite{cui2022reslt} has been proposed for LT recognition.
+We find its branch layer architecture and residual fusion mechanism are effective under the CIL setting.
+However, directly applying this classifier for CIL raises the model-growing problem.
+The proposed DRC handles it with the branch layer merging and becomes an effective and efficient classifier for CIL.
+Moreover, a new CIL setting, long-tailed CIL (LT-CIL), has been proposed in~\cite{liu2022long}, where the new task data obeys a long-tailed distribution as well. Our DRC is found effective in this setting.
+
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{figs/RC_all.pdf}
+  \caption{
+  Illustrations of the residual classifier (RC) and the proposed dynamic residual classifier (DRC) for CIL at task $t$.
+  The residual fusion of overall logits, ${{{\rm{\bar \ell}}}_t}$, is shown.
+  $\operatorname{F}_t$ is the backbone feature extractor.
+  }
+  \label{fig:maf parameters}
+\end{figure*}
+
+
+
+Methodology
+
+
+ 
+
+In class incremental learning, a model is learned from a sequence of ${T}$ tasks, where the task ${t}$ has a set of $n_t$ different classes ${C_t} = \{ c_{t,1},c_{t,2}, \cdots ,c_{t,n_t}\}$. The classes in different tasks are disjoint, ${C_{i}} \cap {C_j} = \emptyset, \forall i,j \in \{1,...,T\}$.
+The training data of task $t$ denotes as ${D_t}$. It contains data tuples in the form of $(x,y)$ where $x$ is the image and $y$ is its ground-truth class label. When training on task ${t}$, the model can only access to ${D_t}$.
+With rehearsal applied, data samples from previous tasks are maintained in a memory buffer $M_t$ with a relatively small size, i.e.,
+$|{M_t}| \ll |{D_t}|$.
+$M_t$ is also included in the learning procedure of task $t$.
+Updates of the memory buffer are dynamic when the task increment proceeds, as shown in \cref{fig:data_imba}.
+During testing, data samples are from all observed classes so far with balanced distributions.
+
+\subsection{Residual Classifier for CIL}\label{sec:rc}
+The residual classifier (RC) \cite{cui2022reslt} is with the branch layer architecture and residual fusion mechanism. RC can be used to handle the dynamic data imbalance of CIL.
+Specifically, the classification model $\Phi_t$ with RC consists of three parts, the feature extractor $\operatorname{F}_t$, the branch layers ${ \operatorname{B}_{1},\cdots,\operatorname{B}_{t} }$ and the classifier heads $\operatorname{H}_{t} = \{ {\operatorname{h}_1},{\operatorname{h}_2}, \cdots ,{\operatorname{h}_{t}} \}$, as illustrated in \cref{fig:maf parameters}(a).
+ The feature representation of an input image $x$ is
+ \begin{equation}
+  f = \operatorname{F}_t(x),
+\end{equation}
+where $f \in \mathbb{R}^d$ and $\operatorname{F}_t$ is parameterized with $\theta_t$.
+The branch layers are task-specific under the CIL setting. $\operatorname{B}_{1},\cdots,\operatorname{B}_{t-1}$ are inherited from the previous model $\Phi_{t-1}$ to preserve the old knowledge. Therefore, they are frozen at the new task $t$. $\operatorname{B}_{t}$ is for task $t$ and learned with other parts of $\Phi_t$. All branches are lightweight, i.e., the $1\times1$ convolutional layers without bias terms, to alleviate the growing overhead of model parameters. The output of the branch layer $\operatorname{B}_i$ is
+\begin{equation}
+  b_i = \operatorname{B}_i(f) = \omega_{\operatorname{B}_i} \cdot f,
+\end{equation}
+where $\omega_{\operatorname{B}_i}$ is the weight of branch layer and $\cdot$ is matrix multiplication, $i = 1, \cdots, t$. To encode the knowledge of all previous tasks, their outputs are averaged,
+\begin{equation}
+  \bar{b}_{t-1} = \frac{b_1 + \cdots + b_{t-1}}{t-1},
+\end{equation}
+with $t \geq 2$.
+$\operatorname{H}_t$ is a set of task-specific classifiers ${ {\operatorname{h}_1},{\operatorname{h}_2}, \cdots ,{\operatorname{h}_{t}} }$, where $\operatorname{h}_i$ corresponds to the classifier of task $i, i=1, \cdots, t$. $\operatorname{h}_i$ is an FC layer with output dimension $|C_i|$.
+Different logits of classifiers are computed via
+\begin{equation}
+\left\{ {\begin{array}{*{20}{l}}
+\ell^{'}_{t, \operatorname{H}_{t-1}} = \operatorname{H}_{t-1}(\bar{b}_{t-1}),\\
+\ell^{'}_{t, h_t} = h_t(\bar{b}_{t-1}),\\
+\ell_{t, \operatorname{H}_{t-1}} = \operatorname{H}_{t-1}(b_t),\\
+\ell_{t, h_t} = h_t(b_t),
+\end{array}} \right.
+\end{equation}
+as depicted in \cref{fig:maf parameters}(a).
+$\ell_{t}$ and $\ell^{'}_{t}$ are the overall logits of two branches respectively. Taking $\ell_{t}$ as an example, its computation is
+\begin{equation}
+\ell_{t} = \operatorname{H}_t(b_t) = [\operatorname{H}_{t-1}(b_t), \ell_{t, h_t}]  = [\ell_{t, \operatorname{H}_{t-1}}, \ell_{t, h_t}] 
+\label{eq:l_t}
+\end{equation}
+where $[\cdot]$ is the concatenate operation and $\ell_{t} \in \mathbb{R}^{|C_1|+\cdots+|C_t|}$ covers all classes seen so far. 
+The probabilistic output of $\ell_t$ is $p_t = \operatorname{Softmax}(\ell_t)$.
+$\ell^{'}_{t}$ can be obtained in the similar way with $\bar{b}_{t-1}$ as input.
+
+The residual fusion is applied to the corresponding logits between the two branches. Three fused logits are computed via
+\begin{equation}
+\left\{ {\begin{array}{*{20}{l}}
+{{{{\rm{\bar \ell}}}_t} = \frac{1}{2}({\ell_t} + \ell_t^{'})},\\
+{{{{\rm{\bar \ell}}}_{t,{\operatorname{H}_{t - 1}}}} = \frac{1}{2}({\ell_{t,{\operatorname{H}_{t - 1}}}} + \ell_{t,{\operatorname{H}_{t - 1}}}^{'})},\\
+{{{{\rm{\bar \ell}}}_{t,{\operatorname{h}_t}}} = \frac{1}{2}({\ell_{t,{\operatorname{h}_t}}} + \ell_{t,{\operatorname{h}_t}}^{'})}.
+\end{array}} \right.
+\label{eq:fusion outputs3}
+\end{equation}
+$\bar \ell_t$ is the fused logits of all categories till task $t$.
+$\bar \ell_{t,\operatorname{H}_{t-1}}$ fuses the logits of old tasks.
+$\bar \ell_{t,\operatorname{h}_{t}}$ is the logits for new categories at task $t$.
+
+  
+
+
+
+\subsection{Dynamic Residual Classifier}\label{sec:drc}
+
+The residual classifier (RC) still suffers from the growing storage and computation overhead as more task-specific branch layers are introduced under the CIL setting.
+Dynamic Residual Classifier is proposed to handle this issue via the \emph{branch layer merging} in an iterative manner.
+Assuming the task increment proceeds from $t-1$ to $t$, $\operatorname{B}^{'}_{t-2}$ and $\operatorname{B}_{t-1}$ are the two branch layers inherited from task $t-1$. As the branch layers are instantiated with the lightweight $1\times1$ convolutional layer without bias term, $\operatorname{B}^{'}_{t-2}$ and $\operatorname{B}_{t-1}$ are parameterized by the weight matrices $\omega_{\operatorname{B}^{'}_{t-2}}$ and $\omega_{\operatorname{B}_{t-1}}$ respectively.
+A new branch layer $\operatorname{B}^{'}_{t-1}$ is obtained by merging $\operatorname{B}^{'}_{t-2}$ and $\operatorname{B}_{t-1}$ in the parameter space,
+\begin{equation}
+  {\omega_{\operatorname{B}_{t-1}^{'}}} = \frac{{\omega_{{\operatorname{B}_{t-1}}}} + {\omega_{\operatorname{B}_{t - 2}^{'}}}}{2}.
+  \label{eq:weight}
+\end{equation}
+$\operatorname{B}^{'}_{t-1}$ is frozen to preserve the discriminative knowledge learned from previous tasks, as shown in \cref{fig:maf parameters}(b). 
+The model-growing problem in RC is thus handled by DRC with only two branch layers, $\operatorname{B}^{'}_{t-1}$ and $\operatorname{B}_{t}$, included for each task.
+Moreover, it is interesting to show that the final logit $\bar \ell_{t-1}$ of the previous model $\Phi_{t-1}$ is consistent with the output logit $\ell^{'}_{t,\operatorname{H}_{t-1}}$ of branch $\operatorname{B}^{'}_{t-1}$ at task $t$,
+\begin{equation}
+\begin{array}{l}
+ \bar \ell_{t-1}= \frac{1}{2}({\operatorname{H}_{t - 1}}({\operatorname{B}_{t - 1}}(f)) + {\operatorname{H}_{t - 1}}(\operatorname{B}_{t - 2}^{'}(f)))\\
+ = \frac{1}{2}({\operatorname{H}_{t - 1}}({\omega _{{\operatorname{B}_{t - 1}}}}\cdot f) + {\operatorname{H}_{t - 1}}({\omega _{\operatorname{B}_{t - 2}^{'}}}\cdot f))\\
+  = {\omega _{{\operatorname{H}_{t - 1}}}}\cdot (\frac{1}{2}({\omega _{{\operatorname{B}_{t - 1}}}} + {\omega _{\operatorname{B}_{t - 2}^{'}}}) \cdot f)  + {{\kappa_{{\operatorname{H}_{t - 1}}}}}\\
+ = {\omega _{{\operatorname{H}_{t - 1}}}}\cdot ({\omega_{\operatorname{B}_{t - 1}^{'}}} \cdot f ) + {{\kappa}_{{\operatorname{H}_{t - 1}}}}\\
+ = {\operatorname{H}_{t - 1}}(\operatorname{B}_{t - 1}^{{'}}(f))\\
+ = \ell^{'}_{t,\operatorname{H}_{t-1}},
+\end{array} 
+\end{equation}
+where ${\omega _{{\operatorname{H}_{t - 1}}}}$ and ${{\kappa_{{\operatorname{H}_{t - 1}}}}}$ are the weight and bias of the classifier ${\operatorname{H}_{t - 1}}$ respectively.
+The effectiveness of simple branch layer merging can be further demonstrated by this observation.
+The output logits of the DRC are also computed with the residual fusion mechanism as in \cref{eq:fusion outputs3}.
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.8\linewidth]{figs/ma_with_drc.pdf}
+   \caption{
+   Model $\Phi_{t}^{a}$ with DRC for Adaptation.
+   }
+   \label{fig:maf with drc}
+\end{figure}
+
+\subsection{CIL Pipelines with DRC}\label{sec:mafdrc}
+
+
+The combinations between DRC and three CIL pipelines, the model adaptation and fusion (MAF), the model direct transfer (MDT), and the model expansion and compression (MEC), are presented.
+The resulting methods, MAFDRC, MDTDRC, and MECDRC, are also compared.
+\noindent \textbf{MAFDRC} \quad
+The MAF pipeline consists of two successive stages, the model adaptation and then fusion, as shown in \cref{fig:frame}(c).
+In the adaptation stage, a trainable model $\Phi^a_{t}$ with DRC is depicted as in \cref{fig:maf with drc}. 
+Specifically, $\operatorname{B}_{t-1}^{'}$ is obtained via the branch layer merging as \cref{eq:weight} and fixed.
+$\ell_t^a$ is the residual fusion between the output logits of the two branches.
+With cross-entropy as the learning objective,
+\begin{equation}
+  \mathcal{L}_c^{a} =\sum\limits_{(x,y) \in {D_t}} {\operatorname{CE}(\ell_t^a,y)},
+  \label{eq:adaptation loss}
+\end{equation}
+$\Phi_{t}^{a}$ is end-to-end optimized on current task $t$ with $D_t$ only.
+
+In the model fusion stage, our aim is to integrate the knowledge from different models, i.e., $\Phi_{t-1}$ and $\Phi_{t}^{a}$, into a single $\Phi_t$ while reducing the impact of data imbalance.
+$\Phi_t$ is instantiated with the model architecture as in \cref{fig:maf parameters}(b). $\operatorname{B}_{t-1}^{'}$ is from the branch layer merging and $\operatorname{B}_{t}$ is initialized with the corresponding branch of $\Phi_t^a$.
+The classification loss $\mathcal{L}_c^{branch}$ consists of two terms,
+\begin{equation}
+\mathcal{L}_c^{branch} =  \sum\limits_{(x,y) \in {D_t} \cup {M_t}} {\operatorname{CE}(\ell_t,y)} + \sum\limits_{(x,y) \in  {M_t}} {\operatorname{CE}(\ell_{t,\operatorname{H}_{t-1}}^{'},y)}.
+\label{eq:branch loss}
+\end{equation}
+They guide the learning of the two branches and encourage parameter specialization for old and new classes respectively.
+${L_c^{fusion}}$ is proposed to optimize the model over all the classes across tasks,
+with the fused logit $\bar \ell_t$ from \cref{eq:fusion outputs3},
+\begin{equation}
+\begin{split}
+  {\mathcal{L}_c^{fusion}} =\sum\limits_{(x,y) \in {D_t} \cup {M_t}} {\operatorname{CE}(\bar \ell_t,y)}.
+  \label{eq:fusion loss}
+\end{split}
+\end{equation}
+Moreover, the discriminative knowledge from $\Phi_{t}^a$ and $\Phi_{t-1}$ are distilled into the final model $\Phi_{t}$ with the loss,
+\begin{equation}
+\begin{split}
+    \mathcal{L}_{distil}= \sum\limits_{(x,y) \in {D_t} \cup {M_t}} \operatorname{KL}(p_{t - 1}||\bar p_{t,\operatorname{H}_{t-1}})  + \operatorname{KL}(p_t^a||\bar p_{t,\operatorname{h}_t}),
+  \label{eq:new kd}
+\end{split}
+\end{equation}
+where $\bar p_{t,\operatorname{H}_{t-1}}$ can be represented by $\operatorname{S}(\bar \ell_{t,\operatorname{H}_{t-1}})$, and $\bar p_{t,\operatorname{h}_{t}}$ can be represented by $\operatorname{S}(\bar \ell_{t,\operatorname{h}_{t}})$).
+In the model fusion step, $\Phi_t$ is optimized on the overall loss,
+\begin{equation}
+  {\mathcal{L}_{all}} = (1 - \alpha ){\mathcal{L}_c^{fusion}} + \alpha {\mathcal{L}_c^{branch} + \beta {\mathcal{L}_{distil}}},
+  \label{eq:sum}
+\end{equation}
+with balancing hyper-parameters $0 \leq \alpha \leq 1$ and $\beta$.
+
+\noindent \textbf{MDTDRC} \quad
+In the MDT pipeline, distillation loss is used to directly transfer the knowledge of the previous task from $\Phi_{t-1}$ (the teacher) to $\Phi_t$ (the student) and prevent the representations of previous data from drifting too much during new task learning, as illustrated in \cref{fig:frame}(a).
+The proposed DRC is enabled by introducing the branch layers, $\operatorname{B}_{t}$ and $\operatorname{B}_{t-1}^{'}$. The parameters of $\operatorname{B}_{t-1}^{'}$ are obtained via \cref{eq:weight} and $\operatorname{B}_{t}$ for the new task is random initialized. 
+
+\noindent \textbf{MECDRC} \quad
+In the model expansion stage, the previous model is frozen and expanded with a new trainable one by concatenating their feature representations.
+The resulting larger model is then trained with $D_t$ and $M_t$, as shown in \cref{fig:frame}(b).
+The proposed DRC is also introduced at this stage to boost the performance of the large model across tasks. % How to add DRC to this stage? details?
+In the mode compression stage, the expanded model is distilled into the final model with a smaller size.
+\noindent \textbf{Comparisons among Three Pipelines} \quad
+MDT usually impose a challenge to find the balance between learning novel classes and preserving old knowledge simultaneously within a single model. 
+Model expansion can achieve better balance at the price of storage and computation overhead, while model compression may neutralize the improvements from expansion.
+In MAF, $\Phi_t^a$ is optimized with only new data $D_t$ in the first stage. $\Phi_{t-1}$ preserves the knowledge of previous tasks. 
+The complementary knowledge in $\Phi_t^a$ and $\Phi_{t-1}$ is then fused into $\Phi_t$ by distillation to improve performance on both old and new tasks.
+Moreover, DRC is integrated into both stages of MAF rather than a single stage of MEC or MDT.
+To this end, MAFDRC is chosen as our main method.
+
+
+Experiments
+\label{sec:exper}
+
+                
+
+
+                
+
+
+\begin{table*}[t]
+\centering
+\begin{tabular}{c|cccccc|cccc|cc}
+\hline
+\multirow{3}{*}{Methods} & \multicolumn{6}{c|}{ImageNet100 B0}                                                        & \multicolumn{4}{c|}{ImageNet100 B50}                        & \multicolumn{2}{c}{ImageNet1000} \\ \cline{2-13} 
+                         & \multicolumn{2}{c}{5 steps} & \multicolumn{2}{c}{10 steps} & \multicolumn{2}{c|}{20 steps} & \multicolumn{2}{c}{5 steps} & \multicolumn{2}{c|}{10 steps} & \multicolumn{2}{c}{10 steps}     \\ \cline{2-13} 
+                         & Avg          & Last         & Avg          & Last          & Avg           & Last          & Avg          & Last         & Avg           & Last          & Avg            & Last            \\ \hline
+                
+iCaRL~\cite{icarl}     & 74.87                                 & 63.36                                     & 70.35                                 & 55.78                                     & 67.80                                 & 51.78  & 64.69                                 & 54.46                                 & 57.92                                 & 50.52 & 54.15                                 & 36.25       \\
+BiC~\cite{wu2019large}  & 77.11                                 & 67.10                                     & 70.98                                 & 52.00                                     & 63.79                                 & 41.70   & 68.51                                 & 54.36                                 & 60.73                                 & 43.04        & 61.66                                     & 41.30     \\
+WA~\cite{wa}        & 77.59                                 & 68.36                                     & 73.59                                 & 60.78                                     & 68.81                                 & 57.16     & 68.49                                 & 59.74                                 & 62.10                                 & 54.42   & 59.23                                 & 40.92       \\
+PODNet~\cite{podnet}    & 76.73                                 & 64.90                                     & 70.13                                 & 53.30                                     & 62.78                                 & 47.10    & 78.41                                 & 69.18                                 & 75.97                                 & 66.50  & - & - \\ 
+DER w/o p~\cite{der} & {\color[HTML]{3166FF} \textbf{81.03}}                                 & {\color[HTML]{3166FF} \textbf{74.44}}                                             & {\color[HTML]{3166FF} \textbf{78.30}}                                 & {\color[HTML]{3166FF} \textbf{70.40}}                                                      & {\color[HTML]{FE0000} \textbf{78.22}}                                 & {\color[HTML]{FE0000} \textbf{71.40}}      & {\color[HTML]{3166FF} \textbf{80.30}} & {\color[HTML]{3166FF} \textbf{74.28}} & {\color[HTML]{FE0000} \textbf{78.58}} & {\color[HTML]{FE0000} \textbf{71.66}}    & 67.41                                 & {\color[HTML]{3166FF} \textbf{58.56}} \\
+
+FOSTER B4~\cite{foster} & 79.59 & 72.58         & 76.54 & 67.08               & 74.21 & 62.16             & 79.93                                 & 72.48                                 & 76.27                                 & 67.04                   & {\color[HTML]{3166FF} \textbf{68.34}} & 58.53         \\
+FOSTER~\cite{foster}    & 78.38                                 & 71.38                                 & 76.22                                 & 66.70                                  & 73.95                                 & 62.42       & 79.56                                 & 71.18                                 & 75.79                                 & 66.90    & - & -  \\ \hline
+MAFDRC    & {\color[HTML]{FE0000} \textbf{82.22}} & {\color[HTML]{FE0000} \textbf{76.01}} & {\color[HTML]{FE0000} \textbf{79.66}} & {\color[HTML]{FE0000} \textbf{70.41}} & {\color[HTML]{3166FF} \textbf{75.21}} & {\color[HTML]{3166FF} \textbf{63.59}}   & {\color[HTML]{FE0000} \textbf{81.37}} & {\color[HTML]{FE0000} \textbf{74.86}} & {\color[HTML]{3166FF} \textbf{77.95}} & {\color[HTML]{3166FF} \textbf{71.26}}  & {\color[HTML]{FE0000} \textbf{69.37}} & {\color[HTML]{FE0000} \textbf{59.59}}\\ \hline
+\end{tabular}
+\caption{
+Results on ImageNet100 B0, B50 and ImageNet1000 B0 settings.
+DER w/o P means DER without pruning. 
+FOSTER B4 means the model before feature compression.
+}
+\label{tab:imagenet}
+\end{table*}
+
+
+
+  
+
+
+\begin{figure*}[t]
+\centering
+  \begin{subfigure}{0.32\linewidth}
+    \includegraphics[width=1\linewidth]{figs/Imagenet100_results10.pdf}
+    \caption{ImageNet100 B0 10 steps}
+    \label{fig:imagenet100-b0-10}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.32\linewidth}
+    \includegraphics[width=1\linewidth]{figs/Imagenet100_resultsB50_10.pdf}
+    \caption{ImageNet100 B50 10 steps}
+    \label{fig:imagenet100-b50-10}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.32\linewidth}
+    \includegraphics[width=1\linewidth]{figs/Imagenet1000_results10.pdf}
+    \caption{ImageNet1000 B0 10 steps}
+    \label{fig:imagenet1000-b0-10}
+  \end{subfigure}
+  \hfill
+  \caption{
+  Incremental Accuracy on ImageNet.
+  The top-1 accuracy (\%) after learning each task is shown.
+  }
+  \label{fig:imagenet}
+\end{figure*}
+
+\subsection{Experimental Setup and Details}\label{sec:DES}
+
+\noindent {\bf Datasets } \quad
+ImageNet1000~\cite{den
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

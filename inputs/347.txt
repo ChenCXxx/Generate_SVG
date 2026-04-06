@@ -1,0 +1,220 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+	
+	
+	Data imbalance \cite{zhu2014capturing, longtail_survey, det_imbalance} and open-ended distribution \cite{drummond2006open, yang2021generalized, open_set_survey} are inherently intertwined with each other in the real visual world \cite{places-LT}. On the one hand, the frequency of different objects exhibits long-tailed distribution \cite{zipf, spain2007measuring} where a small portion of classes dominate the distribution and many classes are associated with only a few examples, as observed in healthcare \cite{medical_longtail1, medical_longtail2}, autonomous driving \cite{autonomous_driving_longtail1, autonomous_driving_longtail2} and species classification \cite{inaturalist}. On the other hand, humans or intelligent agents constantly encounter novel visual instances. Such complicated intertwined context poses great challenges to develop effective visual algorithms \cite{kang2021exploring, sun2021react} that apply to real-world scenarios \cite{amodei2016concrete, dietterich2017steps}. 
+	
+	Tremendous efforts have been devoted to addressing the challenges of long-tail and open-set learning. In long-tail learning (LTL), previous works aim to highlight minority categories by re-sampling \citep{re-sampling1, re-sampling2, re-sampling3} or re-weighting \citep{re-weighting3, re-weighting4} approaches, debiasing model prediction from a statistical perspective \cite{ren2020balanced, logit_adj}, decoupling feature learning and classifier training \cite{decouple}, or generalizing to semi-supervised \cite{ABC, DARP, crest} and self-supervised \cite{ssl_robust, SDCLR, BCL} scenarios. For open-world learning, existing work can be divided into three sub-domains based on how to handle open-set samples. Robust semi-supervised learning (SSL) \cite{oliver2018realistic} assumes that out-of-distribution (OOD) samples may undesirably appear in the unlabeled set, and several techniques \cite{guo2020safe, yu2020multi, chen2020semi} are designed to \textit{reject} these potential open-set samples to improve model robustness. Another line of methods \cite{bendale2016towards, hendrycks2017a, ood_det1, lee2018simple, vazeopen, ming2022poem, wang2023clipn} attempt to \textit{detect} them with close-set knowledge during testing and formulate the task as OOD detection. Furthermore, generalized category discovery (GCD)~\cite{GCD} suggests to \textit{classify} open-set samples into each class~\cite{ORCA, opencon, SimGCD}. An earlier work OLTR \cite{places-LT} manage to integrate LTL and open-world learning towards more realistic visual recognition. OLTR handles close-set data imbalance and is aware of open-set instances similar to OOD detection. However, this approach does not meet the requirements for real-world recognition scenarios as: a) it works in a fully-supervised manner and does not effectively utilize a large amount of unlabeled data in the real world. b) it can only \textit{detect} unseen (open-set) samples rather than classifying them with novel visual concepts.
+	
+	In this work, we consider a real-world yet more challenging setting: we assume that only a portion of classes are collected and manually annotated (known classes) while massive unlabeled data from both known and open-set categories (novel classes) are available in the real world (Figure \ref{fig1}c). These two types of data, both long-tailed, form the semi-supervised training set, and the model is expected to \textit{classify} \textbf{all} known and novel classes in a balanced test set, as illustrated in Figure \ref{fig1}. We name this setting Distribution-Agnostic Generalized Category Discovery (DA-GCD) and contrast it with other related settings in Table \ref{tab_setting}. DA-GCD differs from previous open-world tasks because it considers realistic long-tail settings. It also differs from the pioneering work OLTR \cite{places-LT} by further considering the semi-supervised setting and classifying novel classes, as in up-to-date open-world settings \cite{GCD, ORCA}. 
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=1\textwidth]{fig1_fixed.pdf}
+		\caption{Illustration of distribution-agnostic generalized category discovery (DA-GCD).}
+		\label{fig1}
+	\end{figure}
+
+ 
+	The DA-GCD setting presents significant challenges that cannot be resolved with existing methods. Firstly, as confirmed by numerous studies in the field of long-tail learning, imbalanced datasets lead to severe performance degradation and model bias \cite{longtail_survey, decouple, SDCLR}. This issue is even more challenging in DA-GCD, where the prior dataset distribution is unavailable in open-world scenarios. Therefore, most LTL methods~\cite{logit_adj, balanced_softmax} could not be directly extended to resolve the DA-GCD task. Meanwhile, since only unlabeled samples are available for novel classes (as shown in Figure \ref{fig1}c), the performance on these open-set classes is severely limited. Existing contrastive-based methods in GCD \cite{GCD, opencon} struggle to optimize the feature space of unlabeled samples, resulting in poor alignment and uniformity \cite{wang2020understanding}. Lastly, GCD methods lack tailored designs for imbalanced datasets, leading to significant performance degradation on long-tailed datasets (as discussed in Section \ref{sec_exp_vulner}).
+	
+	To conquer the aforementioned challenges, we propose BaCon, a novel Self-\textbf{Ba}lanced \textbf{Co}-Advice co\textbf{n}trastive framework. BaCon comprises a contrastive-learning branch and a pseudo-labeling branch, which work collaboratively to provide interactive supervision to tackle the imbalanced recognition task under open-world scenarios. Specifically, the contrastive-learning branch provides distribution estimation during training, which is used to regularize the prediction results of the linear classifier for better pseudo-labeling. On the other hand, the generated pseudo-labels are further sampled and debiased to re-balance and provide additional supervision for the contrastive-learning branch. To fuse the knowledge of the two branches and learn a better feature space, we design a novel pseudo-label-based contrastive loss that clusters samples based on their \textit{positiveness} scores.
+	
+    We make the following major contributions. \textbf{1)} We formulate a more realistic DA-GCD task that unifies long-tail and open-world learning and identify unique challenges that cannot be adequately addressed by existing techniques in both fields. \textbf{2)} We design a novel self-\textbf{Ba}lanced \textbf{Co}-advice co\textbf{n}trastive (BaCon) framework for DA-GCD, which comprises a contrastive-learning branch and pseudo-labeling branch that work collaboratively to tackle the data imbalance and classify novel (open-set) categories simultaneously. \textbf{3)} We conduct extensive experiments on various datasets and perform fine-grained comparisons with SOTA baselines to validate the effectiveness of BaCon.
+
+
+Related Works
+	\begin{table}[t]
+		\begin{center}
+			\caption{Comparison of DA-GCD with other similar settings.}
+			\label{tab_setting}
+			\setlength\tabcolsep{2.5pt}
+			\begin{tabular}{lc>{\centering\arraybackslash}p{1.6cm}>{\centering\arraybackslash}p{1.6cm}cc}
+				\toprule
+				Setting & Scenario &  \makecell[c]{Known\\ classes} &  \makecell[c]{Novel\\ classes} & \makecell[c]{Involved in training? \\ (novel classes)} & Data Distribution \\
+				\midrule
+				Robust SSL & Semi-supervised & Classify & Reject & \Checkmark & Balanced \\
+				OOD Det & Depend on method & Classify & Detect & Depend on method & Balanced \\
+				GCD & Semi-supervised & Classify & Classify & \Checkmark & Balanced \\
+				LT-SSL & Semi-supervised & Classify & N.A. & \XSolidBrush & Long-tailed \\
+				OLTR & Fully-supervised & Classify & Detect & \XSolidBrush & Long-tailed \\
+				\midrule
+				\default{\textbf{DA-GCD}} & \default{Semi-supervised} & \default{Classify} & \default{Classify} & \default{\Checkmark} & \default{Long-tailed} \\
+				\bottomrule
+			\end{tabular}
+		\end{center}
+	\end{table}
+	
+    \textbf{Open-World Learning} tackling the scenario where some unknown (open-set) visual concepts or categories are involved during training or real-world applications. OOD detection \cite{ood_det1, ood_det2, ood_det3}, as a well-known sub-field, considering a distributional shift (either semantic shift \cite{hendrycks2017a} or covariate shift \cite{li2017deeper}) between the train and test stage, with the goal of \textit{detecting} these OOD samples during testing. Robust semi-supervised learning \cite{oliver2018realistic, guo2020safe, yu2020multi, chen2020semi} apply different techniques to \textit{reject} undesirable OOD samples in the unlabeled set to improve model robustness. More recently, a line of work \cite{GCD, ORCA, opencon, SimGCD, TRSSL, OpenLDN} propose to \textit{classify} the open-set samples according to their visual concepts. Nevertheless, these methods are built on the class balance assumption, and we observe a consistent performance degradation when generalizing to DA-GCD scenarios. Distribution-agnostic recognition is also investigated by \cite{yang2023bootstrap}, which focuses on the task of novel category discovery.
+	
+	\textbf{Long-Tail Learning} refers to a scenario where the majority of samples belong to a few classes, while the minority classes have only a small number of samples \cite{wang2022towards, elbatel2023fopro}. Early research on long-tail learning mainly focused on fully-supervised scenarios, with representative methods that highlight the minority samples via re-sampling \citep{re-sampling1, re-sampling2, re-sampling3}, re-weighting \citep{re-weighting3, re-weighting4}, or knowledge transferring \cite{knowledge_transfer1, knowledge_transfer2, knowledge_transfer3}. Long-tail learning under semi-supervised \cite{ABC, DARP, crest} and self-supervised \cite{COLT, rethinking, ssl_robust, SDCLR, BCL, zhang2022self} settings are also widely investigated and have notable achievements. However, the requirement of the dataset distribution obstructs the application of fully/semi-supervised methods in DA-GCD, while self-supervised methods would disregard the available label information for known samples.
+	
+	\textbf{Contrastive Learning} \cite{simclr, moco, BYOL} provide distinctive and transferable representations by controlling the instance similarity in feature space, achieving significant progress in recent years. The following literature generalizes the idea to different scenarios \cite{scl, PiCO, SDCLR}, implements it for solving various downstream tasks \cite{chaitanya2020contrastive, xie2020pointcontrast}, and provides theoretical support \cite{wang2020understanding, ladder}. However, few attempts have been made at contrastive-based open-world recognition. GCD \cite{GCD} proposes performing supervised CL on labeled samples and unsupervised CL on all data. OpenCon \cite{opencon} generating pseudo-positive pairs for closely aligned representations, but this paradigm could lead to another dilemma: the representations and pseudo-labels are interdependent, which means an inferior feature space (e.g., lack of intra-class consistency) could lead to false positive pairs, and in turn deteriorate the learning of feature space. In short, those methods are incompatible with the proposed DA-GCD setting and have inferior representations for samples belonging to \textit{novel} classes. 
+	
+
+
+Preliminaries
+	\subsection{Problem Formulation}
+	As illustrated in Figure \ref{fig1}a, our training set is composed of a labeled subset $\mathcal{D}^l=\left\{(\boldsymbol{x}_i^l, {y}_i^l)\right\}\in \mathcal{X}\times \mathcal{Y}_l$ and an unlabeled subset $\mathcal{D}^u=\left\{(\boldsymbol{x}_i^u, {y}_i^u)\right\}\in \mathcal{X}\times \mathcal{Y}_u$, where we don't have the label information for \textbf{any} images in novel classes, i.e., $\mathcal{Y}_l = \left\{ \mathcal{Y}_{k} \right\}$, $\mathcal{Y}_u = \mathcal{Y} = \left\{ \mathcal{Y}_{k} \cup \mathcal{Y}_{n} \right\}$. Both $\mathcal{D}^l$ and $\mathcal{D}^u$ present a long-tail distribution with imbalance ratio $\rho_l, \rho_u \gg 1$. The objective of DA-GCD is to assign labels on a disjoint balanced test set containing all classes in $\mathcal{Y}_u$. The total number of classes in the whole dataset $\mathcal{D}$ is commonly regarded as a known prior \cite{GCD, ORCA, SimGCD}, as we can effectively estimate it through off-the-shelf methods \cite{han2019learning}.
+	
+	\subsection{Revisiting Contrastive Learning}
+	Contrastive-based representation learning methods \cite{simclr, moco, BYOL, scl} aim to find an embedding function $ f $ to acquire optimal feature representation $\boldsymbol{z} \in \mathbb{R}^d$ of the input image $\boldsymbol{x} \in \mathbb{R}^{CHW}$ with $\boldsymbol{z} = f(\boldsymbol{x})$, such that $\boldsymbol{z}$ retains the discriminative semantic information of the input image. The general contrastive learning loss can be defined as:
+	
+	\begin{equation}
+		\mathcal{L}_{\text{CL}}(\mathcal{D}) = \frac{1}{|\mathcal{D}|} \sum_{i\in \mathcal{D}}\left [ \frac{1}{|P(i)|}\sum_{p \in P(i)} -\log\frac{\mathrm{exp}(\boldsymbol{z}_i \cdot \boldsymbol{z}_{p}/ \tau)}{\sum_{a \in A(i)} \mathrm{exp}(\boldsymbol{z}_{i} \cdot \boldsymbol{z}_a/ \tau)}\right ],
+		\label{eq_contrastive}
+	\end{equation} 
+	
+	where $\mathcal{D}$ is the training set. $P(i)$ is the set of indices of positive pairs in $A(i)$, $| \cdot |$ denotes the operation to compute the cardinality, and $\tau$ is a hyper-parameter. In unsupervised learning, the positive set is formulated as the two views of the same image \cite{simclr, moco}. \cite{scl} further generalizes the contrastive loss into supervised scenarios where the positive set is the images that share the same ground truth label.
+	
+
+
+Self-Balanced Co-Advice Contrastive Framework
+	As illustrated in Figure \ref{fig_pipeline}, we design a two-branch structure framework for DA-GCD. In Section \ref{sec_esti}, we propose the contrastive-learning branch to estimate the training distribution and further regularize the outputs of the pseudo-labeling branch. We then describe techniques for self-balanced knowledge transfer from the pseudo-labeling branch to the contrastive-learning branch in Section \ref{sec_sampling}. Finally, in Section \ref{sec_soft_con}, a novel contrastive loss is proposed for better novel class learning. 
+	
+	\subsection{Regularize Predictions with Dynamic Distribution Estimation}
+	\label{sec_esti}
+	
+	To enhance and re-balance the contrastive representation learning, we propose to learn an auxiliary classifier for pseudo-labeling. Our pseudo-labeling branch includes a cross-entropy loss $\mathcal{L}_{s}$ on labeled data, a semi-supervised objective $\mathcal{L}_{u}$ (e.g., cross pseudo supervision in \cite{SimGCD}) on all samples, and a regularization term $\mathcal{L}_{reg}$ to align the predictions with the data distribution to avoid non-activated classifiers. However, the distribution of the training set is agnostic in DA-GCD, and simply using the distribution of labeled set $\boldsymbol{\pi}_{\mathcal{D}^l}$ or a balance prior results in inferior performance (Table \ref{tab:ablation_reg}). Furthermore, we observed that estimating the distribution from the pseudo-labeling branch itself could accumulate the estimation error and deteriorate model performance. 
+	
+	To this end, we perform estimation on the contrastive-learning branch as an alternative to avoid the accumulation of estimation bias. Concretely, we perform k-means clustering on all samples in the training set $\mathcal{D}$ to obtain $C$ clusters with size $\boldsymbol{n}$, where $C=| \mathcal{Y} |$, and normalized the sample number $\boldsymbol{n}$ to frequency ${\boldsymbol{\pi}_e}$, i.e., ${\boldsymbol{\pi}_e} = {\boldsymbol{n}}/{\sum_{c=1}^{C}(n[c] )}$. Moreover, we also need to determine the corresponding relationship between clusters and categories. Therefore, we use the Hungarian optimal assignment algorithm \cite{hungarian} to map $| \mathcal{Y}^l |$ clusters to each known class. For the remaining $| \mathcal{Y} |- | \mathcal{Y}^l |$ clusters, we sort them by the cluster size and assign them sequentially to the novel classes.\footnote{During inference, we use optimal assignment to determine the correspondence between classifiers and categories (detailed in Section \ref{sec_exp_setup}), hence sequentially assigning the clusters to classes will not affect performance.} Finally, we regularize the mean prediction of the pseudo-labeling branch with the aligned estimated distribution $\boldsymbol{\pi}_e$:  
+	
+	\begin{equation}
+		{\mathcal{L}}_{reg} = \mathrm{KL} \left[ \frac{1}{|B|} \sum_{i\in B} \mathrm{softmax}(f_{cls}(\boldsymbol{x}_i)) \; \Vert \; (\mathrm{align}({\boldsymbol{\pi}_e}))^p \right],
+		\label{eq_reg}
+	\end{equation}
+	
+	where $B$ refers to the batch size during training, $f_{cls}$ denote the backbone and the linear classifier of the auxiliary branch, $\mathrm{KL}[\, \cdot \, \Vert \, \cdot \,]$ is the Kullback-Leibler (KL) divergence between the two distributions, and $p \in [0, 1]$ is a hyper-parameter used to smooth the target long-tailed distribution. To balance estimation accuracy and computation overhead, we re-estimate the dataset distribution every $r$ epoch. The overall training objective of the pseudo-labeling branch is as follows:
+	
+	\begin{equation}
+		\mathcal{L}_{cls} = \mathcal{L}_{s} + \eta_1 \mathcal{L}_{u} + \eta_2 {\mathcal{L}}_{reg}.
+		\label{eq_aux}
+	\end{equation}
+	
+	\subsection{Self-Balanced Knowledge Transfer: Debiasing and Sampling}
+	\label{sec_sampling}
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=1\textwidth]{pipeline_upload_final.pdf}
+		\caption{Overview of the self-balanced co-advice contrastive framework (BaCon).}
+		\label{fig_pipeline}
+	\end{figure}
+	
+	In Section \ref{sec_esti}, we regularize the pseudo-labeling branch with the estimated dataset distribution $\boldsymbol{\pi}_e$ acquired from the contrastive-learning branch. In this step, we aim to transfer the knowledge from the pseudo-labeling branch to the contrastive-learning branch in turn and further enhance the representation learning, which is also beneficial to the estimation of data distribution $\boldsymbol{\pi}$. However, the long-tail distribution of the underlying dataset places additional requirements on knowledge transferring. On one hand, we should ensure that the knowledge to be transmitted is not affected by the long-tailed distribution. Meanwhile, we hope that this process can help the contrastive-learning branch cope with the issue of data imbalance and the lack of supervision for {novel} classes. 
+	
+	We design a debiasing and sampling step of the pseudo-labels to meet the two aforementioned requirements respectively for knowledge transfer. First, we apply post-hoc logits adjustment \cite{logit_adj} based on the estimated distribution to the predicted logits $f_{cls}(\boldsymbol{x}_i)$ to eliminate the bias caused by long-tailed distribution:
+	
+	\begin{equation}
+		\widetilde{\boldsymbol{p}_{i}} = \mathrm{softmax}(f_{cls}(\boldsymbol{x}_i) - k \cdot \text{log} \boldsymbol{\pi}_e)),
+		\label{eq_positiveness}
+	\end{equation} 
+	
+	where $\widetilde{\boldsymbol{p}_{i}}$ denotes the rectified class probability prediction of sample $\boldsymbol{x}_i$, and $k$ is a hyper-parameter in \cite{logit_adj}. Next, in order to re-balance the learning process and filter low-precision pseudo-labels, we propose to sample the unlabeled instances. Specifically, we sample the pseudo-labels of unlabeled instances in a training batch $ \widetilde{\boldsymbol{p}}_B = \{ \widetilde{\boldsymbol{p}_{i}}: i = 1, \cdots, B  \}$ according to their prediction class $c$, where $c_i = \argmax \widetilde{\boldsymbol{p}_{i}}$. Formally, the class-wise sampling rate $\mathrm{SR}^c$ can be defined as:
+	
+	\begin{equation}
+		\mathrm{SR}^c = 
+		\begin{cases}
+		
+			(\frac{\boldsymbol{\pi}_e^c}{\mathrm{min}(\boldsymbol{\pi}_e)})^{-\beta}, \quad \text{otherwise},
+		\end{cases}
+		\label{eq_sampling}
+	\end{equation}
+	where $\boldsymbol{\pi}_e$ is the estimated distribution introduced in Section \ref{sec_esti}, $\mathcal{Y}_{B} \subseteq \mathcal{Y}_{k}$ denotes the set of labels which involved in the current batch, and $\alpha,\beta \in [0,1]$ are two hyper-parameters. Setting $\alpha = \beta = 0$ means sampling all pseudo-labels, while $\alpha = \beta = 1$ means setting the sampling rate to be inversely proportional to the estimated number of samples in its category. 
+    Note that we prioritize selecting samples with higher prediction confidence in each class to remove the potentially false pseudo-labels. The sampled instances $\{M(\mathcal{D}_u)\}$ complement the original long-tailed distribution to serve as a re-balance term for the labeled subset $\{\mathcal{D}_l\}$ and also provide additional supervision for \textit{novel} classes. With this debiasing and sampling step, the sampled instances $\{\mathcal{D}_l \cup M(\mathcal{D}_u)\}$ and their corresponding rectified pseudo-labels mitigate the impact of the imbalance issue and compensate the unlabeled open-set samples simultaneously.
+	
+	\subsection{Pseudo-label-based Soft Contrastive Learning}
+	\label{sec_soft_con}
+
+	In Section \ref{sec_esti} and Section \ref{sec_sampling}, we generate pseudo-labels via the pseudo-labeling branch with help from the contrastive-learning branch. Those pseudo-labels could provide additional information to improve the contrastive-learning branch as well. 
+	In particular, we adopt a \textit{soft} contrastive strategy to fully leverage the probabilistic information in pseudo-labels. We design a pair-wise \textit{positiveness} score to adjust the contribution of different samples to the anchor instance. For image pair $(\boldsymbol{x}_i, \boldsymbol{x}_j)$, the \textit{positiveness} score $w_{ij} = \mathrm{Sim}(\widetilde{\boldsymbol{p}_{i}}, \widetilde{\boldsymbol{p}}_{j})$. $w_{ij}$ is obtained by calculating the similarity of the rectified class probability distribution between $\boldsymbol{x}_i$ and $\boldsymbol{x}_j$. In practice, We implement the similarity metric with the dot product operation, which can be mathematically interpreted as the probability of instance $\boldsymbol{x}_i$ and $\boldsymbol{x}_j$ belonging to the same class. We compare different definitions of the \textit{positiveness} score in Section \ref{sec_exp_ablation}. Finally, we formulate the soft contrastive loss by incorporating $\boldsymbol{w}$ into Eq. \ref{eq_contrastive}:
+	
+	\begin{equation}
+		\mathcal{L}_{\text{CL}}^{soft}(\mathcal{D}) = \frac{1}{|\mathcal{D}|} \sum_{i\in \mathcal{D}}\left[ \frac{1}{\sum_{j \in A(i)} w_{ij}}\sum_{j \in A(i)} -w_{ij} \cdot \log\frac{\mathrm{exp}(\boldsymbol{z}_i \cdot \boldsymbol{z}_{j}/ \tau)}{\sum_{a \in A(i)} \mathrm{exp}(\boldsymbol{z}_{i} \cdot \boldsymbol{z}_a/ \tau)} \right].
+		\label{eq_softcon}
+	\end{equation}  
+	
+	\begin{mythm}
+		\label{thm1}
+		Assume we train a model $\theta$ with the proposed soft contrastive loss, and $\boldsymbol{x}_i$ and $\boldsymbol{x}_j$ are two samples within a training batch $B$. The optimal value of the contrastive logit $p_{ij}^*$ is $\frac{w_{ij}}{\sum_{k=1}^{|B|}{w_{ik}}}$, where $w_{ij}$ is the corresponding positiveness score for the sample pair $(\boldsymbol{x}_i, \boldsymbol{x}_j)$ in Eq. \ref{eq_softcon}.
+	\end{mythm}
+	
+ Claim \ref{thm1} indicates that minimizing Eq. \ref{eq_softcon} encourages the similarity of features between two samples to be proportional to the corresponding \textit{positiveness} score. In this way, we effectively transfer knowledge from the pseudo-labeling branch to contrastive learning. The overall training objective of the contrastive-learning branch consists of an unsupervised CL loss on all samples, a supervised CL loss on labeled instances, and the proposed soft CL loss on both labeled and sampled unlabeled subset:
+	
+	\begin{equation}
+		\mathcal{L}_{con} = \mathcal{L}_{\text{CL}}^{u}(\mathcal{D}) + \gamma_1 \mathcal{L}_{\text{CL}}^{s}(\mathcal{D}_{l}) + \gamma_2 \mathcal{L}_{\text{CL}}^{soft}(\mathcal{D}_l \cup M(\mathcal{D}_u)).
+		\label{eq_con}
+	\end{equation}
+	
+ It's worth noting that the backbone of the two branches is shared and frozen during training (except for the last block). Therefore the two-branch structure only slightly increases computational overheads. During inference, we only utilize the backbone of the contrastive-learning branch and obtain predictions via k-means clustering on the backbone features. 
+	
+
+
+Expriments
+	
+	\subsection{Experimental Setup}
+	\label{sec_exp_setup}
+	\textbf{Data Preparation}
+	We conduct experiments on four popular datasets. {CIFAR-10-LT/CIFAR-100-LT} are long-tail subsets sampled from the original CIFAR10/CIFAR100 \cite{cifar-lt}. We set the imbalance ratio to 100 in default. {ImageNet-100-LT} is proposed by \cite{SDCLR} with 12K images sampled from ImageNet-100 \citep{imagenet100} with Pareto distribution. {Places-LT} \cite{places-LT} contains about 62.5K images sampled from the large-scale scene-centric Places dataset \citep{places} with Pareto distribution. For each dataset, we first sub-sample $\vert \mathcal{Y}_k \vert$ classes from the whole long-tail datasets to stimulate known classes and treat the rest as novel classes, then sub-sample 50\% instances in each known class as $\mathcal{D}^l$ and concentrate others with all samples in novel classes to form $\mathcal{D}^u$. The default $\vert \mathcal{Y}_k \vert$ for CIFAR-10-LT, CIFAR-100-LT, ImageNet-100-LT, Places-LT are 5, 80, 50, 182 respectively.
+	
+	\textbf{Evaluation Protocols and Metrics}
+	Following previous works \cite{GCD, ORCA}, we calculate the accuracy by assigning the model prediction (cluster result) $\hat{\boldsymbol{y}}$ to ground truth $\boldsymbol{y}$ via the Hungarian assignment algorithm \cite{hungarian}. With the assignment fixed, we report the overall classification accuracy on $\mathcal{Y}_k$ (Old), $\mathcal{Y}_n$ (New), and $\mathcal{Y}_k \cup \mathcal{Y}_n$ (All). To observe the impact of long tail distribution on performance, we evenly divide $\mathcal{Y}_k$ and $\mathcal{Y}_n$ into three disjoint groups \{\textit{Many, Median, Few}\} respectively in terms of the number of instances of each class. We also calculate the standard deviation (Std) of the accuracy of the three groups, which quantitatively analyze the balancedness of a feature space \cite{SDCLR}. 
+	
+	\textbf{Training Settings}
+	Following GCD \cite{GCD}, we load a DINO \cite{DINO} pre-trained ViT-B/16 \cite{ViT} as the backbone for both branches and only fine-tune the last block for all datasets. The classification head and projector are randomly initialized. To achieve a fair comparison, we replace the backbone model of all baseline methods with the ViT pre-trained by DINO (the same as ours), and $\dagger$ denotes adapted methods.
+	
+	\subsection{Migration of Existing Methods to DA-GCD}
+	\label{sec_exp_vulner}
+	\begin{table}[t]
+		\begin{center}
+			\caption{Test accuracy (\%) and balancedness (Std$\downarrow$) of existing methods on CIFAR-100-LT.}
+			\label{tab1}
+			\setlength\tabcolsep{3.2pt}
+			\begin{tabular}{lcccccc|ccccc|c}
+				\toprule
+				& & \multicolumn{5}{c}{Known} & \multicolumn{5}{c}{Novel} & Overall \\ 
+				\cmidrule(r){3-7} \cmidrule(r){8-12}
+				Method & Subset & Many$\uparrow$ & Med$\uparrow$ & Few$\uparrow$ & Std$\downarrow$ & All$\uparrow$ & Many$\uparrow$ & Med$\uparrow$ & Few$\uparrow$ & Std$\downarrow$ & All$\uparrow$ & \\ 
+				\midrule
+				\multirow{2}{*}{\makecell[l]{GCD\\}} & $\mathcal{D}_b$ & 66.2 & 75.4 & 73.6 & 4.0 & 71.8 & 60.3 & 54.1 & 51.5 & 3.7 & 55.2 & 68.5 \\ 
+				& $\mathcal{D}_i$ & 75.9 & 69.4 & 52.9 & 9.7 & 65.5 & 41.9 & 54.2 & 49.8 & 5.1 & 49.0 & 62.2 \\ 
+				\midrule
+				\multirow{2}{*}{\makecell[l]{SimGCD\\ }} & $\mathcal{D}_b$ & 75.1 & 75.3 & 72.2 & 1.4 & 74.2 & 60.2 & 58.8& 59.7 & 0.6 & 59.5 & 71.3 \\ 
+				
+				& $\mathcal{D}_i$ & 72.8 & 71.1 & 34.6 & 17.6 & 59.8 & 32.9 & 25.8 & 15.5 & 7.1 & 24.8 & 52.8 \\ 
+				\midrule
+				\multirow{1}{*}{\makecell[l]{ABC\\ }} & $\mathcal{D}_i$ & 77.4 & 51.6 & 16.3 & 25.0 & 48.5 & 20.8 & 32.0 & 5.9 & 10.7 & 20.8 & 43.0 \\ 
+				
+				\multirow{1}{*}{\makecell[l]{DARP\\ }} & $\mathcal{D}_i$ & 74.8 & 55.2 & 33.4 & 16.9 & 54.5 & 29.9 & 30.1 & 10.0 & 9.4 & 24.0 & 48.4 \\ 
+				\bottomrule
+			\end{tabular}
+		\end{center}
+	\end{table}
+	
+	\begin{table}[t]
+    \begin{center}
+        \caption{Test accuracy (\%) on four generic long-tailed image recognition datasets. (\textbf{bold}: best performance among all methods, \underline{underline}: best performance among the baseline methods.)}
+        \label{tab2}
+        \setlength\tabcolsep{5.4pt}
+        \begin{tabular}{lcccccccccccc}
+            \toprule
+            & \multicolumn{3}{c}{CIFAR-10-LT} & \multicolumn{3}{c}{CIFAR-100-LT} & \multicolumn{3}{c}{ImageNet-100-LT} & \multicolumn{3}{c}{Places-LT} \\ 
+            \cmidrule(r){2-4} \cmidrule(r){5-7} \cmidrule(r){8-10} \cmidrule(r){11-13}
+            Methods & Old & New & All & Old & New & All & Old & New & All & Old & New & All \\ 
+            \midrule
+            {{ABC$^{\dagger}$}} & 77.7 & 20.2 & 48.9 & 48.5 & 20.8 & 43.0 & - & - & - & - & - & - \\ 
+            {\makecell[l]{DARP$^{\dagger}$}} & 77.6 & 35.2 & 56.4 & 54.5 & 24.0 & 48.4 & - & - & - & - & - & - \\ 
+            \midrule
+            {{TRSSL$^{\dagger}$}} & 78.4 & 66.8 & 72.6 & 58.7 & 35.8 & 54.1 & - & - & - & - & - & - \\ 
+            
+            {{ORCA$^{\dagger}$}} & 77.5 & 55.6 & 66.6 & 55.0 & 30.8 & 50.1 & 69.3 & 29.0 & 49.2 & 21.5 & 6.9 & 14.2 \\ 
+            {\makecell[l]{SimGCD}} &75.1&41.5&58.3&59.8&24.6&52.8&{81.1}&33.4&57.8&{\underline{\textbf{31.4}}}&18.2&24.8 \\ 
+            {{GCD}} & 78.5 & \underline{71.7} & \underline{75.1} & \underline{65.5} & \underline{49.0} & \underline{62.2} & 81.0 & \underline{76.8} & \underline{78.9} & 29.8 & \underline{22.7} & \underline{26.2} \\ 
+            {{OpenCon$^{\dagger}$}} & \underline{{87.2}} & 47.2 & 67.2 &64.2&40.9&59.6&\underline{83.3}&42.8&63.0& 30.6 & 12.4 & 21.6 \\ 
+
+       
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

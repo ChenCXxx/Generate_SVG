@@ -1,0 +1,360 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Event extraction \cite{grishman1997information, ahn2006stages} aims to detect event types and identify their event arguments and roles from natural language text.
+Given a sentence ``\textit{The Oklahoma City bombing conspirator is already serving a life term in federal prison}'', an event extraction model is expected to identify ``\textit{bombing}'' and ``\textit{serving}'', which are the event triggers of the ``\textit{Attack}'' and ``\textit{Sentence}'' types, respectively.
+Also, the model should identify arguments and roles of corresponding event types such as ``\textit{conspirator}'' and ``\textit{Oklahoma City}'' are two arguments involved in ``\textit{Attack}'' and as argument roles of ``\textit{Attacker}'' and ``\textit{Place}'', respectively.
+
+Conventional studies \cite{mcclosky-etal-2011-event, nguyen-etal-2016-joint-event, du-cardie-2020-event, lin-etal-2020-joint, nguyen-etal-2021-cross, wang-etal-2022-query} model event extraction as a task to extract from the pre-defined event types and argument roles.
+In practice, new event types and argument roles emerge continually. 
+We define a new problem called \emph{continual event extraction} for this scenario.
+Compared to conventional studies, continual event extraction expects the model not only to detect new types and identify corresponding event arguments and roles but also to remember the learned types and roles. 
+This scenario belongs to \emph{continual learning} \cite{Ring1994COntnual}, which learns from data streams with new emerging data.
+
+\begin{figure}
+\centering
+\subfigure[Example of semantic confusion when new types emerge.]{
+\includegraphics[width=\columnwidth]{confuse.pdf}
+\label{fig:confuse}}
+\subfigure[Imbalanced number distribution of event types.]{
+\includegraphics[width=\columnwidth]{long-tailed.pdf}
+\label{fig:long-tailed}}
+\caption{Problems in continual event extraction.}
+\end{figure}
+
+To alleviate the so-called catastrophic forgetting problem \cite{THRUN199525, FRENCH1999128}, existing works focus on event detection and apply knowledge transfer or prompt engineering \cite{cao-etal-2020-incremental, yu-etal-2021-lifelong, liu-etal-2022-incremental}.
+On one hand, they do not consider the task of argument extraction, making them incomplete in event extraction.
+On the other hand, they ignore that the semantic understanding by the model deviates from correct semantics when new types emerge, which we call \textit{semantic confusion}.
+
+First, semantic confusion is caused by the annotations of previous types and new types do not generate at the same time.
+As shown in Figure~\ref{fig:confuse}, a sentence may have multi-type annotations. 
+However, current training data only contains new annotations, and the model misunderstands the text ``\textit{died}'' with the previous annotation ``\textit{Die}'' as a negative label ``\textit{NA}''.
+Similarly, the model that is only trained on the previous data would identify the new types as negative labels. 
+Existing works \cite{cao-etal-2020-incremental, yu-etal-2021-lifelong, liu-etal-2022-incremental} simply transfer all learned knowledge to the current model, which would disturb new learning.
+The second problem is the imbalanced distribution of event types in natural language text. 
+Figure~\ref{fig:long-tailed} shows the number distribution of event types in three widely used event extraction datasets.
+The model is confused with the semantics of the long-tailed event types in two aspects.
+On one hand, it suffers from the lack of training on long-tailed event types due to their few instances.
+On the other hand, the semantics of long-tailed types would be disturbed by popular types during training.
+
+This paper proposes a novel continual event extraction method to rectify semantic confusion and address the imbalance issue.
+Specifically, we propose a data augmentation strategy that marks pseudo labels of each sentence to avoid the disturbance of semantic confusion.
+We apply a pivotal knowledge distillation to further encourage the model to focus on vital knowledge during training at the feature and prediction levels.
+Moreover, we propose prototype knowledge transfer, which leverages the semantics of other associated types to enrich the semantics of long-tailed types.
+
+Our main contributions are outlined as follows:
+\begin{compactitem}
+    \item Unlike existing works, we extend continual learning to event extraction and propose a new continual event extraction model.
+    
+    \item We explicitly consider semantic confusion on event types. 
+    We propose data augmentation with pseudo labels, pivotal knowledge distillation, and prototype knowledge transfer to rectify semantic confusion.
+    
+    \item We conduct extensive experiments on three benchmark datasets. 
+    The experimental results demonstrate that our model establishes a new state-of-the-art baseline with significant improvement and obtains better performance on long-tailed types. 
+\end{compactitem}
+
+
+
+Related Work
+
+\subsection{Event Extraction}
+Conventional event extraction models \cite{mcclosky-etal-2011-event, li-etal-2013-joint, nguyen-etal-2016-joint-event, lin-etal-2020-joint, wang-etal-2021-cleve} regard the event extraction as a multi-class classification task.
+In recent years, several new paradigms have been proposed to model event extraction. 
+The works \cite{du-cardie-2020-event, liu-etal-2020-event, li-etal-2020-event, lyu-etal-2021-zero} treat event extraction as a question-answering task. 
+They take advantage of the pre-defined question templates and have specific knowledge transfer abilities on event types.
+The work \cite{wang-etal-2022-query} refines event extraction as a query-and-extract process by leveraging rich semantics of event types and argument roles.
+These models cannot apply to continual event extraction as they learn all event types at once. 
+
+\subsection{Continual Learning}
+Mainstream continual learning methods can be distinguished into three families: regularization-based methods \cite{li2017learning, kirkpatrick2017overcoming}, dynamic
+architecture methods \cite{aljundi2017expert, rosenfeld2018incremental, qin2021bns}, and memory-based methods \cite{lopez2017gradient, rebuffi2017icarl, castro2018end, wu2019large}.
+
+\begin{figure*}[!tb]
+\centering
+\includegraphics[width=\textwidth]{model.pdf}
+\caption{Framework of our proposed continued event detection model.}
+\label{fig:model}
+\end{figure*}
+
+For many NLP tasks, the memory-based methods \cite{wang-etal-2019-sentence, dautume2019episodic, cao-etal-2020-incremental} show superior performance than other methods.
+Existing works \cite{cao-etal-2020-incremental, yu-etal-2021-lifelong, liu-etal-2022-incremental} make use of knowledge transfer to alleviate catastrophic forgetting in event detection. 
+KCN \cite{cao-etal-2020-incremental} employs memory reply and hierarchical distillation to preserve old knowledge. 
+KT \cite{yu-etal-2021-lifelong} transfers knowledge between related types to enhance the learning of old and new event types.
+EMP \cite{liu-etal-2022-incremental} leverages soft prompts to preserve the knowledge learned from each task and transfer it to new tasks.
+All the above models are unable to identify event arguments and roles, so they are incomplete in continual event extraction.
+Furthermore, they ignore semantic confusion on event types while training.
+We address these problems and propose a new model.
+
+
+Task Definition
+\label{sect:task_def}
+
+Given a sentence, the event extraction task aims to detect the event types in this sentence (a.k.a. \emph{event detection}) and identify the event arguments and roles (a.k.a. \emph{argument extraction}). 
+
+In a continual event extraction task, there is a sequence of $K$ tasks $\{T_1, T_2, \ldots, T_K\}$. 
+Each individual task $T_i$ is a conventional event extraction task that contains its own event type set $E_i$, role type set $R_i$, and respective training set $D_{i}^\text{train}$, development set $D_{i}^\text{dev}$, and test set $D_{i}^\text{test}$.
+$E_i$ of each task $T_i$ is disjoint with other tasks. 
+$D_{i}^\text{train}$ contains instances for $E_i$ and negative instances for ``\textit{NA}''. 
+$D_{i}^\text{dev}$ and $D_{i}^\text{test}$ only contain sentences for $E_i$.
+
+At the $i$-th stage, the continual event extraction model is trained on $D_{i}^\text{train}$ and evaluated on all seen test sets $\Tilde{D}_i^\text{test} = \bigcup_{t=1}^{i}{D_{t}^\text{test}}$ to detect all seen event types $\Tilde{E}_i = \bigcup_{t=1}^{i}{E_{t}}$ and identify all event arguments and roles of corresponding event types.
+
+
+
+Methodology
+\label{sect:method}
+
+\subsection{Overall Framework}
+Our framework for continual event extraction consists of two models: event detection model $\mathcal{F}_i$ and argument extraction model $\mathcal{G}_i$. 
+When a new task $T_i$ comes, we detect the candidate event types for each sentence by $\mathcal{F}_i$. 
+The framework of our proposed model $\mathcal{F}_i$ is shown in Figure~\ref{fig:model}.
+We first augment current training data with pseudo labels.
+Then, we train the current model on augmented data and memory data with pivotal knowledge distillation.
+For long-tailed event types, we enhance their semantics with event prototypes.
+At last, we pick and store a few instances for new types and augment them with pseudo labels for the next task $T_{i+1}$.
+The parameters are updated during training.
+After predicting each candidate event type, we train $\mathcal{G}_i$ to obtain corresponding event arguments and roles.
+Similar to event detection, we also pick and store a few instances.
+The accuracy of argument extraction highly depends on correct event types. 
+
+\subsection{Event Detection}
+
+\subsubsection{Base Model and Experience Replay}
+
+\paragraph{Base model.}
+Following \cite{cao-etal-2020-incremental,yu-etal-2021-lifelong,liu-etal-2022-incremental,du-cardie-2020-event}, we use the pre-trained language model BERT \cite{devlin-etal-2019-bert} as the encoder to extract the hidden representation of text. 
+
+Given a sentence $w$, we first use the BERT encoder to get the hidden representation $\mathbf{h}_{x_j}$ for each token $x_j$ in $w$. 
+Then, we obtain the feature representation $\mathbf{f}_{x_j}$ of $x_j$ by
+\begin{align}
+\mathbf{f}_{x_j} = \mathrm{LayerNorm}\big(\mathbf{W}\,\mathrm{Dropout}(\mathbf{h}_{x_j})+\mathbf{b}\big),
+\end{align}
+where $\mathbf{W}\in\mathbb{R}^{h\times d}$ and $\mathbf{b}\in\mathbb{R}^h$ are trainable parameters.
+$h,d$ are the dimensions of feature representations and hidden layers in BERT, respectively.
+$\mathrm{LayerNorm}(\cdot)$ is the normalization operation.
+
+We use a linear softmax classifier to get $x_j$'s output probability distribution on the basis of $\mathbf{f}_{x_j}$. 
+The cross-entropy classification loss of the current dataset is defined as follows:
+\begin{align}
+\mathcal{L}_\text{cla} = -\frac{1}{|\mathcal{N}|} \sum_{x \in \mathcal{N}}\sum_{e \in \mathcal{E}} y_{x,e}\log P(e\,|\,x; \mathcal{F}_i),
+\end{align}
+where $\mathcal{N}$ is the token set from the current training data. $\mathcal{E}$ is the seen event types set $\Tilde{E_i}$ and ``\textit{NA}''.
+$y_{x,e}$ indicates whether the reference type of $x$ is $e$.
+$P(e\,|\,x; \mathcal{F}_i)$ is the probability of $x$ classified as $e$ by the event detection model $\mathcal{F}_i$.
+
+\paragraph{Experience replay.}
+\label{sec:Er}
+Inspired by the previous works on continual learning \cite{wang-etal-2019-sentence, dautume2019episodic, yu-etal-2021-lifelong, liu-etal-2022-incremental}, we pick and store a small number $m$ of instances for each event type.
+At the $i$-th stage, the memory space to store the current training data is denoted by $\delta_i$, so the accumulated memory space is $\Tilde{\delta_i} = \bigcup_{t=1}^{i}{\delta_t}$.
+Note that we do not store negative instances in $\Tilde{\delta_i}$, owing to the fact that negative instances are prevalent at each stage.
+At the $i$-th stage, we train the model with current training data $D_{i}^\text{train}$ and memory space $\Tilde{\delta}_{i-1}$.
+We leverage the k-means algorithm to cluster the feature representations of each event type's instances, where the number of clusters equals the memory size $m$.
+We select the instances closest to the centroid of each cluster and store them.
+
+\subsubsection{Data Augmentation}
+In the event detection task, a sentence may have several annotations of event types. 
+For example, in the sentence ``\textit{Melony Marshall was married before she left for Iraq}'', ``\textit{married}'' and ``\textit{left}'' indicate the event types ``\textit{Marry}'' and ``\textit{Transport}'', respectively. 
+Let us assume that ``\textit{Marry}'' is the previously seen type and ``\textit{Transport}'' is the newly emerging type. 
+If the current memory space does not include this sentence, the annotation corresponding to ``\textit{married}'' would be ``\textit{NA}''.
+Thus, the model would treat the text ``\textit{married}'' as a negative label ``\textit{NA}'' at the current stage.
+However, ``\textit{married}'' has been considered as the event trigger of ``\textit{Marry}'' at the previous stage.
+It is noticeable that the semantics of ``\textit{married}'' are confused at these two different stages.
+Previous works \cite{cao-etal-2020-incremental,yu-etal-2021-lifelong,liu-etal-2022-incremental} simply ignore this problem and suffer from semantic confusion.
+
+To address this issue, we propose a data augmentation strategy with pseudo labels to excavate potential semantics and rectify semantic confusion.
+Before training the current model, we first augment the training data with the previous model. 
+For each instance in the training set $D_{i}^\text{train}$, it is just annotated by the new event types $E_{i}$. 
+We regard this sentence as a test instance and leverage the previous model to predict the event types for each token. 
+Once the prediction confidence exceeds a threshold $\tau$, we mark this token as the predicted type, serving as a pseudo label.
+Then, the augmented data can be used to train the current model.
+After training, we also leverage the trained model to obtain pseudo labels for the memory data.
+Note that we just use augmented task data and memory data for training, rather than for prototype generation in prototype knowledge transfer, since the pseudo labels are not completely reliable.
+
+\subsubsection{Pivotal Knowledge Distillation}
+Knowledge distillation \cite{hinton2015distilling} aims to remind the current model about learned knowledge by leveraging the knowledge from the previous model.
+It is important to leverage precise learned knowledge, otherwise, it would lead to semantic confusion like in previous works \cite{cao-etal-2020-incremental, yu-etal-2021-lifelong, liu-etal-2022-incremental}.
+In this paper, we propose pivotal knowledge distillation, which enables the model to focus on critical knowledge and transfers precise knowledge between the previous model and the current model at the feature and prediction levels.
+
+\paragraph{Attention feature distillation.} 
+At the feature level, we expect the features extracted by the current model similar to those by the previous model.
+Unlike existing works \cite{lin-etal-2020-joint, cao-etal-2020-incremental, liu-etal-2022-incremental}, we consider that each token in a sentence should not have an equal feature weight toward an event trigger. 
+The tokens associated closely with the event trigger are more important than others.
+To capture such context information, we propose attention feature distillation.
+We first apply in-context attention to obtain attentive feature $\mathbf{A}_{x_j}$ for each token $x_j$ in a sentence:
+\begin{align}
+\mathbf{A}_{x_j}=\frac{1}{|\mathcal{W}|} \sum_{x \in \mathcal{W}} \phi(\mathbf{f}_{x_j}, \mathbf{f}_{x})\mathbf{f}_{x},
+\end{align}
+where $\mathcal{W}$ denotes all tokens in this sentence.
+$\phi(\cdot)$ is an attention function, which is calculated as the average of the self-attention weights from the last $L$ layers of BERT, where $L$ is a hyperparameter.
+$\mathbf{f}_{x}$ is the feature representation of $x$.
+
+After capturing attentive feature $\mathbf{A}_{x_j}$, we preserve previous features through an attention feature distillation loss:
+\begin{align}
+\mathcal{L}_\text{afd}=-\frac{1}{|\mathcal{N}|} \sum_{x \in \mathcal{N}} 1-\cos(\mathbf{A}_{x}^i, \mathbf{A}_{x}^{i-1}),
+\end{align}
+where $\cos(\cdot)$ is the cosine similarity between two features.
+$\mathbf{A}_{x}^i$ and $\mathbf{A}_{x}^{i-1}$ are two attentive features computed by $\mathcal{F}_i$ and $\mathcal{F}_{i-1}$, respectively.
+
+During feature distillation, the current model would pay more attention to the associated tokens and obtain the critical and precise knowledge of these tokens from the previous model to remember the seen event types.  
+Moreover, with the lower attention to irrelevant tokens, the current model avoids being confused by irrelevant semantics. 
+
+\paragraph{Selective prediction distillation.}
+At the prediction level, we enforce that the probability distribution predicted by the current model $\mathcal{F}_i$ does not deviate from that of the previous model $\mathcal{F}_{i-1}$.
+The previous methods \cite{yu-etal-2021-lifelong, SONG2021222, liu-etal-2022-incremental} transfer the probability distribution of each token in a sentence.
+However, we argue that this brings semantic confusion from the previous model.
+The tokens of emerging event types should not be transferred.
+The previous model $\mathcal{F}_{i-1}$ gives an inaccurate probability distribution of these tokens due to that it has not been trained on emerging event types.
+Therefore, if we transfer the current model $\mathcal{F}_{i}$ with a wrong probability distribution, it would be confused with the semantics of new event types.
+To overcome this problem, we directly leverage the tokens of the previously seen types and the ``\textit{NA}'' type to transfer knowledge.
+Furthermore, we do not transfer the probability distribution of ``\textit{NA}'' owing to the availability of negative training data on every task. 
+
+Based on the above observation, we propose a selective prediction distillation to avoid semantic confusion in knowledge distillation:
+\begin{align}
+\resizebox{\columnwidth}{!}{$
+\mathcal{L}_\text{spd}=-\frac{1}{|\Tilde{\mathcal{N}}|} \sum\limits_{x \in \Tilde{\mathcal{N}}} \sum\limits_{e \in \Tilde{\mathcal{E}}} P(e\,|\,x; \mathcal{F}_{i-1})\log P(e,|\,x; \mathcal{F}_i),
+$}
+\end{align}
+where $\Tilde{\mathcal{N}}$ is the token set excluding the tokens of new types.
+$\Tilde{\mathcal{E}}$ is the previously seen type set.
+
+Inspired by \cite{yu-etal-2021-lifelong}, we optimize the classification loss and distillation loss with multi-task learning. 
+The final loss is
+\begin{align}
+\resizebox{\columnwidth}{!}{$
+\mathcal{L} = \Big(1-\frac{|\Tilde{E}_{i-1}|}{|\Tilde{E_i}|}\Big)\mathcal{L}_\text{cls} +\frac{|\Tilde{E}_{i-1}|}{|\Tilde{E_i}|}(\alpha\cdot\mathcal{L}_\text{afd} + \beta \cdot \mathcal{L}_\text{spd}),
+$}
+\end{align}
+where $\alpha$ and $\beta$ are hyperparameters.
+
+\subsubsection{Prototype Knowledge Transfer}
+The distribution of event types is naturally imbalanced in the real world, where the majority of instances belong to a few types.
+Due to the lack of instances, the semantics of long-tailed event types are difficult to capture by the model. 
+Moreover, if a long-tailed event type is analogous to a popular event type with many instances, its semantics are likely to be biased toward that of the popular one.
+Consequently, the model obtains confused semantics on long-tailed event types.
+
+To address this issue, we propose a prototype knowledge transfer method to enhance the semantics of long-tailed types with associated event prototypes.
+In our viewpoint, the prototypes imply the semantics of their event types.
+To get the exact prototypes of emerging event types, we first train the base model with the current training data $D_{i}^\text{train}$.
+For each event type $e$ in the seen event types $\Tilde{E}_i$, we calculate the average $\mu_e$ and the standard deviation $\sigma_e$ of feature representations of corresponding tokens in the current training data $D_{i}^\text{train}$ or memory space $\Tilde{\delta}_{i-1}$.
+If the event type is newly emerging, we calculate its prototype by
+\begin{align}
+\mu_e &= \frac{1}{|\mathcal{N}_e|} \sum_{x \in \mathcal{N}_e}\mathbf{f}_x,\\
+\sigma_e &= \sqrt{\frac{1}{|\mathcal{N}_e|} \sum_{x \in \mathcal{N}_e}(\mathbf{f}_x - \mu_e)^2},
+\end{align}
+where $\mathcal{N}_e$ is the tokens of event type $e$ in $D_{i}^\text{train}$.
+For the previous event types, we compute their prototype by tokens in memory space as above.
+
+For each token $x$ of long-tailed type $e$, we clarify its semantics through the associated event prototypes.
+We first measure the similarity of $e$ and another event type $e^{\prime}$ in the seen event types $\Tilde{E}_i$ by the cosine distance.
+Then, we calculate the associated standard deviation with associated event prototypes by
+\begin{align}
+\Tilde{\sigma}_{e} = \sum_{e^{\prime} \in P} d_e^{\prime}\sigma^{\prime},\quad d_e^{\prime} = \cos{(\mu_e, \mu^{\prime})},
+\end{align}
+where $P$ is the prototypes of all seen event types.
+
+We assume that the hidden representations of event types follow the Gaussian distribution and generate the intensive vector $\Tilde{\mathbf{f}}_e$ by
+\begin{align}
+\Tilde{\mathbf{f}}_e \sim \mathbb{G}(0, \Tilde{\sigma}_{e}^2).
+\end{align}
+
+We add the intensive vector $\Tilde{\mathbf{f}}_e$ with the feature vector $\mathbf{f}_x$ as the final representation $\mathbf{f}_x^*$ of this long-tailed token by $\mathbf{f}_x^* = \Tilde{\mathbf{f}}_e + \mathbf{f}_x$.
+We leverage the final representation for further learning like the feature representation of popular types.
+Note that we do not apply the average to generate the intensive vector. 
+We think that the use of average would align the semantics of long-tailed event types and their associated event types, causing semantic confusion to a certain extent. 
+In this paper, we categorize the last 80\% of types in terms of the number of instances as long-tail types.
+
+\subsection{Argument Extraction}
+After obtaining the event types of sentences, we further identify their arguments and roles based on the pre-defined argument roles of each event type.
+The arguments are usually identified from the entities in the sentence.  
+Here, we first recognize the entities in each sentence with the BERT-BiLSTM-CRF model, which is optimized on the same current training data.
+We treat these entities as candidate arguments.
+Then, we leverage another BERT encoder to encode each candidate argument and concatenate its starting and ending token representations as the final feature vector.
+Finally, for each candidate event type, we classify each entity into argument roles by a linear softmax classifier.
+The training objective is to minimize the following cross-entropy loss function:
+\begin{align}
+\mathcal{L}_\text{ae} = -\frac{1}{|\mathcal{Q}|} \sum_{e \in \mathcal{Q}}\sum_{r \in \mathcal{R}} y_{e,r}\log P(r\,|\,e),
+\end{align}
+where $\mathcal{Q}$ is the set of candidate entities.
+$\mathcal{R}$ is the pre-defined argument roles of the corresponding event type.
+$y_{e,r}$ denotes whether the reference role of $e$ is $r$.
+$P(r\,|\,e)$ denotes the probability of $e$ classified as $r$.
+
+For argument extraction, we also apply another memory space to store a few instances to alleviate catastrophic forgetting.
+We pick and store instances in the same way as described in Section~\ref{sec:Er}.
+
+
+
+Experiments and Results
+In this section, we evaluate our model and report the results. 
+The source code is accessible online
+
+\begin{table*}[t]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}l|l|ccccc|ccccc|ccccc}
+\toprule        
+\multicolumn{2}{c|}{\multirow{2}{*}{\diagbox[innerwidth=2.7cm,height=1.1cm]{Models}{Datasets}}} & \multicolumn{5}{c|}{ACE05-EN+} & \multicolumn{5}{c|}{ERE-EN} & \multicolumn{5}{c}{MAVEN} \\
+\cmidrule(lr){3-7} \cmidrule(lr){8-12} \cmidrule(lr){13-17} \multicolumn{2}{c|}{} & $T_1$ & $T_2$ & $T_3$ & $T_4$ & $T_5$ & $T_1$ & $T_2$ & $T_3$ & $T_4$ & $T_5$ & $T_1$ & $T_2$ & $T_3$ & $T_4$ & $T_5$ \\
+\midrule
+\parbox[c]{3mm}{\multirow{8}{*}{\rotatebox[origin=c]{90}{Event detection}}} & Fine-tuning & \underline{84.35} & 54.37 & 36.82 & 31.15  & 24.75 & \textbf{80.73} & 48.60 & 36.08 & 27.28 & 24.98 & \textbf{78.88} & 47.47 & 35.16 & 28.79 & 22.67\\ 
+& Joint-training & 84.35 & 81.24 & 80.02 & 77.03 & 75.51 & 80.73 & 73.61 & 69.75 & 65.78 & 63.66 & 78.88 & 71.78 & 68.52 & 67.74 & 65.88 \\
+& KCN & 82.15 & 72.69 & 65.38 & 60.17 & 55.68 & 77.38 & 63.37 & 53.05 & 50.09 & 45.47 & 75.32 & 49.85 & 43.49 & 40.61 & 37.98 \\
+& KT & 82.15 & \underline{73.02} & \underline{66.36} & \underline{61.56} & 57.23 & 77.38 & \underline{65.89} & \underline{60.06} & \underline{56.68} & \underline{53.40} & 75.32 & \underline{56.95} & \underline{51.68} & \underline{47.59} & 44.08 \\
+& EMP &  82.52 & 71.85 & 65.48 & 60.95 & \underline{58.19} & \underline{79.66} & 63.78 & 53.79 & 51.02 & 50.17 & \underline{77.96} & 55.86 & 49.41 & 47.19 & \underline{44.98}\\
+& BERT\_QA\_Arg &  \textbf{85.00} & 54.65 & 39.26 & 31.73 & 27.95  & 78.63 & 48.14 & 36.72 & 28.14 & 23.81 & 77.36 & 47.17 & 34.79 & 28.16 & 21.98 \\
+& ChatGPT & 16.43 & 16.03 & 15.43 & 17.41 & 17.11 & 11.52 & 10.79 & \ \,7.81 & 10.69 & \ \,9.97 & 10.36 & \ \,7.99 & \ \,7.49 & \ \,7.72 & \ \,7.54 \\
+& Our model & \underline{84.35} & \textbf{80.75} & \textbf{76.39} & \textbf{76.10} & \textbf{73.08} & \textbf{80.73} & \textbf{68.69} & \textbf{63.82} & \textbf{59.96} & \textbf{58.18} & \textbf{78.88} & \textbf{68.03} & \textbf{61.74} & \textbf{57.31} & \textbf{55.87}  \\
+\midrule
+\parbox[c]{3mm}{\multirow{5}{*}{\rotatebox[origin=c]{90}{Arg. extract.}}} & Fine-tuning & \underline{48.45} & 35.00 & 23.29 & 18.42 & 17.51 & \textbf{50.39} & \underline{30.57} & \underline{22.16} & 17.46 & \underline{14.27} & \multicolumn{5}{c}{\multirow{5}{*}{\diagbox[innerwidth=5.8cm,height=2.3cm]{}{}}} \\ 
+& Joint-training  & 48.45 & 51.73 & 48.85 & 48.84 & 47.89 & 50.39 & 45.54 & 43.34 & 41.49 & 40.11 & & & &\\
+& BERT\_QA\_Arg & \textbf{50.63} & \underline{35.63} & \underline{25.81} & \underline{20.31} & \underline{19.13} & \underline{48.41} & 29.34 & 22.12 & \underline{17.59} & 13.91\\
+& ChatGPT & \ \,4.59 & \ \,2.53 & \ \,5.61 & \ \,5.43 & \ \,5.59 & \ \,3.36 & \ \,4.59 & \ \,3.71 & \ \,3.19 & \ \,3.84 & & & & \\
+& Our model & \underline{48.45} & \textbf{47.24} & \textbf{42.30} & \textbf{40.36} & \textbf{37.90} & \textbf{50.39} & \textbf{39.49} & \textbf{35.94} & \textbf{34.19} & \textbf{31.25} & & & & \\
+\bottomrule
+\end{tabular}}
+\caption{F1 scores of event detection and argument extraction on the ACE05-EN+, ERE-EN, and MAVEN datasets.
+The best and second-best scores except for joint-training are marked in \textbf{bold} and with \underline{underline}, respectively.}
+\label{tab:main}
+\end{table*}
+
+\subsection{Experiment Setup}
+\paragraph{Datasets.}
+We carry out our experiments on 3 widely-used benchmark datasets. 
+(1) \emph{ACE05-EN+} \cite{doddington-etal-2004-automatic} is a classic event extraction dataset containing 33 event types and 22 argument roles. 
+We follow \cite{lin-etal-2020-joint} to pre-process the dataset. 
+Since several event types are missing in the development and test sets, we re-split the dataset for a better distribution of the event types.
+(2) \emph{ERE-EN}~\cite{song-etal-2015-light} is another popular event extraction dataset, which contains 38 event types and 21 argument roles. 
+We pre-process and re-split the data like ACE05-EN+.
+(3) \emph{MAVEN} \cite{wang-etal-2020-maven} is a large-scale dataset with 168 event types. 
+Due to the lack of argument annotations, we can only evaluate the event detection task. 
+Since its original dataset does not provide the annotations of the test set, we re-split the dataset as well. 
+ 
+
+\paragraph{Implementation.} As defined in Section~\ref{sect:task_def}, we conduct a sequence of event extraction tasks. 
+Following \cite{yu-etal-2021-lifelong,liu-etal-2022-incremental}, we partition each dataset into 5 subsets to simulate 5 disjoint tasks, denoted by $\{T_1, \dots, T_5\}$.
+As the majority of event types have more than 10 training instances, we set the memory size to 10 for all competing models. 
+To reduce randomness, we run every experiment 6 times with different subset permutations. 
+\paragraph{Competing models.}
+We compare our model with 7 competitors.
+\emph{Fine-tuning} simply trains on the current training set without any memory. 
+It forgets the previously learned knowledge seriously.  
+\emph{Joint-training} stores all previous training data as memory and trains the model on all training data for each new task.
+It simulates the behavior of re-training.
+It is viewed as an upper bound in continual event extraction.
+To reduce catastrophic forgetting, \emph{KCN} \cite{cao-etal-2020-incremental} combines experience reply with hierarchical knowledge distillation.
+\emph{KT} \cite{yu-etal-2021-lifelong} transfers knowledge between learned event types and new event types.
+\emph{EMP} \cite{liu-etal-2022-incremental} uses prompting methods to instruct model prediction. 
+KCN, KT, and EMP are only feasible for event detection so we cannot apply them to argument extraction.
+\emph{BERT\_QA\_Arg} \cite{du-cardie-2020-event} casts event extraction as a question-answering task. 
+It is capable of transferring specific knowledge based on its question templates. 
+Besides, we consider \emph{ChatGPT}\footnote{https://chat.openai. 
+Following \cite{li2023evaluating}, we use the same prompt in the experiments.
+
+\paragraph{Evaluation metrics.} We assess the performance of models with F1 scores and report the average F1 scores over all permutations for each model. 
+For event detection, we follow \cite{cao-etal-2020-incremental, yu-etal-2021-lifelong, liu-etal-2022-incremental} to calculate F1 scores.
+For argument extraction, an argument is correctly classified if its event type, offsets, and
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,257 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+% Title: Untitled
+
+% ArXiv ID: 2310.11989
+
+
+
+
+\twocolumn[
+\icmltitle{Image Clustering with External Guidance}
+
+
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Yunfan Li}{scu}
+\icmlauthor{Peng Hu}{scu}
+\icmlauthor{Dezhong Peng}{scu}
+\icmlauthor{Jiancheng Lv}{scu}
+\icmlauthor{Jianping Fan}{lenovo}
+\icmlauthor{Xi Peng}{scu}
+\end{icmlauthorlist}
+
+\icmlaffiliation{scu}{School of Computer Science, Sichuan University, Chengdu, China}
+\icmlaffiliation{lenovo}{AI Lab at Lenovo Research, Beijing, China}
+
+\icmlcorrespondingauthor{Xi Peng}{pengx.gm@gmail.com}
+
+\icmlkeywords{Clustering, Deep Clustering, External Knowledge}
+
+\vskip 0.3in
+]
+
+
+
+\printAffiliationsAndNotice{}  % leave blank if no need to mention equal contribution
+
+\begin{abstract}
+The core of clustering lies in incorporating prior knowledge to construct supervision signals. From classic k-means based on data compactness to recent contrastive clustering guided by self-supervision, the evolution of clustering methods intrinsically corresponds to the progression of supervision signals. At present, substantial efforts have been devoted to mining internal supervision signals from data. Nevertheless, the abundant external knowledge such as semantic descriptions, which naturally conduces to clustering, is regrettably overlooked. In this work, we propose leveraging external knowledge as a new supervision signal to guide clustering. To implement and validate our idea, we design an externally guided clustering method (Text-Aided Clustering, TAC), which leverages the textual semantics of WordNet to facilitate image clustering. Specifically, TAC first selects and retrieves WordNet nouns that best distinguish images to enhance the feature discriminability. Then, TAC collaborates text and image modalities by mutually distilling cross-modal neighborhood information. Experiments demonstrate that TAC achieves state-of-the-art performance on five widely used and three more challenging image clustering benchmarks, including the full ImageNet-1K dataset. The code can be accessed at \url{https://github.com/XLearning-SCU/2024-ICML-TAC}.
+\end{abstract}
+
+\section{Introduction}
+\label{introduction}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{Figures/performance}
+\caption{The evolution of clustering methods could be roughly divided into three eras, including \textbf{i) classic clustering}, which designs clustering strategies based on data distribution assumptions; \textbf{ii) deep clustering}, which extracts clustering-favorable features with deep neural networks, and \textbf{iii) self-supervised clustering}, which constructs supervision signals through data augmentations or momentum strategies. In this work, instead of mining the internal supervision, we propose exploring external knowledge to facilitate image clustering. We categorize such a novel paradigm as \textbf{iv) externally guided clustering}. By leveraging the semantics in the text modality, our TAC pushes the clustering accuracy to a new state-of-the-art.}\label{fig: performance}
+\end{figure}
+
+Image clustering aims at partitioning images into different groups in an unsupervised fashion, which is a long-standing task in machine learning. The core of clustering resides in incorporating prior knowledge to construct supervision signals. According to different choices of supervision signals, one could roughly divide the evolution of clustering methods into three eras, \textit{i.e.}, classic clustering, deep clustering, and self-supervised clustering as depicted in Fig~\ref{fig: performance}. At the early stage, classic clustering methods build upon various assumptions on the data distribution, such as compactness~\cite{Kmeans, DBSCAN}, hierarchy~\cite{AgglomerativeClustering}, connectivity~\cite{SpectralClustering, SpectralClusteringNie, wang2020large}, sparsity~\cite{SSC, liu2017sparse}, and low rank~\cite{NMF, LRR, nie2016constrained}. Though having achieved promising performance, classic clustering methods would produce suboptimal results confronting complex and high-dimensional data. As an improvement, deep clustering methods equip clustering models with neural networks to extract discriminative features~\cite{DeepClusteringPeng2016, JULE, DEC, deepclustering_wangqi}. In alignment with priors such as cluster discriminability~\cite{DeepClusteringGhasedi} and balance~\cite{IMSAT}, various supervision signals are formulated to optimize the clustering network. In the last few years, motivated by the success of self-supervised learning~\cite{MOCO, SimCLR, BYOL}, clustering methods turn to creating supervision signals through data augmentation~\cite{CC, SCAN, dang2021nearest} or momentum strategies~\cite{GCC, ProPos}.
+
+Though varying in the method design, most existing clustering methods design supervision signals in an internal manner. Despite the remarkable success achieved, the internally guided clustering paradigm faces an inherent limitation. Specifically, the hand-crafted internal supervision signals, even enhanced with data augmentation, are inherently upper-bounded by the limited information in the given data. For example, ``Corgi'' and ``Shiba Inu'' dogs are visually similar and are likely to be confused in image clustering. Luckily, beyond the internal signals, we notice there also exists well-established external knowledge that potentially conduces to clustering, while having been regrettably and largely ignored. In the above example, we could better distinguish the images given the external knowledge that ``Corgi'' have shorter and thicker legs compared with ``Shiba Inu'' dogs. In short, from different sources or modalities, the external knowledge could serve as promising supervision signals to guide clustering. Compared with exhaustively mining internal supervision signals from data, it would yield twice the effect with half the effort by incorporating rich and readily available external knowledge to guide clustering.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\columnwidth]{Figures/example}
+\caption{Our observations with two image examples from the ImageNet-Dogs dataset as a showcase. For each example, we show the manually annotated class names and the nouns obtained by the proposed TAC, as well as the zero-shot classification probabilities. From the example, one could arrive at two observations, namely, i) visually similar samples could be better distinguished in the text modality, and ii) manually annotated class names are not always the best semantic description. As shown, zero-shot CLIP falsely classifies both images to the \textit{Blenheim Spaniel} class (probably due to the word \textit{Spaniel}), whereas the nouns obtained by our TAC successfully separate them. Such observations suggest a great opportunity to leverage the external knowledge (hidden in the text modality in this showcase) to facilitate image clustering.} \label{fig: example}
+\end{figure}
+
+In this work, we propose a simple yet effective externally guided clustering method TAC (Text-Aided Clustering), which clusters images by incorporating external knowledge from the text modality. In the absence of class name priors, there are two challenges in leveraging the textual semantics for image clustering, namely, \textit{i)} how to construct the text space, and \textit{ii)} how to collaborate images and texts for clustering. For the first challenge, ideally, we expect the text counterparts of between-class images to be highly distinguishable so that clustering can be easily achieved. To this end, inspired by the zero-shot classification paradigm in CLIP~\cite{CLIP}, we reversely classify all nouns from WordNet~\cite{WordNet} to image semantic centers. Based on the classification confidence, we select the most discriminative nouns for each image center to form the text space and retrieve a text counterpart for each image. Intriguingly, Fig.~\ref{fig: example} demonstrates that in certain cases, the retrieved nouns could describe the image semantics, sometimes even better than the manually annotated class names. For the second challenge, we first establish an extremely simple baseline by concatenating the images and text counterparts, which already significantly enhances the k-means clustering performance without any additional training. For better collaboration, we propose to mutually distill the neighborhood information between the text and image modalities. By additionally training cluster heads, the proposed TAC achieves state-of-the-art performance on five widely used and three more challenging image clustering datasets. Without loss of generality, we evaluate TAC on the pre-trained CLIP model in our experiments, but TAC could adapt to any vision-language pre-trained (VLP) model by design.
+
+The major contributions of this work could be summarized as follows:
+\begin{itemize}
+	\item Unlike previous clustering works that exhaustively explore and exploit supervision signals internally, we propose leveraging external knowledge to facilitate clustering. We summarize such a novel paradigm as externally guided clustering, which provides an innovative perspective on the construction of supervision signals.
+	\item To implement and validate our idea, we propose an externally guided clustering method TAC, which leverages the textual semantics to facilitate image clustering. Experiments demonstrate the superiority of TAC over eight datasets, including ImageNet-1K. Impressively, in most cases, TAC even outperforms zero-shot CLIP in the absence of class name priors.
+	\item The significance of TAC is two-fold. On the one hand, it proves the effectiveness and superiority of the proposed externally guided clustering paradigm. On the other hand, it suggests the presence of more simple but effective strategies for mining the zero-shot learning ability inherent in VLP models.
+\end{itemize}
+
+\section{Related Work}
+In this section, we review the deep clustering methods, and the zero-shot classification paradigm of VLP models which also utilizes the text modality to perform visual tasks.
+
+\subsection{Deep Image Clustering}
+In addition to effective clustering strategies, discriminative features also play an important role in clustering. Benefiting from the powerful feature extraction ability of neural networks, deep clustering methods show their superiority in handling complex and high-dimensional data~\cite{DeepClusteringPeng2016, DeepClusteringGuo, DeepClusteringGhasedi}. The pioneers in deep clustering focus on learning clustering-favorable features through optimizing the network with clustering objectives~\cite{JULE, DEC, DeepClusteringPeng2018, IMSAT, PICA, IIC}. In recent years, motivated by the success of contrastive learning, a series of contrastive clustering methods achieve substantial performance leaps on image clustering benchmarks~\cite{CC, TCC, GCC}. Instead of clustering images in an end-to-end manner, several works initially learn image embedding through uni-modal pre-training and subsequently mine clusters based on neighborhood consistency~\cite{SCAN, NNM} or pseudo-labeling~\cite{SPICE}. By disentangling representation learning and clustering, these multi-stage methods enjoy higher flexibility for their easy adaption to superior pre-trained models. A recent study~\cite{ProPos} demonstrates that the clustering performance could be further improved when equipping clustering models with more advanced representation learning methods~\cite{BYOL}. Very recently, SIC~\cite{SIC} attempts to generate image pseudo labels from the textual space.
+
+Though having achieved remarkable progressions, almost all existing deep image clustering methods mine supervision signals internally. However, the internal supervision signals are inherently bounded by the given images. Instead of pursuing internal supervision signals following previous works, we propose a new paradigm that leverages external knowledge to facilitate image clustering. We hope the simple design and engaging performance of TAC could attract more attention to the externally guided clustering paradigm.
+
+\subsection{Zero-shot Classification}
+Recently, more and more efforts have been devoted to multi-modal, especially vision-language pre-training (VLP). By learning the abundant image-text pairs on the Internet, VLP methods~\cite{UNIMO, Beit3}, have achieved impressive performance in multi-modal representation learning. More importantly, unlike uni-modal pre-trained models that require additional fine-tuning, VLP models could adapt to various tasks such as classification~\cite{CLIP}, segmentation~\cite{DenseCLIP}, and image captioning~\cite{BLIP} in a zero-shot manner. Here, we briefly introduce the zero-shot image classification paradigm in CLIP~\cite{CLIP} as an example. Given names of $K$ classes, CLIP first assembles them with prompts like ``a photo of [CLASS]'', where the [CLASS] token is replaced by the specific class name. Then, CLIP computes the text embeddings $\{w_i\}_{i=1}^K$ of the prompted sentences with its pre-trained text encoder. Finally, CLIP treats the embeddings $\{w_i\}_{i=1}^K$ as the classifier weight, and predicts the probability of image $\textbf{v}$ belonging to the $i$-th class as
+\begin{equation}
+\label{eq: probability}
+	p(y=i | \textbf{v}) = \frac{\exp(\operatorname{sim}(v, w_i)/\tau)}{\sum_{j=1}^K \exp(\operatorname{sim}(v, w_j)/\tau)},
+\end{equation}
+where $v$ denotes the image features, $\operatorname{sim}(\cdot, \cdot)$ refers to the cosine similarity, and $\tau$ is the learned \textit{softmax} temperature.
+
+Thanks to the consistent form between pre-training and inference, CLIP achieves promising results in zero-shot image classification. However, such a paradigm requires prior knowledge of class names, which is unavailable in clustering. To leverage CLIP for image clustering, the most direct approach is performing k-means~\cite{Kmeans} on the image embeddings. Nevertheless, the performance of k-means is limited and the textual semantics are underutilized. In this work, we explore a more advanced paradigm for image clustering, by taking full advantage of both the pre-trained image and text encoders. Intriguingly, experiments demonstrate that even in the absence of class name priors, the proposed TAC outperforms zero-shot CLIP in most cases. We hope this work could bring some insights into the paradigm design of leveraging VLP models for downstream classification and clustering.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{Figures/method}
+\caption{Overview of the proposed TAC. \textbf{(Left)} TAC first classifies all nouns from WordNet to image semantic centers, and selects the most discriminative nouns to construct the text space. After that, TAC retrieves nouns for each image to compute its counterpart in the text space. By concatenating the image and retrieved text, we arrive at an extremely simple baseline without any additional training. \textbf{(Right)} To better collaborate the text and image modalities, TAC trains cluster heads by mutually distilling the neighborhood information. In brief, TAC encourages images to have consistent cluster assignments with the nearest neighbors of their counterparts in the text embedding space, and vice versa. Such a cross-modal mutual distillation strategy further boosts the clustering performance of TAC.}\label{fig: method}
+\end{figure*}
+
+\section{Method}
+
+In this section, we present TAC, a simple yet effective externally guided clustering method illustrated in Fig.~\ref{fig: method}. In brief, we first propose a text counterpart construction strategy to exploit the text modality in Sec.~\ref{sec: semantic}. Then, we propose a cross-modal mutual distillation strategy to collaborate the text and image modalities in Sec.~\ref{sec: distill}.
+
+\subsection{Text Counterpart Construction}
+\label{sec: semantic}
+The textual semantics are naturally favored in discriminative tasks such as classification and clustering. Ideally, clustering could be easily achieved if images have highly distinguishable counterparts in the text modality. To this end, in the absence of class name priors, we propose to select a subset of nouns from WordNet~\cite{WordNet} to compose the text space, which is expected to exhibit the following two merits, namely, \textit{i}) precisely covering the image semantics; and \textit{ii}) highly distinguishable between images of different semantics.
+
+The image semantics of different granularities could be captured by k-means with various choices of $k$. A small value of $k$ corresponds to coarse-grained semantics, which might not be precise enough to cover the semantics of images at cluster boundaries. Oppositely, a large value of $k$ produces fine-grained semantics, which might fail to distinguish images from different classes. To find image semantics of appropriate granularity, we estimate $k=N / 300$ given $N$ images, hypothesizing a cluster of $\tilde{N}=300$ images is compact enough to be described by the same set of nouns. Experiments in Section~\ref{sec: cluster size} show that our TAC is robust across a reasonable range of $\tilde{N}$. With the estimated value of $k$, we apply k-means on image embeddings to compute the image semantic centers by
+\begin{equation}
+\label{eq: image center}
+	s_l = \sum_{i=1}^N \mathbbm{1}_{v_i \in l}~v_i, l \in [1, k],
+\end{equation}
+where $\mathbbm{1}_{v_i \in l}$ is the indicator which equals one iff image $v_i$ belongs to the $l$-th cluster.
+
+Next, we aim to find discriminative nouns to describe each semantic center. Here, motivated by the zero-shot classification paradigm of CLIP, we reversely classify all nouns from WordNet into $k$ image semantic centers. Specifically, the probability of the $i$-th noun belonging to the $l$-th image semantic center is
+\begin{equation}
+\label{eq: noun classification}
+	p(y=l | \mathbf{t_i}) = \frac{\exp(\operatorname{sim}(t_i, s_l))}{\sum_{j=1}^k \exp(\operatorname{sim}(t_i, s_j))},
+\end{equation}
+where $\mathbf{t_i}$ denoted the $i$-th noun prompted like CLIP, and $t_i$ is the feature extracted by the text encoder. To identify highly representative and distinguishable nouns, we select the top $\gamma$ confident nouns for each image semantic center. Formally, the $i$-th noun would be select for the $l$-th center if
+\begin{gather}
+	p(y=k | \mathbf{t_i}) \geq \bar{p}(y=k), \label{eq: noun selection} \\ 
+	\bar{p}(y=k) = \operatorname{sort}\{p(y=k | \mathbf{t_i}) | \operatorname{argmax}p(y | \mathbf{t_i})=k \}[\gamma], \notag
+\end{gather}
+where $\bar{p}(y=k)$ corresponds to the $\gamma$-th largest confidence of nouns belonging to the $l$-th center. In practice, we fix $\gamma=5$ on all datasets.
+
+The selected nouns compose the text space catering to the input images. Then, we retrieve nouns for each image to compute its counterpart in the text modality. To be specific, let $\{\mathbf{\bar{t}_i}\}_{i=1}^{M}$ be the set of $M$ selected nouns with $\{\bar{t}_i\}_{i=1}^{M}$ being their text embeddings, we compute the text counterpart $\tilde{t}_i$ for image $v_i$ as
+\begin{gather}
+	\tilde{t}_i = \sum_{j=1}^{M} p(\bar{t}_j | v_i) \bar{t}_j, \label{eq: noun retrieval 1} \\
+	p(\bar{t}_j | v_i) = \frac{\exp(\operatorname{sim}(v_i, \bar{t}_j) / \tilde{\tau})}{\sum_{k=1}^M \exp(\operatorname{sim}(v_i, \bar{t}_k) / \tilde{\tau})}, \label{eq: noun retrieval 2}
+\end{gather}
+where $\tilde{\tau}=0.005$ controls the softness of retrieval. The design of soft retrieval is to prevent the text counterparts of different images from collapsing to the same point. After the text counterpart construction, we arrive at an extremely simple baseline by applying k-means on the concatenated features $[\tilde{t}_i, v_i]_{i=1}^N$. Notably, such an implementation requires no additional training or modifications on CLIP, but it could significantly improve the clustering performance compared with directly applying k-means on the image embeddings (see Section~\ref{sec: main results}).
+
+\subsection{Cross-modal Mutual Distillation}
+\label{sec: distill}
+Though concatenating text counterparts and image embeddings improves the k-means performance, it is suboptimal for collaborating the two modalities. To better utilize multi-modal features, we propose the cross-modal mutual distillation strategy. Specifically, let $\mathcal{N}(v_i)$ be a random nearest neighbor of $v_i$, we introduce a cluster head $f: v \rightarrow p \in \mathcal{R}^K$ to predict the soft cluster assignments for images $v_i$ and $\mathcal{N}(v_i)$, where $K$ is the target cluster number. Formally, we denote the soft cluster assignments for $n$ images and their neighbors as
+\begin{equation}
+\label{eq: image assignments}
+	P=\left[
+		\begin{array}{c}
+		p_1 \\
+		\cdots \\
+		p_n
+		\end{array}
+	\right] \text { and } 
+	P^\mathcal{N}=\left[
+		\begin{array}{c}
+		p^\mathcal{N}_1 \\
+		\cdots \\
+		p^\mathcal{N}_n
+		\end{array}
+	\right].
+\end{equation}
+Likewise, we introduce another cluster head $g: \tilde{t}_i \rightarrow q_i \in \mathcal{R}^K$ to predict the soft cluster assignments for text counterpart $\tilde{t}_i$ and its random nearest neighbor $\mathcal{N}(\tilde{t}_i)$, resulting in the cluster assignment matrices
+\begin{equation}
+\label{eq: text assignments}
+	Q=\left[
+		\begin{array}{c}
+		q_1 \\
+		\cdots \\
+		q_n
+		\end{array}
+	\right] \text { and } 
+	Q^\mathcal{N}=\left[
+		\begin{array}{c}
+		q^\mathcal{N}_1 \\
+		\cdots \\
+		q^\mathcal{N}_n
+		\end{array}
+	\right].
+\end{equation}
+
+Let $\hat{p}_i, \hat{p}^\mathcal{N}_i, \hat{q}_i, \hat{q}^\mathcal{N}_i$ be the $i$-th column of assignment matrices $P, P^\mathcal{N}, Q, Q^\mathcal{N}$, the cross-modal mutual distillation loss is defined as follows, namely,
+\begin{gather}
+	L_{\mathrm{Dis}} = \sum_{i=1}^K L^{v\rightarrow t} _i + L^{t\rightarrow v}_i, \label{eq: distill} \\
+	L^{v\rightarrow t} _i = -\log \frac{e^{(\operatorname{sim}(\hat{q}_i, \hat{p}^\mathcal{N}_i) / \hat{\tau})}}{\underset{k}{\sum} e^{(\operatorname{sim}(\hat{q}_i, \hat{p}^\mathcal{N}_k) / \hat{\tau})} + \underset{k\neq i}{\sum} e^{(\operatorname{sim}(\hat{q}_i, \hat{q}_k) / \hat{\tau})}  }, \label{eq: distill t} \\
+	L^{t\rightarrow v} _i = -\log \frac{e^{(\operatorname{sim}(\hat{p}_i, \hat{q}^\mathcal{N}_i) / \hat{\tau})}}{\underset{k}{\sum} e^{(\operatorname{sim}(\hat{p}_i, \hat{q}^\mathcal{N}_k) / \hat{\tau})} + \underset{k\neq i}{\sum} e^{(\operatorname{sim}(\hat{p}_i, \hat{p}_k) / \hat{\tau})} }, \label{eq: distill v}
+\end{gather}
+where $\hat{\tau}$ is the \textit{softmax} temperature parameter. The distillation loss $L_{\mathrm{Dis}}$ has two effects. On the one hand, it minimizes the between-cluster similarity, leading to more discriminative clusters. On the other hand, it encourages consistent clustering assignments between each image and the neighbors of its text counterpart, and vice versa. In other words, it mutually distills the neighborhood information between the text and image modalities, bootstrapping the clustering performance in both. In practice, we set the number of nearest neighbors $\hat{N}=50$ on all datasets. Note that the neighbors are only computed once on all samples before training.
+
+Next, we introduce two regularization terms to stabilize the training. First, to encourage the model to produce more confident cluster assignments, we introduce the following confidence loss, namely,
+\begin{equation}
+\label{eq: confidence}
+	L_{\mathrm{Con}} = - \log \sum_{i=1}^n p_i^\top q_i,
+\end{equation}
+which would be minimized when both $p_i$ and $q_i$ become one-hot. Second, to prevent all samples from collapsing into only a few clusters, we adopt the balance loss, \textit{i.e.},
+\begin{gather}
+L_{\mathrm{Bal}} = - \sum_{i=1}^K \left(\bar{p}_i \log \bar{p}_i + \bar{q}_i \log \bar{q}_i\right), \label{eq: balance} \\
+	\bar{p} = \frac{1}{n} \sum_{i=1}^n p_i \in \mathcal{R}^K, \bar{q} = \frac{1}{n} \sum_{i=1}^n q_i \in \mathcal{R}^K, \label{eq: balance pq}
+\end{gather}
+where $\bar{p}$ and $\bar{q}$ correspond to the cluster assignment distribution in the image and text modality, respectively.
+
+Finally, we arrive at the overall objective function of TAC, which lies in the form of
+\begin{equation}
+\label{eq: overall loss}
+	L_{\mathrm{TAC}} = L_{\mathrm{Dis}} + L_{\mathrm{Con}} - \alpha \cdot L_{\mathrm{Bal}},
+\end{equation}
+where $\alpha=5$ is the weight parameter.
+
+\section{Experiments}
+In this section, we evaluate the proposed TAC on five widely used and three more challenging image clustering datasets. A series of quantitative and qualitative comparisons, ablation studies, and hyper-parameter analyses are carried out to investigate the effectiveness and robustness of the method.
+
+\subsection{Experimental Setup}
+We first introduce the datasets and metrics used for evaluation, and then provide the implementation details of TAC. 
+
+\subsubsection{Datasets}
+
+To evaluate the performance of our TAC, we first apply it to five widely-used image clustering datasets including STL-10~\cite{STL}, CIFAR-10~\cite{CIFAR}, CIFAR-20~\cite{CIFAR}, ImageNet-10~\cite{ImageNet_10_Dogs}, and ImageNet-Dogs~\cite{ImageNet_10_Dogs}. With the rapid development of pre-training and clustering methods, we find clustering on relatively simple datasets such as STL-10 and CIFAR-10 is no longer challenging. Thus, we further evaluate the proposed TAC on three more complex datasets with larger cluster numbers, including DTD~\cite{DTD}, UCF-101~\cite{UCF101}, and ImageNet-1K~\cite{ImageNet}. Following recent deep clustering works~\cite{SCAN, NNM}, we train and evaluate TAC on the train and test splits, respectively. The brief information of all datasets used in our evaluation is summarized in Table~\ref{tab: dataset}.
+
+\begin{table}[h]
+\centering
+\caption{A summary of datasets used for evaluation.}
+\label{tab: dataset}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Dataset       & Training Split & Test Split & \# Training & \# Test & \# Classes \\ \midrule
+STL-10        & Train          & Test       & 5,000       & 8,000   & 10         \\
+CIFAR-10      & Train          & Test       & 50,000      & 10,000  & 10         \\
+CIFAR-20      & Train          & Test       & 50,000      & 10,000  & 20         \\
+ImageNet-10   & Train          & Val        & 13,000      & 500     & 10         \\
+ImageNet-Dogs & Train          & Val        & 19,500      & 750     & 15         \\ \midrule
+DTD           & Train+Val      & Test       & 3,760       & 1,880   & 47   \\
+UCF-101       & Train          & Val        & 9,537       & 3.783   & 101   \\
+ImageNet-1K      & Train          & Val        & 1,281,167   & 50,000  & 1,000       \\ \bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table*}[t]
+\caption{Clustering performance on five widely-used image clustering datasets. The best and second best results are denoted in \textbf{bold} and \underline{underline}, respectively.}
+\label{tab: classic}
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lcccccccccccccccc@{}}
+\toprule
+Dataset & \multicolumn{3}{c}{STL-10} & \multicolumn{3}{c}{CIFAR-10} & \multicolumn{3}{c}{CIFAR-20} & \multicolumn{3}{c}{ImageNet-10} & \multicolumn{3}{c}{ImageNet-Dogs} & \multirow{2}{*}{AVG} \\ \cmidrule(r){1-16}
+Metrics          & NMI  & ACC  & ARI  & NMI  & ACC  & ARI  & NMI  & ACC  & ARI  & NMI  & ACC  & ARI  & NMI  & ACC  & ARI  & \\ \midrule
+
+JULE~\cite{JULE}             & 18.2 & 27.7 & 16.4 & 19.2 & 27.2 & 13.8 & 10.3 & 13.7 & 3.3  & 17.5 & 30.0 & 13.8 & 5.4  & 13.8 & 2.8  & 15.5 \\
+DEC~\cite{DEC}              & 27.6 & 35.9 & 18.6 & 25.7 & 30.1 & 16.1 & 13.6 & 18.5 & 5.0  & 28.2 & 38.1 & 20.3 & 12.2  & 19.5 & 7.9  & 21.2 \\
+DAC~\cite{DAC}              & 36.6 & 47.0 & 25.7 & 39.6 & 52.2 & 30.6 & 18.5 & 23.8 & 8.8  & 39.4 & 52.7 & 30.2 & 21.9 & 27.5 & 11.1 & 31.0 \\
+DCCM~\cite{DCCM}             & 37.6 & 48.2 & 26.2 & 49.6 & 62.3 & 40.8 & 28.5 & 32.7 & 17.3 & 60.8 & 71.0 & 55.5 & 32.1 & 38.3 & 18.2 & 41.3 \\
+IIC~\cite{IIC}              & 49.6 & 59.6 & 39.7 & 51.3 & 61.7 & 41.1 & 22.5 & 25.7 & 11.7 & --   & --   & --   & --   & --   & --   & -- \\
+PICA~\cite{PICA}             & 61.1 & 71.3 & 53.1 & 59.1 & 69.6 & 51.2 & 31.0 & 33.7 & 17.1 & 80.2 & 87.0 & 76.1 & 35.2 & 35.3 & 20.1 & 52.1 \\
+CC~\cite{CC}               & 76.4 & 85.0 & 72.6 & 70.5 & 79.0 & 63.7 & 43.1 & 42.9 & 26.6 & 85.9 & 89.3 & 82.2 & 44.5 & 42.9 & 27.4 & 62.1 \\
+IDFD~\cite{IDFD}             & 64.3 & 75.6 & 57.5 & 71.1 & 81.5 & 66.3 & 42.6 & 42.5 & 26.4 & 89.8 & 95.4 & 90.1 & 54.6 & 59.1 & 41.3 & 63.9 \\
+SCAN~\cite{SCAN}             & 69.8 & 80.9 & 64.6 & 79.7 & 88.3 & 77.2 & 48.6 & 50.7 & 33.3 & --   & --   & --   & 61.2 & 59.3 & 45.7 & -- \\
+MiCE~\cite{MiCE}             & 63.5 & 75.2 & 57.5 & 73.7 & 83.5 & 69.8 & 43.6 & 44.0 & 28.0 & --   & --   & --   & 42.3 & 43.9 & 28.6 & -- \\
+GCC~\cite{GCC}              & 68.4 & 78.8 & 63.1 & 76.4 & 85.6 & 72.8 & 47.2 & 47.2 & 30.5 & 84.2 & 90.1 & 82.2 & 49.0 & 52.6 & 36.2 & 64.3 \\
+NNM~\cite{NNM}              & 66.3 & 76.8 & 59.6 & 73.7 & 83.7 & 69.4 & 48.0 & 45.9 & 30.2 & --   & --   & --   & 60.4 & 58.6 & 44.9 & -- \\
+TCC~\cite{TCC}              & 73.2 & 81.4 & 68.9 & 79.0 & 90.6 & 73.3 & 47.9 & 49.1 & 31.2 & 84.8 & 89.7 & 82.5 & 55.4 & 59.5 & 41.7 & 67.2 \\ 
+SPICE~\cite{SPICE}            & 81.7 & 90.8 & 81.2 & 73.4 & 83.8 & 70.5 & 44.8 & 46.8 & 29.4 & 82.8 & 92.1 & 83.6 & 57.2 & 64.6 & 47.9 & 68.7 \\ 
+SIC~\cite{SIC}              & \underline{95.3} & \underline{98.1} & \underline{95.9} & \textbf{84.7} & \textbf{92.6} & \textbf{84.4} & 59.3 & \underline{58.3} & \underline{43.9} & 97.0 & 98.2 & 96.1 & 69.0 & 69.7 & 55.8 & \underline{79.9} \\
+CLIP (k-means)   & 91.7 & 94.3 & 89.1 & 70.3 & 74.2 & 61.6 & 49.9 & 45.5 & 28.3 & 96.9 & 98.2 & 96.1 & 39.8 & 38.1 & 20.1 & 66.3 \\ \midrule
+TAC (no train)  & 92.3 & 94.5 & 89.5 & 80.8 & 90.1 & 79.8 & \underline{60.7} & 55.8 & 42.7 & \underline{97.5} & \underline{98.6} & \underline{97.0} & \underline{75.1} & \underline{75.1} & \underline{63.6} & 79.5 \\
+TAC             & \textbf{95.5} & \textbf{98.2} & \textbf{96.1} & \underline{83.3} & \underline{91.9} & \underline{8
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

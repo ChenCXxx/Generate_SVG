@@ -1,0 +1,296 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+\footnotetext[1]{Corresponding Authors.}
+\renewcommand{\thefootnote}{\arabic{footnote}}
+
+
+\begin{figure}
+\centering
+\includegraphics[width=7.4cm, height=4cm]{intro.pdf}
+\caption{\textbf{Left}: An example of coarse- and fine-grained intent detection for recommendation. \textbf{Right}: Label hierarchy with coarse- and fine-grained categories.} 
+\label{fig1}
+\end{figure}
+
+Many AI fields have progressed into fine-grained analysis, e.g., Computer Vision \citep{fine1,fine2} and Natural Language Processing \citep{fine3,fine4,fine5,chen}, since it can provide much more information than coarse-grained analysis. For example, detecting more fine-grained user intents can help to provide more accurate recommendation and better services for customers (Figure \ref{fig1} Left). However, labelling fine-grained categories can be time-consuming and labour-intensive since it requires more expert knowledge. To get out of this dilemma, a novel task called Fine-grained Category Discovery under Coarse-grained supervision (FCDC) was recently proposed by \citet{fcdc}. Taking Figure \ref{fig1} Right as an example, FCDC aims at discovering fine-grained categories (e.g., Desktop and Tennis) using only coarse-grained (e.g., Computer and Sports) labeled data which are easier and cheaper to annotate.
+
+To solve the FCDC task, previous methods mainly focus on instance-level discrimination to learn low-level features through contrastive learning \citep{fcdc, angular}. Despite the improved performance, these instance-based methods fail to encode cluster-level semantic structures of data. This is because these methods simply treat each instance as a single class and push away other instances, regardless of their semantic similarities \citep{pcl}, which can hinder the formation of compact fine-grained clusters. Here we define `compact' as samples with the same fine-grained categories are compactly clustered into the center of category and away from other samples from different fine-grained categories, which means smaller intra-class distance and larger inter-class distance. Since samples located around decision boundaries are easily misclassified into wrong categories, distributing samples near the category center compactly can avoid overlapping decision boundaries and make these categories more distinguishable.
+So learning compact cluster representations is important for the FCDC task to learn more separable fine-grained categories.
+
+To encode semantic structures of data to learn more compact cluster representations, we propose a novel model named \textit{Denoised Neighborhood Aggregation} (DNA). DNA can capture semantic similarities between data by retrieving \textit{k}-nearest neighbors of a query and aggregating information from them. However, the retrieved neighbors can be noisy and contain many false-positive keys (i.e., keys with different fine-grained categories from the query), which can reduce the quality of representation learning. This situation is more severe in the FCDC setting since pretraining on coarse-grained labels can easily include wrong neighbors for those samples with the same coarse-grained labels but different fine-grained ones. 
+To solve this problem, we propose three principles (named Label Constraint, Reciprocal Constraint, and Rank Statistic Constraint) to filter out these false neighbors. These constraints consider bidirectional semantic structures and statistical features of data to help to retrieve more accurate neighbors. 
+Furthermore, we interpret our framework from a generalized Expectation-Maximization (EM) perspective. At the E-step, we retrieve reliable neighbors from a dynamic queue under the proposed constraints, then at the M-step, we perform neighborhood aggregation to encode semantic structures of data to learn more compact representations.
+Last but not least, we theoretically prove that the learning objective of our model is equivalent to a clustering loss, which can help to learn compact cluster representations to facilitate fine-grained category discovery.
+
+Our main contributions can be summarized as follows:
+\begin{itemize}
+  \item \textbf{Perspective}: we propose to model semantic structures of data to learn more compact cluster representations, which are essential for the FCDC task.
+
+  \item \textbf{Framework}: we propose \textit{Denoised Neighborhood Aggregation}, a self-supervised framework that captures semantic similarities between data and aggregates information from neighbors. We further propose three principles to filter out false neighbors for better representation learning.
+  \item \textbf{Theory}: we interpret our framework from a generalized EM perspective and theoretically prove that the learning objective of our framework is equivalent to a clustering loss. So our model can alternately retrieve more accurate neighbors and learn more compact cluster representations.
+  \item \textbf{Experiments}: Extensive experiments on three benchmark datasets show that our model establishes state-of-the-art performance on the FCDC task (average 9.96\% improvement) and retrieves more accurate neighbors (21.31\% accuracy improvement), which validates our theoretical analysis.
+\end{itemize}
+
+
+
+Related Work
+\subsection{Novel Category Discovery}
+Novel Category Discovery aims at discovering novel categories from unlabeled data to expand existing class taxonomy \citep{openset, thu2021, gcd, selflabel,unknown,ptjn}. To discover novel categories without any annotation, previous models usually adopted self-supervised methods. For example, \citet{ranking} utilized ranking statistics as pseudo-labels to train their model with binary cross-entropy loss. \citet{dpn} proposed to decouple known and novel categories from unlabeled data and performed representation learning with prototypical network. However, these methods only focus on the scenario where known and novel categories are of the same granularity. To discover fine-grained categories, a novel task called Fine-grained Category Discovery under Coarse-grained supervision (FCDC) was proposed by \citet{fcdc}. They also proposed a weighted self-contrastive strategy to acquire fine-grained knowledge. And \citet{coarse2fine} proposed to perform fine-grained text classification with the help of fine-grained label names and coarse-grained labeled data. In Computer Vision, \citet{angular} proposed angular contrastive learning to perform few-shot fine-grained image classification with only coarse-grained supervision. However, these methods only focus on instance-level discrimination, which may prevent them from learning compact cluster representations for fine-grained category discovery.
+
+\begin{figure*}
+\centering
+\includegraphics[width=15.5cm, height=6.5cm]{model_t.pdf}
+\caption{The overall architecture of our \textit{DNA} framework.} 
+\label{fig2}
+\end{figure*}
+
+\subsection{Contrastive Learning}
+Contrastive Learning (CL) performs representation learning by pulling similar samples closer and pushing dissimilar samples far away \citep{simclr}. And how to build high-quality positive keys for the given queries is a challenging task for CL. Most previous methods took two different transformations of the same input as query and positive key, respectively \citep{positivecv, simclr, moco}. \citet{pcl} proposed to utilize prototypes learned by clustering as their positive keys. Furthermore, \citet{fcdc} proposed to use shallow features extracted by BERT as positive keys. Recently, Neighbourhood Contrastive Learning (NCL) was proposed by treating the nearest neighbors of queries as positive keys \citep{ncl}, which can avoid complex data augmentations. \citet{nclncd} further utilized \textit{k}-nearest neighbors to mine hard negative keys for CL. And \citet{new} randomly selected one positive key from \textit{k}-nearest neighbors for representation learning.
+Even though NCL has achieved better results on many tasks, previous methods ignored the fact that the retrieved neighbors can be noisy (i.e., neighbors and the query come from different categories) due to lack of supervision, and these false-positive keys can be harmful for representation learning since they provide wrong supervision signals.
+
+
+Method
+\subsection{Problem Formulation}
+Given a set of coarse-grained categories $\mathcal{Y}_{coarse}=\{\mathcal{C}_{1}, \mathcal{C}_{2},...,\mathcal{C}_{M}\}$ and a coarsely labeled training set $\mathcal{D}_{train}= \{(x_{i}, c_{i}) \mid c_{i} \in \mathcal{Y}_{coarse}\}_{i=1}^{N}$, the FCDC task aims at learning a feature encoder $F_{\theta}$ that maps samples into a compact $D$-dimension embedding space to further separate them into different fine-grained categories $\mathcal{Y}_{fine} = \{\mathcal{F}_{1}, \mathcal{F}_{2},...,\mathcal{F}_{K}\}$, even though without any prior fine-grained knowledge, where $\mathcal{Y}_{fine}$ are sub-classes of $\mathcal{Y}_{coarse}$.
+Model performance will be measured on another testing set $\mathcal{D}_{test}= \{(x_{i}, y_{i}) \mid y_{i} \in \mathcal{Y}_{fine}\}_{i=1}^{L}$ through clustering (e.g., K-Means) based on the embeddings extracted by $F_{\theta}$. It should be noted that we only use the number of fine-grained categories $K$ when testing so that we can make a fair comparison with different methods, following the settings in previous work \citep{fcdc}.
+
+\subsection{Proposed Approach}
+To achieve the learning objective of FCDC, we propose \textit{Denoised Neighborhood Aggregation} (DNA), an iterative framework to bootstrap model performance on retrieving reliable neighbors and learning compact embeddings. As shown in Fig. \ref{fig2}, our model mainly contains three steps. Firstly, we maintain a dynamic queue to retrieve neighbors for queries based on their semantic similarities (Sec. \ref{queue}). Secondly, we propose three principles to filter out false-positive neighbors for better representation learning (Sec. \ref{refine}). Thirdly, we perform neighborhood aggregation to learn compact embeddings for fine-grained clusters (Sec. \ref{dna}). Last but not least, we interpret our framework from the generalized EM algorithm perspective and theoretically prove that our learning objective is equivalent to a clustering loss, which can help to learn more compact fine-grained cluster embeddings (Sec. \ref{analysis}).
+
+\subsubsection{Neighborhood Retrieval}
+\label{queue}
+We maintain a dynamic queue $\mathcal{M}$ to store sample features for subsequent training. The features in the queue are extracted by a momentum encoder $F_{\theta^{m}}$ and are progressively updated at each iteration. To keep consistency of features used for neighborhood retrieval and representation learning, we update $F_{\theta^{m}}$ in a moving-average manner \citep{moco}:
+\begin{equation}
+    \theta^{m}_{t+1} = \alpha\theta^{m}_{t} + (1-\alpha)\theta_{t+1}
+\end{equation}
+where $\alpha \in [0,1)$ is a momentum coefficient, $\theta^{m}$ and $\theta$ are parameters of $F_{\theta^{m}}$ and $F_{\theta}$, respectively. $F_{\theta}$ is a query encoder for representation learning and is updated by back-propagation.
+
+In order to learn compact representations, we retrieve neighbors of each query from the queue $\mathcal{M}$. Specifically, we first pretrain $F_{\theta}$ and $F_{\theta^{m}}$ with cross-entropy loss on coarse-grained labels to initialize models. Then given a query embedding $q_{i} = F_{\theta}(x_{i})$, we search its $k$-nearest neighbors $\mathcal{N}_{i}$ from the queue $\mathcal{M}$ by measuring their semantic similarities:
+\begin{equation}
+    \mathcal{N}_{i} = \{h_{j} \mid h_{j} \in \mathop{argtop_{k}}_{h_{l} \in \mathcal{M}} (sim(q_{i}, h_{l})) \}
+\end{equation}
+where $sim()$ is a similarity function and here we use cosine similarity $sim(q_{i}, h_{j}) = \frac{q_{i}^{T}h_{j}}{\left\|q_{i}\right\| \cdot \left\|h_{j}\right\|}$.
+
+\subsubsection{Neighborhood Refining}
+\label{refine}
+ After neighborhood retrieval, previous methods \citep{ncl,new} simply used these neighbors as positive keys for contrastive learning. However, they ignored the fact that the retrieved neighbors contain many false-positive keys (i.e., keys with different fine-grained categories from the query), which can significantly degrade their model performance. This is because we lack of fine-grained supervision and samples with different fine-grained categories can be clustered together after pretraining.
+To mitigate this problem, we propose three principles to filter out these false-positive neighbors, which consider  bidirectional semantic structures and statistical features of samples (illustrated in Fig. \ref{fig2}).
+
+\noindent \textbf{Label Constraint} aims at filtering neighbors with different coarse-grained labels from the query, since samples with the same fine-grained labels must also have the same coarse-grained ones. The refined neighbor set for query $q_{i}$ is:
+\begin{equation}
+    \mathcal{A}_{i} = \{h_{j} \mid (h_{j} \in \mathcal{N}_{i}) \wedge (c_{i} = c_{j})\}
+\end{equation}
+where $c_{i}$ and $c_{j}$ are coarse-grained labels for the query $q_{i}$ and its neighbor $h_{j}$.
+
+\noindent \textbf{Reciprocal Constraint} requires that the neighborhood relationships should be bidirectional \citep{reciprocal} (i.e., the query should also be its neighbors' neighbor). This constraint is intuitive since samples in a compact cluster should be neighbors to each other. Traditional $k$-NN simply retrieved $k$ neighbors for each sample, which can introduce many false neighbors, especially for data with long-tailed distribution. As the example of reciprocal constraint in Fig. \ref{fig2}, the blue sample should only have two neighbors, but 3-NN introduces a false neighbor (the green sample) for it. The reciprocal constraint can filter out this false neighbor since the blue sample is not a neighbor of the green one. So the reciprocal constraint can capture bidirectional semantic structures between samples and provide different number of neighbors for different samples. And the refined neighbor set for query $q_{i}$ is:
+\begin{equation}
+    \mathcal{R}_{i} = \{h_{j} \mid (h_{j} \in \mathcal{A}_{i}) \wedge (q_{i} \in \mathcal{A}_{j}) \}
+\end{equation}
+
+\noindent \textbf{Rank Statistic Constraint} requires the rank statistics between neighbors to be the same. Specifically, we rank the values of feature embeddings by magnitude and extract the index of top-$m$ values to form a rank set. Then we filter out neighbors who have different rank set from the query. The rank statistic constraint is effective for two reasons. Firstly, rank statistic is more robust than cosine similarity, especially for high-dimensional data \citep{robust, ranking}. Secondly, samples with the same coarse-grained labels but different fine-grained ones can have high cosine similarities after pretraining, which can lead to false-positive neighbors. However, we think the pretrained embeddings also contain information about fine-grained categories which are interrupted by other noisy information. So if we only focus on the main components of these embeddings, we can filter out the noisy information and discover the hidden fine-grained information. The refined neighbor set for query $q_{i}$ is:
+\begin{equation}
+    \mathcal{S}_{i} = \{h_{j} \mid (h_{j} \in \mathcal{R}_{i}) \wedge (top_{m}(h_{j}) = top_{m}(q_{i}))
+    \}
+\end{equation}
+where $top_{m}(q_{i})$ maps the $d$-dimensional embedding $q_{i}$ into a $m$-dimensional set ($m=2$ in Fig. \ref{fig2}) which contains index of top-$m$ values of $q_{i}$.
+
+\subsubsection{Denoised Neighborhood Aggregation}
+\label{dna}
+After mining reliable neighbors, we perform \textit{Denoised Neighborhood Aggregation} (DNA) to pull queries and their neighbors closer by extending the traditional contrastive loss \citep{infonce} to the form with multiple positive keys:
+
+\begin{small}
+\begin{equation}
+\label{multi}
+\begin{split}
+    \mathcal{L}_{DNA} &= -\frac{1}{|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} \frac{1}{|\mathcal{S}_{i}|}\sum\limits_{h_{j} \in \mathcal{S}_{i}} log \frac{exp(q_{i}^{T}h_{j}/\tau)}{\sum\limits_{h_{k} \in \mathcal{M}}exp(q_{i}^{T}h_{k}/\tau)} \\
+    &= \underbrace{-\frac{1}{|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} \frac{1}{|\mathcal{S}_{i}|}\sum\limits_{h_{j} \in \mathcal{S}_{i}} (q_{i}^{T}h_{j}/\tau)}_{(Alignment)} \\
+    &+ \underbrace{\frac{1}{|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} log\sum\limits_{h_{k} \in \mathcal{M}}exp (q_{i}^{T}h_{k}/\tau)}_{(Uniformity)}
+\end{split}
+\end{equation}
+\end{small}
+
+where $q_{i}$ is the $L_{2}$ normalized query embedding and $h_{j}$ is the $L_{2}$ normalized key embedding from the queue $\mathcal{M}$. Then we train the model with the loss $\mathcal{L}_{DNA}$ and the cross-entropy loss $\mathcal{L}_{CE}$ with the coarse-grained labels to learn compact cluster embeddings for FCDC.
+
+\subsubsection{Theoretical Analysis}
+\label{analysis}
+\noindent \textbf{Analysis for $\mathcal{L}_{DNA}$.} \quad
+The loss $\mathcal{L}_{DNA}$ can be divided into two parts \citep{alignment}: \textit{Alignment} to pull queries and their neighbors closer, and \textit{Uniformity} to make samples uniformly distributed in hyper-sphere. Then we will prove that the \textit{Alignment} term in $\mathcal{L}_{DNA}$ is equivalent to a clustering loss that makes the query converge to the center of its neighbors, which can help to learn more compact cluster representations for fine-grained category discovery.
+
+\begin{small}
+\begin{equation}
+\begin{split}
+    (Align.) &= -\frac{1}{\tau|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} \left \{ q_{i}^{T}(\frac{1}{|\mathcal{S}_{i}|} \sum\limits_{h_{j} \in \mathcal{S}_{i}}h_{j}) \right \} \\
+    &= -\frac{1}{\tau|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}}q_{i}^T\mu_{i} \\
+    &= \frac{1}{2\tau|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} \left \{  (q_{i} - \mu_{i})^{2} - \Vert q_{i} \Vert^{2} - \Vert \mu_{i} \Vert^{2} \right \} \\
+    &= \frac{1}{2\tau|\mathcal{D}|}\sum\limits_{q_{i} \in \mathcal{D}} (q_{i} - \mu_{i})^{2} + c \\
+    &\overset{c}{=} \sum\limits_{q_{i} \in \mathcal{D}} (q_{i} - \mu_{i})^{2}
+\end{split}
+\end{equation}
+\end{small}
+
+where the symbol $\overset{c}{=}$ indicates equal up to a multiplicative and/or an additive constant.
+$\mu_{i}=\frac{1}{|\mathcal{S}_{i}|} \sum\limits_{h_{j} \in \mathcal{S}_{i}}h_{j}$ is the center of query's neighbors. 
+$\Vert q_{i} \Vert^{2}=1$ because of normalization, and $\Vert \mu_{i} \Vert^{2}$ is a constant since the neighbor embedding $h_{j}$ is from the queue without gradient.
+
+\noindent \textbf{Interpreting \textit{DNA} from the generalized EM perspective.} \quad
+If we consider the centers of the neighbors as hidden variables, we can interpret the \textit{DNA} framework from the generalized EM perspective. 
+
+At the E-step, we fix model parameters $\theta$ to find the hidden variables by retrieving and refining the neighbor set $\mathcal{S}_{i}$:
+\begin{equation}
+    \{ \mu_{i} | \theta,q_{i},\mathcal{M}  \}_{i=1}^{N} = \frac{1}{|\mathcal{S}_{i}|} \sum\limits_{h_{j} \in \mathcal{S}_{i}}h_{j}
+\end{equation}
+
+At the M-step, we fix the hidden variables $\{ \mu_{i} \}_{i=1}^{N}$ to optimize model parameters $\theta$:
+\begin{equation}
+    \argmin_{\theta} \sum\limits_{q_{i} \in \mathcal{D}} (q_{i} - \mu_{i})^{2}
+\end{equation}
+
+Since more accurate neighbors can boost representation learning and better representation learning can help to retrieve more accurate neighbors, our framework can iteratively bootstrap model performance on representation learning and neighborhood retrieval. In addition to the intuitive explanation, we also verify the intuition through experiments (Sec. \ref{em}).
+
+
+\begin{table}[t]
+\centering
+
+\begin{tabular}{lccccc}
+\hline
+Dataset & |$\mathcal{C}$| & |$\mathcal{F}$| & \# Train  & \# Test  \\
+\hline
+CLINC   &  10    &  150       & 18,000     &  1,000    \\
+WOS     &  7     &  33        & 8,362      &  2,420     \\
+HWU64   &  18    &  64        & 8,954      &  1,031     \\
+\hline
+\end{tabular}
+\caption{Statistics of benchmark datasets. \#: number of samples. |$\mathcal{C}$|: number of coarse-grained categories. |$\mathcal{F}$|: number of fine-grained categories.}
+\label{table1}
+\end{table}
+
+
+\begin{table*}
+\centering
+
+\begin{tabular}{lccccccccc}
+\toprule
+\multirow{2}*{Methods} & \multicolumn{3}{c}{CLINC} &\multicolumn{3}{c}{WOS} &\multicolumn{3}{c}{HWU64}\\
+\cmidrule(r){2-4}  \cmidrule(r){5-7}  \cmidrule(r){8-10}
+&ACC    &ARI    &NMI    &ACC    &ARI    &NMI     &ACC    &ARI    &NMI\\
+\midrule
+BERT    &34.37    &17.61    &64.75    &31.97    &18.36    &45.15    &33.52    &17.04    &56.90\\             
+BERT + CE    &43.85    &32.37    &78.58    &38.29    &36.94    &64.72    &37.89    &33.68    &74.63\\
+\midrule
+DeepCluster                &26.40  &12.51  &61.26  &29.17  &18.05  &43.34   &29.74  &13.98  &53.27\\
+DeepAligned                &29.16  &14.15  &62.78  &28.47  &15.94  &43.52   &29.14  &12.89  &52.99\\
+DeepCluster + CE           &30.28  &13.56  &62.38  &38.76  &35.21  &60.30   &41.73  &27.81  &66.81\\
+DeepAligned + CE           &42.09  &28.09  &72.78  &39.42  &33.67  &61.60   &42.19  &28.15  &66.50\\
+\midrule
+NNCL    &17.42    &13.93    &67.56    &29.64    &28.51    &61.37    &32.98    &30.02    &73.24\\
+CLNN    &19.96    &14.76    &68.30    &29.48    &28.42    &60.99    &37.21    &34.66    &75.27\\
+SimCSE   &40.22  &23.57  &69.02  &25.87  &13.03  &38.53   &24.48  &8.42  &46.94\\
+Ancor + CE                &44.44  &31.50  &74.67  &39.34  &26.14  &54.35   &32.90  &30.71  &74.73\\
+Ancor   &45.60  &33.11  &75.23  &41.20  &37.00  &65.42   &37.34  &34.75  &74.99\\
+Delete    &47.11  &31.28  &73.39  &24.50  &11.68  &35.47   &21.30  &6.52  &44.13\\
+Delete + CE    &47.87  &33.79  &76.25  &41.53  &33.78  &61.01   &35.13  &31.84  &74.88\\
+SimCSE + CE    &52.53  &37.03  &77.39  &41.28  &34.47  &61.62   &34.04  &31.81  &74.86\\
+WSCL   &74.02    &62.98    &88.37    &65.27    &51.78    &72.46    &59.52    &49.34    &79.31\\
+\midrule
+\rowcolor{gray!20}\textbf{Ours}    &\textbf{87.66}  &\textbf{81.82}  &\textbf{94.69}             &\textbf{74.57}           &\textbf{63.30}  &\textbf{76.86}   &\textbf{70.81}           &\textbf{59.66}  &\textbf{83.31}\\
+Improvement    &+13.64    &+18.84    &+6.32    &+9.30    &+11.52    &+4.40    &+11.29    &+10.32    &+4.00  \\
+\hline
+\end{tabular}
+\caption{Model performance (\%) on the FCDC task. Average results over 3 runs are reported. Some results are cited from \citet{fcdc}.}
+\label{table2}
+\end{table*}
+
+
+
+Experiments
+\subsection{Experimental Settings}
+
+\subsubsection{Datasets}
+We conduct experiments on three benchmark datasets. \textbf{CLINC} \citep{clinc} is an intent detection dataset from multiple domains. \textbf{WOS} \citep{wos} is a paper classification dataset. \textbf{HWU64} \citep{hwu64} is an assistant query classification dataset. Statistics of the datasets are shown in Table \ref{table1}.
+
+\subsubsection{SOTA Methods for Comparison}
+We compare our model with following methods. \textbf{Baselines}: BERT \citep{bert} without fine-tuning and BERT under coarse-grained supervision. \textbf{Self-training Methods}: DeepCluster \citep{deepcluster} and DeepAligned \citep{deepaligned}. \textbf{Contrastive based Methods}: SimCSE \citep{simcse}, Ancor \citep{angular}, Delete \citep{delete}, Nearest-Neighbor Contrastive Learning (NNCL) \citep{nnclr},  Contrastive Learning with Nearest Neighbors (CLNN) \citep{clnn} and Weighted Self-Contrastive Learning (WSCL) \citep{fcdc}. We also investigate some variants by adding cross-entropy loss (\textbf{+CE}).
+
+\subsection{Evaluation Metrics}
+\label{eval}
+To evaluate the quality of the discovered fine-grained clusters, we use two broadly used evaluation metrics: Adjusted Rand Index (ARI) \cite{ari} and Normalized Mutual Information (NMI) \cite{nmi}:
+\begin{equation}
+    ARI = \frac{RI-E(RI)}{max(RI)-E(RI)}
+\end{equation}
+
+\begin{equation}
+    NMI = \frac{2 * I(\hat{y};y)}{H(\hat{y}) + H(y)}
+\end{equation}
+where $RI$ is the rand index and $E(RI)$ is the expectation of $RI$. $\hat{y}$ is the prediction from clustering and $y$ is the ground truth. $I(\hat{y};y)$ is the mutual information between $\hat{y}$ and $y$, $H(\hat{y})$ and $H(y)$ represent the entropy of $\hat{y}$ and $y$, respectively.
+
+To evaluate the classification performance of models, we use the metric clustering accuracy (ACC):
+\begin{equation}
+ACC = \frac{\sum_{i=1}^{N}\mathbb I\{\mathcal{P}(\hat{y}_{i}) = y_{i}\}}{N}
+\end{equation}
+where $\hat{y}_{i}$ is the prediction from clustering and $y_{i}$ is the ground-truth label, $N$ is the number of samples, $\mathcal{P}(\cdot)$ is the permutation map function from Hungarian algorithm \cite{hungarian}.
+
+\subsubsection{Implementation Details}
+We use the pre-trained BERT-base model \citep{bert} as our backbone with the learning rate $5e^{-5}$. We use the AdamW optimizer with 0.01 weight decay and 1.0 gradient clipping.
+For hyper-parameters, the batch size for pretraining, training and testing is set to 64. Epochs for pretraining and training are set to 100 and 20, respectively.
+The temperature $\tau$ is set to 0.07. The number of neighbors $k$ is set to \{120, 120, 250\} for the dataset CLINC, HWU64 and WOS, respectively. The dimension for Rank Statistic Constraint is set to 5. The momentum factor $\alpha$ is set to 0.99. 
+For compared methods, we use the same BERT model as ours to extract features and adopt hyper-parameters in their original papers for a fair comparison.
+
+\subsection{Result Analysis}
+Comparison results of different methods are shown in Table \ref{table2}. From the results, we can get following observations. (1) Our model outperforms the compared methods across all evaluation metrics and datasets, which clearly shows the effectiveness of our model. we attribute the better performance of our model to the following reasons. Firstly, our model can model semantic structures of data to learn more compact cluster representations by aggregating information from neighbors. Secondly, our model can retrieve reliable neighbors to boost the quality of representation learning with three filtering principles. Thirdly, the previous two steps can boost performance of each other in an EM manner, which can progressively bootstrap the entire model performance. (2) Baselines and self-training methods perform badly on the FCDC task since they rely on abundant fine-grained labeled data to train their models, which are not available under the FCDC setting. (3) Contrastive-based methods perform better than baselines above since they can acquire fine-grained knowledge even without fine-grained supervision. However, these methods simply treat each instance as a single class but ignore semantic similarities between different instances, which may prevent them from learning compact representations for subsequent clustering.
+
+
+
+
+
+Discussion
+\subsection{Ablation Study}
+We investigate the effectiveness of different components of our model in Table \ref{table3}. From the table we can draw following conclusions. (1) Traditional Nearest-Neighbor Contrastive Learning (NNCL) performs badly on the FCDC task, which is because NNCL ignores semantic similarities between samples and fails to retrieve reliable neighbors. (2) Adding multiple neighbors as positive keys (Eq. \ref{multi}) significantly improves model performance since it can help to learn compact cluster representations for fine-grained categories (Sec. \ref{analysis}). (3) Adding coarse-grained supervision with cross entropy loss can also boost model performance since it can contribute to representation learning. (4) Adding different filtering principles (Label, Reciprocal and Rank) can also improve model performance since they are responsible to retrieve reliable neighbors for better representation learning.
+
+\begin{table}
+\setlength\tabcolsep{7pt}
+\centering
+
+\begin{tabular}{lccc}
+\midrule
+\textbf{Model} & ACC & ARI & NMI \\
+\midrule
+NNCL                          & 32.98 & 30.02 & 73.24\\
++ Multi. Neighbors            & 64.89 & 52.88 & 81.14\\
++ Coarse Labels               & 68.19 & 55.95 & 81.90\\
++ Label                       & 68.67 & 57.08 & 81.99\\
++ Reciprocal                  & 69.42 & 58.16 & 82.99\\
+\rowcolor{gray!20}+ Rank (Ours)                 & 70.81 & 59.66 & 83.31\\
+\hline
+\end{tabular}
+\caption{Results (\%) of different model variants on the HWU64 dataset. '+' means that we add the component to the previous model.}
+\label{table3}
+\end{table}
+
+
+\begin{figure*} \centering    
+\subfigure[Accuracy of selected neighbors.] {
+ \label{fig:a}     
+\includegraphics[width=0.66\columnwidth, height=4.5cm]{neighbor_acc.pdf}  
+}     
+\subfigure[The number of selected neighbors.] { 
+\label{fig:b}     
+\includegraphics[width=0.66\columnwidth, height=4.5cm]{neighbor_num.pdf}     
+}    
+\subfigure[Model performance during training.] { 
+\label{fig:c}     
+\includegraphics[width=0.66\columnwidth, height=4.5cm]{weight.pdf}     
+}   
+\caption{Analysis of the quality of representation learning and neighborhood retrieval.}     
+\label{figure3}     
+\end{figure*}
+
+
+\subsection{Accuracy of Selected Neighbors}
+To investigate the effect of three filtering principles on the accuracy of the retrieved neighbors, we report the accuracy (i.e., the query and neighbors have the same fine-grained labels) of the retrieved neighbors in Table \ref{table4}. Specifically, (1) retrieving neighbors without any filtering (\textbf{\textit{k}-NN}) can yield only 50\% retrieval accuracy, which can significantly affect subsequent learning since those false neighbors provide wrong supervision signal for representation learning. (2) Adding the coarse-grained label constraint (\textbf{Label}) can improve the retrieval accuracy slightly since \textit{k}-NN has also learned the coarse-grained knowledge through pretraining. (3) Adding the reciprocal constraint (\textbf{Reciprocal}) can make huge improvement in retrieval accuracy since this constraint can capture bidirectional relationships between queries and the ret
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,240 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\begin{figure}[t]
+	\centering
+		\includegraphics[width=1.0\linewidth]{figure/performance_radar_text.pdf}
+	\caption{\caml achieves the state-of-the-art performance on a number of multimodal benchmarks, outperforming LLaVA-1.5 and many other large multimodal models.}
+    \label{fig:caml_teaser_fig}
+\end{figure}
+Recently, large multimodal models (LMMs)~\cite{llava,llamaadapter,ofa,llava15, minigpt4, frozen, flamingo} have demonstrated remarkable performance in a variety of tasks, including but not limited to  visual question answering, image captioning, visual grounding, visual-language reasoning, optical character recognition, and visual entailment. Notably, in certain benchmark assessments, these multimodal foundation models have even exceeded human-level performance~\cite{mmcot,llava}. 
+
+Despite the impressive performance, their ability to make inferences is constrained by the knowledge encoded in the model parameters. The inflexible design of these models makes it challenging for them to generalize from contextual examples. For instance, LLaVA-1.5 falls short in processing multiple images and attributes it to the lack of corresponding instruction-tuning training data~\cite{llava15}. Nevertheless, learning and making inferences through contextual examples are fundamental elements of our cognitive processes. Human beings frequently tackle intricate problems by relying on past experiences and identifying analogous situations. Taking inspiration from the cognitive process, we hypothesize that empowering large multimodal models with the capability to perceive and derive insights from analogous contextual examples can significantly streamline the inference process and lead to more precise predictions. Nonetheless, the means to replicate the human cognitive processes in LMMs remain unclear. 
+
+As such, our goal is to empower multimodal foundational models to harness context-aware learning, thereby enhancing their ability to comprehend and adapt to previously unseen examples. Identifying relevant context examples is relatively straightforward; this process can be facilitated using multimodal embedding models like ImageBind~\cite{imagebind} or CLIP~\cite{clip}. This approach simulates the act of recalling similar situations from past experiences. Yet, effectively and efficiently integrating the identified similar context samples into large models poses challenges, particularly given the potential variability in the number of context samples and interleaved modalities, resulting in lengthy and heterogeneous context input.
+To this end, we propose a context-aware multimodal learner, dubbed as \caml, for LMMs. 
+\caml acts as a crucial intermediary between the contextual examples and a large language model (LLM). Our approach is structured hierarchically, where the initial level establishes connections between the text and image modalities for each example through cross-attention mechanisms. This integration of text and image information enables a deeper understanding of the interleaved context. Following this, another module takes the outputs of the first level and performs cross-attention between the contextual information and a predefined set of learnable, fixed-length tokens. The resulting output from this level is then used as fixed-length input for the LLM, allowing the model to leverage the refined and context-aware information to perform complex multimodal understanding tasks. To summarize, we make the following contributions: 
+\begin{itemize}
+    \item  We propose \caml, a context-aware multimodal learning approach for finetuning multimodal models. \caml is lightweight and can be applied to process extremely long multimodal context samples; 
+    \item With \caml, we have developed two multimodal models, \caml-7B and \caml-13B. These models have achieved state-of-the-art performance across a diverse range of benchmarks encompassing various multimodal tasks, all without the need for external data integration; 
+    \item We conduct comprehensive model analyses and case studies to examine the internal mechanisms of \caml and showcase how the proposed model can effectively handle real-world challenging cases. 
+\end{itemize}
+
+
+Related Work
+
+\paragraph{Large Multimodal Models} The success of LLMs has sparked a burgeoning interest in scaling up multimodal models. One prevalent strategy involves the incorporation of vision encoders, such as ViT~\cite{vit} and CLIP, into existing LLMs (\eg, LLaMA~\cite{llama}, Vicuna~\cite{vicuna}). For example, LLaMA-adapter~\cite{llamaadapter} inserts learnable adaption prompts into LLaMA and make it to follow multimodal instructions for multimodal reasoning. BLIP2~\cite{blip2} bridges different modalities via Q-Former and employs a two-stage training method to bootstrap both representation learning and LLM (\eg, OPT~\cite{opt}, Flan-T5~\cite{flant5}) generative learning capabilties. LLaVA~\cite{llava, llava15} projects encoded image features to text token space using linear layers and shows state-of-the-art performance on a variety of multimodal tasks. Another noteworthy series of strategy is to unify multimodal input data and pretrain the model from scratch, exemplified by OFA~\cite{ofa}, Perceiver~\cite{perceiver, perceiverio}, Uni-Perceiver~\cite{uniperceiver}, Unival~\cite{unival}, and Unified-IO~\cite{unifiedio}. These models map images, text, and other modalities into the same IO space and use a causal language model objective for training. 
+
+\paragraph{Multimodal Few-shot Learning} Extensive research has been conducted on learning from a limited number of multimodal examples. Among them, Flamingo~\cite{flamingo} introduces gated xatten-dense layers to establish cross-modal interactions between visual input and text input for few-shot learning. Frozen~\cite{frozen} trains a vision encoder to produce a sequence of image embeddings and input it to frozen language models for multimodal tasks. An alternative approach for tackling multimodal few-shot learning involves leveraging retrieval augmented generations (RAG)~\cite{lewis2020retrieval,borgeaud2022improving,ram2023context,khandelwal2019generalization}. This technique enables the models to access external knowledge repositories, databases, or structured data sources, allowing them to access the up-to-date as well as domain-specific expertise when crafting responses. Recently, there has been a surging interest for harnessing RAG within the realm of multimodal models~\cite{murag,revilm,racm3,liu2023learning}. Amalgamating RAG with multimodal models helps provide contextually-rich responses and opens up exciting possibilities across domains such as image captioning~\cite{revilm}, image generation~\cite{racm3}, etc. Among them, \citet{murag} propose MuRAG, a model of size 527M, for multimodal-QA. MuRAG concatenates the visual embeddings (extracted by ViT) and text word embeddings of retrieved multimodal image-text pairs and requires the language model to handle a very lengthy input sequences.  Re-ViLM~\cite{revilm} is tailored for image captioning and it follows the Flamingo architecture and only uses the retrieved text for augmentation. RA-CM3~\cite{racm3} leverages retrieval to augment the CM3~\cite{cm3} pipeline which can do both text-to-image and image-to-text generations.
+ 
+
+In contrast to previous approaches, our primary objective is to develop a lightweight module capable of processing multimodal context information efficiently and effectively, with superior generalization capabilities. This novel approach enables LLM to proficiently reason from multimodal in-context examples, leading to more accurate and precise inferences. As discussed in \cite{llava15}, LLaVA-1.5 faces limitations when confronted with scenarios involving multiple images and lengthy contexts. \caml can effectively address these challenges, a fact further corroborated by its superior performances across multiple benchmarks.
+
+
+Context-Aware Multimodal Learner
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figure/framework_v4.pdf}
+    \caption{\caml framework, which consists of retriever, perceiver and generator. Once receiving user query $q$, \caml retriever identifies relevant multimodal contexts $C$ from datastore, then \caml Perceiver seamlessly integrates various modalities, effectively encodeing long-context information and injecting it into the \caml generator. This allows for the prediction of responses that are conditioned on both the context and the query $q$.}
+    \label{fig:arch}
+\end{figure*}
+
+\subsection{Architecture of \caml}
+The structure of \caml is depicted in Figure \ref{fig:arch}. We provide a detailed explanation of each component below.
+
+\subsubsection{Datastore and Context Retriever} The datastore is created from either the training set or external resources. We adopt an embedding encoder, ImageBind~\cite{imagebind}, to extract dense vector representations for every multimodal sample contained in the datastore. Following this, we build an index using Faiss~\cite{johnson2019billion}, a highly efficient similarity search library, to enable rapid and efficient search operations. During both the training and inference phases, our approach involves identifying the top $N$ most closely related multimodal samples, denoted as $C_1, C_2, \ldots, C_N$, from the datastore using Faiss, based on a given multimodal query $q$\footnote{Specifically, we compute the similarity between query text and context image, and top-k images along with their corresponding texts are recalled from the datastore.}. It is worth noting that the retriever remains frozen throughout all stages of the process.
+\subsubsection{Multimodal \caml Perceiver} To seamlessly integrate interleaved multimodal samples, we introduce a novel module denoted as \caml Perceiver, which revolves around two key design principles: (1) The module should accommodate a dynamic number of context samples without imposing a significant computational burden. It is worth noting that directly concatenating the image tokens and text tokens will result in $L = \sum^N_{i=1} (T_{i}^{\text{IMG}} + T_{i}^{\text{TXT}})$ tokens, where $T_{i}^{\text{IMG}}$ is the number of image tokens and $T_{i}^{\text{TXT}}$ is the number of text tokens. The formulation results in a linear increase of $L$ with respect to $N$, posing scalability concerns; (2) It is crucial that the text and image in each individual sample remain tightly coupled. 
+
+To achieve this, we embrace a hierarchical design, facilitating the transformation of the $N$ context samples into $M$ tokens, where $M < L$. Formally, the multimodal \caml Perceiver comprises three key modules: a \textit{Vision Perceiver} (VP) denoted as $f_{\theta^{\text{VP}}}$ , a \textit{Language Perceiver} (LP) denoted as $f_{\theta^{\text{LP}}}$, and a \textit{Context Perceiver} (CP) denoted as $f_{\theta^{\text{CP}}}$. Each of these modules follows a similar architectural pattern with Perceiver Layers as the core component, as depicted in Figure \ref{fig:arch}. 
+
+\paragraph{Vision Perceiver} The Vision Perceiver takes the image feature extracted with ViT, $\mathbf{V}^{(C_i)} \in \mathbb{R}^{T_i^{\text{IMG}} \times d}$, as input, and it undergoes a sequence of transformations. It starts with a self-attention layer to capture inherent visual relationships. Subsequently, cross-attention layers are employed to interact with the text token embeddings $\mathbf{U}^{(C_i)}$, allowing the model to enrich its understanding by integrating information from the text domain. Finally, the processed data passes through a feed-forward layer, resulting in an output denoted as $f_{\theta^{\text{VP}}}(\mathbf{V}^{(C_i)}) \in \mathbb{R}^{T_i^{\text{IMG}} \times d}, i=1,...,N$. Subsequently, we concatenate the outputs generated by the Vision Perceiver for each of the $N$ context samples, yielding a feature matrix of shape $\mathbb{R}^{(\sum^N_{i=1} T_{i}^\text{IMG}) \times d}$
+\begin{align*}
+    \mathbf{E}^{\text{IMG}} = \{f_{\theta^{\text{VP}}}(\mathbf{V}^{(C_1)}, \mathbf{U}^{(C_1)}), ..., f_{\theta^{\text{VP}}}(\mathbf{V}^{(C_N)}, \mathbf{U}^{(C_N)})\}, 
+\end{align*}
+where $\{\cdot\}$ denotes the concatenation operation. 
+
+\paragraph{Language Perceiver} The Language Perceiver, on the other hand, takes as input the text token embeddings $\mathbf{U}^{(C_i)} \in \mathbb{R}^{T_i^{\text{TXT}} \times d}$, which encapsulate the linguistic content of the sample. The processing pipeline mirrors that of the Vision Perceiver, starting with a self-attention mechanism to capture textual relationships, followed by interactions with the visual embeddings $\mathbf{V}^{(C_i)}$ via a cross-attention layer to create a holistic understanding of the multimodal context. The final step involves a feed-forward layer,  resulting in an output denoted as $f_{\theta^{\text{LP}}}(\mathbf{U}^{C_i}) \in \mathbb{R}^{T_i^{\text{TXT}} \times d}$. Similarly, we concatenate the outputs of all Language Perceivers to obtain a feature matrix of shape $\mathbb{R}^{(\sum^N_{i=1} T_{i}^\text{TXT}) \times d}$:
+\begin{align*}
+    \mathbf{E}^{\text{TXT}} = \{f_{\theta^{\text{LP}}}(\mathbf{U}^{(C_1)}, \mathbf{V}^{(C_1)}), ..., f_{\theta^{\text{LP}}}(\mathbf{U}^{(C_N)}, \mathbf{V}^{(C_N)})\}. 
+\end{align*}
+
+\paragraph{Context Perceiver} The Context Perceiver takes the lengthy outputs from either the Vision Perceiver or the Language Perceiver as input and produces a condensed set of contextual representations. This is achieved by using a fixed number of learnable embeddings of size $\mathbb{R}^{\frac{M}{2} \times d}$ as the input of the Context Perceiver, where $M$ is typically significantly smaller than $L$. These embeddings undergo processing through a self-attention layer, followed by a cross-attention layer with the feature matrix from either the Vision Perceiver or the Language Perceiver, and a feedforward layer. Specifically, for the Vision Perceiver, the learnable embeddings are denoted as $\mathbf{H}^{\text{IMG}} \in \mathbb{R}^{\frac{M}{2} \times d}$, and the output after applying the Context Perceiver is denoted as:
+\begin{align*}
+    \tilde{ \mathbf{H}}^{\text{IMG}} = f_{\theta^{\text{CP}}}(\mathbf{H}^{\text{IMG}}, \mathbf{E}^{\text{IMG}}) \in \mathbb{R}^{\frac{M}{2} \times d}.
+\end{align*}
+Similarily, for the Language Perceiver,  the learnable embeddings are denoted as $\mathbf{H}^{\text{TXT}} \in \mathbb{R}^{\frac{M}{2} \times d}$, and the output after applying the Context Perceiver is denoted as:
+\begin{align*}
+    \tilde{ \mathbf{H}}^{\text{TXT}} = f_{\theta^{\text{CP}}}(\mathbf{H}^{\text{TXT}}, \mathbf{E}^{\text{TXT}}) \in \mathbb{R}^{\frac{M}{2} \times d}.
+\end{align*}
+
+Following this, $\tilde{\mathbf{H}}^{\text{IMG}}$ and $\tilde{\mathbf{H}}^{\text{TXT}}$ are concatenated, resulting in a contextual feature matrix $\tilde{\mathbf{H}} \in \mathbb{R}^{M \times d}$. This matrix is prepended to the beginning of the sequence, along with the text token embeddings of $q$ and the image embeddings of $q$ (transformed by the LLaVA multimodal projector). This integrated data serves as the input for the Large Language Model (LLM) to facilitate further processing.
+\begin{table}[!t]
+\centering
+\small
+\scalebox{0.87}{
+\begin{tabular}{l|l|cc}
+    \toprule
+    Method & AVG. & IMG & TXT \\
+    \midrule
+    \midrule
+    Human Average & 88.40 & 87.50 & 89.60 \\
+    UnifiedQA~\cite{scienceqa} & 74.11 & 66.53 & 66.42 \\
+    GPT-3 CoT~\cite{scienceqa} & 75.17 & 67.43 & 74.68 \\
+    GPT-4 CoT~\cite{chameleon} & 83.99 & 71.49 & 82.65 \\
+    LLaMA-Adapter~\cite{llamaadapter} & 85.19 & 80.32 & 83.72 \\
+    MMCoT$_{\rm Base}$~\cite{mmcot} & 84.91 & 82.90 & 87.88 \\
+    MMCoT$_{\rm Large}$~\cite{mmcot} & 91.68 & 88.80 & 95.26  \\
+
+    LLaVA-7B~\cite{llava} & 89.28 & 87.32  & 90.96  \\
+    LLaVA-13B~\cite{llava} & 90.90 & 88.00 & 89.49 \\
+    \midrule
+    \rowcolor{gray!20} \textbf{\caml-7B} & \textbf{91.32} & 89.24  & 93.21  \\
+    \rowcolor{gray!20} \textbf{\caml-13B} & \textbf{92.03} & 89.94 & 93.84 \\
+    \bottomrule
+\end{tabular}}
+\caption{Comparison with state-of-the-art methods on ScienceQA benchmark: \caml finetuned on \texttt{train} split and evaluated on \texttt{test} split. ``AVG.'' represents the average accuracy of all ScienceQA questions. ``IMG'' refers to the questions that include image contexts, while ``TXT'' refers to the questions without any images. }
+\label{table:llava_scienceqa_test}
+\end{table}
+
+\subsection{Model Training} In the training process, we freeze the retriever and vision encoder, and train \caml by minimizing the following causal language modeling loss.
+\begin{align*}
+    \ell = -\sum_{i=1}^{|y|} \log p_{\theta} (y_i |\hat{y}_{1:i-1}, q, C_{1},...,C_{N}),
+\end{align*}
+where $\theta \leftarrow (\theta^{\text{LLM}}, \theta^{\text{VP}}, \theta^{\text{LP}}, \theta^{\text{CP}}, \mathbf{H})$ is the model trainable parameter ($\theta^{\text{LLM}}$ is the parameter of LLM);  $y_i$ is the ground-truth target, and $\hat{y}_{1:i-1}$ is the $i-1$ preceding tokens of output $y_i$;  Specifically, we use Vicuna-7B and Vicuna-13B as our backbone language model, resulting in two models \caml-7B and \caml-13B. 
+
+
+
+Experiment
+Table \ref{table:llava_scienceqa_test},  Table \ref{table:instruction_tuning_12bench}, and Table \ref{table:compare_fs_models} provide a comprehensive summary of the performance achieved by \caml-7B and \caml-13B across various multimodal benchmarks. In comparison to previous state-of-the-art approaches, \caml exhibits noticeable improvement and establishes a new state-of-the-art. We elaborate on the experimental settings in the following sections and offer a comprehensive description (\eg, hyperparamter configuration) of the settings in the supplementary material.
+
+\subsection{Multimodal Reasoning on ScienceQA} 
+
+
+\begin{table*}[!t]
+\renewcommand\arraystretch{1.15}
+\centering
+\small
+\scalebox{0.67}{
+\begin{tabular}{lll|ccccc|clcccc}
+    \toprule
+    \textbf{Method} & LLM & Data & VQA$^{\rm v2}$ & GQA & VizWiz & SQA$^{\rm I}$ & VQA$^{\rm T}$ & POPE & MME & MMB & MMB$^{\rm CN}$ & SEED  & MM-Vet  \\
+    \midrule
+    \midrule
+    IDEFICS-9B~\cite{obelics} & LLaMA-7B & 353M+1M& 50.9 & 38.4 & 35.5 & - & 25.9 & - & - & 48.2 & 25.2 & -  & - \\
+    InstructBLIP~\cite{instructblip} & Vicuna-7B & 129M+1.2M & - & 49.2 & 34.5 & 60.5 & 50.1 & - & - & 36.0 & 23.7 & 53.4  & 26.2 \\
+    Qwen-VL~\cite{qwenvl} & Qwen-7B & 1.4B+50M &78.8 & 59.3 & 35.2 & 67.1 & \textbf{63.8} & - & - & 38.2 & 7.4 & 56.3  & - \\
+    Qwen-VL-Chat~\cite{qwenvl} & Qwen-7B & 1.4B+50M &78.2 & 57.5 & 38.9 & 68.2 & 61.5 & - & 1487.5 & 60.6 & 56.7 & 58.2  & - \\
+    LLaVA-1.5~\cite{llava15} & Vicuna-7B & 558K+665K&78.5 & 62.0 & 50.0 & 66.8 & 58.2 & 85.9 & \textbf{1510.7} & 64.3 & 58.3 & 58.6  & 30.5 \\
+    \rowcolor{gray!20} \textbf{\caml-7B}  & Vicuna-7B & 558K$^{\dagger}$+665K & \textbf{79.4} & \textbf{62.7} & \textbf{51.2} & \textbf{67.9} & 58.0 & \textbf{86.4} & 1506.9 & \textbf{66.9} & \textbf{60.6} & \textbf{60.4}  &  \textbf{32.2} \\
+    \midrule
+     IDEFICS-80B~\cite{obelics} & LLaMA-65B & 353M+1M & 60.0 & 45.2 & 36.0 & - & 30.9 & - & - & 54.5 & 38.1 & -  & - \\
+    
+    BLIP-2~\cite{blip2} & Vicuna-13B & 129M & 41.0 & 41.0 & 19.6 & 61.0 & 42.5 & 85.3 & 1293.8 & - & - & 46.4  & 22.4 \\
+    InstructBLIP~\cite{instructblip} & Vicuna-13B & 129M+1.2M& - & 49.5 & 33.4 & 63.1 & 50.7 & 78.9 & 1212.8 & - & - & -  & 25.6 \\
+    Shikra~\cite{shikra} & Vicuna-13B &600K+5.5M & 77.4 & - & - & - & - & - & - & 58.8 & - & -  & - \\
+    LLaVA-1.5~\cite{llava15} & Vicuna-13B & 558K+665K & 80.0 & 63.3 & 53.6 & 71.6 & 61.3 & 85.9 & 1531.3 & 67.7 & \textbf{63.6} & 61.6  & 35.4 \\
+
+    \rowcolor{gray!20} \textbf{\caml-13B}  & Vicuna-13B & 558K$^{\dagger}$+665K & \textbf{80.2} & \textbf{63.7} & \textbf{57.4} & \textbf{72.3} & 59.9 & \textbf{86.7} & \textbf{1588.7} & \textbf{70.2} & \textbf{63.6} & \textbf{62.3}  & \textbf{36.4} \\
+
+    \bottomrule
+\end{tabular}}
+\caption{Comparison with state-of-the-art large multimodal models on 11 benchmarks (VQA$^{\rm v2}$~\cite{vqadataset}, GQA~\cite{gqa}, VizWiz~\cite{vizwiz}, SQA$^{\rm I}$~\cite{scienceqa}: ScienceQA-IMG, VQA$^{\rm T}$~\cite{textvqa}: TextVQA, POPE~\cite{pope}, MME~\cite{mme}, MMB~\cite{mmbench}: MMBench, MMB$^{\rm CN}$~\cite{mmbench}: MMbench-Chinese, SEED~\cite{seed}: SEED-Bench, MM-Vet~\cite{mmvet}). \caml achieves the best performance on 10/11 tasks. $^{\dagger}$ denotes BLIP558K-pretrained projector is initialized for instruction tuning.}
+\label{table:instruction_tuning_12bench}
+\end{table*}
+
+ScienceQA, as introduced in~\cite{scienceqa}, serves as a multimodal benchmark designed for the task of science question answering. It comprises 21,000 multiple-choice questions, encompassing various domains including biology, physics, chemistry, Earth science, and more. We use the ScienceQA train split to build the datastore search index and for the model training. In specific, Vicuna-v1.3 is used as the LLM backbone, and CLIP-ViT-L-14~\cite{clip} is adopted as the visual feature encoder. By default, we retrieve three samples from the datastore as the contexts. We conduct evaluation of the ScienceQA on test split and adopt the same datastore (\ie, train split) search index for contextual samples retrieval. 
+
+We compare \caml with various baselines including UnifiedQA~\cite{unifiedqa}, GPT-4 CoT~\cite{chameleon}, LLaMA-Adapter~\cite{llamaadapter}, MMCoT$_{\rm Base}$~\cite{mmcot}, MMCoT$_{\rm Large}$~\cite{mmcot}, LLaVA~\cite{llava} 7B and 13B. 
+As shown in Table~\ref{table:llava_scienceqa_test},  \caml surpass baselines by a noticeable margin. It is worth noting that our model attains the best performance on average, surpassing the previous state-of-the-art model MMCoT$_{\rm Large}$\footnote{\caml-13B attains the highest AVG scores on the ScienceQA leaderboard when GPT4-review is not used}. We also notice that, on the IMG questions, \caml-13B outperforms LLaVA-13B and MMCoT$_{\rm Large}$ by a wide margin, which underscores \caml's strong capability in handling challenging questions that incorporate scientific images. Furthermore, we conduct detailed ablative studies with the ScienceQA dataset using \caml. See Section~\ref{sec:ablation} for more details. 
+
+\begin{table}[!t]
+\small
+\centering
+\scalebox{0.7}{
+\addtolength{\tabcolsep}{-0.5em}
+\begin{tabular}{l|cc|ccc}
+    \toprule
+    \multirow{3}{*}{\textbf{Method (shots)}} & \makecell{COCO \\ Caption} & Flickr30k & OKVQA & VQAv2 & Vizwiz  \\
+    
+     & CIDEr & CIDEr & Acc & Acc &  Acc  \\
+    \midrule
+    \midrule
+    \textit{\textbf{Retrieval-augmented models:}} & & & & &  \\
+    \ RA-CM3~\cite{racm3} (2) & 89.1 & - & - & - & -  \\
+    \ ReViLM~\cite{revilm} (0) & 60.8 & 52.1 & - & -  & -   \\
+    \ ReViLM~\cite{revilm} (2) & 77.2 & - & - & - &  -   \\
+    \ ReViLM~\cite{revilm} (4) & 90.5 & - & - & - &  -   \\
+    \ ReViLM~\cite{revilm} (8) & 90.2 & - & - & - &  -   \\
+    \midrule
+    \textit{\textbf{Zero/Few-shot models:}} & & & & &  \\
+    \ Uni-Perceiver (0)~\cite{uniperceiver} & 109.8 & 41.2 & - & - & - \\
+    \ Flamingo-9B (4) & 93.1 & 72.6 & 49.3 &  56.3 & 34.9   \\
+    \ Flamingo-9B (32) & 106.3 & 72.8  &  51.0 &  60.4 & 44.0   \\
+    \ Flamingo-80B (4) & 103.2  & 75.1 &  57.4 &  63.1  & 39.6   \\
+    \ Flamingo-80B (32) & 113.8  & 75.4 & 57.8  &   67.6 & 49.8   \\
+    \ KOSMOS-1 (4)~\cite{kosmos1}  & 101.7 & 75.3 & - &  51.8 & 35.3  \\
+    \ MMICL (4)~\cite{mmicl}  & - & 72.0 & -  & 70.6 & 50.3  \\
+    \midrule
+    \rowcolor{gray!20} \textbf{\caml-7B} (3) & 111.4 & 82.7 & 64.7  & 79.4 & 51.2  \\
+    \rowcolor{gray!20} \textbf{\caml-13B} (3) & \textbf{116.8} & \textbf{84.5} & \textbf{66.3}  & \textbf{80.2} & \textbf{57.4} \\
+    \bottomrule
+\end{tabular}}
+\caption{Comparison with state-of-the-art zero/few-shot models including retrieval-augmented counterparts on Captioning and VQA tasks: \caml are the ones that trained in instruction tuning (Sec~\ref{sec:instruction_following}) and are evaluated with 3-shots. \caml-13B achieves the best performance on 5/5 tasks, even outperforming Flamingo-80B model \cite{flamingo} under 32 shots.}
+\label{table:compare_fs_models}
+\end{table}
+
+\begin{table}[!t]
+\centering
+\small
+\scalebox{1.0}{
+\begin{tabular}{l|lcc}
+    \toprule
+    Method & AVG. & IMG & TXT \\
+    \midrule
+    \midrule
+    \caml-7B Baseline & \textbf{91.3} & \textbf{89.2} & \textbf{93.2} \\
+    \ - \textit{w/o Perceiver} & 89.7 & 85.8 & 93.2 \\
+    \ - \textit{w/o Vision Perceiver} & 89.8 & 87.4 & 92.1  \\
+    \ - \textit{w/o Language Perceiver} & 90.0 & 87.7 & 92.0 \\
+    \ - \textit{w/o Shared weights} &  91.3 & 89.1 & 93.2   \\
+    \bottomrule
+\end{tabular}}
+\caption{Ablation Experiments on \caml perceiver components and shared-weights Context Perceiver: \caml-7B models are evaluated on ScienceQA-\texttt{test}.}
+\label{table:ablation_contextmodel_design}
+\end{table}
+
+\subsection{Multimodal Instruction Tuning} \label{sec:instruction_following}
+\caml can be enhanced by tuning to follow multimodal instructions to handle a more diverse set of multimodal tasks. To substantiate this, we perform instruction tuning following \cite{llava15} on LLaVA-665K, an instruction-tuning data mixture of LLaVA-1.5. Following \cite{llava15}, we use Vicuna-v1.5 as the LLM backbone and CLIP-ViT-L-14-336px as the visual encoder. The datastore is built using the exact training set, LLaVA-665K, without external injected information for a fair comparison. LLaVA-665K comprises 665K multimodal samples, and is made up of LLaVA-Instruct-158K, ShareGPT-40K~\cite{sharegpt}, VQAv2~\cite{vqadataset}, GQA~\cite{gqa}, OKVQA~\cite{okvqa}, OCRVQA~\cite{ocrvqa}, A-OKVQA~\cite{aokvqa}, TextCaps~\cite{textcap}, RefCOCO~\cite{refcoco} and VG~\cite{vg}. We adopt a training strategy in which each individual sample might have a distinct $N$, spanning a range from $1$ to $3$ and denote it as ``mixed-shots training". During inference, we retrieve three relevant supporting multimodal samples from the datastore index. To evaluate the model effectiveness, we traverse 11 comprehensive benchmarks, including VQAv2, GQA, TextVQA~\cite{textvqa}, MME~\cite{mme}, POPE~\cite{pope}, MM-Vet~\cite{mmvet}, MMBench~\cite{mmbench}, MMBench-CN~\cite{mmbench}, SEED-Bench~\cite{seed}, and Vizwiz~\cite{vizwiz}. Results on ScienceQA image (denoted as SQA$^{\rm I}$) is also reported following \cite{llava15}.
+We compare \caml with large multimodal baselines such as  BLIP-2~\cite{blip2},  InstructBLIP~\cite{instructblip}, Shikra~\cite{shikra}, IDEFICS-9B~\cite{obelics}, IDEFICS-80B~\cite{obelics}, Qwen-VL~\cite{qwenvl},  Qwen-VL-Chat~\cite{qwenvl}, and LLaVA-1.5~\cite{llava15}. 
+As shown in Table~\ref{table:instruction_tuning_12bench}, \caml-13B demonstrates the best performance across all 11 benchmarks, surpassing LLaVA-1.5, which uses the same training data. Notably, when employing Vicuna-13B as its backbone, \caml-13B outperforms BLIP-2, InstructBLIP-13B, Shikra, and LLaVA-1.5-13B. Additionally, \caml-7B delivers impressive results, outperforming all other baseline models except for LLaVA-1.5-13B on ten of the benchmark datasets. On POPE, \caml-7B achieves performance on par with that of \caml-13B. These encouraging observations showcase \caml's efficacy in harnessing multimodal contextual information and following multimodal instructions. In contrast to \citet{llava15}'s assertion that LLaVA-1.5 cannot handle multiple images due to the absence of instruction-tuning data and context length limitations, our design demonstrates feasibility of training a model to effectively process multiple images merely with the same training set and efficiently manage long context length.
+\begin{figure*}[!t]
+	\begin{center}
+		\includegraphics[width=0.32\linewidth]{figure/ablation_perceiver_layers.pdf}
+        \includegraphics[width=0.32\linewidth]{figure/ablation_perceiver_querys.pdf}
+        \includegraphics[width=0.32\linewidth]{figure/ablation_perceiver_hiddensize.pdf}
+	\end{center}
+	\caption{Ablation Experiments on \caml perceiver hyper-parameters: layers, query number $M$ and hidden sizes. \caml-7B with different settings are evaluated on ScienceQA \texttt{test}.}
+	\label{fig:ablation_layer_query_hiddensize}
+\end{figure*}
+
+\begin{figure*}[!t]
+	\begin{center}
+		\includegraphics[width=0.60\linewidth]{figure/ablation_shots.pdf}
+        \hspace{0mm}
+        \includegraphics[width=0.35\linewidth]{figure/ablation_inference.pdf}
+	\end{center}
+	\caption{Ablation Experiments on \caml context number $N$. Left: different \caml models trained on $N$ shots are evaluated under 1$\sim$32 shots. Right: comparison between \caml and \caml without perceiver in terms of inference running time and memory footprint, the statistic is averaged on 100 samples from \caml-7B, which are tested on NVIDIA A100-80G GPU using ScienceQA dataset.}
+    
+    \label{fig:ablation_shot_inference}
+\end{figure*}
+
+\subsection{Multimodal Few-shot Learning}
+\caml essentially operates as a few-shot learning method. Few-shot models leverage the synergy of multiple intertwined images and texts to guarantee precise inference. Among these, retrieval-augmented models are widely recognized for their ability to retrieve highly similar samples, thereby improving few-shot prediction. In Table~\ref{table:compare_fs_models}, we conduct a comparison between \caml, retrieval-augmented models (RA-CM3~\cite{racm3} and ReViLM~\cite{revilm}), and other popular few-shot LLMs such as Flamingo~\cite{flamingo}, KOSMOS-1~\cite{kosmos1}, MMICL~\cite{mmicl} on tasks including visual captioning (COCO caption, Flickr30k), and visual question answering (OKVQA, VQAv2, Vizwiz). For \caml, we employ the same model described in Section \ref{sec:instruction_following}, with LLaVA-665K serving as the datastore. 
+
+Several observations merit attention: (1) It is worth mentioning that while previous visual language models augmented with retrieval capabilities have been predominantly optimized for visual captioning tasks, \caml exhibits broad applicability across a wide range of tasks, including visu
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,333 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+3D perception task plays an important role in autonomous driving. Previous works are mainly developed on single modality~\cite{yin2021center,li2022bevdepth, kendall2018multi, ye2022lidarmultinet, feng2021simple,philion2020lift,li2022bevformer, xie2022m,liu2022petr, liu2022petrv2} and different perception tasks are separated into individual models~\cite{ bai2022transfusion, li2022hdmapnet, lang2019pointpillars, yin2021multimodal, chen2022futr3d}. Often we wish to leverage complementary modalities to produce robust prediction and integrate multiple tasks within a model for the sake of computation budget. For instance, with the development of hardware, it is affordable to deploy both LiDAR and camera on a car, which are responsible to provide spatial information and semantic information. Integrating semantic-complementary vision tasks within a framework would greatly facilitate the deployment of real-world application~\cite{caesar2020nuscenes}. 
+
+\begin{figure}[t]
+  \centering
+   \caption{ \textbf{Comparison of paradigms on 3D perception.}
+   (a) BEVFormer~\cite{li2022bevformer} focuses on multi-task learning, which could save the computation burden and thus facilitate the depolyment of real-world application.
+   (b) Transfusion~\cite{bai2022transfusion} is proposed for multi-modality fusion for robust prediction since point cloud and images are complementary.
+   (c) Our proposed Fuller is a unified framework that integrates these ingredients organically by solving the notorious problems of modality bias and task conflict.
+   \label{fig:motivation}
+\end{figure}
+
+Recent advances have stayed tuned for multi-modality fusion~\cite{liu2022bevfusion, liang2022bevfusion} and multi-task learning~\cite{zhang2022beverse, li2022bevformer} in the applications of 3D autonomous driving scenario. Meanwhile, it is of great interest to unify multi-modality fusion and multi-task learning within a framework. In fact, it is unlikely to expect that dumping all the individual components into one framework and they would function organically. We build up a competitive baseline based on BEVFusion~\cite{liu2022bevfusion}, which takes as input both the point cloud and image, and serves for two complementary vision tasks: 3D detection (foreground) and map segmentation (background). However, we observe the severe issues of modality bias and task conflict: a) different tasks prefer specific modality, \eg, 3D detection relies on spatial information provided by LiDAR sensor while segmentation task relies more on image inputs.
+b) adding a new task will degrade both tasks: -3.0 \% mAP for detection and -18.3\% mIoU for map segmentation.
+From the perspective of optimization, we investigate the potential gradient imbalance that occurs during end-to-end training in a hierarchical view. First, we study the gradients which are produced by different task heads and are applied to update the parameters of the shared backbone. We observe that simply summing up these raw gradients to update the shared backbone would damage the performance of both tasks, suggesting an imbalance between them. Empirical findings prove that there is a great discrepancy between the gradient magnitudes w.r.t. the task objectives. Second, we inspect the gradients produced in the intra-gradient layer, which is to be separated into successive modality branches. Given a trained baseline, we visualize the gradient distributions of different modality branches and find their magnitudes imbalanced greatly. We further calculate the task accuracy by dropping one of the modalities to measure the modality bias. Our findings catch up with the theoretical analysis of~\cite{wang20222modality}, which suggests that the point cloud and image branches are suffering from the imbalanced convergence rate w.r.t. the downstream tasks. 
+
+We motivate our method by noting the findings discussed above, which is proposed to uni\textbf{f}y m\textbf{u}lti-modality mu\textbf{l}ti-task 3D perception via mu\textbf{l}ti-level gradi\textbf{e}nt calib\textbf{r}ation, dubbed as \textit{\textbf{Fuller}}. Specifically, we devise the multi-level gradient calibration, comprised of inter-gradient and intra-gradient calibration, to address the associated issues.
+In terms of the task conflict, we find that the task with lower gradient magnitude would be overwhelmed by another task with higher gradient magnitude. Thus, we propose to calibrate the gradients of different task losses at the backbone. Since the gradient would be manipulated at the layer level, this technique is referred to as \textbf{inter-gradient} calibration.
+Regarding modality bias, we expect the different modalities can update and converge at the same pace. Hence, before the gradients are separated into the modality branches, we calibrate their magnitudes to the same level, which is performed in the intra-gradient layer internally and thus called \textbf{intra-gradient} calibration.
+
+On top of the gradient calibration, we introduce two lightweight heads for our tasks. These two heads are both transformer-based. With our specially designed initialization methods, they can generate fine-grained results with just a one-layer decoder, allowing to save much more parameters than dense heads.
+
+We thoroughly evaluate the Fuller on the popular benchmark nuScenes~\cite{caesar2020nuscenes}.
+Regarding the sensory input, we adopt the point cloud to provide accurate spatial information and use the image to compensate for the lack of visual semantics. In terms of perception tasks, we select two representative and complementary tasks: 3D detection and map segmentation, which are responsible for dynamic 
+foreground objects and static road elements understanding.
+Note that BEVFusion~\cite{liu2022bevfusion} only organizes these ingredients empirically without mentioning the problems discussed above. To summarize, our contributions are:
+\begin{itemize}
+    \item We propose the Fuller which organically integrates multi-modality fusion and multi-task learning for 3D perception via multi-level gradient calibration during end-to-end optimization.
+    \item We introduce the new architecture design for task heads, which outperforms or is comparable with the previous head design while saving $\sim$40\% parameters.
+    \item Extensive experiments demonstrate that Fuller can prevent the notorious problems of modality bias and task conflict, \eg, an absolute 14.4\% mIoU improvement on map segmentation and 1.4\% mAP improvement on 3D detection.
+\end{itemize}
+
+\begin{figure*}[t]
+  \centering
+  \caption{\textbf{Framework of the Fuller.}
+  Generally, Fuller takes as input the LiDAR scan and multi-view images and predicts two tasks: 3D detection and map segmentation. 
+  We propose multi-level gradient calibration to deal with the problems of task conflict and modality bias during optimization:
+  i) The gradients, produced by the task heads and applied on the shared backbone, will be calibrated on the last layer of the backbone, namely, inter-gradient calibration (pink dashed line). 
+  ii) When it comes to the subsequent modality branches of the shared backbone, the gradient magnitudes will be calibrated again to the same level within the intra-gradient layer, referred to as intra-gradient calibration (blue dashed line). We also introduce a lightweight design for the task heads, which saves $\sim$40\% parameters.}
+\end{figure*}
+
+
+Related Work
+\label{sec:formatting}
+
+\noindent \textbf{3D perception tasks in autonomous driving.}
+Lidar and image are the two most powerful and widely used modalities in the area of autonomous driving.  Multimodal fusion has been well-studied to boost the performance of 3D object detection task\cite{vora2020pointpainting, yin2021multimodal,chen2022futr3d, bai2022transfusion, liang2022bevfusion}.
+Multi-task networks of 3D perception also arouse significant interest in autonomous driving community. These multi-task studies are limited on uni-modal network architectures, either with a Lidar backbone\cite{kendall2018multi, ye2022lidarmultinet, feng2021simple} or an image backbone\cite{philion2020lift,li2022bevformer, xie2022m,liu2022petr, liu2022petrv2}. MMF\cite{liang2019multi} works on depth completion and object detection with both camera and LiDAR inputs, but depth estimation only works as an auxiliary head and only object detection was evaluated.
+BEVFusion\cite{liu2022bevfusion} is the first multimodal network to perform object detection and map segmentation simultaneously. However, BEVFusion\cite{liu2022bevfusion} focuses on single task and network acceleration, and only provides two pieces of joint training results. Our proposed method is the first multimodal multitask network, and we evaluate each task and analyze them from the perspectives of multimodal and multitask.
+
+\noindent \textbf{Multimodal learning.}
+Multimodal learning is increasingly used to improve the performance of certain tasks, such as action recognition\cite{gao2020listen,ismail2020improving, kazakos2019epic}, visual question answering \cite{antol2015vqa, ilievski2017multimodal} and perception tasks in autonomous driving\cite{liu2022bevfusion, bai2022transfusion, liang2022bevfusion}.
+Most multi-modality research focuses on the network structure, such as concatenation, convolution or gated fusion in the middle or later part of the network\cite{kiela2018efficient, owens2018audio, hu2018squeeze}. Few studies\cite{wang2020makes, peng2022balanced} concentrate on multimodal optimization methods during the training process.
+\cite{wang2020makes} proposes a metric OGR to quantize the significance of overfitting and try to solve it with Gradient Blending. It designs modal heads for each task thus difficult to expand to multi-task network.
+OGM-GE\cite{peng2022balanced} try to solve the optimization imbalance problem by dynamically adjusting the gradients of different modalities. 
+Since it separates parameters of different modalities in the linear classification head, it is hard to generalize to other complicated task heads.
+Differently, our method can be used in networks with any task head as long as the network has modal-specific parameters.
+
+\noindent \textbf{Multi-task optimization methods.}
+Multi-task methods are mainly divided into two categories in \cite{vandenhende2021multi}, network architecture improvement\cite{misra2016cross,xu2018pad, ruder2019latent,guo2020learning} and optimization methods\cite{liu2019end,chen2018gradnorm,liu2021towards,yu2020gradient,mordan2021detecting}. Our approach focuses on the optimization methods. The goal of multi-task optimization methods is to balance the loss weights of different tasks to prevent one task from overwhelming another during training. DWA\cite{liu2019end} adjusts the loss weights based on the rate at which the task-specific losses change, but it requires to balance the loss magnitudes beforehand.
+Gradnorm\cite{chen2018gradnorm} balances the loss weights automatically by stimulating the task-specific gradients to be of similar magnitude. IMTL\cite{liu2021towards} optimizes the training process by guaranteeing the aggregated gradient has equal projections onto individual tasks. 
+Yet they have not been studied in the domain of multi-modality multi-task learning. Our method complements these analysis.
+
+
+Method
+In this section, we introduce the Fuller, a framework that unifies the multi-modality multi-task 3D perception in autonomous driving scenarios. Fuller aims to mitigate the problem of modality bias and task conflict during the end-to-end training by gradient calibration.
+Regarding the network architecture, we introduce a lightweight design for the task heads, named Fuller-det and Fuller-seg.
+
+\subsection{Network architecture}
+\label{sec:arch}
+As shown in \cref{fig:framework}, our proposed Fuller extracts features from both point cloud and images, then transforms them into a unified bird's-eye view (BEV) representation. It relies on VoxelNet~\cite{zhou2018voxelnet} as LiDAR backbone and Swin-T~\cite{liu2021swin} as image backbone. 
+As for image features from multi-view cameras, we project them onto BEV feature using the scheme as same as LSS~\cite{philion2020lift}.
+We adopt the modality fusion strategy where the features of two branches, $f^{img}$ and $f^{lid}$, are first concatenated and then fed into the fusion block:
+\begin{equation}
+    f^{fuse} = {\texttt{conv}}(f^{lid}\oplus f^{img}),
+\label{eq:fuse}
+\end{equation}
+\noindent where $\texttt{conv}$ is the modal fusion block (\ie, 2-layer FPN) and $\oplus$ is concatenation operation.
+$f^{fuse}$ is then connected to task-specific heads. 
+
+The detection head Fuller-det follows a DETR-style~\cite{carion2020end} architecture with object queries. 
+Given the fusion featrure $f^{fuse}$, Fuller-det initializes the queries by an auxiliary heatmap head according to TransFusion\cite{bai2022transfusion}.
+Also, Fuller-seg utilizes a query-based semantic segmentation head with segmentation queries. 
+The BEV feature $f^{fuse}$ is transformed into the output shape feature $F$. 
+The initialized queries and $F$ are then used to obtain mask embeddings $M$, processed by the transformer decoder layer. 
+Finally, the binary mask prediction $S$ is computed via a dot product between $M$ and $F$, followed by a sigmoid activation.
+We refer the reader to App. {\color{red}{B}} for more details.
+
+ 
+Both Fuller-det and Fuller-seg have only one transformer decoder layer and could achieve competitive results compared to state-of-the-art methods, as will see in~\cref{sec:comparison}. 
+\begin{figure}
+  \centering
+  \caption{ We visulize the $\gamma_{\rm task}$ (\cref{eq:magnitude}) in the last layer of the modality-fusion block. The gradient tensors are unfolded along the first axis.
+  It is easy to observe that the gradient magnitude of seg loss dramatically lags behind that of the det loss. We apply the proposed Fuller and compare it with GradNorm~\cite{chen2018gradnorm}. We find that our method is able to balance the gradients from two tasks. Importantly, our method yields a more stable and balanced $\gamma_{\rm task}$.
+  \label{fig:grad_magnitude_task}
+\end{figure}
+
+\subsection{Multi-level Gradient Calibration}
+We now introduce the multi-level gradient calibration. First, it will calibrate the gradient between tasks via inter-gradient calibration. When it comes to the subsequent modality branches of the backbone, the gradient will be calibrated again by intra-gradient calibration.
+\subsubsection{Inter-Gradient Calibration for Task Conflict}
+By definition, the gradients will be propagated from the task heads to the shared backbone.
+Without any regularization, multi-task learning would simply sum up the individual gradients for backbone update. Since the gradients of the downstream tasks tend to exhibit great distinction, this naive manner will inevitably result in task conflict. For example, an objective with low gradient magnitude would be overwhelmed by another one with high gradient magnitude. Therefore, existing works~\cite{vandenhende2021multi,chen2018gradnorm,liu2019end,liu2021towards} propose to \textit{manipulate} the gradients to interfere the optimization process. 
+
+Following this philosophy, we visualize the gradient distribution of the two tasks to inspect the inferior performance. 
+Specifically, we compute the ratio of $L2$ norm between the gradients computed by raw individual losses:
+\begin{equation}
+    \gamma_{\rm task} = \frac{||\nabla_{\texttt{shared\_L}}\mathcal{L}_{\rm{Det}}||}{||\nabla_{\texttt{shared\_L}}\mathcal{L}_{\rm{Seg}}||},
+\label{eq:magnitude}
+\end{equation}
+\noindent where $\nabla$ denotes gradient computation operator, $\mathcal{L}_{\rm Det}$ and $\mathcal{L}_{\rm Seg}$ are the output losses of 3D detection and map segmentation, respectively. 
+Typically, the gradients of shared backbone computed by different task losses are utilized to measure task characteristics. To save computation, we select the last layer of shared backbone, denoted as $\texttt{shared\_L}$. 
+Thus, $\gamma_{\rm task}$ is a metric that reflects the gradient discrepancy.
+
+As we might notice in~\cref{fig:grad_magnitude_task}, the value of $\gamma_{\rm task}$ between the two tasks is significantly huge. Based on this finding, we consider that the emergence of task conflict is probably because the gradients of segmentation task are overwhelmed by that of detection task. Inspired by the loss weighting methods~\cite{vandenhende2021multi,chen2018gradnorm,liu2019end,liu2021towards}, we balance the gradients of different tasks by balancing their loss weights. At each iteration, we obtain the gradients corresponding to individual loss on the last layer of the shared backbone.
+These gradients are utilized to derive the new loss weights. Then, the aggregated loss is applied to calibrate the gradients of the entire network.
+We evaluate existing literature and choose the IMTL\_G~\cite{liu2021towards} as the technique for this purpose given its superior performance, 
+as discussed in App. {\color{red}{C.2}}.
+\subsubsection{Intra-Gradient Calibration for Modality Bias}
+We have analyzed the impact of different task objectives on the backbone holistically. Another complicated situation arises when optimizing modality branches. During our experiments, we observe the issue of modality bias which undermines the assumption that multiple modalities can collaboratively support the downstream tasks. This phenomenon is also known as semantic inconsistency~\cite{goel2022cyclip} and modality imbalance~\cite{wang20222modality}. 
+The first layer of the modality fusion block is referred to as the intra-gradient layer, parameterized by $\theta^{F}$. It consists of two parts, $\theta^{F}_{lid}$ and $\theta^{F}_{img}$, that represent the parameters directly connected to the LiDAR and image backbones during backpropagation. Let $H$ denotes the modality branches, where $\theta^H_{lid}$ and $\theta^H_{img}$ represent the parameters of the LiDAR and image branch. 
+According to the chain rule, 
+the gradient for a certain modality branch is defined as:
+\begin{equation}
+G_{mod} = \frac{\partial\mathcal{L}}{\partial{\theta_{mod}^{H}}}     
+= \frac{\partial \mathcal{L}}{\partial{\theta^{F}_{mod}}}                \cdot
+            \frac{\partial {\theta^{F}_{mod}}}{\partial{\theta_{mod}^{H}}}, 
+\label{eq:grad_sensor}
+\end{equation}
+\noindent where $mod$ = $\{lid, img\}$, $G_{lid}$ and $G_{img}$ mean the gradients of the two modality branches.
+According to~\cref{eq:grad_sensor}, $\nabla{\theta^{F}_{lid}}=\frac{\partial \mathcal{L}}{\partial \theta^{F}_{lid}}$ 
+would carry out the updating message from the task heads to the LiDAR branch, similarly for
+image branch.
+
+Regarding the term 
+$\nabla_{\theta^{F}}\mathcal{L}$, 
+this gradient corresponds to the optimization process that determines how the intra-gradient layer would coordinate the fusion of the two modalities to adapt to downstream tasks. Therefore, we use $\nabla{\theta^{F}_{lid}}$ and $\nabla{\theta^{F}_{img}}$ within the intra-gradient layer to establish the connection between two modality branches. 
+Since
+they will be separated into different branches, we consider their relative magnitude during end-to-end training:
+\begin{equation}
+        \gamma_{\rm modal} = \frac{||\nabla{\theta^{F}_{lid}}||}{||\nabla{\theta^{F}_{img}}||}.
+\label{eq:grad_magnitude_modal}
+\end{equation}
+The result displayed in~\cref{fig:grad_magnitude_modal} indicates that for most of the time, $||\nabla{\theta^{F}_{lid}}||$ would surpass $||\nabla{\theta^{F}_{img}}||$, which means the LiDAR and image branches receive uneven attention from the downstream tasks. 
+\begin{figure}[!t]
+  \centering
+  \caption{Compared with baseline, Fuller has a balanced $\gamma_{\rm modal}$ (\cref{eq:grad_magnitude_modal}), meaning that two modalities can be learned in a balanced manner.}
+\end{figure}
+
+To solve this problem, we propose calibrating the gradients between two branches, \ie, $G_{lid}$ and $G_{img}$. In practice, we gate the one with greater magnitude to slow down its pace, ensuring that the tasks pay balanced attention to both modalities. At $t$ step, we obtain the gating factors by:
+\begin{equation}
+\begin{aligned}
+   w^{t}_{lid} &= \sigma(||\nabla{{\theta^{F}_{lid}}^{t}}||,||\nabla{{\theta^{F}_{img}}^{t}}||)\in(0,1],\\
+   w^{t}_{img} &= \sigma(||\nabla{{\theta^{F}_{img}}^{t}}||,||\nabla{{\theta^{F}_{lid}}^{t}}||)\in(0,1],
+\label{eq:gating_factor}
+\end{aligned}
+\end{equation}
+
+\begin{gather}
+    \sigma(x,y)=\textbf{1}_{\frac{x}{y}>1}(1- \texttt{tanh}(\alpha\cdot \frac{x}{y}))+\textbf{1}_{\frac{x}{y}<=1},
+\label{eq:alpha}
+\end{gather}
+\noindent where $\sigma(\cdot,\cdot)$ is a composition function conditioned by the indicator function and used to measure a paired input. $\alpha$ is a weight factor.
+The gating factors in~\cref{eq:gating_factor} are further smoothed by momentum update with coefficient $m$ to stabilize the training. Then the calibrated gradient will be backpropagated to the associated branch:
+\begin{equation}
+\begin{aligned}
+        w^{t}_{mod} &= m\cdot w^{t-1}_{mod} + (1-m)\cdot w^{t}_{mod},
+\end{aligned}
+\label{eq:momentum}
+\end{equation}
+\begin{equation}
+    G^{t}_{mod} = w^{t}_{mod} \cdot G^{t}_{mod}.
+\label{eq:cali_grad}
+\end{equation}
+
+\noindent We refer this technique as intra-gradient calibration where it is performed 
+between modalities.
+
+\subsection{Fuller: The Blueprint}
+
+We have presented a hierarchical view of the inter-gradient and intra-gradient calibration techniques, which are proposed to optimize the entire backbone and the associated modality branches, respectively. The procedure of Fuller is summarized in~\cref{alg:fuller}. At each update step, we first calculate the gradients w.r.t. the two objectives in the last layer of the shared backbone.
+The two gradients are calibrated to alleviate the problem of task conflict, where a pair of weights are derived. 
+After applying the weights to the raw losses, we obtain the calibrated gradient of the total loss on the intra-gradient layer, 
+$\nabla{\theta^{F}_{lid}}$ and $\nabla{\theta^{F}_{img}}$. To mitigate the issue of modality bias, 
+we utilize them to calibrate the gradients of corresponding branches.
+
+        
+        
+        
+
+\begin{algorithm}[t]
+    \renewcommand{\algorithmicrequire}{\textbf{Input}}
+	\renewcommand{\algorithmicensure}{\textbf{Output}}
+    \caption{Training Procedure of Fuller}
+    \label{alg:fuller}
+    \begin{algorithmic}[1]
+        \REQUIRE 
+        composition function $\sigma$, 
+        modality branches' parameter $\theta^H$, 
+        intra-gradient layer's parameter $\theta^F$,
+        off-the-modality's parameter $\theta^K$, learning rate $\eta$.
+        \ENSURE $\theta^H$, $\theta^K$
+        \FOR { $t=0,1,2,...,T$}
+        \STATE Inter-gradient Calibration For Task Conflict: \\ 
+        
+        
+        {\small $\alpha_{\rm Seg}$, $\alpha_{\rm Det}$
+        $\leftarrow$ {\rm IMTL}(
+        $\nabla_{\texttt{shared\_L}}\mathcal{L}_{\rm{Det}},
+        \nabla_{\texttt{shared\_L}}\mathcal{L}_{\rm{Seg}}$)}
+
+        \STATE $\mathcal{L}\leftarrow \alpha_{\rm Seg}\cdot \mathcal{L}_{\rm Seg} + \alpha_{\rm Det}\cdot \mathcal{L}_{\rm Det}$
+        \STATE $\theta^K \leftarrow \theta^K - \eta \cdot \frac{\partial \mathcal{L}}{\partial \theta^K}$ \ $\triangleleft$ \ Update task heads
+        \STATE Intra-gradient Calibration for Modality Bias: \\
+        
+        \STATE $\nabla{\theta^{F}_{lid}},  \nabla{\theta^{F}_{img}} \leftarrow \frac{\partial \mathcal{L}}{\partial \theta^{F}_{lid}}, \frac{\partial \mathcal{L}}{\partial \theta^{F}_{img}}$
+        
+        
+        \STATE $w^{t}_{lid} \leftarrow \sigma(||\nabla{{\theta^{F}_{lid}}^{t}}||,||\nabla{{\theta^{F}_{img}}^{t}}||)$\\
+        $w^{t}_{img} \leftarrow \sigma(||\nabla{{\theta^{F}_{img}}^{t}}||,||\nabla{{\theta^{F}_{lid}}^{t}}||)$
+        \STATE $w^{t}_{lid} \leftarrow m\cdot w^{t-1}_{lid} + (1-m)\cdot w^{t}_{lid}$ \\ %$\triangleleft$ momentum update
+        $w^{t}_{img} \leftarrow m\cdot w^{t-1}_{img} + (1-m)\cdot w^{t}_{img}$ 
+        \STATE $G^{t}_{lid} \leftarrow w^{t}_{lid} \cdot G^{t}_{lid}$
+        ; \; $G^{t}_{img} \leftarrow w^{t}_{img} \cdot G^{t}_{img}$
+        \STATE backward $G^{t}_{lid}$ and update $\theta^{H}_{lid}$ \; \; $\triangleleft$ LiDAR branch
+        \STATE backward $G^{t}_{img}$ and update $\theta^{H}_{img}$ $\triangleleft$ Image branch
+        \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+
+
+
+Experiments
+\label{sec:exp}
+We first introduce our baseline setting and benchmark dataset. 
+We also investigate the potential of Fuller by evaluating it under different loss weights and dataset distribution settings.
+Finally, we ablate the proposed components to validate their individual effectiveness.
+\subsection{Experimental Settings}
+\noindent \textbf{Implementation details.}
+We adopt BEVFusion~\cite{liu2022bevfusion} as the strong baseline with a few modifications. The detailed design has been discussed in~\cref{sec:arch}. 
+The AdamW optimizer is utilized with a weight decay of $10^{-2}$ and momentum of 0.9.
+The models are trained for 10 epochs with a learning rate of $10^{-3}$.
+We use 8 NVIDIA V100 GPUs with 2 samples per GPU, resulting in a total batch size of 16. 
+Additionally, the value of $\alpha$ used in~\cref{eq:alpha} is set to 0.1, while $m$ in~\cref{eq:momentum} is set to 0.2.
+
+\noindent \textbf{nuScenes dataset.} nuScenes~\cite{caesar2020nuscenes} is a multi-sensor dataset that provides diverse annotations for multiple tasks, including detection, tracking, and especially BEV map segmentation, which is typically absent in other datasets. 
+The dataset comprises 28,130 training samples and 6,019 validation samples, each containing a 32-beam LiDAR scan and 6 multi-view images. 
+The 3D detection task involves 10 foreground categories, and the performance is evaluated by mean Average Precision (mAP) and nuScenes Detection Score (NDS). For map segmentation, the model is required to segment 6 background categories in BEV view, which is measured by the mean Intersection over Union (mIoU). 
+
+\noindent \textbf{Evaluation protocol.}
+\label{sec:dataset}We evaluate the performance of multi-task learning 
+based on the metric in~\cite{vandenhende2021multi}:
+
+\begin{equation}
+\Delta_{\rm MTL} = \frac{(-1)^{l}}{T}\sum_{i=1}^{T}(M_{m,i}-M_{b,i})/M_{b,i},
+\label{eq:mtl}
+\end{equation}
+\noindent
+where $T$ is the number of tasks.
+$M_{m,i}$ and $M_{b,i}$ are the performance of the $i$-th task of the evaluated model and baseline, respectively.
+$\Delta_{\rm MTL}$ could be intuitively understood as the average performance drop,
+where we set $l =1$, \ie, lower value means better performance.
+Following Liang \etal~\cite{liang2022effective}, we also evaluate the Fuller in three annotation schemes.
+
+\noindent \textbf{Full setting.} 
+We leverage all available annotations by default, which serves as the upper bound for the following two settings.
+
+\noindent \textbf{Disjoint-normal.} 
+Given the limited budget, the annotation complexity determines the quantity of task labels. In a realistic practice, we split the full dataset into 3D detection and map segmentation parts using a 3:1 ratio, where each sample is labeled for one task.
+\noindent \textbf{Disjoint-balance.} 
+Similarly, each sample is endowed with a task label and each task can leverage half of the dataset.
+
+\begin{table}[t]
+    \centering
+    \caption{Sensitivity analysis and ablation study of the proposed gradient calibration with different initial loss weights.}
+    \resizebox{1.0\columnwidth}{!}
+    {\tablestyle{8pt}{1.0}
+    \begin{tabular}{@{}cc|cccc@{}}
+    \toprule
+        Intra. & Inter. &mAP(\%)$\uparrow$ &NDS$\uparrow$ &mIoU(\%)$\uparrow$ 
+        &{ $\Delta_{\rm MTL}$}(\%)$\downarrow$\\
+        \midrule
+        \multicolumn{6}{c}{\textit{det\_weight:seg\_weight=1:1}}\\
+        \midrule
+        &  &59.1 & 65.0 & 44.0 &18.3\\
+        \checkmark & &59.5 &\textbf{65.4} &45.0 &16.9\\
+        &\checkmark & 57.1 &63.3 &\textbf{59.5} &8.8\\
+        \checkmark &\checkmark &\textbf{60.5}  &65.3  &58.4 &\textbf{5.4}\\
+        
+        \midrule
+        \multicolumn{6}{c}{\textit{det\_weight:seg\_weight=1:5}}\\
+        \midrule
+        &  &59.8 & 65.5 & 55.7 &8.0\\
+        \checkmark &  &59.8 &65.3 &56.1 &7.8 \\
+        &\checkmark &56.9 &63.3  &\textbf{59.8} &8.7 \\
+        \checkmark &\checkmark & \textbf{60.1} & \textbf{65.6} & 58.2 &\textbf{5.7}\\
+        
+        \midrule
+        \multicolumn{6}{c}{\textit{det\_weight:seg\_weight=1:10}}\\
+        \midrule
+        &  &59.3 & 65.0 & 57.9 &7.0\\
+        \checkmark & & \textbf{60.1} & \textbf{65.4} & 57.3 &6.5\\
+        &\checkmark &58.2  &64.2 & \textbf{60.1} &6.7\\
+        \checkmark &\checkmark & 59.9 &65.2 &59.2 &\textbf{5.3}\\
+\bottomrule
+    \end{tabular}}
+\end{table}
+\subsection{Sensitivity Analysis}
+\noindent \textbf{Initial states.} 
+To investigate the robustness of our method w.r.t. initial loss weights, we incrementally increase the weight of segmentation loss and inspect its impact on performance. 
+As illustrated in~\cref{tab:ablation}, the loss weights between detection and segmentation are set to 1:1, 1:5, and 1:10. 
+We find that increasing the loss weight of map segmentation can improve the subsequent performance of the baseline model. However, manually adjusting the loss weights can lead to sub-optimal results. For instance, when the loss weight of map segmentation is increased from 5 to 10, it benefits map segmentation (55.7\%$\rightarrow$57.9\% mIoU) but damages the performance of detection task (59.8\%$\rightarrow$59.3\% mAP). Nonetheless, the proposed method can facilitate model training despite variations in initial loss weights.
+
+         
+
+         
+\begin{table}[!t]
+    \centering
+    \caption{Sensitivity analysis and ablation study of the proposed gradient calibration under different dataset distribution.}
+    \resizebox{1.0\columnwidth}{!}
+    {\tablestyle{8pt}{1.0}
+    \begin{tabular}{@{}cc|cccc@{}}
+    \toprule
+        Intra. & Inter. &mAP(\%)$
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

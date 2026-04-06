@@ -1,0 +1,324 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+\hspace{1em}
+The recent surge in \textbf{L}arge \textbf{L}anguage \textbf{M}odel (LLM) families \cite{touvron2023llama,zhang2022opt,chung2022flan-t5,openai2023gpt4,iyer2022opt-iml} opens up great opportunities for solving various machine learning tasks in a generalized way \cite{liu2023llava,li2023blip2,instructblip,jiang2023motiongpt}.
+During this LLM carnival, researchers are also seeking generalized LLM solutions to various vision language tasks \cite{instructblip,xu2023pointllm,zhang2023gpt4roi}.
+Among these, LLM-based 3D scene understanding is a valuable topic that would benefit the development of autonomous driving \cite{fu2023drive,chen2023driving} and embodied AI agents \cite{driess2023palm,song2023llm}.
+However, it is also challenging given 1) the diversity and complication of 3D environments and 2) the demands for understanding sparse 3D points.
+Prior works have made initial success addressing various 3D vision and language tasks.
+The mainstream of researches build 3D specialists aiming at solving one specific down-stream task, including 
+\textbf{3D} \textbf{Q}uestion \textbf{A}nswering (3D-QA) \cite{azuma2022scanqa,ma2022sqa3d}, 
+\textbf{3D} \textbf{V}isual \textbf{G}rounding (3D-VG) \cite{chen2020scanrefer,wu2023eda}, and 
+\textbf{3D} \textbf{D}ense \textbf{C}aptioning (3D-DC) \cite{chen2021scan2cap,chen2023vote2cap-detr}.
+Meanwhile, other works \cite{zhu20233d-vista,jin2023-3D-VLP,cai20223djcg,chen2023unit3d} study the mutual promotion of different 3D vision and language tasks with shared structure modelling relations among objects.
+Recently, researchers have also introduced LLMs for general purpose 3D understanding, where Point-Bind and Point-LLMs \cite{xu2023pointllm,guo2023pointbind+pointllm} mainly focus on the understanding of 3D objects.
+Concurrently, 3D-LLM \cite{hong20233d-llm} proposes an LLM-driven solution that aggregates multi-view features for 3D features, presenting mighty capacities a machine could understand various 3D object and scenes, and follow textual instructions produced by human. 
+
+
+Though these methods have achieved remarkable success addressing different challenges in understanding 3D worlds with natural language, there are certain limitations.
+With limited supervision, 3D specialists could hardly scale-up for better performance, while the joint pre-training still requires separate heads for specific tasks.
+Extracting mutli-view features results in huge computational overhead, and ignores the essential geometry properties.
+Additionally, plain texts often lead to ambiguities especially in cluttered and complex 3D environments.
+
+
+
+
+To address the above issues, we propose the \modelname{}, a \textbf{L}arge \textbf{L}anguage \textbf{3D} \textbf{A}ssistant that could respond to both textual and visual interactions from human, and understand, reason, and plan in complex 3D environments (\cref{fig:teaser}).
+We adopt a multi-modal transformer that aggregates information from textual instructions, visual prompts, and 3D scene into a fixed length of learnable querying tokens via the attention mechanism.
+The querying tokens are projected and used as the prefix of the textual instructions, serving as the input to a pre-trained and frozen LLM.
+This design not only helps to address the contradiction between the permutation-invariant 3D scene embeddings with the LLM embedding space, but also extracts interaction-aware 3D scene embeddings for efficient instruction following.
+We conduct extensive experiments to explore the capacities of LLMs in understanding, reasoning, and planning within complex and diverse 3D environments.
+Our model achieves state-of-the-art results on two widely used datasets for 3D Dense Captioning \cite{chen2020scanrefer,achlioptas2020referit3d}, and 3D Question Answering \cite{azuma2022scanqa}.
+Additionally, by introducing additional visual interactions, our method could further remove the ambiguities within the vague textual instructions.
+To summarize, our key contributions lie in:
+
+\begin{itemize} 
+\setlength\itemsep{0em}
+
+    \item We present a LLM-based solution for understanding, reasoning, and planning in complex 3D environments.
+    
+    \item Our model takes both the textual instructions and visual interactions as inputs, and extracts interaction-aware features for effective instruction-following.
+
+    \item Extensive experiments show that our method surpasses various state-of-the-art 3D vision language models.
+    
+\end{itemize}
+
+
+Related Work
+\label{sec:related}
+
+\myparagraph{3D Vision and Language} alignment, pre-training, and understanding \cite{ding2023pla,zhu20233d-vista,chen2020scanrefer} covers a bunch of tasks requiring a model to adopt its understanding towards a complex 3D scene answering to, or answering with natural language.
+Among those, \textbf{3D} \textbf{D}ense \textbf{C}aptioning (3D-DC) \cite{chen2021scan2cap,wang2022spacap3d,chen2023vote2cap-detr} expects a model to translate an input 3D scene into a set of instance coordinates and natural language descriptions.
+Existing methods could be categorized into ``detect-then-describe'' models \cite{cai20223djcg,chen2021scan2cap,wang2022spacap3d} and the ``set-to-set'' prediction approaches \cite{chen2023vote2cap-detr,chen2023vote2cap-detr++}.
+The former builds explicit relations on the instance coordinate predictions, while the latter direct learns the location and description of instances from the input 3D scene.
+\textbf{3D} \textbf{V}isual \textbf{G}rounding (3D-VG) \cite{chen2020scanrefer,achlioptas2020referit3d,wu2023eda} demands a model to respond the natural language queries with the instance coordinates in the 3D scene.
+The mainstream of existing methods \cite{cai20223djcg,zhu20233d-vista,zhao20213dvg} address 3D-VG via selecting a candidate from a 3D detector's prediction.
+\textbf{3D} \textbf{Q}uestion \textbf{A}nswering (3D-QA) \cite{ye20223d,azuma2022scanqa,ma2022sqa3d,zhao2022-fe-3dgqa} requires a model to answer the questions with natural language based on the input 3D scene.
+The majority of existing methods \cite{azuma2022scanqa,delitzas2023multi-clip,parelli2023clip-guided} directly select the desired response from a given answer set.
+Researchers have also studied the mutual promotion of various 3D vision language tasks via training their shareable architectures simultaneously on different tasks \cite{cai20223djcg,chen2023unit3d,zhu20233d-vista,jin2023-3D-VLP}.
+UniT3D \cite{chen2023unit3d} and 3DJCG \cite{cai20223djcg} focus on the joint promotion between 3D-DC and 3D-VG in the relation modelling, while 3D-VLP \cite{jin2023-3D-VLP} further includes 3D-QA.
+Recently, 3D-LLM \cite{hong20233d-llm} introduce a family of LLM-driven 3D generalists that could handle diverse textual instructions with the reconstructed 3D feature from multi-view images \cite{hong20233d}.
+In this paper, we present \modelname{}, an LLM solution that directly extracts features from the 3D scene, and could handle both visual prompts and textual instructions to diversify the possible interactions human could make with the complex 3D environment.
+
+
+\begin{figure*}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{figures/pipeline-details.pdf}
+	\caption{
+    	\textbf{Overview of the Proposed Approach.} 
+        (a) The overall pipeline of our proposed \modelname{} first extracts interaction-aware 3D scene embeddings, which are later projected to the prefix of textual instructions as the input of a frozen LLM.
+        (b) The detailed design of the Interactor3D, which aggregates visual prompts, textual instructions, and 3D scene embeddings into a fixed length querying tokens.
+        (c) The prompt encoder encodes the user clicks and box coordinates with the positional embeddings and ROI features, respectively.
+    }
+	\label{fig:pipeline}
+\end{figure*}
+\myparagraph{Large Multimodal Models (LMM).}
+Along with the rapid development of \textbf{L}arge \textbf{L}anguage \textbf{M}odels (LLM) \cite{zhang2022opt,chung2022scaling}, researchers have made great recent efforts adapting LLMs to visual understanding and reasoning tasks \cite{xu2023survey-multimodal,yin2023survey-mllm}.
+Some project or compress global image features as prefix for instruction following \cite{li2023blip2,liu2023llava,ye2023mplug-owl,zhu2023minigpt4}, while others extract ROI features as LLM tokens for region-oriented instruction reasoning \cite{zhang2023gpt4roi,chen2023position}.
+Meanwhile, InstructBLIP \cite{instructblip} proposes to extract textual instruction-aware visual features, and has achieved remarkable success addressing complex and unseen instructions.
+Concurrently, researchers have also made great attempts solving various 3D tasks using LLMs. 
+Notably, \cite{xu2023pointllm,guo2023pointbind+pointllm,luo2023cap3d,zhou2023regionblip} demonstrate remarkable success in understanding and reasoning about 3D objects.
+In this paper, we present an LLM-driven solution that could handle both interactions in forms of visual prompts and textual instructions, and propose to extract interaction-aware 3D scene representations for better instruction following.
+
+
+
+Methodology
+\label{sec:method}
+
+
+To build a general purpose agent that could handle both visual and textual interactions in complex 3D environments, we propose \modelname{}, an LLM driven auto-regressive approach to 3D vision language tasks.
+In this section, we first introduce the problem formatting in \cref{subsec:problem formatting}.
+Next, we introduce our model design in details (\cref{subsec:encoder}).
+\subsection{Problem Formatting}
+\label{subsec:problem formatting}
+
+\myparagraph{Model I/O.}
+As shown in \cref{fig:pipeline} (a), the \textbf{input} of our model consists of a 3D scene represented by a set of points $PC$, the textual instruction $\mathcal{I}_{t}$, and potential visual interactions $\mathcal{I}_{v}$ that serve as supplementary spatial identifiers.
+Here, point cloud $PC = \left[p_{in}, f_{in}\right] \in \mathbb{R}^{N \times \left(3 + F\right)}$, where $p_{in} \in \mathbb{R}^{N \times 3}$ and $f_{in} \in \mathbb{R}^{N \times F}$ are the point coordinates and the additional point features, including \textit{color}, \textit{normal}, and \textit{height}.
+The \textbf{output} of our model is free-form natural language, part of whom could be interpreted into 3D coordinates.
+
+\myparagraph{Instruction Formatting.}
+Following existing LMMs \cite{xu2023pointllm}, we begin the textual instructions $\mathcal{I}_{t}$ with the ``\sep{\textit{\#\#\# human:}}'' identifier, and ask the model to generate responses after the ``\sep{\textit{\#\#\# assistant:}}'' identifier.
+This endows the model with the ability to distinguish information from the context, and further engage in multi-turn conversations.
+\myparagraph{Coordinate Representations.} To provide LLMs with the capacity to perceive and respond with 3D coordinates, we convert the 3D points and 3D bounding boxes to plain texts.
+Specifically, a point is represented by ``\loc{$x$, $y$, $z$}'', and a bounding box is represented by its center point and size, \textit{i.e.} ``\obj{$c_{x}$, $c_{y}$, $c_{z}$, $w$, $h$, $l$}''.
+Here, all the numerical data is discretized into unsigned integers within a range of $\left[0, 255\right]$ with respect to the boundary of the input 3D scene.
+This design could naturally fit in the vocabulary of existing pre-trained LLMs \cite{zhang2022opt,touvron2023llama}.
+Without introducing any additional learnable tokens, we could save the effort of tuning the whole LLM.
+
+\subsection{Model Design}
+\label{subsec:encoder}
+
+As shown in \cref{fig:pipeline} (a), our model first aggregates a fixed-length scene embeddings through the Interactor3D, which takes the visual prompts, the textual instructions, and the 3D scene as input.
+Next, the aggregated scene embeddings are projected to the prefix of textual instructions as inputs of a frozen LLM.
+The detailed design of Interactor3D is shown in \cref{fig:pipeline} (b), which consists of a frozen 3D scene encoder $\mathcal{E}^{3D}$, a visual prompt encoder, and a Q-Former to transform the permutation-invariant 3D embeddings into a fixed-length interaction-aware scene embedding, serving as the prefix of the LLM's input.
+
+\myparagraph{Scene Encoder.} We adopt the masked transformer encoder pre-trained on ScanNet detection \cite{chen2023vote2cap-detr} as the scene encoder, $\mathcal{E}^{3D}$, which takes $PC$ as its input, and outputs the 3D scene embeddings:
+\begin{equation}
+    f_{enc} = \mathcal{E}^{3D}\left(PC\right) = \mathcal{E}^{3D}\left(p_{in}; f_{in}\right) \in \mathbb{R}^{M \times d}.
+\end{equation}
+Here, $f_{enc}$ consists of $d$-dimensioned features for $M$ points uniformly down-sampled from the input 3D scene through the \textbf{F}arthest \textbf{P}oint \textbf{S}ampling (FPS) algorithm.
+In practice, we choose to keep the scene encoder frozen to save the memory cost during training.
+
+\myparagraph{Visual Prompt Encoder.}
+We mainly take two common types of visual interactions into consideration, user clicks and 3D box annotations \cite{kirillov2023segany}.
+Each user click is first normalized within a range of $[0, 1]$ by the size of the input 3D scene $p_{\text{click}} \in \mathbb{R}^{3}$.
+Then, we encode $p_{\text{click}}$ with the 3D Fourier positional embeddings \cite{tancik2020fourier} function:
+\begin{equation}
+    \text{pos}\left(p_{\text{click}}\right) = \left[\sin \left(2\pi p_{\text{click}}\cdot B\right); \cos \left(2\pi p_{\text{click}} \cdot B\right)\right].
+\end{equation}
+Here, $B \in \mathbb{R}^{3 \times \left(d / 2\right)}$ is a learnable matrix.
+The box annotation is represented by the ROI feature $f_{\text{box}} \in \mathbb{R}^{d}$ extracted by a pre-trained 3D object detector \cite{chen2023vote2cap-detr}.
+The two types of the visual prompts are then projected with separate and identical \textbf{F}eed \textbf{F}orward \textbf{N}etworks (FFN).
+\begin{equation}
+\begin{aligned}
+    f_{\text{click}} &= FFN_{\text{click}}\left(\text{pos}\left(p_{\text{click}}\right)\right) \\
+    f_{\text{box}} &= FFN_{\text{box}}\left(f_{\text{box}}\right)
+\end{aligned}
+\end{equation}
+In practice, we represent each visual prompt with 8 tokens.
+
+
+\myparagraph{Multi-Modal Transformer}(MMT)
+serves as a role to 1) address the contradiction between permutation-invariant 3D scene embeddings and the position-sensitive causal LLMs, 2) bridge the gap between frozen unimodal experts, and 3) fill the needs for interaction-aware feature extraction.
+Inspired by the Q-Former architecture \cite{instructblip,li2023blip2}, MMT aggregates the visual information within a fixed number of 32 learnable querying tokens.
+In each layer, the queries interact with the encoded visual prompts $\left[f_{\text{click}}; f_{\text{box}}\right]$ and the textual instructions $\mathcal{I}_{t}$ through a shared self-attention.
+Then, we allow the learnable querying tokens and the visual prompts to interact with the task-agnostic 3D scene embeddings $f_{enc}$ via cross-attention.
+The output of MMT is 32 queries noted as $Q \in \mathbb{R}^{32\times 768}$, and are finally projected to the embedding space of LLM with a simple linear projector.
+In practice, we notice that initializing Q-Former with pre-trained BERT \cite{devlin2018bert,li2023blip2} weights will lead to repetitive outputs, thus we only choose to initialize the pre-trained word and position embeddings from BERT.
+
+
+\myparagraph{LLM.}
+We consider the decoder-only generative pre-trained transformers \cite{zhang2022opt,touvron2023llama} as our large language model backbone, which are sensitive to the input orders because of the position embeddings, and the causal attention mask.
+The parameters and the embedding layers of the LLM are kept frozen to save memory cost.
+During inference, we generate the responses via searching for the response $s^{*}$ that satisfies:
+\begin{equation}
+    s^{*} = \arg \max_{s} P\left(s\vert PC, \mathcal{I}_{t}, \mathcal{I}_{v}\right).
+\end{equation}
+In practice, we use beam search with a beam size of 4.
+
+
+
+
+
+Multi-modal Instruction Tuning
+
+A general purpose agent is meant to deal with various tasks in complex 3D scenes.
+Apart from introducing proper training data, it is important to direct the model to generate the desired outputs.
+Thus, \cref{subsec:task instructions} will first introduce how we identify each task.
+After that, \cref{subsec:training} will present details for training objective.
+\subsection{Tasks and Instructions.}
+\label{subsec:task instructions}
+
+All the following tasks will be modelled as auto-regressive generation after the ``\sep{\textit{\#\#\# assistant:}}'' identifier.
+
+\myparagraph{3D Dense Captioning} requires the localization and description of instances in diverse 3D environments. 
+We adopt either user clicks and box annotations as the visual prompt to identify the object to be described.
+Additionally, we design two types of textual instructions that ask the model to either ``describe'' or ``describe and localize'' the object, which diversifies the tasks, and leads to better performance.
+
+\myparagraph{3D Question Answering} requires the model to generate response to the questions based on the global knowledge of a 3D scene.
+To help the model better understand the 3D environment, we also design two types of textual instructions that ask the model to either ``answer'' or ``answer and localize the related objects''.
+The latter serves as an auxiliary task widely adopted in various 3D-QA methods \cite{azuma2022scanqa,parelli2023clip-guided}.
+To diversify the tasks during training, we randomly adopt visual prompts to the objects mentioned in the questions.
+\myparagraph{Scene Description} requires the model to translate its global knowledge of the 3D scene into natural languages, thus we simply ask the ``describe'' this 3D scene.
+\myparagraph{Embodied Conversation and Planning} could be treated as multi-turn conversation, which we use the ``\sep{\textit{\#\#\# human:}}'' and ``\sep{\textit{\#\#\# assistant:}}'' identifier to distinguish the source of information as introduced in \cref{subsec:problem formatting}.
+
+
+\subsection{Instruction Following Tuning}
+\label{subsec:training}
+
+During training, for tasks that requires additional visual interactions, \textit{i.e.} 3D-DC and 3D-QA, we randomly select the user clicks and box annotations.
+\myparagraph{Training Objective.} 
+Our training objective is to optimize the trainable parameters $\theta$, so that the likelihood of the target response sequence $s$ is maximized given the input point cloud $PC$, and the interactions $\mathcal{I}_{v}$ and $\mathcal{I}_{t}$:
+\begin{equation}
+    \theta^{*} = \arg \max_{\theta} P\left(s \vert PC; \mathcal{I}_{v}; \mathcal{I}_{t}; \theta\right).
+\end{equation}
+In practice, this is accomplished by adopting the token-wise cross-entropy loss that trains the model to predict the $i$th token $s_{\left[i\right]}$ given the previous $(i-1)$ tokens, $s_{\left[1, \cdots, i-1\right]}$.
+\begin{equation}
+    \mathcal{L}\left(\theta\right) = - \sum_{i=1}^{|s|} \log P\left(s_{\left[i\right]} \vert PC; \mathcal{I}_{v}; \mathcal{I}_{t}; \theta; s_{\left[1, \cdots, i-1\right]}\right).
+\end{equation}
+Here, $|s|$ is the number of tokens in the desired response.
+
+
+Experiments
+\label{sec:benchmark}
+
+To examine the capacity of our proposed model, we provide numerous evaluations.
+To begin with, we introduce the datasets, metrics, and implementation details (\cref{subsec:exp-intro}).
+Then, we compare our model's capacity of understanding and reasoning in complex 3D environments with previous 3D specialists on 3D Dense Captioning and 3D Question Answering (\cref{subsec:exp-sota}), and conduct quantitative ablation studies on the model design and training strategy (\cref{subsec:exp-ablations}).
+Finally, \cref{subsec:exp-qualitative} showcases several qualitative results.
+\input{tables/benchmark-scanrefer}
+\input{tables/benchmark-scanqa}
+\subsection{Datasets, Metrics and Implementation Details}
+\label{subsec:exp-intro}
+\myparagraph{Datasets.} In this paper, we experiment with 3D data from ScanNet \cite{dai2017scannet}, a 3D dataset covering 1,201 and 312 diverse and complex indoor 3D scenes for training and validation.
+The language annotations used in this study are sourced from ScanRefer \cite{chen2020scanrefer}, Nr3D \cite{achlioptas2020referit3d}, ScanQA \cite{azuma2022scanqa}, and the ScanNet subset of 3D-LLM \cite{hong20233d-llm}.
+This combination covers a variety of tasks, including instance and scene descriptions, conversations, embodied planning and question answering.
+Please refer to the supplementary materials for more details on the statistics of data.
+
+\myparagraph{Metrics.} Here, we adopt \textbf{C}, \textbf{B-4}, \textbf{M}, \textbf{R} as abbreviations for CiDEr \cite{vedantam2015cider}, BLEU-4 \cite{papineni2002bleu}, METEOR \cite{banerjee2005meteor}, and Rouge-L \cite{lin2004rouge} to evaluate the quality of the generated textual responses.
+
+\myparagraph{Implementation Details.} Following previous works on 3D vision language tasks \cite{chen2023vote2cap-detr,chen2021scan2cap}, we randomly sample $40$k points from each 3D scene as the 3D input.
+We adopt the pre-trained OPT-1.3B \cite{zhang2022opt} as our causal LLM backbone, which is frozen and loaded in float16 to save memory cost.
+We adopt the AdamW \cite{loshchilov2017AdamW} optimizer with a weight decay of $0.1$ and a learning rate decaying from $10^{-4}$ to $10^{-6}$ with a cosine annealing scheduler for about $100$k iterations.
+For all the training tasks, we train with a total batch size of 16, and evaluate our method every 4k iterations.
+Each training process consumes no more than eight Nvidia RTX3090 (24G) GPUs within a day.
+
+\subsection{Comparison with SoTA Specialists}
+\label{subsec:exp-sota}
+
+We evaluate the model's capacity to understand and reason in 3D environments via 3D-DC and 3D-QA.
+For each evaluation task, we fine-tune the trainable parameters in our model on each task for $\sim$30k iterations.
+\myparagraph{3D Dense Captioning} demands a model to localize and describe any instance in a 3D scene. 
+We benchmarks state-of-the-art methods on the widely-used ScanRefer \cite{chen2020scanrefer} and Nr3D \cite{achlioptas2020referit3d} dataset in \cref{tab:benchmark-3d-dense-cap} under the $m@k$IoU metric \cite{chen2021scan2cap}.
+Here, $m\in \left\{\text{C, B-4, M, R}\right\}$, and the $m$ score of a caption is set to $0$ if the IoU between the predicted box and the object is less than the given threshold $k$.
+Following existing works \cite{chen2021scan2cap,chen2023vote2cap-detr}, we consider C@0.25 and C@0.5 as the main metric for ScanRefer, and C@0.5 for Nr3D.
+Among the listed methods, UniT3D \cite{chen2023unit3d}, 3DJCG \cite{cai20223djcg}, and 3D-VLP \cite{jin2023-3D-VLP} are pre-trained on multiple 3D vision and language tasks annotated on ScanNet scenes.
+Additionally, UniT3D \cite{chen2023unit3d} adopts off-the-shelf image caption models \cite{mokady2021clipcap} and multi-view images to generate additional instance-captions for pre-training.
+It is worth mentioning that the results of 3D-VisTA \cite{zhu20233d-vista} come from their reported version that is not trained on additional 3D scenes.
+To evaluate our model, we adopt the box predictions produced by Vote2Cap-DETR \cite{chen2023vote2cap-detr} as the visual prompt.
+Results show that our method consistently outperforms existing methods on all both datasets.
+For example, our method achieves 65.19\% C@0.5 on ScanRefer and 51.18\% C@0.5 on Nr3D, which is (\better{+3.38}\% and \better{+7.34}\%) higher than the current state-of-the-art 3D vision and language model, Vote2Cap-DETR.
+
+\myparagraph{3D Question Answering} requires a model to generate responses to the natural language queries questioning towards an 3D scene.
+We benchmark state-of-the-art methods on the ScanQA \cite{azuma2022scanqa} validation set as well as two test benchmarks in \cref{tab:benchmark-scanqa}, and consider CiDEr as the main metric.
+The majority of the listed methods are based on classification (marked ``CLS''), \textit{i.e.}, selecting responses from a pre-defined answer set.
+Meanwhile, 3D-LLM \cite{hong20233d-llm} tries to address 3D-QA via generating texts (marked ``GEN''), and we list their fine-tuned version for comparison.
+Results show that our method consistently outperforms existing methods on all the evaluation sets, and surpasses the generation based method, 3D-LLM, by a large margin (\better{+7.39}\% CiDEr score on the validation set).
+
+
+\subsection{Ablation Studies}
+\label{subsec:exp-ablations}
+
+In this section, we provide ablation studies on model designs and training strategies. 
+We evaluate on ScanRefer and ScanQA to quantize the effectiveness.
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=\linewidth]{figures/ablation-qformer.pdf}
+	\caption{
+    	\textbf{Different Ways of Encoding Visual Prompts.} 
+        We listed two ways of encoding visual prompts, (a) adopting a unified transformer to aggregate features from all kinds of interactions, and (b) directly concatenate the visual prompts to the scene embeddings.
+        Experiments (\cref{tab:ablation-qformer-design}) show that early fusion(a) leads to a better performance.
+    }
+	\label{fig:ablation-qformer}
+\end{figure}
+
+\myparagraph{Effectiveness of the Q-Former Design.}
+We list two ways of utilizing visual prompts in \cref{fig:ablation-qformer},
+where (a) is our proposed method that adopts a unified transformer that aggregates information from both the textual instructions and visual prompts, and (b) is the ``direct injection'' version, which only extract instruction-aware 3D feature with visual prompts concatenated after the scene embeddings.
+We train both models from scratch and evaluate their performance on ScanRefer 3D Dense Captioning.
+The results (\cref{fig:ablation-qformer}) show that the method we use (\cref{fig:ablation-qformer} (a)) could better capture feature related to the visual prompts, leading to better instance caption generation performance (\better{+3.45\%} C@0.5).
+
+\input{tables/ablation-qformer}
+
+
+\myparagraph{Instructions as Auxiliary Tasks for 3D Dense Captioning.} 
+We have introduced two types of textual instructions in \cref{subsec:task instructions} for 3D-DC, \textit{i.e.} the ``describe'' only instructions and ``detect and localize'' instructions.
+Additionally, we have introduced two types of visual prompts (\cref{fig:pipeline} \& \cref{subsec:training}).
+In this study, we show how they serve as auxiliary tasks for 3D-DC by evaluating on ScanRefer in \cref{tab:ablation-densecap-auxiliary}.
+All the methods listed are trained from scratch.
+In \cref{tab:ablation-densecap-auxiliary}, ``Aux.Loc'' identifies whether we train the model with the ``detect and localize'' instructions, and ``Clicks'' identifies whether we train the model with clicks as additional visual prompts.
+Results show that either way can serve as good auxiliary tasks for 3D Dense Captioning.
+
+\input{tables/ablation-densecap-auxiliary}
+
+\input{tables/ablation-generalist}
+
+\input{tables/ablation-scanqa-auxiliary}
+
+\myparagraph{Instructions as Auxiliary Tasks for 3D Question Answering.} 
+We have made similar study on the effectiveness of treating ``answer and localize'' instructions and additional visual prompts as auxiliary tasks for 3D-QA on ScanQA \cite{azuma2022scanqa} validation set in \cref{tab:ablation-scanqa-auxiliary}.
+The listed methods are evaluated without any visual interactions for fair comparison.
+Results show that the additional textual instructions and visual prompts improve the task diversity and further improve the performance on 3D Question Answering.
+
+
+\myparagraph{Performance as a Generalist.}
+To examine whether our method could distinguish different tasks given the textual instructions and visual prompts introduced in \cref{subsec:task instructions}, we evaluate our model on different tasks with the same set of weights in \cref{tab:ablation-generalist} with several baseline methods.
+The first three rows list the performance our proposed models trained on each dataset from scratch as generalists.
+The following three rows list the performance of the model fine-tuned on each dataset.
+The last row lists the performance of our model as a generalist.
+Results show that our model could distinguish 3D-DC and 3D-QA given the textual instructions and visual prompts, providing strong results (62.98\% C@0.5 on ScanRefer, 75.67\% CiDEr on ScanQA).
+However, the generalist model achieves poor results on Nr3D \cite{achlioptas2020referit3d}, which is because we did not try to differentiate between Nr3D and ScanRefer during training as these two datasets are used for the same task in the first place.
+There is also an interesting observation that although we did not differentiate between the two datasets for 3D-DC, and the training sample sizes of the two models were similar, the model still tend to achieve high scores on ScanRefer (62.98\% C@0.5).
+We are also excited to see that the weights of the generalist model could serve as a strong initialization of weights for fine-tuning.
+For example, the fine-tuned model on ScanRefer could achieve 65.19\% C@0.5, which is \better{+2.35}\% higher than the model trained from scratch.
+
+\myparagraph{Importance of Textual Instructions.}
+We further conduct study to see whether the instructions are necessary in 3D Dense Captioning in \cref{tab:ablation-interaction}.
+The first row is our baseline method that directly generates the captions based on visual prompts without any textual instructions, and the second row is our method that is trained with textual instructions introduced in \cref{subsec:task instructions}.
+Both methods are trained from scratch for fair comparison.
+We notice that since the LLM is frozen, certain textual instructions are beneficial to generating results in specific domains/tasks.
+
+\input{tables/ablation-instructions}
+
+
+\myparagraph{Clicks for Better Question Answering.}
+One major challenge of answering que
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

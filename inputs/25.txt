@@ -1,0 +1,202 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Few-shot learning is of significant value for semantic segmentation. It is because the semantic segmentation task requires pixel-wise annotation, which is notoriously cumbersome and expensive~\cite{pascal-voc-2012, linMicrosoft2014,liFSS10002020}. Therefore, learning from very few samples for semantic segmentation has attracted significant research interest, yielding a popular topic, \emph{i.e.}, few-shot semantic segmentation (FSS). Formally, FSS aims at performing semantic segmentation on novel classes given only a few (\eg, one or five) densely-annotated samples (called \emph{support} images)~\cite{caellesOneShot2017}.
+
+With a rethink of recent advances in FSS, we find current FSS methods usually require an intricate decoder, deviating far from the plain supervised segmentation framework. More concretely, state-of-the-art FSS methods adopt the ``feature extractor $+$ (intricate) decoder'' framework (Fig.~\ref{fig:intro} (a), (b) and (c)), while the supervised segmentation methods usually adopt the ``feature extractor $+$ (simple) linear classification head'' framework (Fig.~\ref{fig:intro} (d)). In FSS frameworks, the decoders perform sophisticated matching and can be summarized into three types (Fig.~\ref{fig:intro} (a), (b), and (c)), as detailed in the related works in Section\ref{sec: relatedwork_FFS}. 
+Arguably, the intricacy of the decoder and its sophisticated matching pipeline makes the FSS framework hard to follow. Under this background, we think it is valuable to explore a relatively straightforward FSS framework. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/1-intro.pdf}
+    \caption{Comparison between the ``feature extractor + intricate decoder'' (a, b and c) and the plain``feature extractor + linear classification head'' framework (d and e). 
+    \textbf{(a)} The decoder refines the prior maps (raw segmentation) for final prediction~(\eg, FWB~\cite{Nguyen_2019_ICCV}, CWT~\cite{luSimpler2021}, SCL~\cite{zhangSelfGuided2021}). \textbf{(b)} The decoder concatenates the support prototype and the query features and then further feeds them into the CNN or transformer~(\eg, PFENet~\cite{tianPrior2020}, ASGNet~\cite{liAdaptive2021}, CyCTR~\cite{zhang2021few}). \textbf{(c)} The decoder conducts pixel-to-pixel matching from query to support and then applies 4D convolution or transformer to discover the patterns within the matching score maps~(\eg, HSNet~\cite{minHypercorrelation2021}, VAT~\cite{hongCost2021}). \textbf{(d)} The plain framework of ``feature extractor + linear classification head'' in supervised segmentation. \textbf{(e)} The proposed FPTrans revives the plain framework and makes only one necessary modification (\emph{i.e.}, the proxies are extracted from the support images on the fly).}
+    \label{fig:intro}
+\end{figure}
+
+This paper revives the plain framework of ``feature extractor $+$ linear classification head'' for FSS and proposes a novel Feature-Proxy Transformer (FPTrans) method. The term ``proxy'' denotes the vector representing a foreground class or the background in the linear classification head. We note that in Fig.~\ref{fig:intro} (d), given the extracted feature maps, the supervised segmentation methods simply feed them into a linear classification head to perform pixel-wise prediction. FPTrans adapts this straightforward framework to the FSS task with only one modification: instead of fixing the already-learned proxies in the classification head (Fig.~\ref{fig:intro} (d)), FPTrans uses support feature maps and the support mask to generate the proxies on the fly. 
+This modification is necessary for recognizing novel classes and is consistent with some earlier FSS methods \cite{shaban2017one,Wang_2019_ICCV}. 
+
+To tackle two FSS challenges (\emph{i.e.}, generalization to novel classes and very few support samples) under this simple framework, FPTrans has two keypoints for learning discriminative features and representative proxies, respectively. \textbf{1)} To better utilize the limited support samples, the feature extractor makes the query interact with the support features from the bottom to top layers. Consequently, the support sample provides extra information/clues for extracting the query features and is thus beneficial. \textbf{2)} To promote generalization to novel classes, FPTrans uses multiple local background proxies instead of a single 
+global proxy for representing the background. 
+This design is important because, during base training, the background is not homogeneous and may contain some novel foreground classes. Consequently, it avoids confusing novel classes with the background of the base data and thus benefits generalization to novel classes. 
+
+We implement the above two keypoints with a novel prompting strategy.
+While using the prompt to condition a transformer for different tasks \cite{liPrefixTuning2021,jiaVisual2022,wangLearning2022} or different domains \cite{geDomain2022} is a common practice, our prompting strategy is significantly different and has two novel functions, \emph{i.e.}, 1) prompting for different (foreground or background) proxies and, 2) acting as the intermediate for query-support interaction. Specifically, FPTrans simultaneously prepends multiple prompts at the input layer, with one prompt for the foreground and the other prompts for the background. These prompts are fed into the transformer and finally become the foreground proxy and local background proxies, respectively. During their flow from the input layer to the output layer, the hidden states of prompts in all the hidden layers are shared by the query and support for cross-attention (query-prompt attention and support-prompt attention). Therefore, it significantly reduces the interaction complexity from $O(N^2)$ to $O(N)$ ($N$ is the number of pixels on the feature maps). Since the prompting and attention mechanism are critical for these two keypoints, we use the transformer backbone as a natural choice. 
+
+We conduct extensive experiments and show that FPTrans achieves accuracy on par with the decoder-based FSS methods. For example, on PASCAL-5$^i$~\cite{caellesOneShot2017} with one support sample, FPTrans achieves 68.81\% mIoU, setting a new state of the art. With its simple framework and competitive accuracy, we hope FPTrans can serve as a strong baseline for FSS.
+
+To sum up, our main contributions are summarized as follows: 
+(i) We revive the plain ``feature extractor $+$ linear classification head'' framework for FSS. We hope the correspondingly-proposed method FPTrans can serve as a simple and strong FSS baseline. 
+(ii) We integrate two keypoints into FPTrans, \emph{i.e.}, learning discriminative features through query-support interaction and learning representative local background proxies. These two keypoints rely on a novel prompting strategy of the transformer backbone and correspondingly tackle two FSS challenges, \emph{i.e.}, very few support samples and generalization to novel classes. 
+(iii) We conduct extensive experiments to validate the effectiveness of FPTrans. Experimental results show that FPTrans with a plain framework achieves competitive accuracy, compared with state-of-the-art FSS methods with intricate decoders. 
+
+
+
+
+
+
+
+
+Related Work
+
+\subsection{Recent Progress on Few-Shot Segmentation}\label{sec: relatedwork_FFS}
+
+Early FSS methods directly generate class-specific classifier weights and biases~\cite{shaban2017one,rakelly2018conditional,tianDifferentiable2019} or apply the prototype learning~\cite{snellPrototypical2017,dong2018few,Wang_2019_ICCV,Siam_2019_ICCV}. The recent state-of-the-art methods shift to the decoder-based framework and can be categorized into three types according to the decoder structure. \textbf{1)} Some recent methods\cite{Nguyen_2019_ICCV,liuCRNet2020,luSimpler2021,zhangSelfGuided2021} (Fig.~\ref{fig:intro}(a)) generate prior maps based on query features and support features. They further use CNN or transformer to refine the prior maps (which may be viewed as raw segmentation) into the final segmentation output. \textbf{2)} Some methods~\cite{zhangSGOne2020,Zhang_2019_CVPR,tianPrior2020,liAdaptive2021,zhang2021few,xieScaleAware2021,xieFewShot2021,yangPrototype2020,Zhang_2019_ICCV} (Fig.~\ref{fig:intro}(b)) concatenate the support prototype vector and the query features and then feed the concatenated feature maps into a subsequential CNN or transformer for prediction. %Considering to enhance class-wise representation, multiple prototypes ~\cite{yangPrototype2020,Zhang_2019_ICCV,liAdaptive2021,zhangSelfGuided2021,liuPartAware2020} are explored in feature space with EM algorithm, clustering, and so on. 
+\textbf{3)} Some methods focus on exploring fine-grained knowledge and calculating the pixel-to-pixel matching scores between support and query features to derive affinity maps~\cite{huAttentionBased2019,wangFewShot2020a,yangBriNet2020,gairolaSimPropNet2020,zhang2021few,yangNew2019,luSimpler2021} (Fig.~\ref{fig:intro}(c)). Some further apply 4D convolution or transformer~\cite{minHypercorrelation2021,hongCost2021} to discover the latent patterns within the affinity maps. Besides, latent information is also investigated to enhance the model~\cite{pambalaSML2020,zhaoObjectnessAware2020,khandelwalUniT2021,yangMining2021,wuLearning2021,liuPartAware2020}. 
+
+In contrast, this paper abandons the intricate decoder and revives the plain framework of ``feature extractor + linear classification head''. We show that this simple framework can also achieve promising FSS results. We note that a recent work~\cite{boudiafFewShot2021} also uses the plain framework during training. However, they rely on transductive inference during testing to mitigate the gap between the inconsistent training and testing schemes. Compared with \cite{boudiafFewShot2021}, the proposed FPTrans maintains its simplicity for testing and achieves superior FSS accuracy. 
+
+\subsection{Backbone for Few-Shot Segmentation}
+Previous FSS methods usually adopt CNNs (\eg, VGG~\cite{simonyanVery2015}, ResNet~\cite{heDeep2016}) as the backbone (\ie, feature extractor) and typically fix the pretrained backbone parameters~\cite{Zhang_2019_CVPR,tianPrior2020,zhang2021few,zhangSelfGuided2021,wuLearning2021,luSimpler2021,liAdaptive2021,minHypercorrelation2021,hongCost2021}. However, fixing the backbone is prone to a side-effect, \emph{i.e.}, insufficient adaptation to the segmentation training data. Some recent methods finetune the CNN backbone along with FSS training with sophisticated techniques (\emph{e.g.}, model ensemble or transductive inference~\cite{langLearning2022,boudiafFewShot2021}) to tackle the problem of insufficient adaptation. %However, they rely on extra intricate decoders~\cite{minHypercorrelation2021,hongCost2021} or techniques~(\eg, ensemble, transductive inference)~\cite{langLearning2022,boudiafFewShot2021} to reach the desired performance. 
+
+In contrast, this paper adopts the vision transformer~\cite{dosovitskiyImage2021,henaffDataEfficient2020,xieSegFormer2021,liuSwin2021} as the backbone because we rely on the attention mechanism and a novel prompting technique for query-support interaction. Moreover, the proposed FPTrans benefits from fine-tuning the backbone parameters without bells and whistles. 
+We note that using the transformer backbone does NOT necessarily improve FSS, because the ablation studies~(in Table~\ref{tab:backbone}) show that replacing the CNN backbone with a transformer does NOT bring improvements to the decoder-based FSS methods~\cite{tianPrior2020, zhang2021few}. Therefore, we attribute the superiority of our method mainly to the two unique keypoints in FPTrans. %In other words, using the transformer backbone does NOT necessarily improves FSS.  %Therefore, using the transformer backbone is a natural choice for FPTrans with plain framework, while using the CNN backbone is 
+
+
+
+Methods
+
+\subsection{Problem Formulation}
+
+Few-shot segmentation aims at tackling the semantic segmentation problem on novel classes under a low data regime. Specifically, FSS usually provides a training set with categories $\mathcal{C}_{train}$ and a testing set with novel categories $\mathcal{C}_{test}$ ($\mathcal{C}_{train}\cap\mathcal{C}_{test}=\emptyset$). %Given only few support images for each testing category, FSS seeks for accurate segmentation on query images. 
+The mainstream setting~\cite{Zhang_2019_CVPR,zhang2021few,tianPrior2020} adopts the episodic training and testing scheme: Each episode corresponds to a single class $c$ ($c\in\mathcal{C}_{train}$ during training and $c \in \mathcal{C}_{test}$ during testing), and provides a query sample $\{I_q, Y_q\}$ and $K$ support samples $\{I_s^{(k)}, Y_s^{(k)}\}_{k=1}^K$ ($I$ is the image and $Y$ is the label). The superscript $k$ will be omitted unless necessary. Within each episode, the model is expected to use $\{I_s, Y_s\}$ and $I_q$ to predict the query label. In this paper, we follow this popular episodic training and testing scheme. 
+\subsection{Preliminaries on Vision Transformer and Prompt Learning}
+The proposed FPTrans uses the vision transformer as its backbone and integrates a novel prompting strategy. Therefore, we first revisit the vision transformer and the prompting mechanism. 
+
+\textbf{Vision Transformer}~\cite{dosovitskiyImage2021}(ViT) is designed for computer vision tasks based on transformer~\cite{vaswaniAttention2017} which is originally designed for sequential data~\cite{devlin2019BERT,brownLanguageModelsAre2020,Yijing2022TPGNN}. It is composed of a patch embedding module, a transformer encoder, and an MLP head. Given an RGB image as the input, ViT first reshape it into $N$ patches $\{\mathbf{a}_p\in\mathbb{R}^{3\times P\times P}\vert p=1,2,\dots,N\}$ ($P$ is the patch size) and then projects the flattened image patches into $C$-Dimensional embeddings by $\mathbf{x}_p=\text{Embed}(\mathbf{a}_p)\in\mathbb{R}^C,\; p=1,2,\dots,N$. We denote the collection of these embedding tokens as $\mathbf{X}^0 = \{\mathbf{x}_p\}_{p=1}^N \in \mathbb{R}^{N\times C}$. ViT has $L$ stacked transformer blocks, each one of which consists of a Multiheaded Self-Attention module and an MLP module (See supplementary Section A for details). Given $\mathbf{X}^0$ (the collection of embedding tokens), ViT concatenates it with a classification token $\mathbf{x}_{cls}^0 \in \mathbb{R}^C$ and then inputs them into the stacked transformer blocks,  which is formulated as:
+\begin{equation}\label{eqn:vit1}
+    [\mathbf{x}_{cls}^l, \mathbf{X}^l] = B_l([\mathbf{x}_{cls}^{l-1}, \mathbf{X}^{l-1}]), \qquad l=1,2,\dots,L, 
+\end{equation}
+where $\mathbf{x}_{cls}^l$ and $\mathbf{X}^l$ are the outputs of the $l$-th block $B_l$, and $[\cdot,\cdot]$ is the concatenate operation. 
+
+\textbf{Prompting} was first introduced in NLP tasks to identify different tasks by inserting a few hint words into input sentences~\cite{gao-etal-2021-making,jiangHow2020, brownLanguage2020,liuPretrain2021}. More generally, prompting techniques can efficiently condition the transformer to different tasks~\cite{liPrefixTuning2021,guPPT2022,houlsbyParameterEfficient2019,heUnified2022,wangLearning2022} or domains~\cite{geDomain2022} without changing any other parameters of the transformer. To this end, prompting techniques typically prepend some prompt tokens $\mathbf{P}^0$ to the input layer. Correspondingly, Eqn~\eqref{eqn:vit1} transforms into  $[\mathbf{x}_{cls}^l,\mathbf{X}^l,\mathbf{P}^l]=B_l([\mathbf{x}_{cls}^{l-1},\mathbf{x}^{l-1},\mathbf{P}^{l-1}])$. It can be seen that changing the prompt simultaneously changes the mapping function of the transformer, even if all the transformer blocks $B_l$ remain  unchanged. 
+
+\textbf{Our prompting strategy} in FPTrans is significantly different from the prior prompting techniques. In contrast to the popular prompting for different tasks or different domains, FPTrans prepends multiple prompts to simultaneously activate multiple different proxies (\emph{i.e.}, the foreground and local background proxies), as well as to facilitate efficient query-support interactions. Moreover, in prior works, the prompts in the hidden layers are dependent on a single input sample. In contrast, in FPTrans, the prompts in the hidden layers are shared by the query and support images through a synchronization procedure. We will illustrate these points in the following section. 
+
+\subsection{Feature-Proxy Transformer}\label{sec:FPTrans}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{images/2-methods.pdf}
+    \caption{Overview of the proposed {Feature-Proxy Transformer}~(FPTrans). \textbf{(a)} Given a support image, we generate a foreground prompt and multiple local background prompts. Each prompt consists of multiple tokens.
+    \textbf{(b)} The \textcolor{my_yellow}{feature extractor} consists of $L$ transformer blocks. It takes patch tokens from the query and support images, as well as the prompts as its input. 
+    After every transformer block, FPTrans synchronizes the prompt tokens from the query and support branches to facilitate efficient query-support interactions. The \textcolor{my_white}{ classification head} uses two types of proxies (the feature-based and the prompt-based proxies) for training and uses the feature-based proxies for inference. }
+    \label{fig:methods}
+\end{figure}
+
+\subsubsection{Overview}
+The proposed Feature-Proxy Transformer~(FPTrans) consists of three major steps, \emph{i.e.}, 1) prompt generation, 2) feature and proxy extraction, and 3) training the classification head and inference, as illustrated in Figure ~\ref{fig:methods}. The  prompts are extracted from the support images within a (training or testing) episode and contain a foreground prompt and multiple local background prompts (Section~\ref{sec:prompt}). Afterward, FPTrans concatenates these prompts with the image patch tokens and forwards them into the stacked transformer blocks to extract both the features and proxies (Section~\ref{sec:feature_proxy}). Different from the popular prompting technique, FPTrans shares the hidden states of the prompt tokens for the query and its support images, using a prompt synchronization operation. It facilitates efficient feature interactions between support and query features. Finally, given the extracted features and proxies, we elaborate on how to use them for training the classification head and for inference in Section~\ref{sec:train_infer}.
+
+
+\subsubsection{Prompt Generation}\label{sec:prompt}
+
+Prompt generation is illustrated in Fig.~\ref{fig:methods} (a). Within each episode, FPTrans uses the support image(s) to extract class-aware prompts and share them for the support and query images. The prompts are class-aware because we respectively extract prompts from the foreground and  background. %In other words, the foreground and background have their own prompts. 
+
+To this end, we first use a pretrained plain vision transformer (Eqn.~\eqref{eqn:vit1}) to extract deep features from the support image and get $\mathbf{F}_s^*\in\mathbb{R}^{C\times H\times W}$, in which $H$ and $W$ are the feature height and width, and the subscript $s$ indicates the ``support''. Afterward, we use the support mask to crop out the foreground regions and background regions from $\mathbf{F}_s^*$. %Generating the foreground prompt is relatively simple: we average the cropped foreground features to get a foreground mean feature. This foreground mean feature is summed with several additional learnable tokens   Extracting the foreground. 
+While the foreground regions are cropped out as a whole, the background regions are cropped and partitioned into multiple ($S$) local regions, because the background is likely not to be homogeneous. %To this end, we employ a Voronoi-based method \cite{aurenhammerVoronoi1991} to partition the background regions in three steps:
+To this end, we employ a Voronoi-based method \cite{aurenhammerVoronoi1991} to partition the background into $S$ regions (See supplementary Section B.1 for details). %See supplementary for more details of selecting dispersed point and the Voronoi partition.
+
+
+According to the background partition results, we generate $S$ local masks for the background, \emph{i.e.}, $\{B_n\}_{n=1}^S$ with $B_n\in\{0,1\}^{H\times W}$. A partition example of $S=3$ is illustrated in Fig.~\ref{fig:methods}(a). Consequently, we calculate the mean feature of the foreground $\mathbf{u}_f^* \in \mathbb{R}^C$ and the local mean feature of background $\mathbf{u}_n^*\in\mathbb{R}^C$ by masked average pooling:
+\begin{equation}\label{eqn:proxy}
+    \mathbf{u}_f^* = \frac{1}{\vert \Tilde{Y}_s\vert}\sum_{i=1}^{HW}\mathbf{F}_{s,i}^*\Tilde{Y}_{s,i}, \quad \mathbf{u}_n^* = \frac{1}{\vert B_n\vert}\sum_{i=1}^{HW}\mathbf{F}_{s,i}^*B_{n,i}, \qquad n=1,\dots,S,
+\end{equation}
+where $\Tilde{Y}_s\in\{0,1\}^{H\times W}$ is the down-sampled foreground mask of the support image.  
+Based on the mean features, we further expand each $C$-dimensional mean feature vector ($\mathbf{u}_f^* \in \mathbb{R}^C$ and $\mathbf{u}_n^*\in\mathbb{R}^C$) into a corresponding $G \times C$ token and then add it with extra learnable tokens by:
+\begin{equation}
+    \mathbf{p}_f = \mathcal{E}(\mathbf{u}_f^*) + \mathbf{z}_f, \quad
+    \mathbf{p}_n = \mathcal{E}(\mathbf{u}_n^*) + \mathbf{z}_n, \qquad n=1,\dots,S, 
+\end{equation}
+where $\mathcal{E}$ is the expansion from $C$-dimensional vector to $G\times C$-dimensional token, and $\mathbf{z}_f,\mathbf{z}_n \in \mathcal{R}^{G\times C}$ are the learnable tokens. Adding these learnable tokens makes prompts gain extra diversity and become more discriminative  \cite{yangAssociating2021}. See supplementary Section B.2 for more details on this prompt augmentation technique. 
+Consequently, after the expansion and augmentation, we get a foreground prompt token $\mathbf{p}_f \in \mathcal{R}^{G\times C}$ and $S$ local background prompt tokens $\mathbf{p}_n \in \mathcal{R}^{G\times C} (n=1,2, \cdots, S)$.  
+
+
+
+
+
+\subsubsection{Feature and Proxy Extraction}\label{sec:feature_proxy}
+
+\paragraph{Feature Extraction.} The process for extracting features is illustrated in Fig.~\ref{fig:methods}(b). Without loss of generality, we take the 1-shot setting as the example for clarity. (See supplementary Section C for $K$-shot settings) Within each episode, a query image $I_q$ and a support image $I_s$ are split into $N$ patches and then flattened as $\{\mathbf{a}_{q,p}\}_{p=1}^N$ and $\{\mathbf{a}_{s,p}\}_{p=1}^N$, respectively.
+An embedding layer projects these patches into query and support patch tokens, \emph{i.e.}, $\mathbf{X}_q^0\in\mathbb{R}^{N\times C}$ and $\mathbf{X}_s^0\in\mathbb{R}^{N\times C}$. 
+We recall that in Section~\ref{sec:prompt}, we already get multiple prompt tokens, \emph{i.e.}, $\mathbf{P}^0=[\mathbf{p}_f, \mathbf{p}_0, \mathbf{p}_1, \cdots, \mathbf{p}_S]$. The patch tokens from a single image and the prompt tokens are concatenated as the query input and support input, \emph{i.e.}, $[\mathbf{X}_q^0, \mathbf{P}^0]$ and $[\mathbf{X}_s^0, \mathbf{P}^0]$. 
+The query and support inputs are processed by the transformer blocks, which are formulated by:
+\begin{align}\label{eqn:fptrans_1}
+[\mathbf{X}_q^l,\mathbf{P}_q^l] &= B_l([\mathbf{X}_q^{l-1},\mathbf{P}^{l-1}]), %\qquad l=1,2,\dots,L, 
+\\  \label{eqn:fptrans_2} 
+[\mathbf{X}_s^l,\mathbf{P}_s^l] &= B_l([\mathbf{X}_s^{l-1},\mathbf{P}^{l-1}]),
+\\ \label{eqn:fptrans_3} 
+\mathbf{P}^l &= (\mathbf{P}_q^l + \mathbf{P}_s^l)/2, 
+\end{align}
+where $l=1,2, \cdots, L$ enumerates all the transformer blocks. 
+
+There is a novel and unique \textbf{prompt synchronization} (Eqn.~\eqref{eqn:fptrans_3}) in FPTrans. Specifically, Eqn.~\eqref{eqn:fptrans_3} averages the query and support prompt tokens after every transformer block. It makes the synced prompt token $\mathbf{P}_l$ absorb information from both the query and support patch tokens. Therefore, in the subsequential $(l+1)$-th block, the synced prompt token $\mathbf{P}_l$ passes the support information to the query tokens $[\mathbf{X}_q^{l+1}, \mathbf{P}_q^{l+1}]$ and vice versa. In a word, this simple prompt synchronization facilitates efficient interaction between query and support features. 
+
+
+\paragraph{Proxy Extraction.} As the results of Eqn.~\eqref{eqn:fptrans_1} to Eqn.~\eqref{eqn:fptrans_3}, the feature extractor outputs support features $\mathbf{X}_s^L$, query features $\mathbf{X}_q^L$, as well as the deep states of prompts $\mathbf{P}^L$. FPTrans uses the support features $\mathbf{X}_s^L$ and the deep states of prompts $\mathbf{P}^L$ to extract two types of proxies, \emph{i.e.}, the feature-based proxies and the prompt-based proxies, respectively. 
+$\bullet$ \emph{Feature-based proxies}. FPTrans uses the downsampled foreground mask $\Tilde{Y}_s$ and the partitioned background masks $B_n$ (which are already provided in Section~\ref{sec:prompt}) to extract the feature-based proxies by: $\mathbf{u}_f=\frac1{\vert \Tilde{Y}_s\vert}\sum_i\mathbf{F}_{s,i}\Tilde{Y}_{s,i},\;\mathbf{u}_n=\frac1{\vert B_n\vert}\sum_i\mathbf{F}_{s,i}B_{n,i}\;n=1,\dots,S$. 
+
+$\bullet$ \emph{Prompt-based proxies}. Moreover, FPTrans uses the deep states of prompts $\mathbf{P}^L$ to get the prompt-based proxies by: $\mathbf{v}_f=\frac1G\sum_{j=1}^G\mathbf{p}_{f,j}^L$ and $\mathbf{v}_n=\frac1G\sum_{j=1}^G\mathbf{p}_{n,j}^L$.
+
+These two types of proxies are both used for training FPTrans. In contrast, during testing, FPTrans only uses feature-based proxies. 
+\subsubsection{Training and Inference}\label{sec:train_infer}
+FPTrans uses two classification losses (one for the feature-based proxies and the other for the prompt-based proxies) and a pairwise loss for training.
+
+\textbf{Classification losses.} Since segmentation can be viewed as a pixel-wise classification problem, FPTrans directly compares the similarity of each query feature vector ($\mathbf{F}_{q,i}$) and the proxies for linear classification. %We note that there are two sets of proxies, \emph{i.e.}, the feature-based and the prompt-based proxies. 
+We elaborate on the classification loss with the feature-based proxy (and the process with the prompt-based proxies is similar). 
+The predicted probability of $\mathbf{F}_{q,i}$ belonging to the foreground is formulated as:
+\begin{equation}\label{eq:prob}
+    \mathcal{P}(\mathbf{F}_{q,i}) = \frac{\exp({\texttt{sim}(\mathbf{F}_{q,i}, \mathbf{u}_f})/\tau)}
+    {
+    \exp{(\texttt{sim}(\mathbf{F}_{q,i}, \mathbf{u}_f)/\tau)}+
+    \max_n(\exp{(\texttt{sim}(\mathbf{F}_{q,i}, \mathbf{u}_n/\tau)}))
+    }, \quad n=1,2, \cdots, S
+\end{equation}
+where $\texttt{sim}(\cdot,\cdot)$ is the cosine similarity between two vectors, $\tau$ is a temperate coefficient. The $\max$ operation is critical because it facilitates comparing a feature to its closest background proxy. 
+
+Given the predicted probability and the ground-truth label, FPTrans uses the standard cross-entropy loss $\mathcal{L}_{ce}$ for supervising the pixel-wise classification. In parallel to $\mathcal{L}_{ce}$, FPTrans uses the prompt-based proxies in a similar procedure and derives another classification loss $\mathcal{L}_{ce}'$. 
+
+\textbf{Pairwise loss.} In addition to the classification losses, FPTrans further employs a pairwise loss to pull close all the foreground features from the query and support samples, as well as to push the foreground and background features far away from each other. The pairwise loss is formulated as:
+\begin{equation}\label{eq:pair}
+    \mathcal{L}_{pair} = \frac1{Z}\sum_{(Y_{q,i}+Y_{s,j})\geq 1}\text{BCE}(\sigma(\texttt{sim}(\mathbf{F}_{q,i}, \mathbf{F}_{s,j})/\tau), \mathbf{1}[Y_{q,i}=Y_{s,j}]),
+\end{equation}
+where $Z=\vert (Y_{q,i}+Y_{s,j})\geq 1\vert$ is the normalization factor and $\text{BCE}$ is the binary cross-entropy loss. $\sigma$ is a Sigmoid layer and $\mathbf{1}[\cdot]$ is the indicator function. %The intuition is that: if a query feature $\mathcal{F}_{q,i}$ and a support feature $\mathcal{F}_{s,j}$ both belong to the foreground, their cosine similarity should be enlarged to approach $1$. In contrary, 
+If two features both belong to the background ($ (Y_{q,i}+Y_{s,j})=0)$, this pairwise loss function will NOT pull them close. Ablation studies show that pulling two foreground features close substantially improves FSS (Table~\ref{tab:ablation_components}) while pulling two background features actually compromises the FSS accuracy, as evidenced in the supplementary Section E.2.
+
+\textbf{Overall, } FPTrans sums all the three losses for training:
+\begin{equation}\label{eq:overall}
+    \mathcal{L} = \mathcal{L}_{ce}+\mathcal{L}_{ce}' + \lambda\mathcal{L}_{pair},
+\end{equation}
+where $\lambda$ is a hyperparameter. 
+For inference, FPTrans simply uses the query feature and the feature-based proxies for the final prediction (Eqn.~\eqref{eq:prob})
+
+
+
+
+Experiments
+
+
+\begin{table}[!t]
+  \caption{Comparison with state-of-the-art methods on PASCAL-5$^i$. We report 1-shot and 5-shot results using the mean IoU (\%).}
+  \label{tab:pascal}
+  \centering
+  \small
+  \setlength\tabcolsep{5.4pt}%
+  \begin{tabular}{clcccccccccc}
+    \toprule
+    \multirow{2}{*}{Backbone} & \multirow{2}{*}{Method} &  \multicolumn{5}{c}{1-shot} & \multicolumn{5}{c}{5-shot} \\
+    \cmidrule{3-12}
+      &  & S0 & S1 & S2 & S3 & Mean & S0 & S1 & S2 & S3 & Mean \\
+    \midrule
+    \multirow{5}{*}{Res-50} & RPMM~\cite{yangPrototype2020} & 55.2 & 66.9 & 52.6 & 50.7 & 56.3 & 56.3 & 67.3 & 54.5 & 51.0 & 57.3 \\
+    & PFENet~\cite{tianPrior2020} & 61.7 & 69.5 & 55.4 & 56.3 & 60.8 & 63.1 & 70.7 & 55.8 & 57.9 & 61.9 \\
+    & CyCTR~\cite{zhang2021few} & 67.8 & 72.8 & 58.0 & 58.0 & 64.2 & 71.1 & 73.2 & 60.5 & 57.5 & 65.6 \\
+    & HSNet~\cite{minHypercorrelation2021} & 64.3 & 70.7 & 60.3 & 60.5 & 64.0 & 70.3 & 73.2 & 67.4 & 67.1 & 69.5 \\
+    & BAM~\cite{langLearning2022} & 69.0 & 73.6 & 67.6 & 61.1 & 67.8 & 70.6 & 75.1 & 70.8 & 67.2 & 70.9 \\
+    \midrule
+    \multirow{5}{*}{Res-101} & DAN~\cite{wangFewShot2020a} & 54.7 & 68.6 & 57.8 & 51.6 & 58.2 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

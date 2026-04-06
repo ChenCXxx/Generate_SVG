@@ -1,0 +1,212 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+3D object detection, aiming at localizing objects in the 3D space, is a crucial ingredient for 3D scene understanding. It has been widely adopted in various applications, such as autonomous driving \citep{chen2022autoalign,shi2020pv,wang2021multi}, robotic navigation \citep{antonello2017fast}, and virtual reality \citep{schuemie2001research}. Recently, multi-view 3D object detection has drawn great attention thanks to its low cost and high efficiency. As images offer a discriminative appearance and rich texture with dense pixels, detectors can easily discover and categorize the objects, even in a far distance. Despite the promising deployment advantage, accurately localizing instances from camera view only is extremely difficult, mainly due to the ill-posed nature of monocular imagery. Therefore, recent approaches adopt heavy backbones (\textit{e.g.,} ResNet-101-DCN \citep{he2016deep}, VoVNetV2 \citep{lee2020centermask}) for image feature extraction, making it inapplicable for real-world applications. 
+
+LiDAR points, which capture precise 3D spatial information, provide natural guidance for camera-based object detection. In light of this, recent works \citep{guo2021liga,peng2021lidar} start to explore the incorporation of point clouds in 3D object detection for performance improvement. One line of work \citep{wang2019pseudo} projects each points to the image to form depth map labels, and subsequently trains a depth estimator to explicitly extract the spatial information. Such a paradigm generates intermediate products, \textit{i.e.,} depth prediction maps, therefore introducing extra computational cost. Another line of work \citep{chong2021monodistill} is to leverage the teacher-student paradigm for knowledge transfer. \citep{chong2021monodistill} projects the LiDAR points to the image plane, constructing a 2D input for the teacher model. Since the student and teacher models are exactly structurally identical, feature mimicking can be naturally conducted under the framework. Although it solves the alignment issue across different modalities, it misses the opportunity of pursuing a strong LiDAR-based teacher, which is indeed important in the knowledge distillation (KD) paradigm. Recently, UVTR \citep{li2022unifying} propose to distill the cross-modal knowledge in the voxel space, while maintaining the structure of respective detectors. However, it directly forces the 2D branch to imitate the 3D features, ignoring the divergence between different modalities. 
+
+In this work, by carefully examining the non-homogenous features represented in the 2D and 3D spaces, we explore the incorporation of knowledge distillation for multi-view 3D object detection. Yet, there are two technical challenges. First, the views of images and LiDAR points are different, \textit{i.e.,} camera features are in the perspective view, while LiDAR features are in the 3D/bird's-eye view. Such a view discrepancy indicates that a natural one-to-one imitation \citep{romero2014fitnets} may not be suitable. Second, RGB images and point clouds hold respective representations in their own modalities. Therefore, it can be suboptimal to mimic features directly, which is commonly adopted in the 2D detection paradigm \citep{yang2022prediction,zhang2020improve}.
+
+We address the above challenges by designing a cross-modal BEV knowledge distillation framework, namely \textbf{BEVDistill}. Instead of constructing a separate depth estimation network or explicitly projecting one view into the other one, we convert all features to the BEV space, maintaining both geometric structure and semantic information. Through the shared BEV representation, features from different modalities are naturally aligned without much information loss. After that, we adaptively transfer the spatial knowledge through both \textit{dense} and \textit{sparse} supervision: (i) we introduce soft foreground-guided distillation for non-homogenous dense feature imitation, and (ii) a sparse style instance-wise distillation paradigm is proposed to selectively supervise the student by maximizing the mutual information.  
+
+Experimental results on the competitive nuScenes dataset demonstrate the superiority and generalization of our BEVDistill. For instance, we achieve 3.4 NDS and 2.7 NDS improvements on a competitive multi-view 3D detector, BEVFormer \citep{li2022bevformer}, under the single-frame and multi-frame settings, respectively. Besides, we also present extensive experiments on lightweight backbones, as well as detailed ablation studies to validate the effectiveness of our method. Notably, our best model reaches 59.4 NDS on nuScenes test leaderboard, achieving new state-of-the-art results among all the published multi-view 3D detectors.
+
+
+
+
+Related Work
+
+\subsection{Vision-based 3D Object Detection}
+
+Vision-based 3D object detection aims to detect object locations, scales, and rotations, which is of great importance in autonomous driving \citep{xie2022m,jiang2022polarformer,zhang2022beverse} and augmented reality \citep{azuma1997survey}. One line of work is to detect 3D boxes directly from single images. Mono3D \citep{chen2016monocular} utilizes traditional methods to lift 2D objects into 3D space with semantic and geometrical information. In the consideration that objects located at different distances appear on various scales, D4LCN \citep{ding2020learning} proposes to leverage depth prediction for convolutional kernel learning. Recently, FCOS3D \citep{wang2021fcos3d} extends the classical 2D paradigm FCOS \citep{tian2019fcos} into monocular 3D object detection. It transforms the regression targets into the image domain by predicting its 2D-based attributes. Further, PGD \citep{wang2022probabilistic} introduces relational graphs to improve the depth estimation for object localization. MonoFlex \citep{zhang2021objects} argues that objects located at different positions should not be treated equally and presents auto-adjusted supervision. 
+
+Another line of work predicts objects from multi-view images. DETR3D \citep{wang2022detr3d} first incorporates DETR \citep{carion2020end} into 3D detection by introducing a novel concept: 3D reference points. After that, Graph-DETR3D \citep{chen2022graph} extends it by enriching the feature representations with dynamic graph feature aggregation. Different from the above methods, BEVDet \citep{huang2021bevdet} leverages the Lift-splat-shoot \citep{philion2020lift} to explicitly project images into the BEV space, followed by a traditional 3D detection head. Inspired by the recently developed attention mechanism, BEVFormer \citep{li2022bevformer} automates the \texttt{cam2bev} process with a learnable attention manner and achieves superior performance. PolarFormer \citep{jiang2022polarformer} introduces polar coordinates into the model construction of BEV space and greatly improves the performance. Moreover, BEVDepth \citep{li2022bevdepth} improves BEVDet by explicitly supervising depth prediction with projected LiDAR points and achieves state-of-the-art performance. 
+
+\subsection{Knowledge Distillation in Object Detection}
+
+Most KD approaches for object detection focus on transferring knowledge among two homogenous detectors by forcing students' predictions to match those of the teacher \citep{chen2017learning,dai2021general,zheng2022localization}. More recent works \citep{guo2021distilling,wang2019distilling} find that imitation of feature representations is more effective for detection. A vital challenge is to determine which feature regions should be distilled from the teacher model. FGFI \citep{wang2019distilling} chooses features that are covered by anchor boxes whose IoU with GT is larger than a certain threshold. PGD \citep{yang2022prediction} only focuses on a few key predictive regions using a combination of classification and regression scores as a measure of quality. 
+
+Despite a large number of works discussing the KD in object detection, only a few of them consider the multi-modal setting. MonoDistill \citep{chong2021monodistill} projects the points into the image plane and applies a modified image-based 3D detector as the teacher to distill knowledge. Such a paradigm solves the alignment issue naturally, however, it misses the chance to pursue a much stronger point-based teacher model. LIGA-stereo \citep{guo2021liga} leverages the information of LiDAR by supervising the BEV representation of the vision-based model with the intermediate output from the SECOND \citep{yan2018second}. Recently, UVTR \citep{li2022unifying} presents a simple approach by directly regularizing the voxel representations between the student and teacher models. Both of them choose to mimic the feature representations across the models, while ignoring the divergence between different modalities. 
+
+
+Methods
+
+In this section, we introduce our proposed BEVDistill in detail. We first give an overview of the whole framework in Figure \ref{fig:framework} and clarify the model designs of the teacher and student model in Section \ref{sec:baseline}. After that, we present the cross-modal knowledge distillation approach in Section \ref{sec:bevdistill}, which consists of two modules: dense feature distillation and sparse instance distillation.
+\subsection{Baseline Model}
+\label{sec:baseline}
+
+\textbf{Student Model.} We adopt current state-of-the-art camera-based detector, BEVFormer \citep{li2022bevformer}, as our student model. It consists of an image backbone for feature extraction, a spatial cross-attention module for \texttt{cam2bev} view transformation, and a transformer head for 3D object detection. Besides, it provides a temporal cross-attention module to perceive subsequential multi-frame information for better predictions. 
+
+\textbf{Teacher Model.} In order to keep consistent with the student model, we select Object-DGCNN \citep{wang2021object} as our teacher model. For simplicity and generality, we replace the DGCNN attention with a vanilla multi-scale attention module. It first casts 3D points into the BEV plane and then conducts one-to-one supervision with transformer-based label assignment. We train the model by initializing it from a pre-trained CenterPoint model and fix all parameters during knowledge distillation.
+
+\subsection{BEVDistill}
+\label{sec:bevdistill}
+
+BEVDistill follows the common knowledge distillation paradigm, with a 3D point cloud detector as teacher and an image detector as student. Different from previous knowledge distillation methods, which keep the same architecture for both student and teacher models (except for backbone), BEVDistill explores a more challenging setting with non-homogenous representations.
+
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=1.0\textwidth]{images/framework.png}
+\end{center}
+\caption{The overall architecture of the proposed BEVDistill consists of three main components: a transformer-based LiDAR detector, a transformer-based image detector, and the proposed cross-modal distillation modules. It follows the teacher-student paradigm with both RGB images and LiDAR points as the inputs and keeps the original structure of respective model structures.}
+\label{fig:framework}
+\end{figure*}
+
+\subsubsection{Dense Feature Distillation}
+\label{sec:dense_distill}
+
+In order to conduct dense supervision for feature distillation, we first need to determine the BEV features generated from both models. For the student, we directly adopt the BEV features maps $F^{2D}$ produced by the \texttt{BEVTransformerEncoder}. In order to align the feature representations between the teacher and student, we choose the same BEV feature $F^{3D}$ outputted by the transformer encoder for the teacher model. Different from LIGA-Stereo \citep{guo2021liga} which directly mimics the BEV features extracted from the 3D backbone, we postpone such supervision after the transformer encoder (illustrated in Figure \ref{fig:framework}), which offers more opportunities for the network to align information across different modalities.
+
+Previous works \citep{romero2014fitnets, li2022unifying} directly force the student to mimic the feature map from the teacher and achieve significant performance improvement:
+\begin{equation}
+	L_{feat} = \frac{1}{H \times W} \sum_i^H\sum_j^W ||F_{ij}^{3D} - F_{ij}^{2D}||_2,
+\end{equation}
+where $H, W$ denotes the width and height of the distilled feature map, and $||\cdot||_2$ is the $L_2$ norm. 
+However, such a strategy may not work well under the cross-modal feature setting. Although the view discrepancy is eliminated by projecting both features into the BEV plane, there is still domain discrepancy between different modalities: \textit{despite the same scenes being captured with the point clouds and images with careful alignment, the representation itself can be diverse under different modalities}. For instance, images holds pixels for both foreground and backgrounds regions, however LiDAR points only appears when there exists objects to reflect the ray.
+
+Consider that the regional 3D features can hold meaningful information only if the point exists, we regularize the distillation within the foreground regions. Besides, we notice that the boundary of foreground could also provides useful information, therefore, instead of performing hard supervision on each foreground regions, we introduce a soft-supervision manner similar in \citep{zhou2019objects}. Concretely, we draw Gaussian distribution for each ground truth center $(x_i, y_i)$ in the BEV space with,
+\begin{equation}
+    w_{i,x,y} = \text{exp}(-\frac{(x_i - \hat{x}_i)^2 + (y_i - \hat{y}_i)^2}{2 \sigma_i^2}),
+\end{equation}
+where $\sigma_i$ is a constant (set to 2 by default), indicating the object size standard deviation. Since the feature maps are class-agnostic, we merge all $w_{i,x,y}$ into one single mask $W$. For overlapping regions among different $w_{i,x,y}$ at the same position, we simply take the maximum value of them. 
+
+After that, we enforce the student to mimic the feature with the foreground-guided mask $W$ for dense feature distillation: 
+\begin{equation}
+	L_{feat} = \frac{1}{H \times W \times \sum max(W_{i,j})} \sum_i^H\sum_j^W max(W_{ij}) ||F_{ij}^{3D} - F_{ij}^{2D}||_2.
+\end{equation}
+
+This foreground-guided re-weight strategy allows the model to focus on the foreground regions from the teacher, and at the same time avoid imitation of useless empty 3D features in the background regions. Such a manner is counter to the finding in previous homogeneous knowledge distillation works \citep{yang2022masked}.
+
+\subsubsection{Sparse Instance Distillation}
+\label{sec:sparse_distill}
+
+Instance-level distillation can be easily conducted under the dense prediction setting, where only a pixel-to-pixel mapping is needed for supervision. However, both the student and teacher models in BEVDistill act in a sparse-prediction style. Therefore, a set-to-set mapping is required to ensure instance-level distillation. To achieve the goal, we simply follow the practice in \citep{wang2021object} to construct the correspondence between the student and teacher predictions. Specifically, suppose the categorical and localization predictions output by the $i_{th}$ query from the teacher model are $c_i^T$ and $b_i^T$, and the student can be represented as $c_i^S$ and $b_i^S$, a permutation of $\hat\sigma$ can be found between the output set of the teacher and the student with the lowest cost:
+
+\begin{equation}
+	\hat{\sigma} = \text{arg min} \sum_i^N \mathcal{L}_{match}(y_i, \hat{y}_i),\\
+\end{equation}
+where $\mathcal{L}_{match}(y_i, \hat{y}_i)$ is a pair-wise matching cost, which is defined as:
+
+\begin{equation}
+	\mathcal{L}_{match}(y_i, \hat{y}_i) = - \text{log}~c^S_{\sigma(i)} (c^T_i) + || b_i^T, b_{\sigma(i)}^S||_1.
+\end{equation}
+
+However, we empirically find such a vanilla distillation approach works poorly in a cross-domain supervision manner. There are two main issues that impede the model from further performance improvement. On one hand, not all predictions from the teacher should be treated equally as valuable cues, since most of the predictions are false positives with a low classification score. On the other hand, though the classification logits can represent rich knowledge \citep{hinton2015distilling}, it may not hold when the input data are different. Directly distilling these prediction will introduce great noise to the model and deteriorate the performance. To tackle the problem, we exploit reliable quality score derived from the teacher model to measure the importance of the instance-level pseudo labels and use the score as soft re-weighted factors to eliminate the potential noise predictions made by the teacher. Specifically, we consider the classification score $c_i$ (categorical information) and the IoU between the prediction $b_i^{pred}$ and the ground truth $b_i^{GT}$ (localization information) together to formulate the quality-score $q_i$
+:
+\begin{equation}
+	q_i = (c_i)^{\gamma} \cdot \text{IoU}(b_i^{GT}, b_i^{pred})^{1-\gamma}.
+\end{equation}
+
+The quality score serves as an indicator to guide the student on which teacher's predictions should be paid more weight. Therefore, the final instance-level distillation can be written as:
+\begin{equation}
+	\mathcal{L}_{inst} = \sum_i^N - q_i~(\alpha\mathcal{L}_{cls}(c^S_{\sigma(i)}, c^T_i) + \beta\mathcal{L}_{box}(b_i^T, b_{\sigma(i)}^S)),
+\end{equation}
+
+where $\mathcal{L}_{cls}$ is the KL divergence loss, $\mathcal{L}_{box}$ is the $L_1$ loss in \citep{wang2021object}, and $\alpha$, $\beta$ are reweighted factors to balance the supervision (set to 1.0 and 0.25 by default). Given that the prediction probability mass function over classes contains richer information than one-hot labels, student models are proven to been benefited from such extra supervision \citep{hinton2015distilling}. However, this low dimensional prediction distribution (number of classes) means that only a few amount of knowledge is encoded, thus limiting the knowledge that can be transferred, especially under the cross-modal setting. Besides, the representational knowledge is often structured, with implicit complex interdependencies across different dimensions, while the KL objective treats all dimensions independently. To overcome the problem, instead of minimizing the KL divergence over two distributions, we choose to directly maximize the mutual information (MI) between the representations $h^S, h^T$ at the penultimate layer (before logits) from the teacher and student networks:
+
+\begin{equation}
+	I(h^S; h^T) = \text{KL}(p(h^T, h^S)||\mu(h^T)v(h^S)),
+\end{equation} 
+where $p(h^T, h^S)$ is the joint distribution and the marginal distributions $\mu(h^T), v(h^S)$. We then define a distribution $q$ conditioned on $\eta$ that captures whether the pair is congruent ($q(\eta = 1)$) or incongruent ($q(\eta = 0)$):
+\begin{equation}
+	q(h^T, h^S|\eta = 1) = p(h^T, h^S), q(h^T, h^S|\eta = 0) = \mu(h^T)v(h^S).
+\end{equation}
+
+With Bayes' rule, we can obtain the posterior for $\eta = 1$:
+\begin{equation}
+	q(\eta = 1 | h^T, h^S) = \frac{p(h^T, h^S)}{p(h^T, h^S) + \mu(h^T)v(h^S)},
+\end{equation}
+By taking the logarithm of both sides, we have
+\begin{equation}
+	\text{log} ~q(\eta = 1|h^T, h^S) \leq \text{log}~\frac{p(h^T, h^S)}{p(h^T, h^S) + \mu(h^T)v(h^S)} = I(h^T, h^S).
+\end{equation}
+
+Therefore, the objective can be transformed to maximize the lower bound of MI
+\begin{equation}
+	L_{cls}(h^T, h^S) = E_{q(h^T, h^S|\eta=1)}[\text{log}~g(h^T, h^S)] + E_{q(h^T, h^S|\eta=0)}[\text{log}~(1 - g(h^T, h^S))].
+\end{equation}
+
+To this end, the final sparse instance distillation loss can be represented as:
+\begin{equation}
+	\mathcal{L}_{inst} = \sum_i^N - q_i~(\alpha \mathcal{L}_{cls}(h^S_i, h^T_i) + \beta \mathcal{L}_{box}(b_i^T, b_{\sigma(i)}^S)).
+\end{equation}
+
+
+
+
+
+
+
+Experiments
+
+\subsection{Dataset and Evaluation Metrics}
+
+We conduct the experiments on the NuScenes dataset \citep{caesar2020nuscenes}, which is one of the most popular datasets for 3D object detection. It consists of 700 scenes for training, 150 scenes for validation, and 150 scenes for testing. For each scene, it includes 6 camera images (front, front left, front right, back left, back right, back) to cover the whole viewpoint, and a 360$^{\circ}$ LiDAR point cloud. Camera matrixes including both intrinsic and extrinsic are provided, which establish a one-to-one correspondence between each 3D point and the 2D image plane. There are 23 categories in total, and only 10 classes are utilized to compute the final metrics according to the official evaluation code. 
+
+We adopt the official evaluation toolbox provided by nuScenes. We report nuScenes Detection Score (NDS) and mean Average Precision (mAP), along with mean Average Translation Error (mATE), mean Average Scale Error (mASE), mean Average Orientation Error (mAOE), mean Average Velocity Error (mAVE), mean Average Attribute Error (mAAE) in our experiments. The NDS score is a weighted sum of mean Average Precision (mAP) and the aforementioned True Positive (TP) metrics, which is defined as $\text{NDS} = \frac{1}{10}[5 \times mAP + \sum_{\text{mTP} \in TP}{(1 - \text{min}(1, \text{mTP}))}]$.
+
+\subsection{Implementation Details}
+
+Our codebase is built on MMDetection3D \citep{mmdet3d2020} toolkit. All models are trained on 8 NVIDIA A100 GPUs. We first train the 3D detector with a voxel size of $(0.1m, 0.1m, 0.2m)$ followed in \citep{yin2021center}. During the distillation phase, the batch size is set to 1 per GPU with an initial learning rate of 2e-4. Unless otherwise specified, we train the models for 2 $\times$ schedule (24 epochs) with a cyclic policy. The input image size is set to 1600 $\times$ 900 and the grid size of the BEV plane in BEVFormer is set to 128 $\times$ 128. FP16 training is enabled for GPU memory management.
+
+\subsection{Main Results}
+
+We first implement BEVFormer and BEVFormer-T on the nuScenes validation subset with ResNet-50 backbone and compare BEVDistill with other state-of-the-art knowledge distillation methods. The final results are shown in Table \ref{tab:main_results}. Our BEVDistill greatly boosts its vanilla student model, BEVFormer, by more than 3.4/2.3 mAP and 3.4/2.7 NDS, respectively, without introducing any extra inference cost. This validates the effectiveness and generalization of the proposed method under both single-frame and multiple-frame settings. Classical and effective distillation methods like FitNet \citep{romero2014fitnets}, fail to bring any enhancement and even deteriorate the final performance, \textit{i.e.,} -1.2\% NDS. The Set2Set \citep{wang2021object} also gets struck in the detection accuracy (-1.3\% NDS) due to the miss consideration of the divergence between different modality features. UVTR \citep{li2022unifying}, which is the first work to leverage 3D points for multi-view 3D object detection, manages to get an 0.8 NDS improvement. However, it only focuses on feature-based distillation while missing the potential benefits in other aspects. We also reimplement MonoDistill \citep{chong2021monodistill} by extending its monocular version to a multi-view one, yielding an improvement of 0.7 NDS. 
+
+\input{tables/main_result.tex}
+
+\subsection{Comparison with State-of-the-Arts}
+In addition to offline results, we also report the detection performance on nuScenes test leaderboard compared to various multi-view 3D detection approaches to further explore the potential of BEVDistill. The results are shown in Table \ref{tab:nus_test}. Our final model is based on current state-of-the-art model BEVDepth with an input image size of 640 $\times$ 1600. We adopt ConvNeXt-base \citep{liu2022convnet} as our image encoder with a BEV space of 256 $\times$ 256. The model is trained 20 epochs with CBGS and no test-time augmentation is applied. It surpasses all other detectors, including the recently developed PETRv2, BEVFormer, and BEVDet4D by more than 1.0 NDS, achieving new state-of-the-art on this competitive benchmark. 
+
+\input{tables/sota.tex}
+
+\subsection{Ablation Studies}
+\label{sec:ablations}
+
+In this section, we provide detailed ablation studies on different components of our model to gain a deeper understanding of BEVDistill. For efficiency, we adopt BEVFormer-R50 as our baseline model with 1$\times$ schedule on 1/2 subset of the nuScenes training set if not specified.
+ 
+\subsubsection{Main Ablations}
+
+To understand how each module contributed to the final detection performance in BEVDistill, we test each component independently and report its performance in Table \ref{tab:main_ablations}. The overall baseline starts from 42.2 NDS. When dense feature distillation is applied, the NDS is raised by 2.5 points, which validates the finding that disentangling the foreground regions with soft supervision can greatly promote the student's detection ability. Then, we add the sparse instance distillation, which brings us a 1.7\% NDS enhancement. Finally, the NDS score achieves 45.7 when all components are applied, yielding a 3.4 \% absolute improvement, validating the effectiveness of BEVDistill.
+
+\input{tables/main_ablations.tex}
+
+\subsubsection{Ablations on Dense Feature Distillation}
+
+\textbf{Comparison with other feature-based distillation mechanisms.}
+
+Feature-based distillation methods have been extensively explored in both image classification \citep{hinton2015distilling} and object detection tasks \citep{yang2022focal,yang2022masked}. Therefore, we compare our dense feature distillation module with other competitive feature-based distillation approaches. The results are shown in Table \ref{tab:compare_kd}. FitNet distills all pixels across 2D and 3D features with equal supervision, yielding little improvement. FGD \citep{yang2022focal} is current state-of-the-art knowledge distillation approach in 2D object detection. However, it neglects the divergence between different modalities across features, therefore gets the worse performance. UVTR \citep{li2022unifying} also mimics the features directly but it only selects positive regions (query points) for feature imitation. Compared with the above methods, BEVDistill considers both modality divergence and region importance for feature imitation, providing the highest accuracy.
+
+\input{tables/compare_feat_distill.tex}
+
+\textbf{Strategies on foreground mask generation.}
+
+As mentioned in Section \ref{sec:dense_distill}, not all positions in BEV feature representation should be treated equally. How to select the most informative regions for feature imitation is also non-trivial. Hence, we provide detailed experiments on how to generate the foreground imitation mask for distillation. Intuitively, we can directly select the center points of the ground truth objects (GT-Center) or the query reference points (Query-Center) as imitation instances. However, such a strategy directly abandons most areas, which may contain useful information. Therefore, we attempt to convert such a `hard' decision into the `soft' manner with a heatmap mask, which can be the model classification prediction from the teacher (Pred-Heatmap) or the ground truth heatmap (GT-Heatmap). The final results are shown in Table \ref{tab:compare_mask}. The soft foreground mask generation is much better compared to the hard one. We choose the GT-Heatmap strategy in our experiments due to it highest score.
+
+\subsubsection{Ablations on Sparse Instance Distillation}
+
+\input{tables/compare_instance.tex}
+
+\textbf{Ablations on the instance distillation loss.}
+
+Instance-level distillation is a necessary module in detection-based knowledge distillation. However, such a component has been seldom discussed in a transformer-based sparse prediction setting. In this ablation, we conduct detailed experiments on the loss selection in Table \ref{tab:cls_reg}. We first conduct the commonly adopted cross-entropy and L1 loss for the classification and regression branches. The result is surprisingly lower than its vanilla baseline. When adding them respectively, we figure out that the cross-entropy is the key issue leading to performance degradation. To avoid the problem, we replace it with the InfoNCE loss along with the contrastive paradigm, and an immediate improvement is observed, which validates our assumption in Section \ref{sec:sparse_distill}. 
+
+\textbf{Strategies on selection of critic $g$.}
+
+Since most self-supervised learning approaches are based on homogenous representations, exploring the suitable contrastive paradigm for cross-modality is important. Note that features located in the same positions in the 2D and 3D BEV feature maps are considered positive pairs while the rest are negative pairs. We compare three prototypes of critic $g$ and report the results in Table \ref{tab:critic}. We first adopt the classic InfoNCE loss, which provides the most improvement. We also conduct experiments on positive pairs only with NCS (negative cosine similarity) and CE (cross-entropy) loss, while gets little enhancement, validating the proof in Section \ref{sec:sparse_distill}.
+
+
+
+Conclusion
+
+In this paper, we introduce a cross-modal knowledge distillation framework for multi-view 3D object detection, namely BEVDistill. It unifies different modalities in the BEV space to ease the modal alignment and feature imitation. With the dense feature distillation module, it can effectively transfer rich teacher knowledge to the student across 2D and 3D data. BEVDistill also explores a sparse instance distillation approach under the transformer-based detection paradigm. Without bells and whistles, it achieves new state-of-the-art performance on the competitive nuScenes test leaderboard. 
+
+
+
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

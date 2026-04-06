@@ -1,0 +1,218 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Change captioning is a new task of vision and language, which requires not only understanding the contents of two similar images, but also describing their difference with natural language. In real world, this task brings a variety of applications, such as generating elaborated reports about monitored facilities \cite{hoxha2022change,jhamtani2018learning} and pathological changes \cite{liu2021contrastive,li2023dynamic}. 
+
+\begin{figure}[t]
+  \centering
+   \includegraphics[width=1\linewidth]{fig1}
+
+   \caption{The examples of change captioning. (a) is from a surveillance scene with underlying illumination change. (b) is from an image editing scene. (c) shows that with both object move and moderate viewpoint change. (d) shows that with both object move and extreme viewpoint change. Changed objects and referents are shown in  red and green boxes, respectively.}
+   \label{fig1}
+\end{figure}
+While single-image captioning is already regarded as a very challenging task, change captioning  carries additional difficulties. Simply locating inconspicuous differences is one such challenge (Fig. \ref{fig1} (a) (b)). Further, in a dynamic environment, it is common to acquire two images under different viewpoints, which leads to pseudo changes about objects' scale and location  (Fig. \ref{fig1} (c) (d)).  As such, change captioning needs to characterize the real change while resisting pseudo changes. To locate change, the most intuitive way is to subtract two images \cite{park2019robust,hosseinzadeh2021image}, but this risks computing difference features with noise if two images are unaligned \cite{tu-etal-2021-r}. Recently, researchers \cite{shi2020finding} find that same objects from different viewpoints would have similar features, so they match object features between two images to predict difference features. This paradigm has been followed by some of the recent works \cite{kim2021agnostic,Qiu_2021_ICCV,yao2022image,tu-etal-2021-r,tu2023neighoborhood}. 
+ 
+
+Despite the progress,  current match-based methods suffer from learning stable difference features under pseudo changes. In detail, the matching is directly modeled between two image features, usually by cross-attention.  However, the features of corresponding objects might shift under pseudo change. This case is more severe under drastic viewpoint changes (Fig. \ref{fig1} (d)). Such feature shift appearing in most objects would overwhelm the local feature change, thus making it less effective to directly match two images. %In short, above methods are likely to be prone to learn the unstable difference features under pseudo changes.
+
+For this challenge, we have two new observations.   (1)  While the feature difference might be ignored between a pair of similar images, it is hard to be overwhelmed between two images from different pairs.  As such, contrastive difference learning between similar/dissimilar images can help the model focus more on the change of feature and resist feature shift.  (2) Pseudo changes are essentially different distortions of objects, so they just construct cross-view comparison between two similar images, rather than affecting their similarity.  Motivated by these, we study cross-view feature matching between similar/dissimilar images, and maximize the alignment of similar ones, so as to learn two view-invariant image representations. Based on these, we can reconstruct the representations of unchanged objects and learn a stable difference representation.
+In this paper, we tackle the above challenge with a novel \textbf{S}elf-supervised \textbf{C}r\textbf{O}ss-view \textbf{RE}presentation \textbf{R}econstruction (SCORER) network, which learns a stable difference representation while resisting pseudo changes for caption generation. Concretely, given two similar images,  we first devise a multi-head token-wise matching (MTM) to model relationships between cross-view features from similar/dissimilar images, via fully interacting different feature subspaces. Then, by maximizing cross-view contrastive alignment of the given image pair, SCORER learns their representations that are invariant to pseudo changes in a self-supervised way. Based on these, SCORER mines their reliable common features by cross-attention, so as to reconstruct the representations of unchanged objects.  Next, we fuse the representations into two images to highlight the unchanged objects and implicitly infer the difference. Through this manner, we can obtain the difference representation that not only captures the change, but also conserves referent information, thus generating a high-level linguistic sentence with a transformer decoder.
+
+To improve the quality of sentence,  we further design a cross-modal backward reasoning (CBR) module. CBR first reversely produces a ``hallucination'' representation with the full representations of sentence and ``before'' image, where the ``hallucination'' is modeled based on the viewpoint of ``before''. Then, we push it closer to the ``after'' representation by maximizing their cross-view contrastive alignment. Through this self-supervised manner, we ensure that the generated sentence is informative about the difference.
+
+
+\textbf{Our key contributions are}: \textbf{(1)} We propose SCORER to learn two view-invariant image representations for reconstructing the representations of unchanged objects, so as to model a stable difference representation under pseudo changes. 
+ \textbf{(2)} We devise MTM to model relationships between cross-view images by fully interacting their different feature subspaces,  which plays a critical role in view-invariant representation learning. \textbf{(3)}  We design CBR to improve captioning quality by enforcing the generated caption is informative about the difference. \textbf{(4)} Our method performs favorably against  the state-of-the-art methods on four public datasets with different change scenarios.%reversely producing a  ``halucination'' representation with the caption and ``before'' representation and pushing it closer to the ``after'' representation.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=1\textwidth]{fig2} % Reduce the figure size so that it is 
+  \caption{The architecture of the proposed method, including a pre-trained CNN model,  the \textbf{self-supervised cross-view representation reconstruction} network, a transformer decoder, and  the \textbf{cross-modal backward reasoning} module. $\tilde {X}'_{bef}$ and $\tilde {X}'_{aft}$ denote the ``before'' and ``after'' image features from different pairs in the training batch. $B$ is the batch size; $N$ indicates the feature number in each image.   }
+\label{fig2}
+\end{figure*}
+
+
+
+Related Work
+\label{related work}
+\textbf{Change Captioning }  is a new task in vision-language understanding and generation \cite{li2022long,liu2022entity,lin2022swinbert,tu2022i2transformer,cong2022ls,wang2023semantic}. The pioneer works \cite{jhamtani2018learning,tan2019expressing} describe the difference between two aligned images (Fig. \ref{fig1} (a) (b)). Since there usually exist viewpoint changes in a dynamic environment, recent works \cite{park2019robust,kim2021agnostic} collect two datasets to simulate moderate (Fig. \ref{fig1}  (c)) and extreme viewpoint changes (Fig. \ref{fig1}  (d)). To describe the difference under viewpoint changes, previous works \cite{park2019robust,liao2021scene} compute the difference by direct subtraction, which could compute difference with noise \cite{shi2020finding}. Recent methods \cite{kim2021agnostic,Qiu_2021_ICCV,tu-etal-2021-r,tu2023neighoborhood,tu2023viewpoint,yue2023i3n} directly match two images to predict difference features. However, due to the influence of pseudo changes, these methods are hard to learn stable difference features. In contrast, our SCORER first learns two view-invariant image representations by maximizing their cross-view contrastive alignment. Then, it mines their common features to reconstruct the representations of unchanged objects, thus learning a stable difference representation for caption generation.
+We note that the latest work \cite{yao2022image} pre-trains the model with three self-supervised tasks, in order to improve cross-modal alignment. Different from it, we enforce the cross-modal alignment by implementing cross-modal backward reasoning in a self-supervised way. Meanwhile, our overall architecture is trained in an end-to-end manner, which improves the training efficiency. 
+\textbf{Token-wise Matching} has been used in latest image/video retrieval works \cite{yao2021filip,wang2022disentangled} to compute cross-modal interaction between image/video and text features. However, since pseudo changes would induce feature shift between object pairs, it is insufficient to only match cross-view features at token level. Hence, we further design a multi-head token-wise matching for finer-level interaction between different feature subspaces of cross-view images. This is key to learn the view-invariant representations. 
+ 
+\textbf{Cross-modal Consistency Constraint } is to verify the quality of caption by using it and ``before'' image to rebuild ``after'' image. This idea has been tried by the latest works \cite{hosseinzadeh2021image,kim2021agnostic}. However, both works only enforce the consistency among the caption, the changed object in ``before'' and ``after'' images, while ignoring the constraint for referents. If the changed object is similar to other objects (Fig. \ref{fig1} (c) (d)), describing both the change and its referent is helpful to convey accurate change information.  Considering this, we perform backward reasoning with the full representations of ``before'' and ``after'' images, which helps generate a high-level sentence about the change and its referent.
+
+
+Methodology
+As shown in Fig. \ref{fig2}, our method consists of four parts: (1) A pre-trained CNN encodes a pair of cross-view images into two representations. (2) The proposed SCORER learns two view-invariant representations to reconstruct the representations of unchanged objects and model the difference representation. (3) A transformer decoder translates the difference representation into a high-level linguistic sentence. (4) The proposed CBR improves the quality of sentence via enforcing  it to be informative about the difference.
+
+\subsection{Cross-view Image Pair Encoding}
+Formally, given a pair of images ``before'' $I_{bef}$ and ``after'' $I_{aft}$, we utilize a pre-trained CNN model to extract their grid features, denoted as $X_{bef}$ and $X_{aft}$, where $X \in \mathbb{R}^{C \times H \times W}$. $C$, $H$, $W$ indicate the number of channels, height, and width. We first project both representations into a low-dimensional embedding space of $\mathbb{R}^{D}$: 
+\begin{equation}
+\tilde {X}_{o}=\text{conv}_2 ({X}_{o})  + pos({X}_{o}),\\
+\end{equation}
+where $o \in (bef,aft)$. $\text{conv}_2$ denotes a 2D-convolutional layer; $pos$ is a learnable position embedding layer.% for every feature with the 2D coordinate in $\tilde{X}$. 
+
+\subsection{Self-supervised Cross-view Representation Reconstruction}
+The core module of SCORER is the multi-head token wise matching (MTM). MTM aims to model relationships between cross-view images by performing fine-grained interaction between different feature subspaces, which plays a key role in view-invariant representation learning. In the following, we first elaborate MTM and then describe how to use it for view-invariant representation learning. Finally, we introduce how to reconstruct the representations of unchanged objects  for difference representation learning.
+
+\subsubsection{Multi-head Token-wise Matching.}  We first introduce the single-head token-wise matching (TM) and then extend it into the multi-head version. Formally, given a query $Q \in \mathbb{R}^{N \times D}$ and a key $K \in \mathbb{R}^{N \times  D}$,  we first compute the similarity of $i$-th query token with all key tokens and select the maximum one as its token-wise maximum similarity with $K$. Then, we perform average pooling over the token-wise maximum similarity of all query tokens to obtain the similarity of $Q$ to $K$. By analogy, we compute the average token-wise maximum similarity of $K$ to $Q$, which ensures capturing correct relationships between them.  The above computation is formulated as follows:
+
+\begin{equation}
+\begin{gathered}
+\text{TM}(Q, K)=\left[\frac{1}{N} \sum_{i=1}^N \max _{j=1}^N\left(e_{i, j}\right)+\frac{1}{N} \sum_{j=1}^N \max _{i=1}^N\left(e_{i, j}\right)\right] / 2, \\
+e_{i, j}=\left(q_i\right)^\top k_j.
+\end{gathered}
+\end{equation}
+Further, we extend $\text{TM}$ into a multi-head version to jointly match different feature subspaces of $Q$ and $K$, so as to perform fine-grained interaction between them:
+\begin{equation}
+\begin{gathered}
+\text{MTM}(Q, K)=\text { Concat }_{i'=1 \ldots h}\left(\text { head }_{i'}\right), \\
+\text { head }_{i'}=\text{TM}\left(Q W_{i'}^Q, K W_{i'}^K\right).
+\end{gathered}
+\end{equation}
+\subsubsection{View-invariant Representation Learning}
+ In a training batch, we sample $B$ image pairs of ``before'' and ``after''. For $k$-th ``before'' image  $\tilde{X}_k^{b}$,  $k$-th ``after'' image $\tilde{X}_k^{a}$ is its positive, while other ``after'' images  will be the negatives in this batch.  First, we reshape $\tilde X \in \mathbb{R}^{D \times H \times W}$ to $\tilde X\in\mathbb{R}^{N \times D}$, where $N=HW$ denotes the number of features. Then, we use MTM to compute similarity ($B \times B$  matrix) of ``before'' to ``after'' and ``after'' to ``before'', respectively. Next, we maximize cross-view contrastive alignment between $\tilde{X}_k^{b}$ and $\tilde{X}_k^{a}$ while minimizing the alignment of non-similar images, by the InfoNCE loss \cite{oord2018representation}:
+
+\begin{equation}
+\label{infonce}
+\begin{gathered}
+\mathcal{L}_{b 2 a}=-\frac{1}{B} \sum_k^B \log \frac{\exp \left(\text{MTM}\left(\tilde{X}_k^{b}, \tilde{X}_k^{a}\right) / \tau\right)}{\sum_r^B \exp \left(\text{MTM}\left(\tilde{X}_k^{b}, \tilde{X}_r^{a}\right) / \tau\right)}, \\
+\mathcal{L}_{a 2 b}=-\frac{1}{B} \sum_k^B \log \frac{\exp \left(\text{MTM}\left(\tilde{X}_k^{a}, \tilde{X}_k^{b}\right) / \tau\right)}{\sum_r^B \exp \left(\text{MTM}\left(\tilde{X}_k^{a},
+\tilde{X}_r^{b}\right) / \tau\right)}, \\
+\mathcal{L}_{\text {cv }}=\frac{1}{2}(\mathcal{L}_{b 2 a}+\mathcal{L}_{a 2 b}),
+\end{gathered}
+\end{equation}
+where $\tau$  is the temperature hyper-parameter.  In this self-supervised way, we can make the representations of $\tilde X_{bef}$ and $\tilde X_{aft}$ invariant to pseudo changes, so as to facilitate the following cross-view representation reconstruction.
+
+\subsubsection{Cross-view Representation Reconstruction}
+Based on the two view-invariant representations $\tilde X_{bef}$ and $\tilde X_{aft}$, we use a multi-head cross-attention (MHCA) \cite{vaswani2017attention} to mine their common features for reconstructing the representations of unchanged objects in each image. Here, representation reconstruction indicates that the unchanged representations of each image are distilled from the other one,  \textit{e.g.}, the unchanged representations of $\tilde X_{bef}$ are computed by transferring similar features on $\tilde X_{aft}$ back to the corresponding positions on $\tilde X_{bef}$. In this way, we reconstruct the unchanged representations for each image, respectively: 
+\begin{equation}
+\label{mhca}
+\begin{aligned}
+\tilde X_{bef}^u=\text {MHCA }(\tilde X_{bef}, \tilde X_{aft}, \tilde X_{aft}),\\
+\tilde X_{aft}^u=\text { MHCA}(\tilde X_{aft}, \tilde X_{bef}, \tilde X_{bef}).\\
+\end{aligned}
+\end{equation}
+Then, instead of subtracting them from image representations \cite{shi2020finding,tu-etal-2021-r,tu2023neighoborhood}, which leads to information (\emph{e.g.,} referents) loss, we integrate them into image representations to highlight the unchanged objects and deduce the difference information, so as to learn the stable difference representation in each image:
+\begin{equation}
+\tilde X_{o}^c= \text{LN}(\tilde X_{o}+\tilde X_{o}^u). \\
+\end{equation}
+Herein, $o \in (bef, aft)$ and LN is short for LayerNorm \cite{ba2016layer}. Finally, we obtain the difference representation between two images by fusing $\tilde X_{bef}^c$ and $\tilde X_{aft}^c$, which is implemented by a fully-connected layer with the ReLU function:
+\begin{equation}
+\tilde{X}_{c}=\operatorname{ReLU}\left(\left[\tilde{X}_{bef}^{c} ; \tilde{X}_{aft}^{c}\right] W_{h} + b_h \right ),
+\end{equation}
+where [;] is a concatenation operation.
+\subsection{Caption Generation}
+After leaning $ \tilde{X}_{c} \in \mathbb{R}^{N \times D}$, we use a transformer decoder \cite{vaswani2017attention} to translate it into a sentence.  First, the multi-head self-attention takes the word  features $ E[W]=\{E[w_1],... ,E[w_{m}]\}$ (ground-truth words during training, predicted words during inference) as inputs and computes a set of intra-relation embedded word features, denoted as $\hat E[W]$.
+Then, the decoder utilizes $ \hat E[W]$ to query the most related features $\hat H$ from $ \tilde{X}_{c} $ via the multi-head cross-attention.
+Afterward, the $\hat H$ is passed to a feed-forward network to obtain an enhanced representation $\tilde H$.
+Finally, the probability distributions of target words are calculated by:
+\begin{equation}
+\label{word}
+\tilde W=\operatorname{Softmax}\left(\tilde H W_{c}+{b}_{c}\right),
+\end{equation}
+where $W_{c}\in \mathbb{R}^{D \times U}$ and $b_{c} \in \mathbb{R}^{U}$ are the parameters to be learned; $U$ is the dimension of vocabulary size.
+
+
+\iffalse
+\subsection{Caption Generation}
+With the representation of change $ \tilde{X}_{c} \in \mathbb{R}^{n \times d}$, we use the standard Transformer decoder \cite{vaswani2017attention} for decoding it into a sentence.  The decoder is comprised of a stack of $N$ identical layers. At the $l$-th decoder layer,  the multi-head self-attention (MHSA) layer first takes the word embedding features $ E[W]=\{E[w_1],... ,E[w_{m}]\}$ as the inputs and captures their relationships:
+\begin{equation}
+ {\hat E[W]}=\text { LN }(E[W]+\text { MHSA }(E[W],E[W],E[W])).
+\end{equation}
+Then, the decoder utilizes the attended word embedding features $ \hat E[W]$ to query the most related features from $ \tilde{X}_{c} $ based on the MHCA layer:
+\begin{equation}
+\hat H=\text { LN } ({E[\hat W]}+\text { MHCA }({E[\hat W]},\tilde{X}_{c}, \tilde{X}_{c})).
+\end{equation}
+Afterward, the $\hat H$ is passed to a feed-forward network (FFN) to obtain an enhanced representation:
+\begin{equation}
+\tilde H=\text { LN}(\hat H+\operatorname {FFN}(\hat H)).
+\end{equation}
+Finally, the probability distributions of target words are calculated via a single hidden layer:
+\begin{equation}
+\label{word}
+W=\operatorname{Softmax}\left(\tilde H W_{c}+{b}_{c}\right),
+\end{equation}
+where $W_{c}\in \mathbb{R}^{D \times U}$ and $b_{c} \in \mathbb{R}^{U}$ are the parameters to be learned; $U$ is the dimension of vocabulary size.
+\fi
+\subsection{Cross-modal Backward Reasoning}
+To improve the quality of generated sentence, we devise the CBR to first reversely model a ``hallucination'' representation with the sentence and ``before'' image. Then, we push it closer to the  ``after'' representation to enforce the sentence to be informative about the difference. Concretely, we first fuse $\tilde H \in \mathbb{R}^{m \times D}$ by the mean-pooling operation to obtain a sentence feature $\tilde T$. Then, we broadcast $\tilde T \in \mathbb{R}^{D}$ as $\tilde T \in \mathbb{R}^{D \times H \times W}$ and  concatenate it with $\tilde X_{bef}$, so as to obtain the ``hallucination'' $\hat{X}_{hal}$:
+\begin{equation}
+\hat{X}_{hal}=\text{conv}_2([\tilde X_{bef}; \tilde T ]), \hat{X}_{hal} \in \mathbb{R}^{D \times H \times W}.
+\end{equation}
+ $\hat{X}_{hal}$ and $\tilde X_{bef}$ are kept as the same shape to ensure that spatial information is not collapsed. Next, we capture the relationships between different locations in $\hat{X}_{hal}$ based on the multi-head self-attention (MHSA), which is essential for backward reasoning and computed by:
+\begin{equation}
+\tilde{X}_{hal}=\text{conv}_2[\text {MHSA }(\hat{X}_{hal}, \hat{X}_{hal}, \hat{X}_{hal})],
+\end{equation}
+Since the ``hallucination'' representation is produced based on the viewpoint of ``before'' representation, it is less effective to directly match it with the ``after'' representation. 
+
+To this end, we sample unrelated representations of ``hallucination'' and ``after'' from different pairs, which are as erroneous candidates for CBR. Similarly, in each batch, for $k$-th ``hallucination'' $\tilde {X}_k^{h}$,  $k$-th ``after'' $\tilde{X}_k^{a}$ is its positive, while the other ``after'' images  will be the negatives. Also, we use MTM to capture relationships  between positive/negative pairs. Subsequently, we maximize cross-view contrastive alignment of positive pairs by the InfoNCE loss \cite{oord2018representation}, which is similar to Eq. (\ref{infonce}):  
+\begin{equation}
+\mathcal{L}_{\text {cm}}=\frac{1}{2}(\mathcal{L}_{h 2 a}+\mathcal{L}_{a 2 h}).
+\end{equation}
+Through this self-supervised manner, we make the sentence sufficiently describe the difference information.
+
+\subsection{Joint Training}
+The proposed overall network is trained in an end-to-end manner by maximizing the likelihood of the observed  word sequence. Given the ground-truth words $\left(w_{1}^{*}, \ldots, w_{m}^{*}\right)$, we minimize the negative log-likelihood loss:
+\begin{equation}
+\mathcal L_{cap}(\theta)=-\sum_{t=1}^{m} \log p_\theta \left(w_{t}^{*} \mid w_{<t}^{*}\right),
+\end{equation}
+where $p_\theta\left(w_t^{*} \mid w_{<t}^{*}\right)$ is computed by Eq.~(\ref{word}), and $\theta$ are the parameters of the network. Besides,  the network is self-supervised by the losses of two contrastive alignments. Hence, the final loss function is optimized as follows:
+\begin{equation}
+\label{cross-entropy}
+\mathcal L =\mathcal L_{cap} + \lambda_v \mathcal{L}_{\text {cv}} + \lambda_m \mathcal{L}_{\text {cm}},
+\end{equation}
+where $\lambda_{v}$ and $\lambda_{m}$ are the trade-off parameters, which are discussed in the supplementary material. 
+
+
+
+Experiments
+\label{experiment}
+\subsection{Datasets}
+\textbf{CLEVR-Change} is a large-scale dataset \cite{park2019robust} with moderate viewpoint change. It has 79,606 image pairs, including five change types, \emph{i.e.}, ``Color'', ``Texture'', ``Add'', ``Drop'',  and ``Move''.We use the official split with 67,660 for training, 3,976 for validation and 7,970 for testing.
+
+\textbf{CLEVR-DC} is a large-scale dataset \cite{kim2021agnostic} with extreme viewpoint shift. It includes 48,000 pairs with same change types as CLEVR-Change. We use the official split with  85\% for training, 5\% for validation, and 10\% for testing.
+
+\textbf{Image Editing Request} dataset \cite{tan2019expressing} includes 3,939 aligned image pairs with 5,695 editing  instructions.  We use the official split with 3,061 image pairs for training, 383 for validation, and 495 for testing.
+
+\textbf{Spot-the-Diff} dataset \cite{jhamtani2018learning} includes 13,192 aligned image pairs from surveillance cameras. Following SOTA methods, we mainly evaluate our model in a single change setting.  Based on the official split, the dataset is split into training, validation, and testing with a ratio of 8:1:1.
+
+\subsection{Evaluation Metrics}
+Following the current state-of-the-art methods, five metrics are used to evaluate the generated sentences, \emph{i.e.}, BLEU-4 (B) \cite{papineni2002bleu}, METEOR (M) \cite{banerjee2005meteor}, ROUGE-L (R) \cite{lin2004rouge}, CIDEr (C) \cite{vedantam2015cider}, and SPICE (S) \cite{anderson2016spice}. The results are computed based on the Microsoft COCO evaluation server \cite{chen2015microsoft}.
+
+\subsection{Implementation Details}
+For a  fair comparison, we follow the SOTA methods to use a pre-trained ResNet-101  \cite{he2016deep} to extract grid features of an image pair, with the dimension of 1024 $\times$ 14 $\times$ 14. We first project these  features into a lower dimension of 512. The hidden size in the overall model and word embedding size are set to 512 and 300.  The proper head and layer numbers of SCORER are discussed below. The head and layer numbers in the decoder are set to 8 and 2 on the four  datasets. 
+During training, We use Adam optimizer \cite{kingma2014adam} to minimize the negative log-likelihood loss of Eq. (\ref{cross-entropy}). During inference, the greedy decoding strategy is used to generate captions. Both training and inference are implemented with PyTorch \cite{paszke2019pytorch} on an RTX 3090 GPU. More implementation details are described in the supplementary material.
+\subsection{Performance Comparison}
+\subsubsection{Results on the CLEVR-Change Dataset.}
+We compare with the state-of-the-art methods in: 1) total performance under both semantic and pseudo changes; 2) semantic change; 3) different change types. The comparison methods are categorized into 1) end-to-end training: DUDA \cite{park2019robust}, DUDA+ \cite{hosseinzadeh2021image}, R$^{3}$Net+SSP \cite{tu-etal-2021-r}, VACC \cite{kim2021agnostic}, SRDRL+AVS \cite{tu2021semantic}, SGCC \cite{liao2021scene},  MCCFormers-D \cite{Qiu_2021_ICCV}, IFDC \cite{huang2022image}, BDLSCR \cite{sun2022bidirectional}, NCT \cite{tu2023neighoborhood}, and VARD-Trans \cite{tu2023viewpoint}; 2) reinforcement learning: M-VAM+RAF \cite{shi2020finding}; 3) pre-training:  PCL w/ pre-training \cite{yao2022image}. 
+
+\begin{table*}[h]
+  \centering
+ 
+   \begin{center}
+    \begin{tabular}{c|ccccc|ccccc}
+    \toprule
+          & \multicolumn{5}{c|}{Total}            & \multicolumn{5}{c}{Semantic Change} \\
+    Method & B     & M     & R     & C     & S     & B     & M     & R     & C     & S \\
+    \midrule
+    PCL w/ Pre-training (AAAI 2022) \cite{yao2022image} & \cellcolor[rgb]{ .878,  .953,  .984}51.2 & \cellcolor[rgb]{ .878,  .953,  .984}36.2 & \cellcolor[rgb]{ .867,  .922,  .969}71.7 & \cellcolor[rgb]{ .608,  .761,  .902}\textbf{128.9} & -     & -     & -     & -     & -     & - \\
+    \midrule
+    M-VAM+RAF (ECCV 2020) \cite{shi2020finding} & \cellcolor[rgb]{ .878,  .953,  .984}51.3 & \cellcolor[rgb]{ .867,  .922,  .969}37.8 & \cellcolor[rgb]{ .867,  .922,  .969}70.4 & \multicolumn{1}{c}{\cellcolor[rgb]{ .878,  .953,  .984}115.8} & \cellcolor[rgb]{ .867,  .922,  .969}30.7 & -     & -     & -     & -     & - \\
+    \midrule
+    DUDA (ICCV 2019) \cite{park2019robust} & \cellcolor[rgb]{ .878,  .953,  .984}47.3 & \cellcolor[rgb]{ .878,  .953,  .984}33.9 & -     & \cellcolor[rgb]{ .878,  .953,  .984}112.3 & \cellcolor[rgb]{ .878,  .953,  .984}24.5 & 42.9  & 29.7  & -     & 94.6  & 19.9 \\
+    DUDA+ (CVPR 2021) \cite{hosseinzadeh2021image} & \cellcolor[rgb]{ .878,  .953,  .984}51.2 & \cellcolor[rgb]{ .867,  .922,  .969}37.7 & \cellcolor[rgb]{ .867,  .922,  .969}70.5 & \cellcolor[rgb]{ .878,  .953,  .984}115.4 & \cellcolor[rgb]{ .867,  .922,  .969}31.1 & \cellcolor[rgb]{ .878,  .953,  .984}49.9 & \cellcolor[rgb]{ .878,  .953,  .984}34.3 & \cellcolor[rgb]{ .878,  .953,  .984}65.4 & \cellcolor[rgb]{ .878,  .953,  .984}101.3 & \cellcolor[rgb]{ .878,  .953,  .984}27.9 \\
+    R$^{3}$Net+SSP (EMNLP 2021) \cite{tu-etal-2021-r} & \cellcolor[rgb]{ .867,  .922,  .969}54.7 & \cellcolor[rgb]{ .867,  .922,  .969}39.8 & \cellcolor[rgb]{ .867,  .922,  .969}73.1 & \cellcolor[rgb]{ .867,  .922,  .969}123.0 & \cellcolor[rgb]{ .867,  .922,  .969}32.6 & \cellcolor[rgb]{ .867,  .922,  .969}52.7 & \cellcolor[rgb]{ .867,  .922,  .969}36.2 & \cellcolor[rgb]{ .867,  .922,  .969}69.8 & \cellcolor[rgb]{ .867,  .922,  .969}116.6 & \cellcolor[rgb]{ .867,  .922,  .969}30.3 \\
+    VACC (ICCV 2021) \cite{kim2021agnostic} & \cellcolor[rgb]{ .878,  .953,  .984}52.4 & \cellcolor[rgb]{ .867,  .922,  .969}37.5 & -     & \cellcolor[rgb]{ .878,  .953,  .984}114.2 & \cellcolor[rgb]{ .867,  .922,  .969}31.0 & -     & -     & -     & -     & - \\
+     SGCC (ACM MM 2021) \cite{liao2021scene} & \cellcolor[rgb]{ .878,  .953,  .984}51.1 & \cellcolor[rgb]{ .741,  .843,  .933}40.6 & \cellcolor[rgb]{ .867,  .922,  .969} 73.9     & \cellcolor[rgb]{ .867,  .922,  .969}121.8 & \cellcolor[rgb]{ .867,  .922,  .969}32.2 & -     & -     & -     & -     & - \\
+    SRDRL+AVS (ACL 2021) \cite{tu2021semantic} & \cellcolor[rgb]{ .867,  .922,  .969}54.9 & \cellcolor[rgb]{ .741,  .843,  .933}40.2 & \cellcolor[rgb]{ .867,  .922,  .969}73.3 & \cellcolor[rgb]{ .867,  .922,  .969}122.2 & \cellcolor[rgb]{ .741,  .843,  .933}32.9 & \cellcolor[rgb]{ .867,  .922,  .969}52.7 & \cellcolor[rgb]{ .867,  .922,  .969}36.4 & \cellcolor[rgb]{ .867,  .922,  .969}69.7 & \cellcolor[rgb]{ .867,  .922,  .969}114.2 & \cellcolor[rgb]{ .867,  .922,  .969}30.8 \\
+    MCCFormers-D (ICCV 2021) \cite{Qiu_2021_ICCV} & \cellcolor[rgb]{ .878,  .953,  .984}52.4 & \cellcolor[rgb]{ .867,  .922,  .969}38.3 & -     & \cellcolor[rgb]{ .867,  .922,  .969}121.6 & \cellcolor[rgb]{ .878,  .953,  .984}26.8 & -     & -     & -     & -     & - \\
+    IFDC (TMM 2022) \cite{huang2022image} & \cellcolor[rgb]{ .878,  .953,  .984}49.2 & \cellcolor[rgb]{ .878,  .953,  .984}32.5 & \cellcolor[rgb]{ .878,  .953,  .984}69.1 & \cellcolor[rgb]{ .878,  .953,  .984}118.7 & -     & \cellcolor[rgb]{ .878,  .953,  .984}47.2 & 29.3  & \cellcolor[rgb]{ .878,  .953,  .984}63.7 & \cellcolor[rgb]{ .878,  .953,  .984}105.4 & - \\
+    
+    NCT (TMM 2023) \cite{tu2023neighoborhood} & \cellcolor[rgb]{ .741,  .843,  .933}55.1 & \cellcolor[rgb]{ .741,  .843,  .933}40.2 & \cellcolor[rgb]{ .741,  .843,  .933}73.8 & \cellcolor[rgb]{ .867,  .922,  .969}124.1 & \cellcolor[rgb]{ .741,  .843,  .933}32.9 & \cellcolor[rgb]{ .867,  .922,  .969}53.1 & \cellcolor[rgb]{ .867,  .922,  .969}36.5 & \cellcolor[rgb]{ .867,  .922,  .969}70.7 & \cellcolor[rgb]{ .867,  .922,  .969}118.4 & \cellcolor[rgb]{ .741,  .843,  .933}30.9 \\
+    VARD-Trans (TIP 2023) \cite{tu2023viewpoint} & \cellcolor[rgb]{ .741,  .843,  .933}55.4 & \cellcolor[rgb]{ .741,  .843,  .933}40.1 & \cellcolor[r
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

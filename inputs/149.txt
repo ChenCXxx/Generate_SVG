@@ -1,0 +1,331 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:preflmr:introduction}
+
+Knowledge-based Visual Question Answering (KB-VQA) systems generate answers to queries consisting of questions about given images. Correctly answering these questions requires accessing relevant world knowledge as well as vision and language understanding.  Despite their demonstrated abilities in vision and language,  recent Large Multimodal Models (LMMs)~\cite{chen2023pali, driess2023palme, liu2023improved, zhu2023minigpt, openai2023gpt4} have performed poorly in recent challenging KB-VQA tasks~\cite{chen-etal-2023-pre-trained, Mensink_2023_ICCV}.  One promising approach to improve their KB-VQA performance is Retrieval-Augmented Generation (RAG), in which answer generation by LMMs is grounded in relevant documents retrieved from a knowledge base.
+
+The best-performing document retrieval approach for KB-VQA to date is Fine-grained Late-interaction Multi-modal Retrieval (FLMR)~\cite{lin2023finegrained}. FLMR uses multi-dimensional embedding matrices to represent documents and queries and then efficiently computes their relevance scores via late-interaction~\cite{khattab-zaharia-2020-colbert}, thus capturing fine-grained relevance at the token level rather than at the passage level, as in Dense Passage Retrieval (DPR)~\cite{karpukhin-etal-2020-dense}. 
+As a late-interaction retriever, FLMR substantially outperforms DPR on a range of KB-VQA tasks, with only minor speed penalties. 
+In all of these methods, model and data size are important considerations. 
+There has been much work in scaling up Large Language Models (LLMs)~\cite{kaplan2020scaling, NEURIPS2022_8c22e5e9, chen2023pali} and text-based retrieval~\cite{ni-etal-2022-large}, 
+but the scaling properties of these vision and language retrieval systems have not been studied. 
+We therefore investigate the following three aspects of FLMR in KB-VQA. 
+
+(1) \emph{Vision \& Text Encoding}:   We investigate how KB-VQA performance is affected by scaling the size and complexity of vision and text encoders.
+
+(2) \emph{Pre-training}:  
+As originally formulated, FLMR employs simple, lightly trained Multi-Layer Perceptrons (MLP).  We investigate whether gains can be had through more extensive model pre-training. 
+
+(3) \emph{Task Diversity}:  We gather nine open-source vision-language datasets into a suite of benchmark tasks, M2KR, for assessing Multi-task Multi-modal Knowledge Retrieval.   M2KR encompasses Image-to-Text, Question-to-Text, and Image\&Question-to-Text retrieval tasks, and also includes prompting instructions that can be provided to an LLM for each of the component tasks.  General purpose multi-modal retrieval models can be created by training on the entirety of the M2KR training data and these models can then be evaluated on any or all of the included tasks.  Models can further be fine-tuned for specific M2KR tasks using the task-specific tuning data included in the collection.  
+
+We show that M2KR can be used in training an FLMR-based RAG LLM for multi-task multi-modal retrieval.   We refer to this model as PreFLRM (for Pre-trained FLMR).  PreFLMR can be used directly in its pre-trained form for multi-task multi-modal retrieval.  PreFLMR can also be fine-tuned for specific task-specific performance.  In both uses we find that PreFLMR gives us substantial gains across the M2KR tasks.  
+
+Contributions of this paper are:
+\begin{itemize}[leftmargin=5.5mm]
+\setlength\itemsep{-0.3em}
+\item The M2KR task suite encompassing nine datasets and three types of retrieval tasks for training and evaluating general-purpose vision-language retrievers. We create M2KR by re-purposing various vision and language data sets that might not be originally created for knowledge-based visual question answering, thus ensuring a rich and diverse collection.
+\item PreFLMR, a strong multi-modal retriever pre-trained on a vision-language corpus of over ten million  items.  We show that PreFLMR performs well across a range of knowledge retrieval tasks when given the appropriate instructions. We will release PreFLMR upon publication. 
+\item A study of the scaling behaviour of FLMR in terms of its model parameters and training data. To our knowledge, this is the first systematic study of scaling in late-interaction based vision-language retrievers and should provide empirical guidance for future work. 
+\end{itemize}
+
+
+
+
+
+
+
+
+
+Related Work
+
+\noindent\textbf{Document Retrieval.}
+DPR has become a cornerstone in knowledge-intensive tasks~\cite{chen-etal-2017-reading, izacard-grave-2021-leveraging, guu2020realm, lee-etal-2019-latent, lewis2020retrieval} as well as in KB-VQA tasks due to its fast and precise retrieval capabilities~\citep{karpukhin-etal-2020-dense, gui2021kat, luo-etal-2021-weakly, lin-byrne-2022-retrieval, wu-mooney-2022-entity}. Recent developments in retrieval methods, particularly Late Interaction models~\citep{khattab-zaharia-2020-colbert, santhanam-etal-2022-colbertv2}, have shown notable performance gains over DPR, albeit with some efficiency trade-offs~\cite{lin-etal-2023-li, lin2023finegrained}. In multi-modal retrieval, FILIP~\citep{yao2022filip} used pre-trained late interaction models for single-modal image-text retrieval, while FLMR~\cite{lin2023finegrained} extended the approach to multi-modal retrieval for KB-VQA with finer-grained visual and text features.  This paper further extends FLMR and explores its scaling properties in multi-modal retrieval.
+Similar to our M2KR benchmark, A concurrent work~\cite{wei2023uniir} introduces M-Beir, which combines several retrieval tasks and can be used to train and evaluate universal multi-modal retrievers.
+
+Another line of relevant research is KB-VQA retrieval involving Named Entities, where retrieved documents must identify the person in the image. 
+For example, on ViQuAE~\cite{lerner2022viquae}, \citet{lerner2023multimodal} trains the retriever with a multi-modal inverse cloze task, while \citet{lerner2024cross} shows that combining mono- and cross-modal retrieval improves performance. Both use a weighted sum of BERT~\cite{devlin-etal-2019-bert} and CLIP~\cite{Radford_2021_CLIP} embeddings, while our work trains a single multi-modal late-interaction retriever.
+
+\noindent\textbf{Knowledge-based VQA Systems.} 
+Recent multi-modal systems have significantly improved in complex tasks like OKVQA~\cite{schwenk2022okvqa} that require external knowledge sources~\citep{narasimhan2018out, garderes2020conceptbert, li2020boosting, wu2022multi, marino2021krisp, chen2023lako, gao2022transform, gui2021kat, Hu2023REVEAL, rao2023retrieval}. Systems like KAT~\citep{gui2021kat} and REVIVE~\citep{lin2022revive} used LLMs (e.g. GPT-3) for generating candidate answers. Challenges remain in answering more knowledge-intensive questions~\cite{chen-etal-2023-pre-trained, Mensink_2023_ICCV}, underscoring the need for robust document retrieval.  \citet{Mensink_2023_ICCV} showed that even state-of-the-art LLMs perform poorly on difficult KB-VQA questions, with an accuracy of under 20\% when retrieval is not incorporated. RA-VQAv2~\citep{lin2023finegrained} and prior work~\citep{lin-byrne-2022-retrieval, luo-etal-2021-weakly, qu2021passage, gao2022transform, Hu2023REVEAL, Mensink_2023_ICCV} demonstrated strong performance in KB-VQA by using external knowledge databases.
+
+\noindent\textbf{Scaling Retrieval Systems.}
+Previous work has explored scaling laws in language/vision systems~\cite{kaplan2020scaling, NEURIPS2022_8c22e5e9}, revealing correlations between model performance, computation, number of parameters, and dataset sizes. 
+In retrieval, \citet{ni-etal-2022-large} and \citet{Hu2023REVEAL} both observe improvements in DPR-like models with one-dimensional embeddings by increasing the size of language/vision encoders.
+This paper reports similar scaling investigations in multi-modal late-interaction retrieval.
+
+
+The M2KR Benchmark Suite
+Current multi-modal retrievers are typically {trained and} evaluated on a single dataset only. To properly study general-purpose multi-modal retrievers, we introduce the Multi-task Multi-modal Knowledge Retrieval (M2KR) benchmark suite. 
+We convert nine diverse datasets, originally designed for vision and language tasks such as image recognition, image captioning, and conversational interactions, into a uniform retrieval format.  
+  M2KR will be released with our models. 
+
+\subsection{Tasks and Datasets}
+\begin{comment}
+    We train and evaluate our systems on 1 text dataset and 8 Vision-Language (VL) datasets. The text dataset MSMARCO uses questions as queries to retrieve documents. For the VL datasets, we categorise them.
+\end{comment}
+
+Table~\ref{tab:dataset_stats} shows the composition of M2KR. We pre-process the datasets into a uniform format and write several task-specific prompting instructions for each dataset.  The M2KR benchmark contains three types of tasks:
+
+\paragraph{Image to Text (I2T) retrieval.} 
+These tasks evaluate the ability of a retriever to find relevant documents associated with an input image.   
+Component tasks are WIT~\citep{srinivasan2021wit}, IGLUE-en \cite{Bugliarello2022iglue}, KVQA \cite{Shah2019KVQA}, and CC3M~\citep{Sharma2018CC3M}.  
+CC3M is included in the M2KR training set to improve scene understanding but not in the validation/test set as the task concerns caption generation, not retrieval.
+The IGLUE test set, which is a subset of WIT and has an established benchmark, is included to enable comparison with the literature.
+
+
+\paragraph{Question to Text (Q2T) retrieval.} 
+This task is based on MSMARCO \cite{Bajaj_2018MSMARCO} and is included to assess whether multi-modal retrievers retain their ability in text-only retrieval after any retraining for images. 
+
+\paragraph{Image \& Question to Text (IQ2T) retrieval.}
+This is the most challenging task which requires joint understanding of questions and images for accurate retrieval.  It consists of these subtasks:  
+OVEN~\cite{Hu2023Oven}, LLaVA~\citep{Liu2023llava}, OKVQA \cite{schwenk2022okvqa}, Infoseek \cite{Chen2023infoseek} and E-VQA \cite{Mensink2023EVQA}. 
+The training/validation/test examples are downsampled from the respective sets of the original datasets.
+We take test examples from the original validation sets for LLaVA and Infoseek since LLaVA has no test sets and the test set annotation of Infoseek has not been released.
+We limit the maximum test samples to 5,120 for each dataset to allow faster performance tests on all 9 datasets.
+
+We further verified that there are no identical images between the training and test sets by checking the MD5 of the images, thereby preventing data contamination during training.
+
+
+
+\begin{table}[]
+    \centering
+    \resizebox{\columnwidth}{!}{%
+    \small
+    \begin{tabular}{lrrrrr}
+    \toprule
+     & \multicolumn{3}{c}{\#Examples} & \multicolumn{2}{c}{\#Passages} \\
+    Datasets                             & Train & Val & Test & Train & Val/Test \\
+    \midrule
+    \multicolumn{4}{l}{\textit{I2T Retrieval}} \\
+    \midrule
+    WIT         & 2.8M              & 20,102 & 5,120                & 4.1M    &     40K            \\
+    \textit{ IGLUE}  & - & -& 685  & -  & 1K \\
+    KVQA                   & 65K             & 13,365 &  5,120               & 16.3K            & 4,648       \\
+    CC3M                  & 595K            & - &  -               & 595K & -                 \\
+    \midrule
+    \multicolumn{4}{l}{\textit{Q2T Retrieval}} \\
+    \midrule
+        MSMARCO                &     400K    & 6,980 &       5,120       &    8.8M    & 200K             \\
+    \midrule
+    \multicolumn{4}{l}{\textit{IQ2T Retrieval}} \\
+    \midrule
+    
+    OVEN                   & 339K   &   20,000       &  5,120               & 10K  & 3,192                \\
+    LLaVA                               & 351K             & - & 5,120                & 351K  & 6,006                \\
+    OKVQA                              & 9K              & 5,046 &  5,046               & 110K & 110K                  \\
+    Infoseek                            & 100K            & - &  4,708           & 100K  & 100K     \\
+    E-VQA                  & 212K            &  9,852  & 3,750             & 50K             & 50K      \\
+
+    \bottomrule
+    \end{tabular}
+    }
+    \caption{Datasets in M2KR Benchmark Suite. %* denotes that the training set is downsampled from the original training set. 
+    }
+    \label{tab:dataset_stats}
+\end{table}
+
+\begin{comment}
+    \begin{table}[]
+    \centering
+    \small
+    \begin{tabular}{lrrrr}
+    \toprule
+     & \multicolumn{2}{c}{\#Examples} & \multicolumn{2}{c}{\#Passages} \\
+    Datasets                             & Train & Test & Train & Test \\
+    \midrule
+    \multicolumn{4}{l}{\textit{I2T Retrieval}} \\
+    \midrule
+    WIT         & 2.8M              & 5,120                & 4.1M    &     40K            \\
+    \textit{ IGLUE}  & - & 685  & -  & 1K \\
+    KVQA                   & 65K             &  5,120               & 16.3K            & 4,648       \\
+    CC3M                  & 595K            &  -               & 595K & -                 \\
+    \midrule
+    \multicolumn{4}{l}{\textit{Q2T Retrieval}} \\
+    \midrule
+        MSMARCO                &     400K    &          5,120       &    8.8M    & 200K             \\
+    \midrule
+    \multicolumn{4}{l}{\textit{IQ2T Retrieval}} \\
+    \midrule
+    
+    OVEN                   & 339K            &  5,120               & 10K  & 3,192                \\
+    LLaVA                               & 351K             & 5,120                & 351K  & 6,006                \\
+    OKVQA                              & 9K              &  5,046               & 110K & 110K                  \\
+    Infoseek                            & 100K            &   4,708           & 100K  & 100K     \\
+    E-VQA                  & 212K            &    5,120             & 50K             & 50K      \\
+
+    \bottomrule
+    \end{tabular}
+    \caption{Datasets in M2KR Benchmark Suite. %* denotes that the training set is downsampled from the original training set. 
+    }
+    \label{tab:dataset_stats}
+\end{table}
+\end{comment}
+
+\subsection{Evaluation}
+\label{sec:M2KR-evaluation}
+We use \textit{Recall@K (R@K)}, which measures whether at least one of the target documents is in the top-$K$ retrieved entries, to evaluate retrieval performance.
+Additionally, for the datasets Infoseek, E-VQA, and OKVQA, we mainly employ \textit{Pseudo Recall/PRecall@K (PR@K)} for evaluation. This metric measures whether at least one of the top K documents includes the target answer.\footnote{In practice, PR@K more accurately reflects actual retrieval performance and exhibits a stronger correlation with the ultimate VQA performance. This is because document annotations are frequently incomplete, and alternative documents within the corpus can often provide answers to the questions.}
+We use R@10 for WIT and MSMARCO, and R@1 for LLaVA and IGLUE.
+Other datasets are evaluated with R@5 or PR@5.
+As in Table~\ref{tab:preflmr:main_results}, we also report the average rank (\textit{A.R.}) of each model over all datasets to indicate multi-task retrieval performance relative to other models in comparison; lower is better.
+
+\subsection{Baselines}
+
+For each dataset, we show the best published results in recent literature as baselines,  if available (Table~\ref{tab:preflmr:main_results}). 
+For datasets without previous results such as LLaVA and OVEN, we use our replication of CLIP~\cite{Radford_2021_CLIP} and FLMR as zero-shot  baselines following~\citet{lin2022revive}. 
+
+
+PreFLMR Architecture and Training
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{Figures/overview.pdf}
+    \caption{PreFLMR Model Architecture. (1) the text query consists of an instruction and a question, which is encoded by a text encoder; (2) at the output of the vision encoder, a mapping network consisting of Multi-Layer Perceptrons (MLP) converts the `[CLS]' token representations into the same embedding space as the text encoder; (3) the transformer blocks take in the patch image embeddings from the penultimate layer of the vision encoder and attend to the text features by cross-attention; (4) a text encoder encodes documents in the knowledge base; (5) the scores between queries and documents are computed based on late-interaction, allowing each query token to interact with all document token embeddings.}
+    \label{fig:preflmr:overview}
+\end{figure*}
+
+Our architecture generally follows that of FLMR~\cite{lin2023finegrained} as shown in Fig.~\ref{fig:preflmr:overview}.
+PreFLMR uses token embedding matrices $\mathbf{Q}$ and $\mathbf{D}$ to represent query and document, respectively. Given a query $\bar{\textbf{q}}$ consisting of texts $q$ and an image $I$, PreFLMR uses a language model $\mathcal{F}_{L}$ to obtain embeddings of all tokens in $q$, a vision model $\mathcal{F}_{V}$ to obtain embeddings of $I$, and a mapping structure $\mathcal{F}_{M}$ to project image embeddings into the text embedding space. All token-level embeddings are concatenated to form the query representation $\mathbf{Q}$. The document matrix $\mathbf{D}$ is obtained similarly with the language model $\mathcal{F}_{L}$ but without visual features. 
+
+The relevance score $r(\bar{\mathbf{q}}, d)$ is computed via \textit{late-interaction}~\cite{khattab-zaharia-2020-colbert} between $\mathbf{Q}$ and $\mathbf{D}$, aggregating the maximum dot products over all query tokens with respect to all document tokens (Eq.~\ref{eqn:flmr:late_interaction}). $l_Q$ and $l_D$ denote the total number of tokens in query $\bar{\mathbf{q}}$ and document $d$, respectively.
+
+\begin{equation}
+r(\bar{\mathbf{q}}, d) = \sum_{i=1}^{l_Q} \max_{j=1}^{l_D} \mathbf{Q}_{i} \mathbf{D}_{j}^\top
+\label{eqn:flmr:late_interaction}
+\end{equation}
+
+PreFLMR improves over FLMR in the following aspects: (1) While FLMR only uses the [CLS] embedding from ViT as the image representation, in PreFLMR we additionally extract embeddings of image patches from ViT's penultimate layer to obtain a detailed visual representation. (2) We introduce Transformer blocks with cross-attention into the mapping structure to obtain query-aware visual representation. 
+The Transformer blocks take the image patch embeddings as input, and use cross-attention to integrate the features of the text encoder.
+This allows PreFLMR to attend to different aspects of the image under different queries. These Transformer blocks are placed in parallel with FLMR's 2-layer MLP mapping structure. 
+(3) We append task-specific instructions to the text query to distinguish between tasks. 
+
+For each query, the instruction is randomly sampled from the corresponding instruction list.
+Instruction tokens are masked in computing relevance score. For Q2T retrieval training, we feed a blank image as PreFLMR's image input. For I2T retrieval training, we use instructions as text input to PreFLMR. 
+
+PreFLMR training and inference follow that of FLMR. When training on data consisting of several datasets, we randomly shuffle the entire training data and only use in-batch negative examples from the same corpus. Post-training, all documents are indexed through PLAID~\citep{keshav2022plaid} for efficient late-interaction retrieval. For detailed evaluation of retrieval efficiency, we refer readers to \citet{lin2023finegrained}.
+
+
+\subsection{Training Procedures}
+PreFLMR's pre-training involves four stages.
+
+\paragraph{Stage 0: Text Encoder Pre-training.} We train ColBERT following \citet{khattab-zaharia-2020-colbert} on the MSMARCO dataset to obtain the initial checkpoint for PreFLMR's text encoder $\mathcal{F}_L$. 
+This is a straightforward replication of ColBERT used as an initial text encoder as was done in FLMR, but also allowing for size variations.
+
+
+\paragraph{Stage 1: Training the Mapping Structure.} 
+In this stage, we only train the mapping structure $\mathcal{F}_M$, keeping the language and vision models frozen. 
+This approach is an extension of the FLMR methodology, incorporating a larger dataset and an additional cross-attention mapping layer. The training is performed on the IQ2T dataset (LLaVA, OVEN), I2T datasets (WIT, CC3M, KVQA), and Q2T dataset (MSMARCO). Our objective is to encompass all three task types in M2KR without the need to optimize the data mixing ratio or manually select datasets to achieve an effective mapping structure. This strategy is inspired by previous studies~\cite{lin2023finegrained, zhu2023minigpt, Liu2023llava}, which utilized relatively simple multi-modal tasks to develop image-to-text mappings.
+We mask the late-interaction token embeddings in query matrix $\mathbf{Q}$ that are produced by the language model (not the token embeddings at the input embedding layer). This encourages the Transformer cross-attention layer to integrate information from its textual inputs and enables PreFLMR to perform IQ2T, I2T, and Q2T retrieval when provided with the appropriate instructions for each task. 
+\paragraph{Stage 2: Intermediate KB-VQA Pre-training.}
+We tune the text encoder $\mathcal{F}_L$ and the mapping structure $\mathcal{F}_M$ on the E-VQA dataset, a large and high quality KB-VQA dataset, to enhance PreFLMR's retrieval performance. 
+Including an intermediate pre-training stage to align the model with in-domain data has been well-explored in the literature (e.g., Google’s TAPAS~\cite{eisenschlos-etal-2020-understanding}). We opt for a straightforward procedure to train on E-VQA in the intermediate stage because of its diversity, increased difficulty, and larger quantity compared to other KB-VQA datasets. 
+Specifically, E-VQA requires recognition of less common entities such as spotted hyenas and relies on more specialized domain knowledge such as American landmarks, making it good for retrieval training. 
+This design choice is well-supported by experimental results (Table~\ref{tab:preflmr:main_results} \#8 vs \#5, \#3 vs \#2) and we provide detailed analysis in Sec.~\ref{sec:Analysis of Intermediate Pre-training}.
+
+
+\paragraph{Stage 3: Full-scale Fine-tuning.}
+We train on the entire M2KR corpora, including OKVQA and Infoseek. 
+This stage is straightforward multi-task learning.
+We tune the entire model except the vision encoder $\mathcal{F}_V$. Additionally, we use separate text encoders to encode queries and documents; their parameters were shared in previous steps.
+
+
+
+
+\subsection{Training Configurations}
+\label{sec:Training Configurations}
+
+We use the Adam optimizer~\cite{KingmaB14adam} with a fixed learning rate of $10^{-4}$ for the mapping structures and $10^{-5}$ for other parameters in all experiments.
+Training was run up to 300k, 220k, 12k, and 50k steps in the four stages, respectively. 
+
+
+Experiments and Results
+
+In this section we present results of scaling PreFLMR components (Sec.~\ref{sec:preflmr:results:preflmr_performance}, \ref{sec:preflmr:ablation_study}), analyze the effect of each training stage (Sec.~\ref{sec:preflmr:staged_performance}, \ref{sec:preflmr:analysis}), and evaluate on the downstream KB-VQA tasks (Sec.~\ref{sec:preflmr:downstream_kbvqa_performancee}). We summarize our findings in Sec.~\ref{sec:preflmr:summary-of-findings}. Multi-task performance refers to PreFLMR results, i.e. Stages 0, 1, 2, and 3, without any single-task fine-tuning. 
+
+\subsection{Model Variants}
+\label{sec:Model Variants}
+
+{We experiment with a range of model configurations. Model sizes range from BERT-Small (28.8M), BERT-Medium (41.1M), BERT-Base (110M) to BERT-large (340M).} ColBERT text encoders are denoted as "[BERT size]-[pre-training scheme]".  There are two ColBERT pre-training schemes: ``v1''~\cite{khattab-zaharia-2020-colbert} and ``v2''~\cite{santhanam-etal-2022-colbertv2}. ``v2'' yields a better performing model than ``v1'' as evaluated on MSMARCO. 
+We compare models initialized from ``v1'' and ``v2'' checkpoints to investigate how the performance of the initial uni-modal text retriever affects the final multi-modal vision-language retriever. Except for ``Base-v2'', all ColBERT variants are trained using our replication of ColBERT following the ``v1'' pre-training scheme.\footnote{The training code of ``v2'' has not been released officially.}
+{For the vision encoders, we use the ViT variants: ViT-B (88M), ViT-L (303M)~\cite{Radford_2021_CLIP}, ViT-H (631M) and ViT-G (1.84B)~\cite{cherti2023openclip}.} 
+
+
+\subsection{PreFLMR Performance}
+\label{sec:preflmr:results:preflmr_performance}
+\begin{table*}[!ht]
+\centering
+\resizebox{1.0\linewidth}{!}{%
+\begin{tabular}{@{}cllllcccccccccr@{}}
+\toprule 
+\multicolumn{5}{c}{} & \multicolumn{3}{|c}{I2T} & \multicolumn{1}{|c|}{Q2T} & \multicolumn{5}{c|}{IQ2T} & \\
+\midrule 
+ & \multirow{2}{*}{Model} & Vis.   & Text & Total & WIT & IGLUE  & KVQA & \multicolumn{1}{c}{MM} & OVEN & LLaVA & Infoseek & E-VQA & OKVQA & A.R. \\
+ & &Enc. & Enc. & Param. &  R@10 & R@1 & R@5 & R@5 & R@5 & R@1 & PR@5 & PR@5 & PR@5 \\
+\midrule
+ & CLIP & & & & 28.1 & 44.1 &  23.8 & - & 22.0 & 33.0  & 17.1   & 10.4 & 5.7 &  \\
+ & SOTA & & & & FLMR & GIVL &  FLMR & ColBERT & FLMR & FLMR & FLMR & Lens & FLMR & \\
+ & ~~~ Res. & & & & 23.8 & 30.8 & 31.9 & 86.9 & 40.5 & 56.4 & 47.1 & 62.5\tablefootnote{The performance is not fully comparable due to differences in the construction of the test passage corpus and the proprietary nature of the data and pipeline used in Lens. The reported figures serve as a reference point.} & 68.1 &  \\
+\midrule
+\multicolumn{13}{l}{\textit{Multi-task Performance}} \\
+\midrule
+1 & PreFLMR & B & B-v1 & 207M & 41.5 & 56.8  & 28.6 & 77.9 & 45.9 & 67.4 & 48.9 & 65.4 & 67.2 & 9.0 \\
+2 & PreFLMR & B & B-v2 & 207M & 41.7 & 57.3 &  28.6 & 79.5 & 46.3 & 67.2 & 48.8 & 67.9 & 66.1 & 8.2 \\
+3 & ~\textit{w/o inter.} & B & B-v2 & 207M &  41.2 & 56.8 & 26.5 & 78.2 & 43.7 & 65.0 & 47.0 & 57.3 & 65.1 & 10.9 \\
+4 & PreFLMR & L & B-v1 & 422M & 58.2 & 69.8 & 40.6 & 72.1 & 59.3 & 69.3 & 57.4 & 70.7 & 67.9 & 5.6 \\
+5 & PreFLMR & L & B-v2 & 422M & 60.5 & 69.2 &  \textbf{43.6} & 78.7 & 59.8 & 71.8 & 57.9 & 70.8 & 68.5 & 3.2\\
+6 & ~\textit{ViT trainable} & L & B-v2 & 422M & 18.7 & 1.5 &  0.8 & 76.7 & 5.6 & 54.6 &  36.7 & 57.2 & 58.9 & 12.3 \\
+7 & ~\textit{w/o instruct.} & L & B-v2 & 422M & 13.3 & 10.5 & 38.2 & 75.2 & 52.1 & 62.1 & 49.1 & 71.3 & 65.7 & 9.2 \\
+8 & ~\textit{w/o inter.} & L & B-v2 & 422M & 60.0 & 72.0  & 40.5 & \textbf{80.3} & 56.1 &  70.5 & 55.4 & 67.0 & 66.6 & 4.6 \\
+9 & PreFLMR & L & S-v1 & 334M & 54.2 & 66.3 &  37.9 & 73.6 & 53.9 & 66.0 &  52.6 & 66.8 & 65.3 & 8.3 \\
+10 & PreFLMR & L & M-v1 & 348M & 56.2 & 67.9 &  37.1 & 72.9 & 55.5 & 64.7 & 52.2 & 70.4 & 65.3 & 8.2\\
+11 & PreFLMR & L & L-v1 & 677M & 49.9 & 62.8 & 40.0 & 72.8 & 58.8 & 69.3 & 59.4 & 58.2 & 68.6 & 6.6 \\
+12 & PreFLMR & H & B-v2 & 750M & 60.5 & 71.2 &  39.4 & 78.5 & 61.5 & 72.3 & \textbf{59.5} & 71.7 & 68.1 & 3.1 \\
+13 & PreFLMR & G & B-v2 & 1.96B & \textbf{61.5} & \textbf{71.5} & 42.1 & 78.6 & \textbf{63.4} & \textbf{72.4} & \textbf{59.6} & \textbf{73.1} & \textbf{68.6} & \textbf{1.6} \\
+\midrule
+\multicolumn{13}{l}{\textit{{Fine-tuned PreFLMR for Specific Downstream Tasks}}} \\
+\midrule
+14 & PreFLMR & L & B-v2 & 422M & 68.5 & &  & & 70.8 & & 60.3 & 71.4 & 67.3 \\
+15 & PreFLMR & H & B-v2 & 750M &69.3 & &  & & 72.3 & & 62.3 & 72.1 & 70.5 \\
+16 & PreFLMR & G & B-v2 & 1.96B & \underline{69.3} & &  & & \underline{73.1} & & \underline{62.1} & \underline{73.7} & \underline{70.9} \\
+\bottomrule
+\end{tabular}
+}
+\caption{PreFLMR performance on all datasets. PR stands for Pseudo Recall. Best multi-task performance is in bold and best downstream fine-tuning performance is underlined. {For the vision encoder, we compare ViT-B (B), ViT-L (L), ViT-H (H) and ViT-G (G). For the text encoder, we compare Base-v1 (B-v1), Base-v2 (B-v2), Small-v1 (S-v1), Medium-v1 (M-v1), and Large-v1 (L-v1).} A.R.: Average Rank against all other models on all tasks. For baselines, we show: GIVL \cite{Yin2023GIVL} for IGLUE; ColBERTv2 for MSMARCO (MM); FLMR~\cite{lin2023finegrained} for Infoseek and OKVQA; and Google Lens~\cite{googlelens} for E-VQA.}
+\label{tab:preflmr:main_results}
+\end{table*}
+
+\begin{comment}
+
+    \begin{table*}[!ht]
+\centering
+\resizebox{1.05\linewidth}{!}{%
+\begin{tabular}{@{}clllcccccccccr@{}}
+\toprule 
+\multicolumn{4}{c}{} & \multicolumn{3}{|c}{I2T} & \multicolumn{1}{|c|}{Q2T} & \multicolumn{5}{c|}{IQ2T} & \\
+\midrule 
+ & \multirow{2}{*}{Model} & \multirow{2}{*}{Vis. Enc.}  & \multirow{2}{*}{Text Enc.}  & WIT & IGLUE  & KVQA & \multicolumn{1}{c}{MM} & OVEN & LLaVA & Infoseek & EVQA & OKVQA & A.R. \\
+ & & & & R@10 & R@1 & R@5 & R@5 & R@5 & R@1 & R@5 & R@5 & R@5 \\
+\midrule
+ & CLIP & &  & 28.1 & 44.1 &  23.8 & - & 22.0 & 33.0  & 17.1   & 10.4 & 5.7 &  \\
+ & Baseline & & & FLMR & GIVL &  FLMR & ColBERT & FLMR & FLMR & FLMR & Lens & FLMR & \\
+ & ~~~ Res. & & & 23.8 & 30.8 & 31.9 & 86.9 & 40.5 & 56.4 & 47.1 & 62.5 & 68.1 &  \\
+\midrule
+\multicolumn{13}{l}{\textit{Multi-task Performance}} \\
+\midrule
+1 & PreFLMR & ViT-B & Base-v1 & 41.5 & 56.8  & 28.6 & 77.9 & 45.9 & 67.4 & 48.9 & 65.4 & 67.2 & 9.0 \\
+2 & PreFLMR & ViT-B & Base-v2 & 41.7 & 57.3 &  28.6 & 79.5 & 46.3 & 67.2 & 48.8 & 67.9 & 66.1 & 8.2 \\
+3 & ~~~\textit{w/o inter.} & ViT-B & Base-v2 & 41.2 & 56.8 & 26.5 & 78.2 & 43.7 & 65.0 & 47.0 & 57.3 & 65.1 & 10.9 \\
+4 & PreFLMR & ViT-L & Base-v1 & 58.2 & 69.8 & 40.6 & 72.1 & 59.3 & 69.3 & 57.4 & 70.7 & 67.9 & 5.6 \\
+5 & PreFLMR & ViT-L & Base-v2 & 60.5 & 69.2 &  \textbf{43.6} & 78.7 & 59.8 & 71.8 & 57.9 & 70.8 & 68.5 & 3.2\\
+6 & ~~~\textit{ViT trainable} & ViT-L & Base-v2 & 18.7 & 1.5 &  0.8 & 76.7 & 5.6 & 54.6 &  36.7 & 57.2 & 58.9 & 12.3 \\
+7 & ~~~\textit{w/o instruct.} & ViT-L & Base-v2 & 13.3 & 10.5 & 38.2 & 75.2 & 52.1 & 62.1 & 49.1 & 71.3 & 65.7 & 9.2 \\
+8 & ~~~\textit{w/o inter.} & ViT-L & Base-v2 & 60.0 & 72.0  & 40.5 & \textbf{80.3} & 56.1 &  70.5 & 55.4 & 67.0 & 66.6 & 4.6 \\
+9 & PreFLMR & ViT-L & Small-v1 & 54.2 & 66.3 &  37.9 & 73.6 & 53.9 & 66.0 &  52.6 & 66.8 & 65.3 & 8.3 \\
+10 & PreFLMR & ViT-L & Medium-v1 & 56.2 & 67.9 &  37.1 & 72.9 & 55.5 & 64.7 & 52.2 & 70.4 & 65.3 & 8.2\\
+11 &
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,266 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Semantic segmentation \cite{SS1,SS2,SS3,SS4} is a fundamental and active task in computer vision, which aims to produce class label for each pixel in image.
+Training modern semantic segmentation models usually requires pixel-level labels for each class in each image, and thus costly datasets have been constructed for learning.
+As a practical task, there is a growing requirement to segment more classes in wider applications.
+However, annotating dense pixel-level mask is too expensive to cover the continuously increasing classes, which dramatically limits the applications of semantic segmentation.
+
+In practice, we have some already annotated semantic segmentation datasets, \emph{e.g.}, COCO-80 \cite{COCO}. 
+These costly datasets focus on certain classes (\emph{e.g.}, the $80$ classes in \cite{COCO}), and ignore other uninterested classes (\emph{e.g.}, other classes beyond the $80$ classes in \cite{COCO}).
+Over time, there may be demand to segment more classes, \emph{e.g.}, extending to COCO-171 \cite{COCOStuff}.
+We refer to the off-the-shelf classes having already annotated masks as base classes, and those newly covered classes as novel classes.
+As illustrated in Fig. \ref{fig:overview} (a), one sample in COCO-80 focuses on segmenting \textit{cat}, \textit{bed}, etc, but ignores the \textit{lamp}.
+Existing scenario for expansion in \cite{COCOStuff} is to annotate the dense pixel-level masks for novel classes again (\emph{i.e.}, annotating the mask for \textit{lamp} in Fig. \ref{fig:overview} (a)), which is too expensive to scale up.
+To this end, we focus on a cheaper yet effective scenario in this paper, where we only need to annotate image-level labels for the novel classes. 
+
+We refer to our learning scenario as weak-shot semantic segmentation, which focuses on further segmenting novel classes by virtue of cheaper image-level labels with the support of base classes having pixel-level masks.
+Specifically, given a standard semantic segmentation dataset annotated only for base classes (the novel classes hide in the ignored regions), we assume that the image-level labels are available for novel classes in each image. We would like to segment all the base classes and novel classes in the test stage.
+Similar scenario has been explored in RETAB \cite{RETAB}, but they 1) further assume that the off-the-shelf dataset contains no novel classes;
+2) assume that the \textit{background} class (in PASCAL VOC dataset \cite{VOC}) consisting of all ignored classes is annotated with pixel-level mask.
+However, these two assumptions are hard to satisfy in real-world applications, because the  ignored region in off-the-shelf dataset may contain novel classes and we actually cannot have the masks of \textit{background} class before having the masks of novel classes.
+In contrast, our scenario is similar in spirit but more succinct and practical, which is well demonstrated by the aforementioned instance expanding from COCO-80 to COCO-171. Besides, RETAB~\cite{RETAB} only conducted experiments on PASCAL VOC, while we focus on more challenging datasets (\emph{i.e.}, COCO-Stuff-10K \cite{COCOStuff} and ADE20K \cite{ADE}), without a \textit{background} class annotated with masks.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{fig_imgs/overview.png}
+\caption{
+In (a), off-the-shelf datasets focus on certain base classes, \emph{i.e.}, the colored masks in (a.2), while leaving novel classes ignored, \emph{i.e.}, the regions in black.
+We would like to segment novel classes by virtue of cheaper image-level labels.
+In (b), our method obtains proposal embeddings and pixel embeddings for each image based on MaskFormer \cite{MaskFormer}.
+Then, the transferred proposal-pixel similarity could produce masks for proposal embeddings of novel classes, and the transferred pixel-pixel similarity could provide semantic relation regularization for pixel pairs across images.
+The solid (\emph{resp.}, dotted) arrow indicates similarity (\emph{resp.}, dissimilarity).
+Best viewed in colors.
+}
+\label{fig:overview}
+\end{figure*}
+
+In weak-shot semantic segmentation, the key problem is how to learn dense pixel-level masks from the image-level labels of novel classes with the support of pixel-level masks of base classes.
+Our proposed solution is SimFormer, which performs dual similarity transfer upon MaskFormer \cite{MaskFormer} as shown in Fig.~\ref{fig:overview} (b).
+We choose MaskFormer \cite{MaskFormer} because it disentangles the segmentation task into two sub-tasks: proposal classification and proposal segmentation.
+Specifically, MaskFormer~\cite{MaskFormer} produces some proposal embeddings (\emph{aka} per-segment embeddings in \cite{MaskFormer}) from shared query embeddings for input image, each of which is assigned to be responsible for one class present in image (allowing empty assignment).
+Then MaskFormer performs proposal classification sub-task and proposal segmentation sub-task for each proposal embedding according to their assigned classes.
+
+In our setting and framework, the proposal embeddings of base classes are supervised in both sub-tasks using class and mask annotations, while the proposal embeddings of novel classes are supervised only in classification sub-task due to lacking mask annotations.
+The proposal segmentation sub-task is essentially learning proposal-pixel similarity.  Such similarity belongs to pair-wise semantic similarity, which is class-agnostic and transferable across different categories \cite{MetaBaseline,LearnToCompare,weakshot-cls}.
+Therefore, proposal segmentation for novel classes could be accomplished based on the proposal-pixel similarity transferred from base classes.
+To further improve the quality of binary masks of novel classes, we additionally propose pixel-pixel similarity transfer, which learns the pixel pair-wise semantic similarity from base classes and distills such class-agnostic similarity into the produced masks of novel classes.
+In this way, the model is supervised to produce segmentation results containing semantic relationship for novel classes.
+Inspired by \cite{CroPixPix,CroPixPix2,CroPixPix3}, we learn from and distill to cross-image pixel pairs, which could also introduce global context into model, \emph{i.e.}, enhancing the pixel semantic consistency across images.
+In addition, we propose a complementary loss, based on the insight that the union set of pixels belonging to base classes is complementary to the union set of pixels belonging to novel classes or ignore class in each image, which provides supervision for the union of masks of novel classes.
+
+We conduct extensive experiments on two challenging datasets (\emph{i.e.}, COCO-Stuff-10K \cite{COCOStuff} and ADE20K \cite{ADE}) to demonstrate the effectiveness of our method. We summarize our contributions as
+
+1) We propose a dual similarity transfer framework named SimFormer for weak-shot semantic segmentation, in which MaskFormer lays the foundation for proposal-pixel similarity transfer.
+
+2) We propose pixel-pixel similarity transfer, which learns pixel-pixel semantic similarity from base classes and distills such class-agnostic similarity to the segmentation results of novel classes. 
+We also propose a complementary loss to facilitate the mask learning of novel classes.
+
+3) Extensive experiments on the challenging COCO-Stuff-10K \cite{COCOStuff} and ADE20K \cite{ADE} datasets demonstrate the practicality of our scenario and the effectiveness of our method.
+
+
+Related Works
+\noindent\textbf{Weakly-supervised Semantic Segmentation (WSSS).}
+Considering the expensive cost for annotating pixel-level masks, WSSS \cite{WSSS1,WSSS2,WSSS3,WSSS4} only relies on  image-level labels to train the segmentation model, which has attracted increasing attention.
+The majority of WSSS methods \cite{WSSSpip1,WSSSpip2,SEAM} firstly train a classifier to obtain class activation map (CAM) \cite{CAM} to derive pseudo masks, which are then used to train a standard segmentation model.
+For example, SEC \cite{SEC} proposed the principle of ``seed, expand, and constrain'', which has a great impact on WSSS. 
+Under similar pipeline, some works \cite{WSSSseed1,WSSSpip1,SEAM} focus on enhancing the seed, while some other works \cite{WSSSex1,WSSSex2,WSSSex3} pay attention to improving the expanding strategy.
+Although WSSS has achieved great success, the expanded CAM is difficult to cover the intact semantic region due to the lack of informative pixel-level annotations.
+Fortunately, in our focused problem, such information could be derived from an off-the-shelf dataset and transferred to facilitate the learning of novel classes with only image-level labels.
+\noindent\textbf{Weak-shot Learning.}
+Reducing the annotation cost is a practical and extensive demand for various applications of deep learning. 
+Recently, weak-shot learning, \emph{i.e.}, learning weakly supervised novel classes with the support of strongly supervised base classes, has been explored in image classification \cite{weakshot-cls}, object detection \cite{weakshot-detection1,weakshot-detection2,weakshot-detection4}, semantic segmentation \cite{RETAB}, instance segmentation~\cite{hu2018learning,weakshot-inseg,birodkar2021surprising}, and so on \cite{fewweakshot}, which has achieved promising success.
+In weak-shot semantic segmentation \cite{RETAB}, the problem is learning to segment novel classes with only image-level labels with the support of base classes having pixel-level labels.
+Concerning the task setting, as aforementioned, RETAB \cite{RETAB} further assumes that the off-the-shelf dataset has no novel classes and the \textit{background} class is annotated with pixel-level mask, while the setting in this paper is more succinct and practical.
+Concerning the technical method, RETAB \cite{RETAB} follows the framework of WSSS, which suffers from a complex and tedious multi-stage pipeline, \emph{i.e.}, training classifier, deriving CAM, expanding to pseudo-labels, and re-training.
+In contrast, we build our framework based on MaskFormer \cite{MaskFormer} to perform dual similarity transfer, which could achieve satisfactory performance in single-stage without re-training.
+
+\noindent\textbf{Similarity Transfer.}
+As an effective method, similarity transfer has been widely applied in various transfer learning tasks \cite{MetaBaseline,LearnToCompare,weakshot-cls}.
+Specifically, semantic similarity (whether the two inputs belong to the same class) is class-agnostic, and thus transferable across classes.
+To name a few, Guo \emph{et al}. \cite{AL-simtrans} transferred class-class similarity and sample-sample similarity across domains in active learning.
+CCN \cite{LearnToCluster} proposed to learn semantic similarity between image pair, which is robust in both cross-domain and cross-task transfer learning.
+PrototypeNet~\cite{PrototypeNet} proposed to learn and transfer the similarity between image and prototype across categories for both few-shot classification and zero-shot classification.
+In this paper, we propose to transfer proposal-pixel similarity and pixel-pixel similarity for weak-shot semantic segmentation.
+These two types of similarities both belong to semantic similarity, which are highly transferable across classes.
+\begin{figure*}[t]
+\centering
+\includegraphics[width=1\linewidth]{fig_imgs/framework.jpg}
+\caption{
+The detailed illustration of our framework. 
+As in MaskFormer, we produce $N$ proposal embeddings in each image.
+On the one hand, each proposal embedding is fed to the classifier, where both base and novel classes are supervised by classification loss (ClsLoss).
+On the other hand, the similarities between each proposal embedding and pixel embeddings are computed to produce binary mask, where only base masks (in red) are supervised by GT mask (MaskLoss) while novel masks (in blue) are supervised by complementary loss (CompLoss).
+We sample some pixels and construct pixel pairs across two images.
+The concatenated pixel embeddings are fed to SimNet, where the base pixel pairs (in red) are used to train SimNet with similarity loss (SimLoss) and novel pixel pairs (in blue)  are used for similarity distillation (DistLoss).
+}
+\label{fig:detailed_framework}
+\end{figure*}
+
+
+
+Methodology
+\subsection{Problem Definition}
+In our weak-shot semantic segmentation, we are given a standard segmentation dataset annotated for base classes $\mathcal{C}_{\rm{b}}$, and we would like to further segment another set of novel classes $\mathcal{C}_{\rm{n}}$ ignored in the off-the-shelf dataset, where $\mathcal{C}_{\rm{b}} \cap \mathcal{C}_{\rm{n}} = \emptyset$.
+We assume that we have the image-level labels for $\mathcal{C}_{\rm{n}}$, which is rather cheaper and more convenient to obtain than pixel-level mask.
+In summary, for each training image, we have image-level labels for both $\mathcal{C}_{\rm{b}}$ and $\mathcal{C}_{\rm{n}}$, and we have pixel-level masks only for $\mathcal{C}_{\rm{b}}$.
+In the test stage, we need to predict pixel-level masks for both $\mathcal{C}_{\rm{b}}$ and $\mathcal{C}_{\rm{n}}$.
+
+\subsection{Review of MaskFormer}
+In this section, we briefly review MaskFormer \cite{MaskFormer}, which lays the foundation of our framework.
+The general pipeline of MaskFormer disentangles semantic segmentation task into two sub-tasks: proposal classification and proposal segmentation.
+Specifically, MaskFormer maintains $N$ learnable $C$-dim query embeddings $\mathcal{Q}\in \mathbb{R}^{C\times N}$ shared for all images, as shown in the upper part of Fig. \ref{fig:detailed_framework}.
+When the image is input, the backbone features are extracted via a backbone.
+Then, $N$ query embeddings attend to backbone features to produce proposal embeddings $\mathcal{E}_{\rm{prop}} \in \mathbb{R}^{C\times N}$ via a transformer decoder.
+For each proposal embedding, a bipartite matching algorithm assigns a class present in the input image to it, considering the classification loss and mask loss as the cost for assignment.
+For proposal classification sub-task, each proposal embedding is fed to a simple classifier to yield class probability predictions  $\mathcal{Y}\in \mathbb{R}^{(K+1)\times N}$ over $K$ semantic classes and $1$ ignore class.
+For proposal segmentation sub-task, pixel embeddings $\mathcal{E}_{\rm{pix}} \in \mathbb{R}^{C\times H \times W}$ are extracted from backbone features via a pixel decoder. 
+Afterwards, proposal embeddings are processed by several FC layers and their dot-products with pixel embeddings followed by sigmoid are computed to produce binary masks $\mathcal{M} \in \mathbb{R}^{N\times H \times W}$, \emph{i.e.}, $\mathcal{M}[i,h,w]={\rm{sigmoid}}(\mathcal{E}_{\rm{prop}}[:,i]\cdot \mathcal{E}_{\rm{pix}}[:,h,w])$.
+In the training stage, the two sub-tasks for each proposal embedding are supervised by the label and mask of assigned class (the mask loss of ignore class is eliminated).
+In the test stage, the semantic segmentation result for each class at pixel $(h,w)$ is obtained by summarizing all the masks weighted by the class score, \emph{i.e.}, $\arg \max_{c\in \{1,...,K\}} \sum_{i=1}^N{\mathcal{Y}[c,i] \cdot \mathcal{M}[i,h,w]}$.
+For more details, please refer to MaskFormer~\cite{MaskFormer}.
+
+\subsection{Proposal-Pixel Similarity Transfer on MaskFormer}
+In our setting, we have only image-level labels for novel classes and we choose to produce pixel-level masks via proposal-pixel similarity transfer based on MaskFormer \cite{MaskFormer}. 
+For concise description, we refer to the proposal embeddings assigned with base (\emph{resp.}, novel or ignore) classes as base (\emph{resp.}, novel or ignore) proposal embeddings.
+We refer to the binary masks produced from base (\emph{resp.}, novel or ignore)  proposal embeddings as base (\emph{resp.}, novel or ignore) masks. 
+We refer to the image pixels actually belonging to base (\emph{resp.}, novel or ignore) classes as base (\emph{resp.}, novel or ignore) pixels.
+
+Our method makes full use of the disentangled two sub-tasks of MaskFormer to perform proposal-pixel similarity transfer.
+The proposal classification sub-task assigns class labels to proposal embeddings. The proposal segmentation sub-task calculates the similarity between each proposal embedding and all pixels to obtain a similarity map, which is the segmentation mask corresponding to the class of this proposal embedding. 
+Such proposal-pixel similarity is class-agnostic and thus transferable across classes.
+In this way, our method could produce novel masks via the similarity transferred from base classes.
+
+Our framework is illustrated in Fig. \ref{fig:detailed_framework}, where the upper part is the same as MaskFormer producing proposal embeddings $\mathcal{E}_{prop} \in \mathbb{R}^{C\times N}$.
+Because we have no mask for novel classes in the bipartite matching algorithm, we omit the mask loss in the cost if the class to be assigned belongs to $\mathcal{C}_{\rm{n}}$.
+For the proposal classification sub-task, all proposal embeddings are supervised to predict the assigned classes because we have all the image-level labels of each input image.
+Thus, we have the classification loss
+\begin{equation}
+    \mathcal{L}_{\rm{cls}}=\sum_{i=1}^{N}-{\rm{log}} (\mathcal{Y}[y^*(i), i]),
+\end{equation}
+where $y^*(i)$ indicates the assigned single ground-truth (GT) class of the $i$-th proposal embedding.
+For the binary segmentation sub-task, only the base masks are supervised as
+\begin{equation}
+    \mathcal{L}_{\rm{mask}}=\sum_{y^*(i)\in \mathcal{C}_{\rm{b}}}{\mathcal{L}_{\rm{focal+dice}}(\mathcal{M}[i,:,:],M^*(y^*(i)))},
+\end{equation}
+where $M^*(y^*(i))$ indicates the GT mask of the assigned class of the $i$-th proposal, and $\mathcal{L}_{\rm{focal+dice}}$ is a binary mask loss consisting of a focal loss \cite{FocalLoss} and a dice loss \cite{DiceLoss} as in MaskFormer~\cite{MaskFormer}.
+Under the supervision of mask loss, the base proposal embeddings will produce binary similarities with all the pixel embeddings, \emph{i.e.}, each proposal embedding is \textit{similar} or \textit{dissimilar} to each pixel embedding.
+Such semantic pair-wise similarity is class-agnostic, and thus transferable across classes.
+Therefore, although the novel proposal embeddings are not supervised by GT masks, we can calculate the similarity between novel proposal embeddings and pixel embeddings to  produce novel masks.
+
+\subsection{Pixel-Pixel Similarity Transfer via Pixel SimNet}
+Due to lacking semantic supervision of novel classes, the novel masks are hard to precisely reach semantic consistency across training images, so we design a novel strategy to learn the pair-wise semantic similarity from base pixels across images and distill such class-agnostic similarity to novel pixels across images, which could complement the above proposal-pixel similarity.
+
+Specifically, to learn pixel-pixel similarity across images, for each input image, we randomly sample another training image as its reference image.
+According to image-level labels, we ensure that the input image and reference image have common base and novel classes.
+We train a pixel-pixel similarity net (SimNet) using base pixels which are associated with GT pixel-level labels.
+By class-aware random sampling $J$ base pixels from both images, we construct $J\times J$ ($J=100$ in our experiments) pixel pairs balanced in binary semantic class (\emph{i.e.}, \textit{similar} \emph{v.s.} \textit{dissimilar}).
+We concatenate the pixel embeddings of paired base pixels to obtain pixel-pair embeddings $\mathcal{E}_{\rm{pair-b}} \in \mathbb{R}^{(C+C)\times J\times J}$.
+A SimNet ($6$ FC layers followed by sigmoid function) takes in $\mathcal{E}_{\rm{pair-b}}$ and outputs the similar scores $\mathcal{R}_{\rm{b}}\in \mathbb{R}^{J\times J}$ for the base pixel pairs.
+We have GT labels for the pixels from base region, and thus $\mathcal{R}_{\rm{b}}$ is supervised by simple binary classification loss $\mathcal{L}_{\rm{sim}}$ for training SimNet.
+
+To distill the learned pixel-pixel semantic similarity into the segmentation of novel pixels, we also construct $J\times J$ pixel pairs from the not-base region (ignore pixels are much fewer than novel pixels) of both images respectively and obtain $\mathcal{E}_{\rm{pair-n}}\in \mathbb{R}^{(C+C)\times J\times J}$.
+Because the input image and reference image have common novel classes, the sampled pixel pairs have chance to belong to the same novel classes, which could inject semantic consistency (\emph{i.e.}, \textit{similar} class) into novel pixels.
+We use the SimNet to estimate the GT semantic similarity and obtain $\mathcal{R}_{\rm{n}}\in \mathbb{R}^{J\times J}$, which is detached of gradient and employed as the distillation source.
+For the distillation target, we compute the segmentation scores of novel classes, \emph{i.e.},  $\mathcal{S}_{\rm{n}}=\{\sum_{i=1}^N{\mathcal{Y}[c,i] \cdot \mathcal{M}[i,:,:]}\}_{c\in \mathcal{C}_{\rm{n}}}$, and collect the segmentation scores of sampled pixels in the input image $\mathcal{S}_{\rm{input-n}} \in \mathbb{R}^{|\mathcal{C}_{\rm{n}}|\times J}$ and those in the reference image $\mathcal{S}_{\rm{ref-n}}\in \mathbb{R}^{|\mathcal{C}_{\rm{n}}|\times J}$.
+The pixel-pixel similarity distillation from base classes to novel classes is achieved by
+\begin{equation}
+    \mathcal{L}_{\rm{dist}}= \rm{BCE}(\rm{ReLU}(\rm{COS_{enum}}(\mathcal{S}_{\rm{input-n}},\mathcal{S}_{\rm{ref-n}})),\mathcal{R}_{\rm{n}}),
+\end{equation}
+where $\rm{COS_{enum}}(\cdot,\cdot)$ computes the cosine similarity of all enumerated pixel pairs between the two sets of $|\mathcal{C}_{\rm{n}}|$-dim vectors. $\rm{ReLU}(\cdot)$ focuses on the non-negative values, since zero value means that two pixels are independent and thus dissimilar. $\rm{BCE}(\cdot, \cdot)$ is the binary cross-entropy loss to push the distillation target towards the distillation source.
+In this way, the pixel-pixel similarity is learned from base classes and transferred to facilitate the semantic consistency of novel masks across images.
+
+\subsection{Complementary Loss}
+Although we have no pixel-level annotation for novel classes, we have the prior knowledge that the union set of novel/ignore pixels and the union set of base pixels are complementary in each image.
+Therefore, we use a complementary loss to inject such insight into our model:
+\begin{equation}
+    \mathcal{L}_{\rm{comp}}= \mathcal{L}_{\rm{focal+dice}}(\textbf{1} - \bigcup_{y^*(i)\in \mathcal{C}_{\rm{b}}} M^*(y^*(i)), \bigcup_{y^*(i)\in \mathcal{C}_{\rm{n}}+\{\rm{ignore}\}}\mathcal{M}[i,:,:]),
+\end{equation}
+where the first input is the complementary set of the union set of all the GT masks of base classes, the second input is the union set of all the binary masks produced by the proposal embeddings assigned with novel classes or ignore class, and the union operator specifically takes the maximum value over involved binary masks at each pixel.
+Because the ignore mask produced from ignore proposal embedding is meaningless here as in MaskFormer \cite{MaskFormer}, we reset all the values in the ignore mask as a constant value $\gamma$ ($0.1$ by default), which is a prior probability for the ignore class.
+The constant prior probability is similar to the background threshold used in weakly supervised semantic segmentation \cite{RIB,SEAM,CONTA}.
+
+\subsection{Training and Inference}
+Our training and inference pipelines are the same as MaskFormer \cite{MaskFormer}, and the full training loss is 
+\begin{equation}
+    \mathcal{L}_{\rm{full}}=\mathcal{L}_{\rm{cls}}+\mathcal{L}_{\rm{mask}}+\mathcal{L}_{\rm{sim}}+\alpha \mathcal{L}_{\rm{dist}}+\beta \mathcal{L}_{\rm{comp}},
+\end{equation}
+where $\mathcal{L}_{\rm{cls}}$ and $\mathcal{L}_{\rm{mask}}$ implicitly include the default trade-off hyper-parameters in MaskFormer, and $\mathcal{L}_{\rm{sim}}$ is actually also a classification loss and balances well with $\mathcal{L}_{\rm{cls}}$.
+We use $\alpha$ ($0.1$ by default) for balancing the distillation loss and $\beta$ ($0.2$ by default) for balancing the complementary loss.
+
+
+Experiments
+\subsection{Datasets, Evaluation, and Implementation Details}
+We explore the learning scenario and evaluate our method on two challenging datasets.
+COCO-Stuff-10K \cite{COCOStuff} contains 9k training images and 1k test images, covering $171$ semantic classes.
+ADE20K \cite{ADE} has 20k training images and 2k validating images, covering $150$ semantic classes.
+All the data preparing processes follow those in MaskFormer \cite{MaskFormer}.
+For the learning scenario, we random split all the classes in the dataset into base classes and novel classes. Then we keep the image-level labels of novel classes in each training image, and reset the pixel-level masks of novel classes to ignore class (\emph{e.g.}, class ID $255$).
+We follow the split ratio $|\mathcal{C}_{\rm{b}}|:|\mathcal{C}_{\rm{n}}|=3:1$ in RETAB \cite{RETAB}, which is also widely used in few-/zero-shot learning \cite{FSSS1,ZSSS2}.
+We employ Intersection-over-Union (IoU) as our evaluation metric.
+To show the performance more clearly, we focus on mean IoU of novel classes, because the base classes are always supervised by GT masks and exhibit robust performances.
+For the network architecture, we follow the setting of MaskFormer and use ResNet50 \cite{ResNet} pre-trained on ImageNet \cite{ImageNet} as backbone.
+\subsection{Comparison with Prior Works}
+\noindent\textbf{Comparative Baselines.}
+We set three groups of baselines: 1) representative WSSS methods, including SEAM \cite{SEAM}, CONTA \cite{CONTA}, CPN \cite{CPN}, and RIB \cite{RIB};
+2) weak-shot segmentation segmentation methods, including RETAB \cite{RETAB};
+3) the standard segmentation method, a MaskFormer \cite{MaskFormer} trained with GT masks of novel classes, named \textit{FullyOracle}.
+Because WSSS baselines and RETAB all need a re-training stage to achieve the final performance and there are GT masks of base classes in training images, we re-train all baselines with mixed labels.
+Specifically, the mixed labels consist of GT masks of base classes and pseudo-labels of novel classes generated by the model (\emph{e.g.}, deriving and expanding CAM).
+For a fair comparison, we re-train each baseline on the standard MaskFormer~\cite{MaskFormer} using the generated mixed labels.
+Therefore, all the methods are consistent in network architecture.
+Our method could also be appended with a re-training stage for further improvement.
+We use the mixed labels consisting of GT masks of base classes and pseudo-labels of novel classes predicted by our model (instead of using CAM) in the re-training stage.
+
+\input{tab_blocks/SOTA}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\linewidth]{fig_imgs/viz_SOTA.png}
+\caption{
+Visual comparison on COCO-Stuff-10K (the first two rows) and ADE20K (the last two rows) datasets.
+Columns (a,b) show input images and GT masks.
+Column (c) shows the base/novel split maps indicating base pixels by red and novel pixels by blue.
+Columns (d,e,f) show the results of three methods.
+The dotted rectangles highlight the major differences.
+}
+\label{fig:viz_SOTA}
+\end{figure}
+
+\noindent\textbf{Quantitative Comparison.}
+We summarize all the results on four random splits of two datasets in Tab.~\ref{tab:SOTA}.
+Even without re-training, our method can dramatically outperform WSSS baselines and RETAB \cite{RETAB} (\emph{e.g.}, about $2.7\%$ against RETAB), demonstrating the effectiveness of our method based on dual similarity transfer.
+By appending a re-training stage as in WSSS, our method is further improved by about $1.9\%$.
+Compared with the fully-supervised upper bound \textit{Fully Oracle}, our method with re-training could achieve satisfactory performances (\emph{i.e.}, about $77\% \sim 89\%$ of the upper bound) on the two challenging datasets, showing the potential of our dual similarity transfer framework for learning novel classes from only image-level labels.
+
+\noindent\textbf{Qualitative Comparison.}
+We conduct qualitative comparison for the re-trained WSSS baseline RIB~\cite{RIB}, RETAB \cite{RETAB}, and our method on both datasets.
+As shown in Fig.~\ref{fig:viz_SOTA}, WSSS baseline tends to produce incomplete masks, and our method could produce more complete and precise semantic masks against RETAB \cite{RETAB}.
+Even in complex scenes (\emph{e.g.}, the 2nd and 3rd rows), our method still predicts preferable results for novel classes.
+\input{tab_blocks/ablation}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1\linewidth]{fig_imgs/viz_prop_pix.png}
+\caption{
+Visualizations for the novel proposals on COCO-Stuff-10K (upper) and ADE20K (lower) datasets.
+In each example, the first row shows the source image, predicted segmentation, GT segmentation, and base/novel split map, and the second row shows the first four proposals ranked by the predicted scores of novel classes. The caption of each proposal sub-figure describes: 1) the class name; 2) the predicted class score; 3) whether the class is actually present in the image.
+}
+\label{fig:viz_prop_pix}
+\end{figure}
+
+\subsection{Module Analysis}
+
+\noindent\textbf{Proposal-pixel Similarity Transfer.}
+As shown in the 1st row of Tab. \ref{tab:ablation}, only with proposal-pixel similarity transfer, the model could achieve acceptable performance on various dataset splits, which lays the foundation of our method.
+We provide in-depth qualitative visualization in Fig.~\ref{fig:viz_prop_pix}, from which we could directly inspect the single-label classification and binary segmentation sub-tasks of each proposal embedding.
+Overall, the predicted classes are precise and confident, and the produced masks of proposal embeddings completely cover the corresponding semantic classes.
+Although \textit{Truck} is actually not in the first example, the class score and  binary mask are both relatively lower, and thus the fused result will not severely degrade the final segmentation performance.
+
+\noindent\textbf{Pixel-pixel Similarity Transfer.}
+As shown in the 2nd row of Tab.~\ref{tab
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

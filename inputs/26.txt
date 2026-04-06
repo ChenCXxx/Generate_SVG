@@ -1,0 +1,356 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+Learning high-quality and performant representations from large-scale image-text data has been the subject of intense study in the past few years. Many applications benefit from an improved vision-language representation, including image-text retrieval~\cite{coco_captions,plummer2015flickr30k}, VQA~\cite{vqa,johnson2017clevr}, and image captioning~\cite{vinyals2015_captioning}.
+Recent advances have been fueled by a renewed interest in contrastive learning.
+State-of-the-art contrastive learning models such as CLIP~\cite{clip} and ALIGN~\cite{jia2021scaling} use image and text specific encoders to embed images and text in a joint embedding space.
+The model is trained to improve the cosine similarity for the aligned image-text pairs and dissimilarity for the unmatched ones. Such contrastive learning models can achieve state-of-the-art fine-tuning performance as well as strong zero-shot generalization results on image-text retrieval, VQA, and image classification. 
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.41\textwidth]{figures/STAIR-vs-CLIP.png}
+\end{center}
+\caption{{\bf Learning a sparse and interpretable embedding for a vision-language model.} CLIP \cite{clip} and ALIGN \cite{jia2021scaling} learn a dense $D$-dimensional embedding. In contrast, the goal of STAIR is to learn a sparse and interpretable embedding in a high-dimensional space. Each dimension in the sparse embedding is a (sub-)word in a large dictionary in which the predicted non-negative scalar corresponds to the weight associated with the token.}
+\label{fig:stair_diagram}
+\end{figure}
+
+Despite the impressive benchmark performance, the dense embedding space is usually considered a black box which is hard and unintuitive to interpret the meaning of the embeddings.
+Furthermore, as a model trained with retrieval~(contrastive) objective, deploying it to a real-world image-text retrieval product is challenging. Despite approximated nearest neighbor search~\cite{guo2020accelerating,faiss} can be used to retrieve from a dense embedding space, the cost can be high when scaling up to billions of images. 
+Lastly, as the embeddings live in a dense space, traditional approaches developed by search engines, such as inverted index, cannot be deployed naively.
+The difficulty of interoperability of the dense embeddings also makes it challenging to be combined with other retrieval features without additional training.
+
+The computer vision field has made many efforts to explore sparse, interpretable representations of images. The bag-of-words and topic models \cite{csurka2004visual,sivic2005discovering,fei2005bayesian,lazebnik2006beyond} were widely used together with the SIFT descriptor \cite{lowe2004distinctive}, but later researchers found its performance is inferior to dense vectors \cite{lin2011large,sanchez2013image}. Another effort in the deep CNN era is to develop the deep visual-semantic embedding \cite{frome2013devise} using ImageNet topics, which is more interpretable but still fails to outperform dense representations \cite{faghri2017vse++}. 
+
+We hypothesize that the gap between sparse semantic and dense embedding stems from at least two factors: (1) Previous works on semantic embedding do not effectively explore large-scale training to model the rich semantics in image-text space. (2) Most existing semantic embedding methods are built on a fixed vocabulary (e.g., several thousand concepts), which cannot handle out-of-vocabulary concepts. In this paper, we present a new model, named \textbf{STAIR}, and a multi-stage training recipe to learn a \textbf{S}parse \textbf{T}ext \textbf{A}nd \textbf{I}mage \textbf{R}epresentation to tackle the aforementioned challenges. We will show that our sparse representation can not only match but also outperform the state-of-the-art of image-text representations. 
+
+Inspired by the recent success of the sparse representation in information retrieval  field~\cite{bai2020sparterm,formal2021splade}, 
+STAIR encodes the image and text into a sparse and grounded token space, as illustrated in Figure~\ref{fig:stair_diagram}. Concretely, images and text are mapped to sparse embeddings that are grounded to actual (sub-)words with non-negative weights. The sparse embedding is straightforward to \textit{1) interpret and understand the model's prediction; 2) conduct a large-scale retrieval using an efficient inverted index approach; 3) combine with other text features by simply biasing the token weights in the sparse token space.} The proposed multi-stage training is critical to the grounding of the model.
+We compare the STAIR model and a CLIP model trained using the same model architecture and dataset. Experiment results show the STAIR model significantly outperforms the CLIP model on image-text retrieval tasks, with +4.9\% and +4.3\% recall@1 on COCO-5K text$\rightarrow$image and image$\rightarrow$text retrieval respectively. STAIR models can also achieve similar or better performance on zero-shot classification and linear probing tasks including ImageNet. 
+
+Furthermore, our sparse embedding is easier for humans to interpret. We define an interpretable space using BERT vocab to quantify the model interpretability. Experiments show \STAIRm is significantly more interpretable, with the Top-1 accuracy $32.9\%$~(STAIR) vs $13.7\%$~(CLIP) on ImageNet.
+
+
+Approach
+\label{sec:approach}
+
+We begin with a review of a typical dual-encoder architecture to motivate our research.
+
+\begin{figure*}[t]
+\begin{center}
+\includegraphics[width=0.9\textwidth]{figures/stair_architecture_4.pdf}
+\end{center}
+\caption{{\bf Diagram of \STAIRm architecture.} It employs a dual-encoder architecture. Different than dense models like CLIP or ALIGN, \STAIRm maps the dense embeddings to a sparse latent embedding space via a token prediction head. In addition to a regular contrastive loss to minimize an image-text matching loss, a FLOPs~\cite{flops} loss is added to encourage sparsity of image and text embeddings.}
+\label{fig:stair}
+\end{figure*}
+\subsection{Dual-Encoder Contrastive Learning}
+Given a dataset of image-text pairs $D=\{(x_i, y_i)\}$, where $x_i$ and $y_i$ represent the image and text respectively, a dual encoder learns a similarity $M(x, y)$, so that the aligned pair $(x_i, y_i)$ has higher similarity score than the unmatched pairs sampled from a negative sample set $D_i'$.
+A dual-encoder architecture consists of an image encoder $E_{\textsc{image}}$ and a text encoder $E_{\textsc{text}}$. Each encoder $E$ has two components: 1) a standard, input-specific, neural network $f(\cdot)$ and 2) a projection head $g(\cdot)$ that maps the features as embeddings in a joint dense embedding space:
+\begin{equation}
+ E(\cdot)=g(f(\cdot))
+  \label{eq:encoder}
+\end{equation}
+State-of-the-art approaches usually set $f(\cdot)$ as a transformer model and $g(\cdot)$ as a pooling layer.
+
+Given an image $x$ and text $y$ inputs, their similarity is measured by the cosine similarity:
+\begin{equation}
+    M(x,y) = \frac{E(x)^T E(y)}{\lVert E(x) \rVert \lVert E(y) \rVert}
+\end{equation}
+
+It is used to train the dual encoder by minimizing the contrastive loss $\mathcal{L}_{\textsc{con}}$: 
+
+\begin{equation}
+\label{eq:con}
+    \mathcal{L}_{\textsc{con}} =  - \frac{1}{|D|}\sum_i \log \frac{e^{M(x_i,y_i)/T}}{\sum_{(x', y')\in D_i}e^{M(x', y')/T}}
+\end{equation}
+where $D_i = D_i' \cup \{(x_i, y_i)\}$ denotes the positive pair and its negative set for each pair, and $T$ is the softmax temperature.
+\subsection{STAIR}
+\label{sssec:stair}
+
+Following CLIP~\cite{clip}, \STAIRm employs a dual-encoder architecture. As illustrated in Figure \ref{fig:stair}, it contains a pair of image and text encoders with sequential feature extraction network $f(\cdot)$ and projection head $g(\cdot)$. In particular, the dense project head $g(\cdot)$ is replaced with a \textbf{Token Projection Head}, which maps the representation to a sparse embedding space. A vocabulary $V$ is used as the basis of embedding space for the purpose of interpretability.
+The token projection head $g(\cdot)$ consists of two components: 1) a mapping function that maps the input sequence $h$ to a sequence of weights for each token $j$ in the vocabulary space $V$ and 2) a pooling layer that summarizes the sequence as sparse embedding in the vocabulary space $V$. We reuse the BERT~\cite{kenton2019bert} masked language model (MLM) prediction head $p(\cdot)$ as the mapping function:
+
+\begin{equation}
+\label{eq:gmap}
+    p(h_j) = e \cdot \textsc{transform}(h_j) + b
+\end{equation}
+where $h_j = f(\cdot)$ corresponds to the $j^{\text{th}}$ token in the sequence of the feature extraction network output, the $\textsc{transform}$ function consists of a FC layer with \textsc{GeLU} activation and a \textsc{Layer Norm} layer, and $e$ and $b$ are the linear mapping and bias in MLM prediction head that maps the transformed embedding to vocabulary space. We tie the weights of linear mapping layer $e$ with the text tower token embedding table. We believe that this step is important to associate the sparse embedding to actual text tokens in $V$.
+
+Following \cite{formal2021splade,formal2021spladev2}, we aggregate the weight of token $j$ to form the sparse embedding $\textsc{enc}$:
+\begin{equation}
+    \textsc{enc} = \log(1+\textsc{ReLU}(\underset{j}{\max}(p(h_j))))
+     \label{eq:log_max_pooling}
+\end{equation}
+The \textsc{ReLU} activation ensures that each token weight is non-negative and adding the log function empirically achieves better performance by suppressing overwhelmingly large weights~\cite{sparta}. 
+After the token projection head, the image embedding $\textsc{enc}^{\textsc{image}}$ and text embedding $\textsc{enc}^{\textsc{text}}$ are sparse vectors living in a $|V|$-dimensional space defined by the vocabulary.
+
+To further encourage sparsity, we follow ~\cite{flops} to introduce the FLOPs regularization loss such that only a small number of token embeddings in $V$ are non-zeros:
+
+\begin{equation}
+    \mathcal{L}_{\textsc{FLOPs}} = \sum_{k \in V}(\frac{1}{N}\sum_{i=1}^N\textsc{enc}_{k}^{(i)})^2 
+\end{equation}
+
+By combining the contrastive loss and the FLOPs regularization loss, the \STAIRm model is optimized by:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\textsc{con}} + \lambda_1 \mathcal{L}_{\textsc{FLOPs}}^{\textsc{image}} + \lambda_2  \mathcal{L}_{\textsc{FLOPs}}^{\textsc{text}}
+    \label{eq:final_training_objectives}
+\end{equation}
+where $\lambda_1$ and $\lambda_2$ are FLOPs regularization weights for image and text embeddings correspondingly.
+
+
+Training Details
+\label{sec:training}
+
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.45\textwidth]{figures/stair_training.jpeg}
+\end{center}
+\caption{{\bf Training strategy for STAIR model.} (1) The text output is masked to only predict the weights of tokens that occur in the input. (2) The image encoder is frozen and the mask is removed from the text encoder. (3) All constraints are removed.}
+\label{fig:stair_training}
+\end{figure}
+\begin{table*}[t]
+\caption{{\bf Zero-shot text/image retrieval.} Reporting recall@K on Flickr30K and COCO.}
+\vskip 0.15in
+\small
+  \centering
+  \begin{tabular}{l|cccccc|cccccc}
+    \toprule
+    & \multicolumn{6}{c|}{\bf COCO 5K} & \multicolumn{6}{c}{\bf Flickr30K}\\
+    & \multicolumn{3}{c}{text $\rightarrow$ image} & \multicolumn{3}{c|}{image $\rightarrow$ text} & \multicolumn{3}{c}{text $\rightarrow$ image} & \multicolumn{3}{c}{image $\rightarrow$ text}\\
+    & R@1 & R@5 & R@10 & R@1  & R@5 & R@10 & R@1 & R@5 & R@10 & R@1 & R@5 & R@10\\
+    \midrule
+
+    \rule{-2pt}{8pt}
+    CLIP & 36.2	& 62.2 & 72.2 &	53.4 & 78.3 & 85.6 & 63.0 &	86.7 & 92.5 & 79.6 & 95.5 &	98.1 \\
+    \STAIRm & \bf{41.1} & \bf{65.4} & \bf{75.0} & \bf{57.7} & \bf{80.5} & \bf{87.3} & \bf{66.6} & \bf{88.7} & \bf{93.5} & \bf{81.2} & \bf{96.1} & \bf{98.4} \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:zero-shot retrieval}
+\end{table*}
+As noted in Section \ref{sssec:stair}, we expect the STAIR model to achieve two goals: 1) aligning text and images in the sparse embedding space; 2) grounding the sparse embedding dimension with human-understandable (sub-)word in the vocabulary. In other words, the image and text embeddings should eventually reside in a space spanned by basis vectors that ground to human-interpretable tokens.
+However, in practice, we found that simply replacing the dense projection head with a token prediction head alone does not guarantee the $2^{\text{nd}}$ goal out of the box. This is because the images and text are two very different modalities with semantic gaps, while contrastive loss only encourages text/image alignment. As shown in Section \ref{sec:grounding}, the model learns a shortcut to reuse the less common tokens to bridge the gap across modalities.
+
+To address this issue, we propose a multi-stage training approach that sequentially bridges the discrepancy between the sparse embedding space and the interpretable space of vocabulary. The main steps are illustrated in Figure \ref{fig:stair_training}.
+
+\paragraph{Stage 1: Training image embedding  with masked tokens} In the first stage, we co-train both the image and text encoders and apply a binary mask on the text embedding as illustrated in Figure \ref{fig:stair_training}. Formally, given the original text input \(y\), the masked text embedding is formulated as:
+\begin{equation}
+  \textsc{enc}^\textsc{text}_\textsc{mask}=g(f(y)) \cdot \textsc{mask}(y)
+  \label{eq:bow}
+\end{equation}
+where $\textsc{mask}_i = 1$ if the $i^{\text{th}}$ token exists in the input sentence $y$ after tokenization, and $g(f(y))$ predicts the weights of the non-masked tokens. In this setting, the text embedding is forced to activate the tokens appearing from the original text input only, while ignoring others. By matching with the masked text embedding, the image encoder is learned to ground its image embedding on the tokens from the pairing text. Therefore, after the stage 1 training, the image embedding is living in the vocabulary's interpretable space.
+\paragraph{Stage 2: Training with frozen image encoder} In this stage we focus on grounding the text embedding to the same interpretable space where the image embedding is trained to reside in from stage 1. The key idea is to let the image encoder teach the text encoder as a teacher model. As shown in Figure \ref{fig:stair_training}, we freeze the image encoder while training the text encoder to match the image embedding via contrastive loss. After stage 2 training, both image and text embeddings are in the same human-interpretable embedding space constructed by the vocabulary.
+
+\paragraph{Stage 3: Fine-tuning both encoders} The first two-stage training provides a good foundation for both encoders to produce human-interpretable embeddings. However, the image and text encoders are tuned in a round-robin fashion, the parameters are not optimal for image-text matching. In stage 3, we boost the image-text matching performance by finetuning both encoders jointly.
+
+
+Experiments
+\label{sec:experiments}
+
+\begin{table*}[t]
+  \caption{{\bf Zero-shot classification accuracy.} Reporting the top-1 accuracy (\%) across 9 datasets.}
+  \vskip 0.15in
+\small
+  \centering
+  \begin{tabular}{l|ccccccccc}
+    \toprule
+    & ImageNet & Caltech-101 & CIFAR-100 & SVHN & DTD & OxPet & OxFlowers & Eurosat & RESISC45 \\
+    \midrule
+    CLIP & 65.1 &	82.3 &	63.2 &	42.0 &	53.6 &	85.8 &	67.7 &	\bf{52.4} &	\bf{64.3} \\
+    \STAIRm & \bf{65.6} &	\bf{82.5} &	\bf{63.4} &	\bf{53.0} &	\bf{56.3} &	\bf{85.9} &	\bf{68.2} &	51.0 &	62.8 \\
+    \bottomrule
+  \end{tabular}
+
+  \label{tab:zero-shot classification}
+\end{table*}
+
+\begin{table*}[t]
+  \caption{{\bf Linear probe classification accuracy.} Reporting the top-1 accuracy (\%) across 9 datasets.}
+\vskip 0.15in
+\small
+  \centering
+  \begin{tabular}{l|ccccccccc}
+    \toprule
+    & ImageNet & Caltech-101 & CIFAR-100 & SVHN & DTD & OxPet & OxFlowers & Eurosat & RESISC45 \\
+    \midrule
+    CLIP & 77.0 &	94.9 &	76.7 &	65.8 &	80.6 &	88.8 &	97.6 &	95.1  &	92.6 \\
+    \STAIRm & \bf{78.1} &	\bf{96.1} &	\bf{77.7} &	\bf{72.5} &	\bf{82.7} &	\bf{91.7} &	\bf{98.2} &	\bf{95.9} &	\bf{93.9}  \\
+    \bottomrule
+  \end{tabular}
+
+  \label{tab:zero-shot classification}
+\end{table*}
+\subsection{Datasets}
+\label{ssec:datasets}
+Our dataset is a combination of internal and public datasets with 1.1B image-text pairs in total.
+The public datasets consists of Conceptual Caption 3M (CC-3M)~\cite{sharma-etal-2018-conceptual} and Conceptual Captions 12M (CC-12M)~\cite{changpinyo2021cc12m}.
+ The web-crawled dataset is mined using a similar approach described in ALIGN~\cite{jia2021scaling} and CLIP~\cite{clip}. We further filter the data by a public CLIP model \footnote{\url{https://huggingface.co/openai/clip-vit-base-patch16}}, where image-text pairs with similarity score $<$ 0.2 are removed.
+
+\subsection{Configurations}
+\label{ssec:config}
+
+In the experiment, we train a CLIP model and a STAIR model for comparison. For both models, we adopt transformer~\cite{vaswani2017attention} as the backbone with a modified CLIP-B/16~\cite{clip} configurations. The text encoder is a 12-layer Transformer with 512 hidden dimensions and 8 attention heads. The text input is tokenized by BERT WordPiece tokenizer~\cite{kenton2019bert} with 30,522 vocabularies. The max input sequence length is set to 76. The image encoder is a 12-layer transformer with 12 attention heads and 768 hidden dimension sizes. 
+
+The CLIP model is trained for 600K steps using a LAMB optimizer~\cite{You2020Lamb} with a learning rate of $1e^{-3}$ and a weight decay ratio of $1e^{-2}$. The learning rate is first warmed up till 10k steps and then linear decay to zero. \STAIRm model takes 300K, 300K, and 600K steps for each of the stage, where each stage use the same configuration as above. To avoid catastrophic forgetting \cite{mccloskey1989catastrophic,french1999catastrophic}, a smaller max learning rate of $1e^{-4}$ is adopted in stage 3. FLOPs regularization weights are set to \(\lambda_1 = \lambda_2 = 1e^{-3}\) by default with a quadraitc growth following \cite{formal2021spladev2}. All models are trained using a global batch size of 16,384 if not specified.
+\subsection{Zero-Shot Text Image Retrieval}
+
+Table \ref{tab:zero-shot retrieval} shows the recall@K~(K=1, 5, 10) performance of image/text retrieval tasks on Flickr30K \cite{plummer2015flickr30k} and COCO-5K \cite{coco_captions}. The metrics are reported with a prompt of ``a photo of '' added before the original caption following \citet{clip}. We observe great performance improvement of STAIR models over the CLIP baseline, \ie 4.9\% and 4.3\% improvement on COCO-5K text$\rightarrow$image and image$\rightarrow$text retrieval recall@1 respectively. A similar improvement is observed on Flickr30K.
+
+\subsection{Zero-Shot Visual Classification}
+In Table \ref{tab:zero-shot classification}, we evaluate the models on the zero-shot image classification on 9 datasets from \citet{clip}. We report the top-1 accuracy and employ the same prompts set from \citet{clip}. Results suggest that \STAIRm performs better or as competitive comparing CLIP on most datasets. In particular, \STAIRm shows significantly better performance on SVHN classification that requires an exact match, thanks to its token grounding capability. On the other side, we notice that STAIR also suffers on specialized out-of-distribution tasks, such as Eurosat \cite{helber2019eurosat} and RESISC45 \cite{cheng2017remote}, similar to CLIP as mentioned by \citet{clip}.
+
+\subsection{Linear Probe of Visual Classification}
+We also compare the linear probe performance using the same 9 datasets as zero-shot classification. We observe that the STAIR model shows more prominent results comparing the CLIP, even on Eurosat and RESISC45 datasets, where it shows weaker performance in zero-shot. It is because the STAIR model can benefit from its embedding dimensionality of 30,522, which is much larger than 512 for CLIP. Moreover, with sparsity enforced in STAIR, there is no extra cost on storage and computation compared to the dense embeddings (More discussion in Section \ref{sssec:ablation_sparsity}).
+
+
+Interpretability
+\label{sec:interpret}
+
+\begin{table}[t]
+  \caption{{\bf Improved interpretability of the STAIR model.} We report the top-K accuracy (\%) of the label among all of the vocabulary in the tokenizer on the ImageNet, CIFAR-100, and CalTech-101 datasets.}
+  \vskip 0.15in
+\small
+    \begin{subtable}{0.5\textwidth}
+      \centering
+      \begin{tabular}{lrrrr}
+        \toprule
+        \bf{ImageNet\space\quad} & Top-1 & Top-10 & Top-50 & Top-100\\
+        \midrule
+        \STAIRm & 32.9 & 69.0 & 83.8 & 87.7 \\
+        CLIP & 13.7 & 34.3 & 47.0 & 51.9 \\
+        \bottomrule
+      \end{tabular}
+    \end{subtable}
+        \hfill
+    \begin{subtable}{0.5\textwidth}
+      \centering
+        \begin{tabular}{lrrrr}
+        \toprule
+        \bf{CIFAR-100\space\space} & Top-1 & Top-10 & Top-50 & Top-100\\
+        \midrule
+        \STAIRm & 10.3 & 56.8 & 75.4 & 80.7 \\
+        CLIP & 8.0 & 28.9 & 44.7 & 50.5 \\
+        \bottomrule
+        \end{tabular}
+    \end{subtable}
+        \hfill
+    \begin{subtable}{0.5\textwidth}
+      \centering
+        \begin{tabular}{lrrrr}
+        \toprule
+        \bf{CalTech-101} & Top-1 & Top-10 & Top-50 & Top-100\\
+        \midrule
+        \STAIRm & 29.3 & 45.4 & 56.0 & 64.8 \\
+        CLIP & 8.1 & 24.2 & 38.9 & 43.8 \\
+        \bottomrule
+        \end{tabular}
+    \end{subtable}
+  \label{tab:stage_interp}
+\end{table}
+\begin{figure*}[t]
+\centering
+\small
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc3.pdf}
+         \caption{\textbf{Original Caption}:  A seagull standing on the sand of a beach.}
+     \end{subfigure}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc9.pdf}
+         \caption{Bride and grooms arms cutting the wedding cake with fruit on top.}
+     \end{subfigure}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc1.pdf}
+         \caption{A couple of people on kayak boats in the middle of the ocean.}
+     \end{subfigure}
+     \hfill
+     
+     \bigskip
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc4.pdf}
+         \caption{An airport filled with planes sitting on tarmacs.}
+     \end{subfigure}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc5.pdf}
+         \caption{Sheared sheep on roadway taken from vehicle.}
+     \end{subfigure}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc11.pdf}
+         \caption{A plane on the runway is being led by a tow cart.}
+     \end{subfigure}
+     \hfill
+     
+     \bigskip
+
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc7.pdf}
+         \caption{There is a sign in front of a brick house.  \quad \quad \quad \quad\quad \quad}
+     \end{subfigure}
+     \hspace{0.3cm}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc8.pdf}
+         \caption{Two ducks floating together on water.  \quad \quad \quad \quad \quad \quad \quad}
+     \end{subfigure}
+     \hspace{0.3cm}
+     \hfill
+     \begin{subfigure}[b]{0.31\textwidth}
+         \centering
+         \includegraphics[width=\textwidth]{figures/wc10.pdf}
+         \caption{A table set for a traditional Thanksgiving dinner.}
+     \end{subfigure} 
+     \hfill
+\caption{{\bf Selected examples of predictions from STAIR model.} Top 20 tokens predicted from an image using \STAIRm where the font size indicates the prediction weight. Note the original caption is shown below the image.}
+\label{fig:image_token_examples}
+\end{figure*}
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=0.48\textwidth]{figures/stair_clip_vs_ms.pdf}
+\end{center}
+\caption{{\bf Selected examples of most relevant (sub-)words in the lexicon space and the similarities from CLIP and STAIR.} 
+Tokens from STAIR are more friendly for human to interpret the visual concepts than CLIP. \textit{\#\# indicates subword from the vocab.}}
+\label{fig:stair_clip_vs_ms}
+\end{figure}
+
+\subsection{Quantatively analysis}
+
+A key difficulty of interpreting a high-dimensional embedding is that its representation residing in the embedding space $R^d$ does not naturally correspond to concepts that humans easily understand. To address the challenge, \citet{kim2018interpretability} proposed to leverage an \textbf{interpretable space} $R^H$ that is spanned by vectors $c$ corresponding to an unknown set of human-interpretable concepts. From this standpoint, the embedding interpretation can be viewed as a mapping of $R^d\rightarrow R^H$. 
+
+For image-text dual encoder models, a good interpretable space to connect multimodalities is a lexicon space that is spanned by basis vectors $c$ of text embeddings representing human understandable tokens, words, phrases, and/or sentences. The interpretation then can be given by the similarity between the embedding and each basis vector, $Sim(\cdot, c)$. The lexicon space is crucial for comparing the interpretation between different models. Suppose we have the embedding from a dog image, without a dog concept existing in the lexicon space, it is infeasible to understand from the image embedding itself. 
+
+Zero-shot image classification is a restricted form of functionally-grounded interpretability evaluation \cite{doshi2017towards} as its interpretable space is predefined by its classes and dataset specific. In practice, the interpretable space can be both lack of human labels and unlimited \cite{ghorbani2019towards}. To lift the constraint, we expand our interpretable space as the vocabulary of the BERT WordPiece Tokenizer~\cite{kenton2019bert} ($n=30,522$) to approximate a lexicon space covering any human-interpretable concepts. Note that, under this definition, the embedding space becomes the same as the interpretable space for STAIR and the interpretation mapping reduces to an identity function. Similar to zero-shot image classification, if an image embedding lies closer to its ground-truth class in the lexicon space, we consider it as easier to interpret. This task is usually more challenging than the original zero-shot classification because the candidate class now becomes the entire vocabulary, which is much more than the predefined classes.
+
+We compare the interpretability of CLIP and STAIR on three datasets, ImageNet, CIFAR-100, and Caltech-101. The Top-K accuracy is used to quantitatively measure the model’s interpretability. In particular, if a ground-truth class is tokenized into separated sub-words $c_k$ in the vocabulary, we take the max similarity over the sub-words $\max_{k}(Sim(\cdot, c^k))$ as the final similarity. As shown in Table \ref{tab:stage_interp}, it is clear that STAIR provides significantly better interpretability than the CLIP model in the interpretable space.
+\subsection{Qualitatively analysis}
+\label{sec:grounding}
+
+Here we qualitatively examine that the sparse embedding from the STAIR model is more interpretable compared to CLIP. In Figure \ref{fig:stair_clip_vs_ms}, we report the top $Sim(\cdot, c^k)$ (sub-)words in the interpretable space defined by the BERT WordPiece Tokenizer for each image. We see that STAIR is better at capturing visual concepts that humans can easily understand than CLIP, which is consistent with our quantitative analysis. We also observe that the top tokens from CLIP tend to have similar matching scores while STAIR avoids the problem by adopting eq.~\eqref{eq:log_max_pooling} in the Token Projection Head. Figure \ref{fig:image_token_examples} shows more examples of (sub-)words with the highest weights from STAIR embeddings given each image. The results suggest that STAIR is capable of grounding images to tokens that are semantically related. For example, it can infer ``wedding'' from the picture of bride and groom cutting cake. In practice, this grounding and interpretability ability is very useful for debugging and understanding model’s behavior. For example, we observe the model favors activating ``https'' token in many predicted embeddings. We find that the bias is mainly caused by a large portion of web-mined content in our training data, where ``https'' occurs in many of the associated texts.
+
+
+Analysis and Discussion
+\label{sec:analysis}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{figures/stair_ss_vs_ms.pdf}
+    \caption{{\bf Selected examples of top predictions and their weights from STAIR models.} The predicted tokens from \STAIRs are not connected the actual meaning of inputs, while \STAIRm predictions from multi-stage training are grounded to input semantics. \textit{\#\# indicates subword from the vocab.}}
+    \label{fig:token_grouding}
+\end{figure}
+\subsection{Necessity of Multi-stage training}
+
+Multi-stage training strategy is crucial to guarantee that STAIR embedding grounds to meaningful tokens. To demonstrate its necessity, we train a single-stage model, denoted as \STAIRs for comparison. Figure~\ref{fig:token_grouding} demonstrates the predictions from \STAIRs and multi-stage \STAIRm models separately. We observed that \STAIRs tends to redefine the semantic meaning of tokens and reuse them to match images and text. For example, \STAIRs does not interpret tokens ``eminent'' and ``nottingham'' as famous and locations but redefines them as teddy bear topics, as they are always the top two predicted tokens for teddy bear images. Similarly, ``clue'' are re-interpreted as the concept of skiing. Although we can guess and infer the new semanti
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

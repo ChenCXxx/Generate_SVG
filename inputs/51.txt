@@ -1,0 +1,232 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+3D object detection (3D-Det)~\cite{misra2021end,qi2019deep,qi2017pointnet} is a fundamental task in computer vision, with wide applications in self-driving, industrial manufacturing, and robotics. Given point cloud scenes, 3D-Det aims to localize and classify objects in the 3D scenes. 
+However, most existing works heavily rely on datasets with fixed and known categories, which greatly limits their potential applications in the real world due to the various and unbounded categories. 
+{Open-vocabulary 3D object detection (OV-3DDet)} is on the verge of appearing to detect novel objects. 
+In OV-3DDet, the model is typically trained on datasets with limited base categories while evaluated on scenes full of novel objects, which brings additional challenges.
+In the problem of OV-3DDet, the key challenge is how to localize and classify novel objects using only annotations of very limited base categories. 
+There are only very few works in the literature targeting this challenging problem so far. 
+\par To obtain novel object boxes,~\cite{lu2023open} utilizes a large-scale pre-trained 2D open-vocabulary object detection (OV-2DDet) model~\cite{zhou2022detecting} as prior knowledge to localize a large number of 2D novel object boxes, and then generates pseudo 3D object box labels for corresponding 3D novel objects. Instead of directly relying on an external OV-2DDet model to obtain novel object localization capability, we aim to learn a discovery of novel 3D object boxes, based on limited 3D annotations of base categories on the target data. With the discovered novel object boxes, we further explore joint class-agnostic and class-specific cross-modal alignment, using the human-annotated base object boxes, and the discovered novel object boxes. The novel object box discovery and cross-modal alignment are collaboratively learned to achieve simultaneous novel object localization and classification.  
+
+Specifically, to localize novel objects, we first propose a {3D Novel Object Discovery (3D-NOD)} training strategy that utilizes information from both the 3D and 2D domains to discover more novel objects in the training process. In detail, the model learns class-agnostic 3D box prediction using 3D box annotations of the base categories, which can provide 3D geometry priors of 3D boxes based on geometric point cloud features. 
+To confirm discovered novel boxes, the pretrained vision-language model CLIP~\cite{radford2021learning} is also utilized to provide 2D semantic category priors. 
+By considering both 3D and 2D cues, novel objects can be effectively discovered during iterative training. 
+\par Building upon 3D-NOD, to achieve novel object classification, we further propose a {Discovery-Driven Cross-Modal Alignment (DCMA)} module that aligns 3D object features with 2D object and text features in a large vocabulary space, using both human-annotated 3D object boxes of base categories, and the discovered 3D boxes of novel categories. DCMA comprises two major components, \emph{i.e.}, category-agnostic box-wise feature distillation and class-specific feature alignment. The former aligns 3D point cloud features and 2D CLIP image features at the box level, without relying on information about specific categories. The distillation pushes the 3D point cloud and 2D image features closer wherever a 3D box covers. On the other hand, DCMA aligns 3D object features with CLIP text features in a large category vocabulary space, using category information from both annotated base objects and discovered novel objects, in a cross-modal contrastive learning manner.
+\par The proposed 3D-NOD and DCMA can be jointly optimized in a unified deep framework named CoDA. They collaboratively learn to benefit each other. The discovered novel object boxes through 3D-NOD can greatly facilitate the cross-modal feature alignment, while better feature alignment through DCMA can further boost the model localization capability on novel objects. With our joint training of 3D-NOD and DCMA in CoDA to simultaneously localize and classify novel objects, {our approach outperforms the best-performing alternative method by 80\% in terms of mAP.}
+
+In summary, the main contribution of the paper is three-fold: 
+
+\begin{itemize}[leftmargin=*]
+\item We propose an end-to-end open vocabulary 3D object detection framework named \textbf{CoDA},
+which can learn to simultaneously localize and classify novel objects, without requiring any prior information from external 2D open-vocabulary detection models.
+\item We design an effective 3D Novel Object Discovery (\textbf{3D-NOD}) strategy that can localize novel objects by jointly utilizing 3D geometry and 2D semantic open-vocabulary priors. Based on discovered novel objects, we further introduce discovery-driven cross-modal alignment (\textbf{DCMA}) to effectively align 3D point cloud features with 2D image/text features in a large vocabulary space. 
+\item We design a mechanism to collaboratively learn the 3D-NOD and DCMA to benefit each other. The novel object boxes discovered from 3D-NOD are used in cross-modal feature alignment in DCMA, and a better feature alignment in DCMA can facilitate novel object discovery.
+\end{itemize}
+
+
+
+Related Work
+\par\noindent\textbf{3D Object Detection.} 3D object detection (3D-Det)~\cite{qi2019deep,xie2020mlcvnet, zhang2021learning, ma2021delving, zhang2020h3dnet, xie2021venet, cheng2021back} has achieved great success in recent years. For instance, VoteNet~\cite{qi2019deep} introduces a point voting strategy
+to 3D object detection. It adopts PointNet~\cite{qi2017pointnet} to process 3D points and then assigns these points to several groups, and
+object features are extracted from these point groups.
+Then the predictions are generated from these object features.
+Based on that, MLCVNet~\cite{xie2020mlcvnet} designs
+new modules for point voting to capture multi-level contextual information.
+Recently, the emergence of transformer-based methods~\cite{carion2020end} has also driven the development of 3D-Det. For example, GroupFree~\cite{liu2021group} utilizes a transformer as the prediction head to avoid handcrafted grouping. 3DETR~\cite{misra2021end} proposes the first end-to-end transformer-based structure for 3D object detection.
+However, these methods mainly focus on the close-vocabulary setting, \emph{i.e.}, the object categories in training and testing are the same and fixed. In contrast to these works, this paper targets open-vocabulary 3D-Det, and we design an end-to-end deep pipeline called CoDA,
+which performs joint novel object discovery and classification.
+\par\noindent\textbf{Open-vocabulary 2D object detection.}
+In open-vocabulary 2D object detection (OV-2DDet), some works~\cite{feng2022promptdet,gu2021open,gupta2022ow,radford2021learning,jia2021scaling,yaodetclip,minderer2022simple,du2022learning,ma2022open,zhou2022detecting,zareian2021open,yao2023detclipv2} push 2D object detection to the open-vocabulary level. 
+Specifically, 
+RegionCLIP~\cite{zhong2022regionclip} pushes the CLIP from the image level to the regional level and learns region-text feature alignment.
+Detic~\cite{zhou2022detecting} instead utilizes image-level supervision based on ImageNet~\cite{deng2009imagenet}, which assigns image labels to object proposals.
+GLIP~\cite{li2022grounded} and MDETR~\cite{kamath2021mdetr} treat
+detection as the grounding task and adopt text query for
+the input image to predict corresponding boxes.
+All the methods mentioned above focus on 2D object detection
+and conduct the object detection from the 2D input image.
+However, in this work,
+we focus on open-world 3D object detection, which is a challenging problem and remains seldom explored in the literature.
+\par\noindent\textbf{Open-vocabulary 3D object detection.} Recently, an open-set 3D-Det method~\cite{luopen} has shown great potential in various practical application scenarios.
+It can successfully detect unlabeled objects by introducing ImageNet1K~\cite{deng2009imagenet} to train a 2D object detection model~\cite{carion2020end},
+which classifies objects generated by a 3D-Det model~\cite{misra2021end}
+on the training set to obtain pseudo labels for the objects.
+Then the pseudo labels are adopted to retrain the open-set
+3D-Det model~\cite{misra2021end}.
+Even though there are no labels for the novel objects during training,
+the names of novel categories are known and fixed so that the
+category-specific pseudo labels can be generated, which is thus an open-set while close-vocabulary model.
+More recently,~\cite{lu2023open} propose a deep method to tackle OV-3Ddet. They adopt the CLIP model~\cite{radford2021learning}
+and a large-scale pretrained external OV-2Ddet~\cite{zhou2022detecting} model to generate pseudo labels of possible novel objects. Our work is closer to~\cite{lu2023open}, but we target OV-3Ddet without relying on any additional OV-2Ddet model as priors to obtain novel box localization capabilities. Our model CoDA can simultaneously learn to conduct novel object discovery and cross-modal alignment with a collaborative learning manner, to perform end-to-end novel object localization and classification. 
+
+\begin{figure*}[!t]
+     \centering
+    \begin{overpic}[width=1\textwidth]{framework.pdf}
+    \end{overpic}
+    \caption{Overview of the proposed open-vocabulary 3D object detection framework named \textbf{CoDA}. We consider 3DETR~\cite{misra2021end} as our base 3D object detection framework, represented by the `Encoder' and `Decoder' networks.
+    The object queries, together with encoded point cloud features, are input into the decoder. The updated object query features from the decoder are further input into 3D object classification and localization heads. We first propose a 3D Novel Object Discovery (\textbf{3D-NOD}) strategy, which utilizes both 3D geometry priors from predicted 3D boxes and 2D semantic priors from the CLIP model to discover novel objects during training. The discovered novel object boxes are maintained in a novel object box label pool, which is further utilized in our proposed discovery-driven cross-modal alignment (\textbf{DCMA}). The DCMA consists of a class-agnostic distillation and a class-specific contrastive alignment based on discovered novel boxes. Both 3D-NOD and DCMA collaboratively learn to benefit each other to achieve simultaneous novel object localization and classification in an end-to-end manner.}
+    \label{fig:methods_overview}
+\end{figure*}
+
+
+Methods
+
+
+
+\subsection{Framework Overview} \label{sec:method_overview}
+
+An overview of our proposed open-world 3D object detection framework called \textbf{CoDA} is shown in~\figref{fig:methods_overview}. 
+Our method utilizes the transformer-based point cloud 3D object detection model 3DETR~\cite{misra2021end} as the detection backbone, which is represented as an `Encoder' and a `Decoder' shown in~\figref{fig:methods_overview}. It has localization and a classification head for 3D object box regression and box category identification, respectively. 
+To introduce open-vocabulary detection capabilities to the 3D point cloud object detection task, we utilize the pretrained vision-language model CLIP~\cite{radford2021learning} to bring us rich open-world knowledge. The CLIP model consists of both an image encoder (\emph{i.e.}, CLIP-Image) and a text encoder (\emph{i.e.}, CLIP-Text) in~\figref{fig:methods_overview}. 
+To localize novel objects, we first propose the 3D Novel Object Discovery (\textbf{3D-NOD}) strategy, which jointly utilizes both 3D box geometry priors from base categories and 2D semantic priors from the CLIP model to identify novel objects. To classify novel objects, we further propose a novel discovery-driven cross-modal alignment (\textbf{DCMA}) module, which aligns feature spaces between 3D point clouds and image/text modalities, using the discovered novel object boxes as guidance. The 3D-NOD and DCMA are jointly optimized to collaboratively learn to benefit each other in the unified deep framework. 
+
+
+\subsection{3D Novel Object Discovery (3D-NOD) with Cross-Priors} \label{sec:novel-object-discovery-with-joint-priors}
+
+
+As shown in Fig.~\ref{fig:methods_overview}, our 3D Novel Object Discovery (3D-NOD) strategy allows for the discovery of novel objects during training.
+To achieve this goal, we utilize cross-priors from both 3D and 2D domains. In terms of the 3D domain, we use 3D box geometry prior provided by the 3D object annotations of base categories, to train a class-agnostic box predictor. Regarding the 2D domain, we utilize the semantic priors from the CLIP model, to predict the probability of a 3D object belonging to a novel category. We combine these two perspectives to localize novel object boxes. 
+
+\par\textbf{Discovery based on 3D Geometry Priors.} We begin with an initial 3D object box label pool $\mathbf{O}_0^{base}$ for objects of base categories (\emph{i.e.}, seen categories) in the training set:
+\begin{equation}
+\mathbf{O}_0^{base} = \left\{o_j = (l_j, c_j) \mid c_j \in \mathbb{C}^{Seen}\right\},
+\label{equ:init_label_set}
+\end{equation}
+where $\mathbb{C}^{Seen}$ represents the base category set of the training data, which has human-annotated object labels. Based on $\mathbf{O}_0^{base}$, we can train an initial 3D object detection model $\mathbf{W}_0^{det}$ by minimizing an object box regression loss function derived from 3DETR~\cite{misra2021end}. We consider a class-agnostic object detection for $W_0$, meaning that we train the model with class-agnostic box regression and binary objectness prediction, and do not utilize the class-specific classification loss. This is because the class-specific training with strong supervision from base categories hampers the model's capabilities of discovering objects from novel categories, which has also been observed from previous OV-2DDet frameworks~\cite{gu2021open}. Thus our modified backbone outputs object boxes, including the parameters for the box 3D localization, and their objectness probabilities. 
+For the $n$-th object query embedding in 3DETR, we predict its objectness probability $p_n^g$, based on $\mathbf{W}_0^{det}$ which is learned using 3D geometry priors from human-annotated 3D object boxes on base categories. 
+\par\textbf{Discovery based on 2D CLIP Semantic Priors.} Then, we also project the 3D object box $l^{3D}_n$ in the point cloud to the 2D box $l^{2D}_n$ on the color image with the corresponding camera intrinsic matrix $M$ as follows:
+\begin{equation}
+l^{2D}_n = M \times l^{3D}_n,
+\label{equ:3d_to_2d}
+\end{equation}
+We then obtain the 2D object region $I^{2D}_n$ in the color image by cropping it with $l^{2D}_n$. Next, we obtain the 2D object feature $\mathbf{F}_{I,n}^{Obj}$ by passing the object region into the CLIP image encoder 
+$\mathbf{E}_{I}^\text{CLIP}$.
+As the testing categories are unknown during training, we adopt a super category list $T^{super}$ following~\cite{gupta2019lvis} to provide text semantic descriptions of rich object categories. We encode ${T}^{super}$ with the CLIP text encoder 
+$\mathbf{E}_{T}^\text{CLIP}$
+to obtain the text embedding $\mathbf{F}_T^{Super}$. We then estimate the semantic probability distribution (\emph{i.e.}, $\mathbf{P}^{3DObj}_n$) of the 3D object using its corresponding 2D object feature as:
+\begin{equation}
+\begin{aligned}
+\mathbf{P}^{3dObj}_n = \left\{p^{s}_{n,i}, p^{s}_{n,2}, p^{s}_{n,3},..., p^{s}_{n,C} \right\} = \mathrm{Softmax}( {\mathbf{F}_{I,n}^{Obj}} \cdot \mathbf{F}_T^{Super}), 
+\label{equ:get_3d_prob}
+\end{aligned}
+\end{equation}
+
+where $C$ is the number of categories defined in the super category set $T^{super}$. The symbol $\cdot$ indicates the dot product operation. $\mathbf{P}^{3dObj}$ provides {semantic priors} from the CLIP model. We can obtain the object category $c^*$ for the object query by finding the maximum probability in $\mathbf{P}^{3dObj}$ as $c^* = {\operatorname{argmax}}_c  \mathbf{P}^{3DObj}$.
+We then combine both the objectness $p_n^g$ from the {3D geometry priors} and $p^{s}_{n,c^*}$ from the {2D semantic priors}, and discover novel objects for the $t$-th training epoch as follows:
+\begin{equation}
+\begin{aligned}
+\mathbf{O}_t^{disc} = \left\{o_j \mid \forall o_i' \in \mathbf{O}_0^{base}, \mathrm{IoU}_{3D}(o_j, o_i') < 0.25, p_n^g > \theta^g,  p_{n,c^*}^s > \theta^s, c^* \notin \mathbb{C}^{Seen}\right\},
+\end{aligned} 
+\end{equation}
+where $\text{IoU}_{3D}$ means the calculation of the 3D IoU of two boxes; $\theta^s$ and $\theta^g$ are two thresholds for the semantic and the geometry prior, respectively; $\mathbb{C}^{seen}$ is the set of seen categories of the training data. Then, the discovered novel objects $O_t^{disc}$ are added to a maintained 3D box label pool $\mathbf{O}_{t}^{novel}$ as:
+\begin{equation}
+\mathbf{O}_{t+1}^{novel} = \mathbf{O}_t^{novel} \cup \mathbf{O}_t^{disc},
+\label{equ:update_label}
+\end{equation}
+The model is trained to iteratively update the novel object box label pool. By gradually expanding the box label pool with the novel objects $O_t^{novel}$, we can broaden the model's capabilities to localize novel objects by using supervision from $O_t^{novel}$ for the model $W_t$. With the semantic priors from CLIP and the 3D geometry prior from $W_t$, the model and the 3D object box label pool can discover more and more novel objects following the proposed object discovery training strategy.
+
+
+\subsection{Discovery-Driven Cross-Modal Alignment (DCMA)} \label{sec:discovery-driven-cross-modality-alignment}
+
+\begin{figure*}[!t]
+\centering
+\begin{overpic}[width=1\textwidth]{fig2.pdf}
+\end{overpic}
+\caption{Illustration of the proposed discovery-driven cross-modal alignment (\textbf{DCMA}) in our OV detection framework (\textbf{CoDA}). The DCMA consists of two parts, \emph{i.e.}, the class-agnostic distillation and the class-specific contrastive feature alignment. The predicted 3D boxes from the detection head are projected to obtain 2D image object regions, which are passed into the CLIP image encoder to generate 2D object features. Then, the CLIP 2D object features and 3D point cloud object features are fed into the class-agnostic distillation module for feature alignment. Driven by discovered novel object boxes from the 3D-NOD strategy, the maintained novel box label pool that is updated during training can be used to match with the predicted 3D object boxes. We perform contrastive alignment for matched novel boxes to learn more discriminative 3D object features for novel objects. More discriminative 3D object features can in turn facilitate the prediction of novel object boxes.  
+   }
+    \label{fig:alignment}
+\end{figure*}
+
+To bring open-vocabulary capabilities
+from the CLIP model, we propose a discovery-driven cross-modal alignment (DCMA) module, to align the 3D point cloud object features with 2D-image/CLIP-text features, based on the discovered novel object boxes $\mathbf{O}^{novel}$. For the proposed DCMA, we utilize the discovered novel object boxes to conduct two types of cross-modal feature alignment, \emph{i.e.}, class-agnostic distillation and class-specific contrastive alignment. 
+\par\textbf{Object-Box Class-agnostic Distillation.} We introduce a class-agnostic distillation strategy to align the 3D point cloud object features and 2D image object features, to transfer more open-world knowledge from the CLIP model. 
+For the $n$-th object query, we can obtain its updated 3D feature $\mathbf{F}_n^{3dObj}$ at the last layer of the decoder. Based on the 3D object feature, the model predicts its 3D box parameterization $l^{3D}_n$, and then we can obtain its corresponding 2D box $l^{2D}_n$ by \equref{equ:3d_to_2d}. Now we have 2D-projected object features $\mathbf{F}^{2DObj}_n$ by inputting CLIP with the cropped 2D region based on $l^{2D}$. To push the feature spaces of both the 3D and 2D objects as close as possible, if a 3D object box is predicted from the 3D object feature, we align them by using a class-agnostic L1 distillation loss, which is defined as follows:
+\begin{equation}
+\mathcal{L}_{distill}^{3D\leftrightarrow 2D} = \sum_{n=1}^N\|\mathbf{F}^{3DObj}_n - \mathbf{F}^{2DObj}_n\|,
+\label{equ:distill}
+\end{equation}
+where $N$ is the number of object queries. As shown in \figref{fig:alignment}, even if the box covers a background region, the class-agnostic distillation still narrows the distance between the two modalities, leading to a more general alignment on different modalities and scenes.
+As we can see, class-agnostic distillation eliminates the requirement of category labels of GT boxes. Thus, the computation of $\mathcal{L}_{distill}^{3D\leftrightarrow 2D}$ does not need category annotations.
+
+\par\noindent\textbf{Discovery-driven class-specific contrastive alignment.} As we discussed in Sec.~\ref{sec:novel-object-discovery-with-joint-priors}, we modify the 3DETR detection backbone, by removing the fixed-category class-specific classification head. We can extract 3D point cloud object features from the updated object query embeddings. For the $n$-th object query embedding, we can obtain a corresponding 3D object feature $\mathbf{F}^{3DObj}_{n}$ at the last layer of the decoder. 
+With the 3D object feature $\mathbf{F}^{3DObj}_{n}$, we expect the feature to be discriminative for both base categories and novel categories defined in the superset $T^\text{super}$. We, therefore, perform class-specific alignment with the CLIP text features.
+Specifically, we calculate the normalized similarities using the dot product operation between $\mathbf{F}^{3DObj}_{n}$ and the text features $\mathbf{F}_T^{Super}$ as follows:
+\begin{equation}
+\mathbf{S}_n = \mathrm{Softmax}(\mathbf{F}^{3DObj}_{n} \cdot \mathbf{F}_T^{Super}),
+\end{equation}
+Then, we introduce the point cloud and text contrastive loss to provide the supervision signal for learning the 3D object features of the object queries. We have already measured the similarity between the 3D object point cloud feature and the text features. To construct a cross-modal contrastive loss, we need to identify the most similar pair between these two modalities as a ground-truth label. 
+We adopt the Bipartite Matching from~\cite{misra2021end} to match the predicted 3D object boxes with the discovered novel boxes in the box pool $\mathbf{O}^{label}$. This is to guarantee that the class-specific alignment is conducted on foreground novel objects, instead of on non-object background boxes, as the object query embeddings also lead to the prediction of noisy 3D object boxes because of the limitation of supervision on novel objects during learning. If we perform class-specific alignment on noisy object boxes, it makes the 3D object feature less discriminative. When we have a matching from the box label pool $\mathbf{O}^{label}$, we then obtain the corresponding category label from the CLIP model by finding the maximum similarity score and construct a one-hot label vector $\mathbf{h}_n$ for the 3D object feature $\mathbf{F}^{3DObj}_{n}$ of the $n$-th object query. A detailed illustration can be seen in \figref{fig:alignment}. By utilizing the discovered foreground novel object boxes, we can construct a discovery-driven cross-modal contrastive loss function as follows:
+\begin{equation}
+\mathcal{L}_{contra}^{3D \leftrightarrow Text} = \sum_{n=1}^N\mathbf{1}(\mathbf{F}^{3DObj}_{n}, \mathbf{O}^{label}) \cdot \mathrm{CE}(\mathbf{S}_n, \mathbf{h}_n),
+\label{equ:contrastive}
+\end{equation}
+where $N$ is the number of object queries; $\mathbf{1}(\cdot)$ is an indicator function that returns 1 if a box matching is identified between the query and the box label pool else 0; $\mathrm{CE}(\cdot)$ is a cross-entropy loss function.
+In this way, the object queries that are associated with novel objects are involved in the cross-modal alignment, leading to better feature alignment learning. The 3D features of novel objects can learn to be more discriminative, further resulting in more effective novel object discovery. 
+In this way, the 3D novel object discovery and cross-modality feature alignment jointly boost the localization and classification for open-vocabulary 3D object detection.
+ 
+
+
+
+
+
+Experiments
+\subsection{Experimental Setup}
+\textbf{Datasets and Settings.} We evaluate our proposed approach on two challenging 3D indoor detection datasets, \emph{i.e.}, 
+SUN-RGBD~\cite{song2015sun} and ScanNetV2~\cite{dai2017scannet}. SUN-RGBD has 5,000 training samples and oriented 3D bounding box labels, including 46 object categories, each with more than 100 training samples. 
+ScanNetV2 has 1,200 training samples containing 200 object categories~\cite{rozenberszki2022language}.
+Regarding the training and testing settings, we follow the strategy commonly considered in 2D open-vocabulary object detection works~\cite{gu2021open, zareian2021open}. It divides the object categories into seen and novel categories based on the number of samples of each category. Specifically, for SUN-RGBD, the categories with the top-10 most training samples are regarded as seen categories, while the other 36 categories are treated as novel categories.
+For ScanNetV2, the categories with the top-10 most training samples are regarded as seen categories, other 50 categories are taken as novel categories.
+Regarding the evaluation metrics, we report the performance on the validation set using mean Average Precision (mAP) at an IoU threshold of 0.25, as described in~\cite{misra2021end}, denoted as $\text{AP}_{25}$.
+
+\textbf{Implementation Details.} The number of object queries for both SUN-RGBD and ScanNetv2 is set to 128, and the batch size is set to 8. We trained a base 3DETR model for 1080 epochs using only class-agnostic distillation as a base model. Subsequently, we train the base model for an additional 200 epochs with the proposed 3D novel object discovery (3D-NOD) strategy and discovery-driven cross-modal feature alignment (DCMA). Note that, to ensure a fair comparison,
+all the compared methods are trained using the same number of epochs.
+For 3D-NOD, the label pool is updated every 50 epochs. For feature alignment, 
+considering that the discovered and GT boxes in a scene are limited, and a larger number of object queries can effectively facilitate contrastive learning, aside from the queries that match GT boxes, we choose an additional 32 object queries from the 128 queries, which are involved in the alignment with the CLIP model.
+The hyper-parameter settings used in the training process follow the default 3DETR configuration as described in ~\cite{misra2021end}.
+\subsection{Model Analysis}
+In this section, we provide a detailed analysis of our open-vocabulary detection framework and verify each individual contribution. The different models
+are evaluated on three different subsets of categories, \emph{i.e.}, novel categories, base categories, and all the categories. These subsets are denoted as $\text{AP}_{Novel}$, $\text{AP}_{Base}$, and $\text{AP}_{Mean}$, respectively. All the evaluation metrics, including mean Average Precision (mAP) and recall ($\text{AR}$), are reported at an IoU threshold of 0.25. The ablation study experiments are extensively conducted on the SUN-RGBD dataset .
+
+\begin{table}[htbp]
+    \centering
+    \newcommand{\tf}[1]{\textbf{#1}}
+    \resizebox{\linewidth}{!}{
+    \begin{tabular}{lcccccc}
+    \toprule
+Methods&  $\text{AP}_{Novel}$ & $\text{AP}_{Base}$ & $\text{AP}_{Mean}$ & $\text{AR}_{Novel}$ & $\text{AR}_{Base}$ & $\text{AR}_{Mean}$\\
+\midrule
+3DETR + CLIP & 3.61& 30.56& 9.47& 21.47& 63.74& 30.66 \\
+Distillation& 3.28& 33.00& 9.74& 19.87& 64.31& 29.53  \\
+3D-NOD + Distillation& 5.48& 32.07& 11.26& 33.45&	66.03& 40.53 \\
+3D-NOD + Distillation \& PlainA& 0.85& 35.23& 8.32&	34.44& 66.11& 41.33 \\
+3D-NOD + DCMA (full)& \textbf{6.71}& \textbf{38.72}& \textbf{13.66}& 33.66& 66.42& 40.78 \\
+
+    \bottomrule
+    \end{tabular}
+    }
+    \caption{Ablation study to verify the effectiveness of the proposed 3D novel object discovery (3D-NOD) and discovery-driven cross-modality alignment (DCMA) in our 3D OV detection framework CoDA. }
+    \label{tab:main-ablation}
+\end{table}
+\begin{wrapfigure}{r}{0.47\linewidth}
+\center
+\includegraphics[width=\linewidth]{images_paper/recall_curve_v6_cropped.pdf}
+\caption{The influence of 3D Novel Object Discovery~(3D-NOD) during training.
+The blue curve in the graph represents $\text{AP}_{novel}$,
+while the orange curve represents $\text{AR}_{novel}$.
+The left side of the black dashed line corresponds to the training process of our base model `Distillation', which is trained for 1080 epochs. 
+After that, we apply our 3D-NOD on the base model and continue to train it for an additional 200 epochs, which is represented by the right side of the black dashed line. 
+By applying our 3D-NOD approach, we observe a significant 
+increase in both $\text{AP}_{novel}$ and $\text{AR}_{novel}$, 
+which breaks the limitation of base category annotations.
+}\label{fig:recall_curve}
+\end{wrapfigure}
+\textbf{Effect of class-agnostic distillation}.
+To demonstrate the effectiveness of class-agnostic distillation in discovery-driven alignment, we first train a class-agnostic 3DETR detection model that provides basic 3D localization for novel objects. The 3D bounding boxes are then projected onto 2D color images to crop the corresponding 2D object regions. By feeding the object regions into the CLIP model, we can conduct open-vocabulary classification to create an open-vocabulary 3D detection framework that requires both point cloud and image inputs. This baseline method is denoted as `3DETR+CLIP' in~\tabref{tab:main-ablation}.
+We also train a 3DETR model with only the class-agnostic distillation, which serves as our base model and is denoted as `Distillation' in~\tabref{tab:main-ablation}. As shown in the table, when tested with only pure point cloud as input, the `Distillation' model achieves comparable results to the `3DETR+CLIP' model in terms of $\text{AP}_{Novel}$ (3.28 vs. 3.61), indicating that class-agnostic distillation provides preliminary
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,187 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[height=3.3cm]{fig/vis3.pdf}
+  \caption{\textbf{The Challenge of Viewpoint Invariance in VLP.} We selected benchmarks representing clean distributions (ImageNet-1K~\cite{deng2009imagenet}, CIFAR-100~\cite{krizhevsky2009learning}), common 2D-OOD (ImageNet-V2~\cite{recht2019imagenet}, ImageNet-R(endition)~\cite{hendrycks2021many}, ImageNet-Sketch~\cite{wang2019learning}), and viewpoint-OOD (ImageNet-V(iewpoint)+~\cite{ruan2023towards}, OOD-CV(Pose)~\cite{zhao2022ood}, MIRO~\cite{cha2022miro}). We display samples from these data distributions (\emph{left}) and report the Top-1 accuracy of the original CLIP (ViT-L/14) and our improved OVT-CLIP (ViT-L/14) (\emph{right}). }
+
+  \label{fig:cover}
+\end{figure}
+
+
+\label{sec:intro}
+Vision-Language Pre-training (VLP) models, such as CLIP~\cite{radford2021learning} and BLIP~\cite{li2022blip}, have shown great promise in learning transferable representations across various vision tasks. By aligning images and texts in a joint embedding space with a large corpus of paired image-text data,  
+the VLP models exhibit exceptional representation and generalization capabilities that surpass traditional task-specific models. Owing to this, the VLP models serve as foundation models for numerous tasks, including visual recognition \cite{radford2021learning,jia2021scaling}, visual question answering~\cite{ liu2024visual,alayrac2022flamingo,zhu2023minigpt}, and text-to-image generation \cite{pmlr-v139-ramesh21a,saharia2022photorealistic}. Moreover, these models can effectively integrate real-world visual inputs with natural language instructions, leading to their increasing use in physical-world applications, like autonomous driving~\cite{zhou2023vision}, embodied robotics~\cite{wu2023embodied, li2023otter, huang2023voxposer}, \etc.
+Besides their expressive power, VLP models have also shown excellent robustness under out-of-distribution (OOD) data~\cite{radford2021learning,pmlr-v162-fang22a,tu2023a}, including common corruptions~\cite{hendrycks2019benchmarking, calian2021defending, dong2023benchmarking}, stylistic changes~\cite{hendrycks2021many, wang2019learning}, and natural distribution shifts~\cite{recht2019imagenet, hendrycks2021many, hendrycks2021natural}.
+However, 
+a recent study~\cite{ruan2023improving} identifies that although VLP models excel at handling OOD data of 2D images, they suffer significant performance degradation under \textit{3D viewpoint changes}, revealing a notable shortcoming of the existing VLP models. 
+As demonstrated in \cref{fig:cover}, when dealing with the recently introduced benchmarks concerned with 3D viewpoint shifts~\cite{dong2022viewfool,ruan2023towards,zhao2022ood}, CLIP's performance is obviously lower than that on 2D-OOD benchmarks. This large gap likely stems from limited coverage of diverse viewpoints in the training datasets~\cite{thomee2016yfcc100m, schuhmann2022laion, gadre2023datacomp}, which is crucial for learning viewpoint-invariant representations. As VLP models are increasingly deployed in real-world environments where viewpoint shifts often occur, enhancing their resilience to such changes is urgent and essential.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[height=10.3cm]{fig/framework_v2.pdf}
+  \caption{\textbf{Method Overview.} \textbf{(A)} We create the first multi-view image caption dataset by collecting multi-view samples from existing 3D object and video datasets, and generating category-guided descriptions using VLLMs. \textbf{(B)} The proposed Omniview-Tuning takes multi-view image caption data as input, employs the cross-view alignment objective to encourage the model to learn viewpoint-invariant representations, and achieves efficient fine-tuning by updating VIformer and LoRA parameters.
+  }
+  \label{fig:framework}
+\end{figure}
+
+To address this problem, this paper sets out to \emph{enhance the viewpoint invariance of VLP models while preserving the original performance as much as possible}. However, achieving this goal meets the following challenges: (1) \emph{Data scarcity}: acquiring VLP training data that covers a wide range of viewpoint variations is particularly challenging compared to conventional image-text pair data. Although some datasets introduced for task-specific models do include viewpoint variations~\cite{barbu2019objectnet,madan2020and,hendrycks2021natural,zhao2022ood}, they often lack the textual descriptions vital for VLP. Even the largest available multi-view datasets~\cite{ruan2023towards,collins2022abo,yu2023mvimgnet} fall short in terms of scale, category coverage, and viewpoint diversity, thereby limiting the potential for VLP models to develop generalizable viewpoint-invariant representations. (2) \emph{Inappropriate paradigms}: traditional approaches, which often regard viewpoint changes as adversarial attacks and employ adversarial training paradigms for enhancing invariance~\cite{alcorn2019strike, ruan2023towards, ruan2023improving}, are not entirely suitable for VLP models. Such frameworks typically entail a trade-off between robustness and accuracy—a balance that requires more careful consideration for foundation VLP models, where our aim is not solely to improve viewpoint invariance but, more importantly, to bridge the gap between it and the original performance. Furthermore, these approaches necessitate extra 3D reconstruction and neural rendering to capture adversarial viewpoints, leading to prohibitive computational costs for large-scale VLP models. For instance, tuning ResNet-50 with VIAT~\cite{ruan2023towards} under a dataset of just 1K objects demands around 400 GPU hours. Therefore, it is important to make training more efficient and less resource-intensive.
+
+Based on the above discussions, this paper conducts a pioneering exploration of the viewpoint invariance of VLP models. Specifically, we address the aforementioned challenges by making the following contributions:
+
+\textbf{\emph{Million-scale multi-view image-text training set.}} We introduce a large-scale \textbf{M}ulti-\textbf{V}iew \textbf{Cap}tion (\textbf{MVCap}) dataset tailored for viewpoint invariance of VLP models, comprising over 4.6 million multi-view image-text pairs across more than 100K objects. To assemble a diverse collection of multi-view image-text pairs, we amalgamate various 3D assets with real-world multi-view data. This process involves an extensive selection and rendering of multi-view images from existing datasets. 
+We then utilize a Vision Large Language Model (VLLM) for automated caption generation to obtain semantically rich textual descriptions without extensive manual efforts.
+To ensure category consistency across varying viewpoints in the generated captions, we implement a category-guided prompting strategy, which maintains accuracy in textual descriptions for different viewpoints of the same object or scene (details in~\cref{sec:dataset}). 
+
+\textbf{\emph{Effective framework for enhancing VLP's viewpoint invariance.}} We propose \textbf{Omniview-Tuning (OVT)}, a novel framework designed to enhance the viewpoint invariance of prevalent VLP models. As illustrated in~\cref{fig:framework}, OVT employs multi-view image-text pairs for training additional learnable components. To amplify the model's proficiency in learning viewpoint-invariant representations, we introduce a \textbf{Cross-viewpoint Alignment} objective, ensuring that representations of the same object from different viewpoints are close and unified in the high-dimensional feature space. To prevent performance trade-offs due to the concept drift from aggressive viewpoint alignment, we innovatively construct the optimization paradigm of OVT in a \textbf{minimax-like form}. The optimization process includes identifying extreme outlier viewpoints during the maximization step, while optimizing the model's invariant representation for these outlier samples in the minimization step. This strategy enables the model to focus more on the worst-case viewpoint samples, thereby maximally preserving the original embedding distribution and avoiding performance degradation while saving computational costs. Moreover, OVT is designed in a \textbf{Parameter-Efficient} Fine-Tuning manner to improve efficiency, and creatively incorporates two trainable parameter modules: an embedding transformation module named VIFormer and the Low-Rank Adaptation (LoRA~\cite{hu2021lora}) weights, to acquire additional viewpoint invariance capabilities efficiently.
+
+
+
+\textbf{\emph{Extensive experiments across various VLP architectures and tasks.}} We conduct extensive experiments to show the efficacy of the OVT framework in improving the viewpoint invariance for VLP models while maintaining performance on clean data and 2D-OOD samples. For example, by fine-tuning CLIP with OVT on different architectures (ViT-B/32, ViT-B/16, and ViT-L/14), the Top-1 accuracy on viewpoint-OOD benchmarks increased by an average of \textbf{9.6\%}, \textbf{10.2\%}, and \textbf{8.9\%}, respectively, with only a minimal sacrifice on 2D-OOD benchmarks by an average of 2.6\%, 1.4\%, and 0.2\%. Furthermore, serving as the visual encoder in VLLMs (\eg, LLaVa \cite{liu2024visual}), OVT-CLIP also effectively improves viewpoint invariance in image captioning and visual question answering tasks.
+
+
+
+
+
+Related Work
+
+\subsection{Viewpoint Invariance and Robustness}
+Viewpoint invariance is a key property of human vision \cite{biederman1987recognition} but is usually lacking in computer vision models \cite{alcorn2019strike,dong2022viewfool}.
+Addressing viewpoint invariance and robustness involves strategies like data augmentation and adversarial learning. Early efforts aim to enhance viewpoint robustness by incorporating datasets enriched with viewpoint variations~\cite{barbu2019objectnet,madan2020and,hendrycks2021natural,zhao2022ood}. For example, Madan~\etal encourage models to learn viewpoint-robust representations by incorporating object-pose combinations~\cite{madan2020and}. However, these methods often falter under malicious viewpoint perturbations due to their inability to capture the worst-case viewpoint samples. Recently, achieving viewpoint invariance within the adversarial training paradigm has shown promise~\cite{alcorn2019strike, hamdi2020towards, dong2022viewfool, ruan2023towards}. By treating viewpoint variations as an adversarial attack, Alcorn~\etal employ a differentiable renderer to train models against adversarial viewpoints optimized from a limited 3D objects set~\cite{alcorn2019strike}. Recent studies, such as Viewfool~\cite{dong2022viewfool} and VIAT~\cite{ruan2023towards, ruan2023improving}, have introduced neural radiance field (NeRF)~\cite{mildenhall2021nerf, muller2022instant}, enabling the characterization of adversarial viewpoint distributions from 2D multi-view inputs. Notably, VIAT adopts adversarial distribution training, significantly improves viewpoint invariance, and successfully generalizes performance to unseen objects. Distinct from previous studies, our work pioneers the improvement of viewpoint invariance representation within large-scale VLP models, which is facilitated through suitable training data and refined fine-tuning methodologies.
+\subsection{Vision-Language Pre-training}
+In the realm of VLP, significant strides have been made in understanding and bridging the semantic gap between visual and textual information. Despite the variety of existing VLP paradigms, such as single-stream encoder (\eg, VisualBERT~\cite{li2019visualbert} and UNITER~\cite{chen2020uniter}, \etc) or dual-stream encoder equipped with diverse training objectives, the dual-stream contrastive learning architecture exemplified by ALIGN~\cite{li2021align} and OpenAI’s CLIP~\cite{radford2021learning} dominates the field. CLIP, in particular, has gained widespread attention for its ability to perform zero-shot classification tasks by adopting a vast corpus of internet-collected image-text pairs, demonstrating the power of large-scale contrastive pre-training. Thus, Our investigation primarily focuses on these VLP architectures. Building upon these foundational works, subsequent iterations like open-CLIP~\cite{ilharco_gabriel_2021_5143773}, EVA-CLIP~\cite{sun2023eva,sun2024eva}, and MetaCLIP~\cite{xu2023demystifying} have introduced nuanced enhancements. These refinements, ranging from the incorporation of more expansive high-quality image-text datasets and improved training methodologies, have collectively contributed to performance uplifts. BLIP~\cite{li2022blip}, meanwhile, introduces a bootstrapping mechanism by the proposed captioner and ﬁlter module that achieve significant performance improvements on various downstream tasks.
+
+
+
+Multi-view Caption Dataset
+
+We recognize that one of the key challenges in achieving viewpoint invariance for VLP is the scarcity of training data that offer comprehensive viewpoint sampling. As summarized in~\cref{table:dataset}, existing large-scale multi-view datasets~\cite{ho2019catastrophic,reizenstein2021common,collins2022abo,yu2023mvimgnet,ruan2023towards} typically lack in either sample diversity, category breadth, or textual descriptions, limiting their effectiveness for supporting VLP models to achieve viewpoint invariance. To address these limitations, we introduce the MVCap dataset. The subsequent sections detail its construction.
+
+\begin{table*}[t]
+\caption{\textbf{Comparison of current large-scale multi-view datasets.} \emph{"Spherical"} indicates whether the viewpoints cover spherical space, \emph{"Diversity"} assesses the diversity of viewpoints, and \emph{"Caption"} indicates whether textual descriptions are provided.}
+\tiny
+\setlength\tabcolsep{2.7pt}
+\renewcommand\arraystretch{1.2}
+\centering
+\begin{tabular}{l|c|c|c|c|c|c|c|c|c}
+\hline
+Dataset      & Year & \#Obj. & \#Cat. & \#Avg.~View. & \#Sample & Image Domain   & Spherical & Diversity & Caption \\ \hline\hline
+OOWL~\cite{ho2019catastrophic}         & 2019 & 500      & 25          & 240             & 120K      & Real           & \XSolidBrush              & $\bigstar$$\bigstar$                  & \XSolidBrush        \\
+CO3D~\cite{reizenstein2021common}         & 2021 & 18.6k    & 50          & $\sim$80              & 1.5M      & Real           & \XSolidBrush              & $\bigstar$                   & \XSolidBrush        \\
+ABO~\cite{collins2022abo}          & 2022 & 7.9k     & 63          & 30              & 238K      & Synthetic      & \XSolidBrush             & $\bigstar$                   & \XSolidBrush        \\
+IM3D~\cite{ruan2023towards}         & 2023 & 1.0k     & 100         & 100             & 100K      & Synthetic      & \Checkmark              & $\bigstar$$\bigstar$$\bigstar$                 & \XSolidBrush        \\
+MVImgNet~\cite{yu2023mvimgnet}     & 2023 & 219.0k   & 238         & $\sim$30              & 6.5M      & Real           & \XSolidBrush             & $\bigstar$$\bigstar$                  & \XSolidBrush        \\
+\rowcolor{gray!25} MVCap (Ours) & 2024 & 94.6k    & 1600        & 100/$\sim$30          & 4.6M      & Synthetic+Real & \Checkmark              & $\bigstar$$\bigstar$$\bigstar$                 & \Checkmark        \\ \hline
+\end{tabular}
+\label{table:dataset}
+\end{table*}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[height=2.3cm]{fig/dataset.pdf}
+  \caption{Generated multi-view captions with common and category-guided prompts.
+  }
+  \label{fig:dataset}
+\end{figure}
+
+\subsection{Multi-View Image Collection} 
+We commence by gathering a multi-view image collection $\mathcal{D} =\{I_{ij}\mid i\!=\!1,2,...,N;j\!=\!1,2,...,M_i\}$, where $N$ and $M_i$ represent the counts of objects and their viewpoints, respectively. To cover various categories from virtual to real-world scenes, we integrate samples from Objaverse~\cite{deitke2023objaverse}, IM3D~\cite{ruan2023towards}, and MVImgNet~\cite{yu2023mvimgnet}. Since the original 3D dataset includes a fair share of noisy and semantically indistinct objects, we leverage semantic embeddings provided by OpenShape~\cite{liu2024openshape} to conduct cosine similarity sorting based on the embeddings of customized labels. Finally, we filter 24,495 virtual 3D objects endowed with distinct semantic clarity and cover over 1,600 categories. For each chosen 3D object, we employ Blender to render 100 random viewpoint images from the upper hemisphere, ensuring a comprehensive and varied viewpoint representation in our collected samples. We also incorporate objects from MVImgNet with over 30 valid viewpoints (video frames), thereby acquiring a substantial number of real-world multi-view samples to enrich the dataset's content and quality further.
+
+\subsection{Category-Guided Caption Generation} 
+The granularity and precision of textual descriptions are pivotal in VLP training, as they influence the model's generalization capabilities and the variety of visual concepts learned. Relying solely on simple prompt engineering, such as "\emph{a photo of [category]}," may introduce biases and limit the model's generalizability, whereas manual annotation is costly. To circumvent this, we utilize InstructBLIP-flant5xl~\cite{instructblip}, a leading VLLM, to create multi-view captions automatically. However, such VLLMs also grapple with viewpoint invariance, where the model's responses to different viewpoints can often be category-inconsistent, as depicted in \cref{fig:dataset}. This situation presents a "chicken or egg" dilemma: we hope to use a viewpoint-invariant model to supply data for viewpoint invariance training. We address this by the design of category-guided prompting. Specifically, we use prompts containing ground-truth category information to eliminate the hallucination of large VLLMs in response to viewpoint-shifted inputs, thereby generating category-consistent multi-view captions. Formally, the forward process for generating captions can be represented as follows:
+\begin{equation}
+\begin{array}{c}
+    \textrm{Prompt}(c_i)=\textrm{"\emph{Write a short description for the image}},\\ 
+    \textrm{\emph{noting that the main instance of the image is a}} <c_i> .\textrm{"},
+    \label{eq: 1}
+\end{array}
+\end{equation}
+where $c_i \in C$ denotes the category label for the $i$-th object, and $\mathcal{G}$ denotes the forward process of InstructBLIP. This yields the multi-view image-text pairs $\tilde{\mathcal{D}} =\{\left \langle I_{ij}, T_{ij} \right \rangle \mid i=1,2,...,N;j=1,2,...,M_i\}$, which can be utilized for the viewpoint invariance fine-tuning of VLP models.
+
+
+Omniview-Tuning
+Similar to traditional task-specific visual models~\cite{dong2022viewfool}, VLP models are equally vulnerable to viewpoint variations, necessitating research into their viewpoint invariance enhancement. Next, we will first review the paradigm of VLP in~\cref{sec:preliminaries}. Building on this, we present the problem formulation of OVT in~\cref{sec:Problem Formulation} and detail the specific training techniques in~\cref{sec:Min-Max Optimization Strategy} and~\cref{sec:Parameter-Efficient Modules}.
+
+\subsection{Preliminaries: Contrastive Vision-Language Pre-training}\label{sec:preliminaries}
+Despite the variety of existing VLP paradigms, such as single-stream or dual-stream architectures equipped with diverse training objectives, the dual-stream contrastive learning architecture exemplified by CLIP \etal~\cite{radford2021learning,li2021align} dominates the field. Thus, Our investigation primarily focuses on this VLP architecture. 
+
+Without the loss of generality, these VLP models are composed of a visual encoder $E_{\mathbf{W_v}}:I\rightarrow z^I\in\mathbb{R}^d$ and a text encoder $E_{\mathbf{W_t}}:T\rightarrow z^T\in\mathbb{R}^d$, which maps visual and textual inputs to a unified high-dimensional feature space ${\mathbb{R}}^d$, respectively, where $\mathbf{W_v}$ and $\mathbf{W_t}$ are weight matrices of two encoders. Given a large corpus of image-text pairs $\{\left \langle I_{i}, T_{i} \right \rangle\}_{i=1}^N$, VLP models typically employ an image-text contrastive (ITC) loss as the training objective:
+\begin{equation}
+\begin{array}{c} 
+\mathcal{L}_{ITC} =  \frac{1}{2} (\mathcal{L}_{I\rightarrow T}+\mathcal{L}_{T\rightarrow I}),\\ 
+\end{array}
+\label{eq:itc loss}
+\end{equation}
+\noindent which is composed of an image-to-text and a text-to-image terms formulated as:
+\begin{equation}
+\begin{array}{c} 
+\mathcal{L}_{T\rightarrow I}=-\frac{1}{N}\sum_{i=1}^{N}\log\frac{\exp(d(z^T_{i},z^I_{i})/\tau )}{\sum_{k=1}^{N}\exp(d(z^T_{i},z^I_{k})/\tau )},
+\end{array}
+\label{eq:itc loss parts}
+\end{equation}
+\noindent where $\tau$ represents a learnable temperature parameter, $z^I$ and $z^T$ denote the image and text embeddings, respectively. The $\mathcal{L}_{ITC}$ maximizes the similarity between matched image-text pairs while minimizing the similarity for mismatched pairs, thus enabling the alignment of visual and textual information to the same feature space, bringing the embeddings of matched pairs closer. Following~\cite{radford2021learning,li2021align,li2022blip}, the proposed Omniview-Tuning implements $\mathcal{L}_{ITC}$ for aligning multi-view images with text modalities, which is explained in the next section.
+\subsection{Problem Formulation} \label{sec:Problem Formulation}
+\noindent \textbf{Viewpoint Invariance of Vision-Language Pre-training.} In computer vision scenario, viewpoint invariance implies that model $f(\cdot)$ can provide consistent predictions or representations given any different views of the identical object or scene~\cite{ruan2023towards}. Formally,  given a collection of multi-view images $\mathcal{D} =\{I_{ij}\mid i\!=\!1,2,...,N;j\!=\!1,2,...,M_i\}$, viewpoint invariance is required:
+\begin{equation}
+    f(I_{ij})=f(I_{ij' }), \quad \forall i, j, j' ~\textrm{with}~j\neq j',
+\end{equation}
+\noindent where $i$ is the index of the object/scene, $j$ and $j'$ are indexes of two viewpoint samples. However, in the context of dual-stream VLP models, this concept requires a more refined interpretation. For VLP models, viewpoint invariance necessitates that the visual representations (\ie, the embeddings inferred from the visual encoder) from different viewpoints be sufficiently close in the feature space. Assuming $I_{ij}$ and $I_{ij'}$ are images from different viewpoints of the same object, this requirement can be formulated as follows:
+\begin{equation}
+\small
+    d \Big[E_{\mathbf{W_v}}(I_{ij}), E_{\mathbf{W_v}}(I_{ij'}) \Big]\le \epsilon , 
+\end{equation}
+where $d(\cdot)$ denotes a distance metric in the representation space, such as cosine distance, $\epsilon$ represents the maximum variance allowed. 
+
+\textbf{Optimization Objectives of Omniview-Tuning.}  Although images from different viewpoints often correspond to slightly varying textual descriptions, influenced by context, grammatical structure, and linguistic ambiguity, this variation could be significantly amplified in the high-dimensional representation space~\cite{rong2014word2vec,chuang2022diffcse}. Therefore, relying solely on image-text alignment may not suffice to adequately align embeddings from different viewpoints. Starting from the definition of viewpoint invariance, we introduce a cross-viewpoint alignment objective within the $\mathcal{L}_{ITC}$ to directly encourage the model to learn invariant representations between different viewpoints, rather than relying on the indirect alignment through textual descriptions. This can be seen as a regularization that forces the model to obtain viewpoint invariance, even when such invariance is not explicitly articulated in the textual descriptions. With this consideration, given a multi-view training set $\mathcal{D}$, the optimization problem is defined as follows:
+
+\begin{equation}
+    \min_{\mathbf{W_v},\mathbf{W_t}} \big [\mathcal{L}_{ITC} + \lambda\cdot \underbracket[1pt][3pt]{\textstyle\sum_i \textstyle\sum_{j\neq j'} d(z^I_{ij},z^I_{ij'})}_{\mathcal{L}_{VC} } \big] , 
+\label{eq:ovt problem}
+\end{equation}
+where the first term represents the image-text alignment used in the pre-training process, while the second term signifies the cross-viewpoint alignment goal mentioned above, referred to as Viewpoint Consistency loss ($\mathcal{L}_{VC}$), which aims to minimize the cosine distance between embeddings from different viewpoints. $\lambda$ is a hyperparameter that balances the importance of two loss terms. 
+\subsection{Optimization Strategy} \label{sec:Min-Max Optimization Strategy}
+In summary, the naive way to achieve viewpoint invariance is to calculate the loss terms in~\cref{eq:ovt problem} based on the forward process of encoders, then update the encoders' weight using gradient descent. However, it has a relatively high time complexity to solve \cref{eq:ovt problem} because current $\mathcal{L}_{VC}$ requires iterating over every possible combination of viewpoints. Therefore, we endeavor to provide a more effective implementation  for the original optimization problem. Drawing from the advantages of adversarial training \cite{madry2017towards,ruan2023towards}, we frame the optimization of the $\mathcal{L}_{VC}$ in a minimax format, rewriting the original problem~\cref{eq:ovt problem} as: 
+\begin{equation}
+\small
+\begin{array}{c}
+\mathrm{where}~~l(z^I_{ij},z^I_{C_i})= \max\big[d(z^I_{ij},z^I_{C_i})+m, 0\big],
+\end{array}
+\label{eq:problem}
+\end{equation}
+where $\mathcal{O}\!=\!\{O_i\}_{i=1}^N$ is the outlier viewpoints set, $z^I_{C_i}$ are anchor viewpoint embeddings of each object, and $l(\cdot)$ is the cosine distance with a margin $m$. During the optimization, The maximization step first identifies the collection of top-$K$ outlier viewpoints $\mathcal{O}$, which are the viewpoint samples with the highest degree of representational deviation. Then, the minimization step encourages the outlier viewpoint embeddings to converge towards corresponding anchor viewpoint embeddings $z^I_{C_i}$. We obtain $z^I_{C_i}$ by calculating the \textbf{nearest-neighbor weighted} embedding centroid of each object:
+\begin{equation}
+\begin{array}{c}
+\end{array}
+\end{equation}
+\noindent where $\mathcal{Q}_{ij}=\{z^I_{ih}\}_{h=1}^5$ is the top-5 nearest neighbours of each viewpoint embedding $z^I_{ij}$. As for the outlier viewpoints set, we define them as the viewpoints with the top-$K$ farthest cosine distances from $z^I_{C_i}$. 
+
+The adoption of this strategy offers dual advantages: \emph{Firstly}, it allows the model to focus solely on extreme outlier viewpoints, preventing concept drift and potential overfitting to the fine-tuning dataset that results from excessive alignment. \emph{Secondly}, this approach reduces computational overhead and significantly enhances optimization efficiency.
+\subsection{Parameter-Efficient Modules} \label{sec:Parameter-Efficient Modules}
+
+To mitigate the impact of full parameters update on the original performance and enhance training efficiency, we achieve viewpoint invariance by efficiently fine-tuning the parameters of the visual encoder while keeping the text encoder frozen. Inspired by LoRA~\cite{hu2021lora}, we perform low-rank decomposition on the weights of the visual encoder $\mathbf{W_v}\in \mathbb{R}^{n\times m}$ to substitute full-parameter update: 
+\begin{equation}
+\small
+    \tilde{\mathbf{W_v}}=\mathbf{W_v}+\Delta W=\mathbf{W_v}+\mathbf{BA},~~\textrm{where}~\mathbf{B}\in\mathbb{R}^{m\times r},\mathbf{A}\in\mathbb{R}^{r\times n},r\ll \min(n,m),
+\end{equation}
+where $\mathbf{A}$ and $\mathbf{B}$ are two learnable low-rank parameter matrices, which we apply to the self-attention layers of the visual encoder and update them during fine-tuning while freezing the original pre-trained weights. This enables us to enhance the model's viewpoint invariance representation capability with minor parameter changes while maximizing the preservation of the original performance. 
+Drawing inspiration from the success of CLIP-Adapter~\cite{gao2023clip}, which improves CLIP's performance in few-shot scenarios by introducing linear layers after the encoder, we propose a similar module called VIformer:$f_{\boldsymbol{\theta}}:z^I\in\mathbb{R}^d\rightarrow s^I\in\mathbb{R}^d$, where $\boldsymbol{\theta}$ is the weight. Unlike CLIP-Adapter, VIformer transforms the original embeddings $z^I$ by introducing self-attention layers in a learnable manner to extract and retain specific viewpoint-invariant key components $s^I$. Combining LoRA and VIformer modules, the forward process of image encoding can be represented as follows: 
+\begin{equation}
+\begin{split} 
+  \tilde{z}^I &=\alpha \cdot f_{\boldsymbol{\theta}} (z^I)+(1-\alpha )\cdot z^I \\
+   &=\alpha \cdot f_{\boldsymbol{\theta}} (\mathbf{W_v}\cdot I+\mathbf{BA}\cdot I)+(1-\alpha )\cdot (\mathbf{W_v}\cdot I+\mathbf{BA}\cdot I),
+\end{split}
+\label{eq:forward}
+\end{equation}
+where the constant value $\alpha$ denotes the residual ratio to balance achieving original performance and viewpoint invariance performance. Therefore, for~\cref{eq:ovt problem}, we now only need to update $\mathbf{A}$, $\mathbf{B}$, and $\boldsymbol{\theta}$, rather than the entire weights of VLP.
+
+In practice, we combine MVCap and ImageNet-1K training set to fine-tune the network. Before each epoch, we first calculate the anchor viewpoints for all objects in the dataset and perform the maximization process to compute the set of outlier viewpoints collection. Then, we calculate the $\mathcal{L}_{ITC}$ and $\mathcal{L}_{VC}$ in each batch and update the $\mathbf{A}$, $\mathbf{B}$, and $\boldsymbol{\theta}$ through gradient descent.
+\begin{table*}[t]
+\caption{\textbf{Configurations of OVT and zero-shot Top-1 accuracy (\%) on ImageNet-1K with ImageNet-V+.} The number in parentheses shows the performance change relative to the pre-trained weights. Through OVT training, each model maintains the performance on ImageNet-1K (IN-1K) while significantly improving the performance on ImageNet-V+ (IN-V+.), narrowing the performance gap.}
+\setlength\tabcolsep{1.
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

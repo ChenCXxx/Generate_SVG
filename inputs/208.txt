@@ -1,0 +1,259 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Multi-modal Knowledge Graphs (MMKGs) integrate various modalities, including text, vision, and structural data, to provide 
+comprehensive insights into knowledge. This integration underpins a range of applications,  from question answering~\cite{zhu2015building} and information retrieval~\cite{dietz2018utilizing,yang2020biomedical}, to recommendation systems~\cite{sun2020multi}. Multi-Modal Entity Alignment (MMEA) aims to identify identical entities across heterogeneous MMKGs, which is essential for the integrity of the knowledge represented within these KGs.
+\begin{figure}
+    \centering
+    \includegraphics[width=1.0\linewidth]{graphs/intro.png}
+    \caption{
+    Illustration of irrelevant vs. relevant features in multi-modal knowledge graphs.
+    }
+    \label{fig:intro}
+\end{figure}
+The essence of MMEA lies in identifying feature commonalities across entities from varied modalities to determine their alignment. 
+The diversity in KG construction introduces potential mismatches in multi-modal features of entities meant to be aligned. For example, Figure~\ref{fig:intro} depicts how the entity ``Interstellar (film)'' might be represented in one knowledge graph \(\mathcal{G} \)  by a poster image of a spaceship, whereas in another knowledge graph \(\mathcal{G'} \), by a portrait of Anne Hathaway, the starring actress. Although both images are related to ``Interstellar (film)'', their disparate perspectives can weaken the semantic relationship, challenging the alignment task. 
+This scenario underscores the problem of {\it alignment-irrelevant features}, distinctly different features that complicate accurate entity alignment. While recent studies~\cite{lin2022multi, chen2023meaformer} have employed attention mechanisms to calculate cross-modal weights at both the KG and entity levels, they overlook the critical step of evaluating modality relevance, thereby neglecting to exclude these irrelevant features.
+
+Another obstacle in MMEA involves ensuring semantic consistency across different modalities. Achieving consistent representations across modalities is crucial for effective entity alignment.
+Existing methods~\cite{lin2022multi,chen2023meaformer,chen2023rethinking} utilize contrastive learning to minimize the intra-modal inconsistencies among aligned entities, yet overlook the {\it cross-modal inconsistencies}. 
+Furthermore, the presence of alignment-irrelevant features exacerbates these inconsistencies, complicating the task of achieving consistent representations across modalities.
+
+To address the aforementioned challenges, we propose 
+a novel method for multi-modal entity alignment, named Progressive Modality Freezing (PMF), designed to effectively filter out irrelevant features. PMF is structured around three key parts: multi-modal entity encoders, progressive multi-modality feature integration, and a unified training objective for MMEA. 
+Initially, PMF separately encodes entity features from each modality, allowing for flexible adjustment of input modalities.
+Following this, the method employs a progressive approach to selectively freeze features deemed less relevant for alignment, simultaneously integrating valuable multi-modal features based on their alignment relevance.
+The culmination of our strategy is a unified training objective, aimed at minimizing the discrepancies both within individual KGs and across different modalities.
+
+To encapsulate, our research contributes in the following three-folds:
+\begin{itemize}
+    \item We propose the Progressive Modality Freezing (PMF) strategy to tackle the challenge of irrelevant features in MMEA. By assigning alignment-relevance scores to modalities, our method progressively freezes features that are alignment-irrelevant, while seamlessly integrating beneficial multi-modal information, ensuring the emphasis remains on features of utmost relevance.% the progressive freezing of alignment-relevant features while facilitating the fusion of cross-modal features. 
+    \item We are at the forefront of employing contrastive learning to address modality consistency across multiple modalities, accompanied by a unified training objective to enhance cross-modal consistency.
+    \item We confirm the effectiveness of PMF across diverse datasets and experimental settings, where it demonstrates superior performance, achieving state-of-the-art in the field. Our thorough analysis further elucidates the advantage of the feature-freezing strategy.
+\end{itemize}
+
+
+
+Related Work
+
+\subsection{Multi-modal Knowledge Graph Representation Learning}
+The field of MMKG representation learning forms a critical foundation for tasks such as entity alignment and link prediction, transitioning from traditional single-modal knowledge graph methods to more complex that leverage diverse data types.
+Early efforts expanded upon established KG representation learning methods for single-modal knowledge graphs, like those introduced by ~\citet{xie2016image} and ~\citet{mousselly2018multimodal}, adapting translational KG embedding techniques ~\cite{bordes2013translating} to incorporate multi-modal data effectively. 
+Subsequent research has delved deeper into the impact of multi-modal information in representation learning. 
+~\citet{pezeshkpour2018embedding} implemented an adversarial method to tackle the challenge of missing data within MMKGs, while ~\citet{fang2022contrastive} explored a contrastive learning approach to leverage the rich, varied data and heterogeneous structures in MMKGs. These advancements highlight the field's move towards more sophisticated, data-inclusive methodologies.
+
+\subsection{Multi-Modal Entity Alignment}
+The exploration of MMEA began with MMKG ~\cite{liu2019mmkg}, which provided a dataset facilitating entity embedding through linked images. 
+Building on this, MMEA~\cite{chen2020mmea} advanced the field by fusing relational triples, images, and numerical attributes to generate entity embeddings.
+
+Given the distinctiveness of images as a modality, utilizing visual data in alignment processes has emerged as a key focus in MMEA. For instance, EVA~\cite{liu2021visual} exploited visual similarities for unsupervised entity alignment, while MSNEA~\cite{chen2022multi} and UMAEA~\cite{chen2023rethinking} enhanced relational feature learning using visual cues to tackle the challenges posed by missing and ambiguous visual data.
+
+Central to MMEA is the integration of multi-modal information. MEAformer~ \cite{chen2023meaformer} employed a dynamic weighting transformer for integration, whereas MCLEA ~\cite{lin2022multi} aimed at bridging the modality gap via contrastive learning. ACK-MMEA ~\cite{li2023attribute} introduced a strategy for normalizing multi-modal attributes, ensuring consistency across modalities. 
+
+Iterative learning has emerged as a powerful strategy for refining entity alignment with methods like XGEA~\cite{xu2023cross} and PSNEA~\cite{ni2023psnea} employing pseudo-labeling to mitigate scarcity of initial seeds. 
+
+Despite these advancements, existing methods neglect the necessity of filtering out alignment-irrelevant features and addressing cross-modal inconsistencies. 
+Our method addresses these gaps by selectively freezing less pertinent modalities within an entity to enhance the alignment process.
+
+
+Model
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=2.1\columnwidth]{graphs/image.png} % 0.95
+    \caption{Overview of the PMF Model. The framework consists of three components: the Multi-Modal Entity Encoder (\&\ref{Multi-Modal Entity Encoder}), Progressive Multi-Modality Feature Integration (\&\ref{Progressive Multi-Modality Feature Integration}), and Cross-Graph Contrastive Learning (\&\ref{Multi-Modal Entity Alignment Objective}). At epoch t, the multi-modal encoder {\textit{ENC$_m$}} transforms raw inputs from each modality graph into entity embeddings {\textit{$\mathcal{H}^t_m$}}. {\textit{Progressive Feature Integration}} (\&\ref{Progressive Features Integration}) occurs during training, employing {\textit{Irrelevant Feature Freezing}} (\&\ref{Irrelevant Feature Freezing}) and performing {\textit{Relevant Feature Fusion}} (\&\ref{Relevant Features Fusion}) guided by {\textit{Relevant Feature Measuring}} (\&\ref{Feature Relevance Measuring}). The model is optimized using Cross-KG Alignment Loss {\textit{$\mathcal{L}^t_{CKG}$}} (\&\ref{Cross-KG Alignment Loss}) and Cross-Modality Association Loss {\textit{$\mathcal{L}^t_{CM}$}} (\&\ref{Cross-Modality Association Loss}).}
+    \label{fig:overview}
+\end{figure*}
+We propose a multi-modal entity alignment framework based on progressively freezing entities with irrelevant features and contrastive learning. As shown in Figure~\ref{fig:overview}, the framework consists of three parts: multi-modal entity encoder, progressive multi-modality feature integration, and cross-graph contrastive learning. First, a multi-modal encoder is used to transform the raw input of each modality graph into entity embeddings. Then, we integrate modality features progressively during training, which gradually freezes alignment-irrelevant features and fuse the modality graphs. Finally, the model is optimized through contrastive loss between different knowledge graphs and different modality graphs.
+
+\subsection{Preliminaries} \label{preliminaries}
+
+\paragraph{MMKG Definition} A multi-modal knowledge graph (MMKG) is defined as $\mathcal{G}=\{\mathcal{E},\mathcal{R},\mathcal{T},\mathcal{A}\}$, where $\mathcal{E}$ is a set of entities, $\mathcal{R}$ is a set of relations between entities, $\mathcal{T}\subseteq \mathcal{E}\times\mathcal{R}\times\mathcal{E}$ denotes a set of triples in the knowledge graph, and $\mathcal{A}$ is a set of multi-modal attributes of entities (e.g., textual descriptions, images, etc.).
+For modality $m\in {\cal M}$, where $\cal M$ is the set of modalities, we define a modality graph $\mathcal{G}_{m}$ that captures a unique aspect pertinent to the knowledge graph. More specifically, $\mathcal{G}_{m}=\{\mathcal{E},\mathcal{R},\mathcal{T},\mathcal{A}_m\}$, where $\mathcal{A}_m$ is the set of attributes associated with modality $m$. 
+
+\paragraph{Task Description} 
+In the context of multi-modal entity alignment (MMEA), consider two MMKGs $\mathcal{G}=\{\mathcal{E},\mathcal{R},\mathcal{T},\mathcal{A}\}$ and $\mathcal{G'}=\{\mathcal{E'},\mathcal{R'},\mathcal{T'},\mathcal{A'}\}$.
+The set $\mathcal{S}= \{(e_i,e_j)|e_i\in\mathcal{E},e_j\in\mathcal{E'}\}$ denotes pre-established pairs of entities known to correspond to the same real-world object across both graphs. 
+In a supervised learning setting, a model is trained with part of $\cal S$ and then tasked to predict the alignments of the remaining entity pairs.
+
+\subsection{Multi-Modal Entity Encoder}
+\label{Multi-Modal Entity Encoder}
+
+In the Multi-modal Entity Encoder module, we process the features of entities from each KG according to their respective modalities. Given an entity $e_i \in \mathcal{G}_m$, its feature is denoted by $e_i^m$. The encoding process for each modality of an entity is defined by the following equation:
+\begin{equation}
+    {h_i^m} = {\rm ENC}_m(\Theta_m, e_i^m),
+\end{equation}
+where ${\rm ENC}_m$ represents the encoder designed for modality $m$ with its associated learnable parameter $\Theta_m$.
+While our framework allows the integration of any modality,  for a fair comparison, we incorporate four modalities: structure ({\it str}), relation ({\it rel}), attribute ({\it att}), and image ({\it img})
+
+\subsection{Progressive Multi-Modality Feature Integration}
+\label{Progressive Multi-Modality Feature Integration} 
+The process of integrating multi-modal features in a stepwise manner unfolds in three distinct phases. Initially, the process involves calculating an alignment-relevant score for each modality graph (e.g., $\mathcal{G}_m$) to discern features that are irrelevant for alignment from those that are crucial. Following this, certain features are selectively `frozen' based on modality scores to mitigate the inclusion of extraneous features. Finally, features from various modality graphs are fused to align multi-modal entities. This approach is executed iteratively and progressively to identify and incorporate beneficial features into the alignment process throughout the training phase, ensuring a refined alignment outcome.
+
+\subsubsection{Feature Relevance Measuring} 
+\label{Feature Relevance Measuring}
+We assess the likelihood that features from a given modality of an entity will contribute to the alignment process, thereby enabling the identification of potential alignment-irrelevant features within each modality graph. The alignment-relevant scores for a modality graph $\mathcal{G}_m$ are denoted as $\mathcal{W}_m$, calculated by the following equation:
+\begin{eqnarray}
+     \mathcal{W}_m = {\rm SCORE}(\mathcal{G}_m,\mathcal{G}_m'),
+\end{eqnarray}
+where ${\rm SCORE}(\cdot)$ represents a score function. Specifically, for an entity $e_i^m$ from $\mathcal{G}_m$ and considering a corresponding modality graph $\mathcal{G}_m'$ from target knowledge graph $\mathcal{G}'$, the alignment-relevant score is computed as:
+\begin{eqnarray}
+\label{exp:confidence}
+    w_i^m &=& {\rm Relu}\left(\frac{\alpha_i^m - \delta}{\max\limits_{e_j \in \mathcal{E}}(\alpha_j^m) - \delta}\right), \\
+    \alpha_i^m &=& \max\limits_{e_k \in \mathcal{E'}}\left(\frac{h_i^m \cdot h_k^m}{|h_i^m||h_k^m|}\right),
+\end{eqnarray}
+where $\delta$ is a dynamic threshold. The collection of $w_i^m$ for all entities constitutes $\mathcal{W}_m$. In a parallel manner, the alignment-relevant scores $\mathcal{W}_m'$ for $\mathcal{G}_m'$ are computed similarly.
+
+The underlying rationale for the alignment-relevant score is to ascertain whether an entity from the current modality graph $\mathcal{G}_m$ exhibits similarity with entities from the modality graph $\mathcal{G}_m'$. Should the features $h_i^m$ of an entity $e_i$ in $\mathcal{G}_m$ lack similar counterparts in $\mathcal{G}_m'$, the correlation between $h_i^m$ and the entity aligned with $e_i$ in $\mathcal{G}_m'$ would consequently be weak. As such, $h_i^m$ is less likely to contribute positively to the alignment process. To facilitate a reasonable measurement of feature similarity within a modality, we normalize this metric using the highest similarity across all entities from the same modality graph. This alignment-relevant score is subsequently utilized to guide the processes of modality feature freezing and fusion.
+
+\subsubsection{Irrelevant Feature Freezing}
+\label{Irrelevant Feature Freezing}
+To minimize the detrimental impact of alignment-irrelevant features on the training process, we introduce a feature-freezing strategy. This approach selectively prevents back-propagation for specific entities within particular modality graphs, thereby preserving the integrity of the training regime. 
+Formally, we define $\mathcal{G}_{m}^t$ by extending $\mathcal{G}_{m}$ with a function ${\cal F}_m^t: \mathcal{E}\rightarrow \{0, 1\}$, to characterize whether entity $e$ is frozen at step $t$. 
+More specifically,  $\mathcal{G}_{m}^t=\{\mathcal{E},\mathcal{R},\mathcal{T},\mathcal{A}_m, {\cal F}_m^t\}$, where for each entity $e$ in $\mathcal{E}$,  $e$ is frozen %if and #byzxf
+only if ${\cal F}_m^t(e)= 0 $. Correspondingly, we refer ${\cal H}_m^t$ and ${\cal W}_m^t$ to the representation of all entities and their alignment-relevant score at step $t$, respectively. All elements in vector ${\cal F}_m^0$ are initialized as $1$.
+The formalization of the entity freezing process is given by: 
+\begin{equation}
+    {\mathcal{F}}_m^{t}= {\rm FREEZE}(\mathcal{W}_m^t,\mathcal{G}^{t}_m).
+\end{equation}
+At step $t$, when the alignment-relevant score $w_i^m$ for entity $e_i$ from $\mathcal{G}_m^t$ is zero, it is inferred that this entity does not contribute positively towards the training of the alignment model. Consequently, the gradient update for features $h_i^m$ associated with such an entity is halted during back-propagation. The freezing operation for an entity $e_i^m$, contingent upon its score $w_i^m$, is defined as:
+\begin{equation}
+{\rm FREEZE}(e_i^m) =
+\begin{cases}
+0 & \text{if } w_i^m = 0, \\
+1 & \text{otherwise.}
+\end{cases},
+\end{equation}
+where $0$ indicates "stop gradient", ensuring that the gradient flow is interrupted for entities deemed irrelevant, with $w_i^m\in \mathcal{W}_m^t$. ${\rm FREEZE}(\cdot)$ systematically applies across all entities within $\mathcal{G}_m^t$. This feature freezing is enacted across all modality graphs of each KG (e.g., $\mathcal{G}$ and $\mathcal{G}'$) to optimize the alignment model's focus on beneficial features.
+\subsubsection{Relevant Feature Fusion}
+\label{Relevant Features Fusion}
+Recognizing that the significance of the features of each modality may vary across entities, we leverage the alignment-relevant scores introduced in Eq.~\ref{exp:confidence} as a guide during the fusion process.
+\begin{equation}
+\mathcal{H}_{joint}^t = \mathop{\rm CONCAT}\limits_{m \in {\cal M}}({\cal W}_m^t,\mathcal{G}_m^t), 
+\end{equation}
+where $\rm CONCAT(\cdot)$ symbolizes the fusion operator acting on all modality graphs $\mathcal{G}_m^t$, integrating them into a joint representation $\mathcal{H}_{joint}^t$.
+
+In practice, for each entity $e_i$, the representations $h_i^m$ are weighted by their respective confidence $w_i^m$, ensuring that modalities with higher relevance scores have a greater influence in the fused representation. Accordingly, at step $t$, this fusion process is defined as follows: 
+\begin{equation}
+h^{joint}_i = \mathop{\mathrm{\oplus}}\limits_{m \in \mathcal{M}}([w_i^m\cdot h_i^m]), %\limits needs to be added after the math symbol
+\end{equation}
+where $\mathrm{\oplus}$ denotes the vector concatenation operation, and $h^{joint}_i$ represents the composite feature embedding for entity $e_i$, synthesized from all modalities. The collective $h^{joint}_i$ across all entities at step $t$ forms $\mathcal{H}_{joint}^t$.
+\subsubsection{Progressive Feature Integration}
+\label{Progressive Features Integration}
+By integrating information from each modality graph, we can progressively optimize entity alignment. This is done by iteratively refining feature relevance, and gradually isolating alignment-irrelevant features from overt to subtle ones. Initially, basic representations are used to gauge modality confidence and selectively freeze modality features, employing a lower threshold to exclude overtly irrelevant features due to nascent modality representations. As training advances, the model accumulates a deeper understanding of modal information, systematically increasing the threshold to prune less obvious features independent of alignment goals.
+The process unfolds as follows: Assuming the model has been trained for $t$ epochs, in epoch $t+1$, we compute the alignment-relevant scores $\mathcal{W}_m^{t+1}$ using the current stage of $\mathcal{G}_m^t$ and $\mathcal{G}_m^{'t}$. Concurrently, the threshold $\delta$ for discerning feature relevance is increased at a predefined rate. Based on the newly calculated scores $\mathcal{W}_m^{t+1}$, entities are frozen to reflect the updated insights, updating each modality graph to $\mathcal{G}_m^{t+1}$. Subsequently, these refined modality graphs are merged, leveraging the latest alignment-relevant scores to produce the joint graph representation $\mathcal{H}_{joint}^{t+1}$, as formalized in Equation (2), (5) and (7).
+
+Comparatively, alternatives like ``early integration'' or ``late integration'' present limitations. Early integration might only freeze superficially irrelevant features due to the premature stage of training, which can be challenging to correct in later stages. Our progressive strategy synergistically blends the benefits of both approaches, ensuring a balanced and effective integration of modality information throughout the training lifecycle. 
+ 
+\subsection{Multi-Modal Entity Alignment Objective} 
+\label{Multi-Modal Entity Alignment Objective}
+Our framework adopts contrastive learning as a pivotal strategy to extract and leverage alignment information across knowledge graphs and to discern semantic associations between various modality graphs. To accomplish this, we have developed a composite loss function that integrates both cross-KG alignment and cross-modality association within a unified learning objective. The overall loss function at step $t$ is defined as follows:
+
+\begin{equation}
+     \mathcal{L}^t = \mathcal{L}^t_{\rm CM} + \mathcal{L}_{\rm CKG}^t,
+\end{equation}
+where $\mathcal{L}_{\rm CKG}^t$ is the alignment loss across different KGs, and $\mathcal{L}_{\rm CM}^t$ denotes the association loss across modalities within each KG. 
+
+\subsubsection{Cross-Modality Association Loss}
+\label{Cross-Modality Association Loss}
+One significant source of inconsistencies across modalities is alignment-irrelevant features. Freezing features within each modality graph allows our framework to more effectively draw together the remaining modal features that are beneficial for alignment.
+
+Specifically for each entity $e_i$, we compute the contrastive loss between pairs of modality graphs $\mathcal{G}_p$ and $\mathcal{G}_q$. The loss function aims to minimize the distance between positive pairs $(e_i^p,e_i^q)$ and maximize the separation between negative pairs $(e_i^p,e_j^q)$ and $(e_j^p,e_i^q)$. Here $e_i$ and $e_j$ are entities in the same knowledge graph ${\cal G}$. For each positive pair $(e_i^p,e_i^q)$, the cross-modality loss at step $t$ is defined as: 
+\begin{equation}
+\small
+    {l}^t_{\rm CM}(e_i^p, e_i^q) = \frac{\exp(h_i^{p}\cdot h_j^{q}/\tau)}{\exp(h_i^{p}\cdot h_j^{q}/\tau)+\!\!\!\!\!\!\sum\limits_{(e_j^p,e_k^q)\in{N_{i,p,q}^{-}}}\!\!\!\!\!\!\!\!\!\!\!\!\exp(h_i^{p}\cdot h_j^{q}/\tau)},
+\end{equation}
+where $h_i^{p}{\in}{\cal H}_p^t$, $h_j^{q}{\in}{\cal H}_q^t$,  and $\exp(h_i^{p}{\cdot}h_j^{q}/\tau)$ are scaled by a temperature factor $\tau$, and set $N_{i,p,q}^{-}$ represents negative samples, encompassing all other entity pairs from the modality graphs $\mathcal{G}_p$ and $\mathcal{G}_q$.
+\looseness=-1
+
+The framework computes the contrastive loss for entities across each modality graph of the two KGs. The final cross-modality loss is then determined by:
+\begin{equation}
+\label{cross-modal loss}
+\small
+    \mathcal{L}^t_{\rm CM} = \sum_{p,q\in {\cal M}} \sum_{e_i\in {\mathcal{E}\cup\mathcal{E'}}}  \beta_p \beta_q \left(-\log l^t_{\rm CM}(e_i^p, e_i^q)\right),
+\end{equation}
+where $\beta_p$ and $\beta_q$ are hyper-parameters associated with modality $p$ and $q$, adjusting the learning rate for features of the corresponding modality.
+
+\subsubsection{Cross-KG Alignment Loss}
+\label{Cross-KG Alignment Loss}
+Pre-aligned entity pairs serve as crucial supervision signals in multi-modal entity alignment. Our approach employs supervised contrastive learning to elucidate the alignment relations between entities from corresponding modality graphs of different KGs. We formalized this supervised contrastive learning process at step $t$ as follows:
+\begin{equation}
+\small
+\begin{aligned}
+    {l}^t_{ckg}(e_i^m, e_j^m) = \frac{\exp(h_i^m{\cdot}h_j^m/\tau)}{\exp(h_i^m{\cdot}h_j^m/\tau) + \!\!\!\sum\limits_{e_k\in{N_{i}^{-}}}\!\!\!\exp(h_i^m{\cdot}h_k^m/\tau)},
+    \label{eq:mea-gamma}
+\end{aligned}
+\end{equation}
+where $N_{i}^{-}$ encompasses a set of in-batch negative samples for $e_i^m$.
+
+Given the undirected nature of entity alignment, we compute the contrastive loss considering both directions across KGs, which is defined as:
+
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}^t_{CKG} = \sum_{m \in \mathcal{M}^{+}} \sum_{(e_i, e_j) \in \mathcal{S}} 
+    & -\frac{1}{2} \log \left( l^t_{ckg}(e_i^m, e_j^m) \right. \\
+    & \left. + l^t_{ckg}(e_j^m, e_i^m) \right),
+\end{aligned}
+\end{equation}
+
+where ${\cal M}^{+}$ is the set of modalities, including $\cal M$ and ``{\it joint}'' as a special modality that encapsulates the fusion features of multi-modal information. Note that the representations of modality ``{\it joint}'' is taken from ${\cal H}^t_{joint}$.
+
+\subsection{Alignment Prediction}
+\label{Alignment Prediction}
+The alignment of entities is executed sequentially, focusing on the similarity between their fused multi-modal embeddings. Specifically, for each entity $e_i$ within the joint modality graph $\mathcal{G}_{joint}$ that remains unaligned, we seek its counterpart, $e_j$, in the corresponding joint modality graph $\mathcal{G}_{joint}'$. 
+The sequence in which entities are aligned follows a greedy strategy.
+The chosen $e_j$ is the unaligned entity that exhibits the highest cosine similarity score with $e_i$.
+
+
+
+Experiment
+\subsection{Experiment Setup}
+\paragraph{Datasets}
+To evaluate the effectiveness of our proposed method, we utilized three publicly available MMEA datasets.
+\textbf{MMKG}~\cite{liu2019mmkg} features two subsets extracted from Freebase, YAGO, and DBpedia.  
+\textbf{Multi-OpenEA}~\cite{sun2020benchmarking}, augmented with entity images from Google search queries, includes two multilingual subsets and two monolingual subsets.
+\textbf{DBP15K}~\cite{sun2017cross,liu2021visual} comprises three subsets from DBpedia's multilingual version.
+Seed alignments are designated for 20\% of MMKG and Multi-OpenEA entity pairs and 30\% for DBP15K entity pairs, aligning with proportions used in prior studies ~\cite{chen2020mmea,liu2021visual,lin2022multi,chen2023meaformer,chen2023rethinking}. %chen2022multi
+\paragraph{Baselines}
+We compare our approach against six leading multi-modal alignment methods: MMEA~\cite{chen2020mmea}, EVA~\cite{liu2021visual}, MSNEA~\cite{chen2022multi}, MCLEA~\cite{lin2022multi}, MEAformer~\cite{chen2023meaformer}, and UMAEA~\cite{chen2023rethinking}. 
+using their publicly available code to establish robust baselines. Although other notable methods like ACK-MMEA ~\cite{li2023attribute} exist, their exclusion was due to the lack of open-source code, ensuring fairness in our comparisons.
+
+\paragraph{Evaluation Metrics}
+We employ two metrics for evaluation. {Hits@1} (abbreviated as {H@1}) measures the accuracy of top-one predictions. {Mean Reciprocal Rank (MRR)} assesses the average inverse rank of the correct entity. Higher values of H@1 and MRR indicate better performance.
+
+\paragraph{Implement Details}
+The total training epochs are set to 250, with an option for an additional 500 epochs using an iterative training strategy. Our training regimen incorporates a cosine warm-up schedule (15\% step for LR warm-up), early stopping, and gradient accumulation, utilizing the AdamW optimizer % (\(\beta_1{=}0.9, \beta_2{=}0.999\)) 
+with a consistent batch size of 3500.
+\looseness=-1
+
+\begin{table*}
+\caption{Comparison of overall performance presenting both non-iterative and iterative results. The highest-performing baseline results are underlined, and any instances where our method sets a new state-of-the-art are highlighted in bold. Results with an asterisk (*) indicate our reproduction under identical settings.}
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{cc|cc|cc|cc|cc|cc|cc|cc|cc|cc} 
+\\ \hline
+&\multirow{3}{*}{Model}& \multicolumn{4}{c|}{MMKG} & \multicolumn{8}{c|}{Multi-OpenEA} & \multicolumn{6}{c}{DBP15K} \\
+&& \multicolumn{2}{c|}{FBDB15K} & \multicolumn{2}{c|}{FBYG15K} & \multicolumn{2}{c|}{EN-FR-V1} & \multicolumn{2}{c|}{EN-DE-V1} & \multicolumn{2}{c|}{D-W-V1} & \multicolumn{2}{c|}{D-W-V2} & \multicolumn{2}{c|}{ZH-EN} & \multicolumn{2}{c|}{JA-EN} & \multicolumn{2}{c}{FR-EN} \\
+
+&& H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR & H@1 & MRR \\
+\hline
+\multirow{8}{*}{\rotatebox[origin=c]{90}{non-iterative}} & MMEA & .265 & .357 & .234 & .317 & - & - & - & - & - & - & - & - & - & - & - & - & - & - \\
+& MSNEA & .114 & .175 & .103 & .153 & .692 & .734 & .753 & .804 & .800 & .826 & .838 & .873 & .609 & .685 & .541 & .620 & .557 & .643 \\
+& EVA & .199 & .283 & .153 & .224 & .785 & .836 & .922 & .945 & .858 & .891 & .890 & .922 & .683 & .762 & .669 & .752 & .686 & .771 \\
+& MCLEA & .295 & .393 & .254 & .332 & .819 & .864 & .939 & .957 & .881 & .908 & .928 & .949 & .726 & .796 & .719 & .789 & .719 & .792 \\
+& MEAformer* & .418 & .519 & .327 & .418 & .836 & .882 & .954 & \underline{.971} & \underline{.909} & \underline{.933} & .944 & .962 & .771 & .835 & .764 & .834 & .772 & .841 \\
+& UMAEA* & \underline{.454} & \underline{.552} & \underline{.355} & \underline{.451} & \underline{.847} & \underline{.891} & \underline{.955} & .970 & .905 & .930 & \underline{.948} & \underline{.967} & \underline{.800} & \underline{.860} & \underline{.801} & \underline{.862} & \underline{.818} & \underline{.877} \\
+\rowcolor{gray!50} & 
+\textbf{PMF} & \textbf{.539} & \textbf{.620} & \textbf{.459} & \textbf{.539} & \textbf{.912} & \textbf{.942} & \textbf{.973} & \textbf{.983} & \textbf{.955} & \textbf{.970} & \textbf{.981} & \textbf{.989} & \textbf{.835} & \textbf{.884} & \textbf{.835} & \textbf{.885} & \textbf{.850} & \textbf{.898} \\
+\rowcolor{gray!30}&  
+\textbf{improve↑} & \textbf{8.5\%} & \textbf{6.8\%} & \textbf{10.4\%} & \textbf{8.8\%} & \textbf{6.5\%} & \textbf{5.1\%} & \textbf{1.8\%} & \textbf{1.2\%} & \textbf{4.6\%} & \textbf{3.7\%} & \textbf{3.3\%} & \textbf{2.2\%} & \textbf{3.5\%} & \textbf{2.4\%} & \textbf{3.4\%} & \textbf{2.3\%} & \textbf{3.2\%} & \textbf{2.1\%} \\
+\hline
+\multirow{7}{*}{\rotatebox[origin=c]{90}{iterative}} & MSNEA & .149 & .232 & .138 & .210 & .699 & .742 & .788 & .835 & .809 & .836 & .862 & .894 & .648 & .728 & .557 & .643 & .583 & .672 \\
+& EVA & .231 & .318 & .188 & .260 & .849 & .896 & .956 & .968 & .915 & .942 & .925 & .951 & .750 & .810 & .741 & .807 & .765 & .831 \\
+& MCLEA & .395 & .487 & .322 & .400 & .888 & .924 & .969 & .979 & .944 & .963 & .969 & .982 & .811 & .865 & .805 & .863 & .808 & .867 \\
+& MEAformer* & \underline{.578} & \underline{.661} & .444 & .529 & \underline{.903} & \underline{.935} & .963 & .977 & \underline{.954} & \underline{.970} & .969 & .981 & .
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,239 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+Visual localization, a challenging task that aims to forecast 6-DOF camera pose on a provided RGB image, is an integral part of several computer vision tasks, such as simultaneous localization and mapping~\cite{wang2021continual, mur2017orb, campos2021orb} and structure-from-motion \cite{ding2019camnet, moran2021deep}. 
+
+Typically, classical structure-based visual localization frameworks~\cite{sattler2016efficient, sarlin2019coarse, yu2020learning, yang2022scenesqueezer} construct 2D keypoints and 3D scene coordinates associations by matching local descriptors, and afterwards use a RANSAC-based PnP algorithm~\cite{fischler1981random, lepetit2009epnp} to retrieve camera pose. 
+Recently, with the advancements of deep learning~\cite{xie2023poly, xie2023farp, song2023vp, wang2023multi, wang2023sat}, 
+scene coordinate regression (SCoRe) based methods \cite{li2020hierarchical, dosovitskiy2020image, zhou2020kfnet, xie2022deep, guan2021scene, dai2023eaainet}, which trains a convolutional neural network (CNN) to regress the 3D scene coordinate corresponding to each pixel in the input image and calculates camera pose with  PnP algorithm \cite{lepetit2009epnp}, establish state-of-the-art localization performance in small static scenes. 
+Compared with structure-based methods, these methods require no database of images or local descriptors and can benefit from high-precision sensors. 
+While SCoRe based methods achieve impressive results, they come with some drawbacks. 
+Scene coordinate regression is scene-specific and required to be trained for new scenes, resulting in a linear increase in total model size with the number of scenes. 
+After witnessing the success of SCoRe-based methods, a naive problem arise: could a single SCoRe-based model predict 3D coordinates for multiple scenes concurrently and generalize to a new scene? 
+Solving this problem is a key step towards truly SCoRe-based model deployment on autonomous robots. 
+
+A naive solution to this problem is that using a shared backbone to extract features from multiple scenes and then leveraging different regression heads to regress scene coordinates for each scene. 
+Nevertheless, jointly optimizing cross-scene localization with a fully shared backbone exists an insurmountable obstacle, i.e., gradient conflict induced by competition among different tasks for shared parameters, resulting in inferior performance compared with learning tasks separately \cite{liu2021conflict, chen2020just, fifty2021efficiently, guo2018dynamic}. 
+Towards this end, we propose OFVL-MS, a unified SCoRe-based framework that optimizes visual localization of multiple scenes collectively. 
+OFVL-MS is a multi-task learning (MTL)~\cite{doersch2017multi, kendall2018multi, liu2019end, chennupati2019multinet++, xie2023poly, wang2023mdl, radwan2018vlocnet++, wallingford2022task} framework where localization of each scene is treated as an individual task. 
+OFVL-MS offers benefits in terms of model complexity and learning efficiency since substantial parameters of the network are shared among multiple scenes, which renders the model more pragmatic to be deployed on robotics. 
+Technically, OFVL-MS eliminates gradient conflict from forward and backward pass. 
+
+In the forward pass, we design a layer-adaptive sharing policy to automatically determine whether each active layer of the backbone is shared or not, from which we derive task-shared parameters for efficient storage and task-specific parameters for mitigating gradient conflict. 
+The central idea of the layer-adaptive sharing policy is to transform the layer selection of the backbone into a learnable problem, so that deciding which layers of the backbone to be shared or not can be done during training by solving a joint optimization problem. 
+In the backward pass, inspired by gradient homogenization algorithms in classical multi-task learning \cite{javaloy2021rotograd, liu2021towards}, we introduce a gradient normalization algorithm that homogenizes the gradient magnitude of the task-shared parameters across scenes to ensure all tasks converge at a similar but optimal pace, further relieving gradient conflict. 
+We also apply a penalty loss on the active layers to prompt all tasks to share as many parameters as possible while improving the performance of some tasks that benefit from the shared parameters, as illustrated in \cref{joint_separate} and \cref{section4_7}. 
+Experiments show that OFVL-MS achieves excellent localization performance on several benchmarks, including 7-Scenes dataset\cite{shotton2013scene}, 12-Scenes datasets \cite{valentin2016learning} and our \textbf{released large indoor dataset LIVL} in terms of median positional and rotational errors, etc. 
+We also demonstrate that OFVL-MS can generalize to a new scene with much few parameters while maintaining exceptional performance. 
+
+To summarize, the contributions of this work are as follows: (1) We propose OFVL-MS, a unified visual localization framework that optimizes localization tasks of different scenes collectively in a multi-task learning manner. (2) We propose a layer-adaptive sharing policy for OFVL-MS to automatically determine, rather than manually, whether each active layer of backbone is shared or not. A penalty loss is also applied to promote layer sharing across scenes. (3) We introduce a gradient normalization algorithm to homogenize gradient magnitudes of the task-shared parameters, enabling all tasks to converge at same pace. 
+(4) We publish a \textbf{new large indoor dataset LIVL} that provides a new test benchmark for visual localization. 
+(5) We demonstrate that OFVL-MS can generalize to a new scene with much fewer parameters while retaining superior localization performance. 
+
+
+Related Work
+\textbf{Structured-based Visual Localization}.
+The structure-based methodologies \cite{sattler2016efficient, sarlin2019coarse, yu2020learning, yang2022scenesqueezer} utilize local descriptors to establish 2D pixel positions and 3D scene coordinate matches for a given query image, afterwards using a PnP algorithm to recover camera pose.  
+However, as opposed to directly matching within an exhaustive 3D map as in \cite{sattler2016efficient}, current state-of-the-art methods \cite{sarlin2019coarse, yu2020learning, yang2022scenesqueezer} employ image retrieval \cite{arandjelovic2016netvlad} to narrow down the searching space and utilize advanced feature matching techniques such as Patch2pix \cite{zhou2021patch2pix}, SuperGlue \cite{sarlin2020superglue}, LoFTR \cite{sun2021loftr}, MatchFormer \cite{wang2022matchformer}, OAMatcher~\cite{dai2023oamatcher}, and DeepMatcher~\cite{xie2023deepmatcher} to generate precise 2D-2D correspondences, which are subsequently elevated to 2D-3D matches. 
+The structured-based methods demonstrate state-of-the-art performance in large-scale scenes thanks to expeditious image retrieval techniques and feature matching algorithms, while they are limited in small-scale static scenes such as indoor scenes \cite{li2020hierarchical, huang2021vs}. 
+Moreover, in lifelong localization scenarios, the size of the image and feature database increases over time due to the continuous addition of new data. As a result, the memory requirements for on-device localization in VR/AR systems may exceed the available limits. 
+
+
+\textbf{Learning-based Visual Localization}.
+Current learning-based visual localization approaches can be classified into absolute pose regression (APR) \cite{kendall2015posenet, xie2020visual, kendall2016modelling}, relative pose regression (RPR) \cite{abouelnaga2021distillpose, ding2019camnet, turkoglu2021visual}, and scene coordinate regression (SCoRe) \cite{li2020hierarchical, dosovitskiy2020image, zhou2020kfnet, xie2022deep, guan2021scene}. 
+The APR methods directly forecast the camera pose via a provided RGB image in an end-to-end way. 
+However, such methods can not realize accurate visual localization as they are essentially analogous to approximate pose estimation via image retrieval \cite{walch2017image}.
+The RPR methods utilize a neural network to identify the relative pose among the requested image and the most identical image retrieved from the database, which, however, is time-consuming and restricts their practical application. 
+The SCoRe approaches directly forecast the 3D scene coordinates, walked by the RANSAC-based PnP algorithm The SCoRe approaches directly forecast the scene coordinates, succeeded by the PnP algorithm to compute camera pose. 
+While these methods can be optimized end-to-end and achieve impressive results, they suffer from some drawbacks. 
+Pose regression and scene coordinate regression are both scene-specific and must be retrained for new scenes, culminating in a linear increase in total model size with the number of scenes. 
+\begin{figure*}[htbp]
+	\centering
+	\includegraphics[width=0.98\hsize]{overall.pdf}
+	\caption{\textbf{Overall of OFVL-MS (using ResNet34~\cite{he2016deep} as backbone).} 
+		OFVL-MS jointly optimizes visual localization across scenes and consists of two components, that is, backbone and regression layer.
+		The layer-adaptive sharing policy and task-specific attention module are utilized to generate more scene-related features, which are fed into regression layers to predict scene coordinates with uncertainty.
+		Besides, the penalty loss is proposed to facilitate OFVL-MS to share parameters as many as possible, realizing efficient storage deployment.
+	}
+	\label{overall}
+\end{figure*}
+\begin{figure}[]
+	\centering
+	\includegraphics[width=0.9\hsize]{adaptive_policy2.pdf}
+	\caption{\textbf{Layer-adaptive Sharing Policy.}
+		The scores $s$ are utilized to determine which parameters (($w, b, s$) or ($\tilde{w}, \tilde{b}, s$)) to be optimized in current iteration.
+	}
+	\label{layer-sharing}
+\end{figure}
+
+\textbf{Gradient Homogenization over Multi-task Learning (MTL)}.
+During the training process of multi-task learning (MTL), the gradient magnitudes and directions of different tasks interact complicatedly together via backpropagation, a phenomenon known as task interference. 
+Previous methods \cite{sener2018multi, liu2021towards, chen2018gradnorm, javaloy2021rotograd, maninis2019attentive, sinha2018gradient}  simplify the matter to two categories of gradient discrepancies (i.e., magnitudes and directions of task gradients) and suggest various techniques to reconcile this difference. 
+For gradient magnitudes, Sener et al. \cite{sener2018multi} characterize multi-task learning as multi-objective optimization and provide an upper bound for the multi-objective loss. 
+Javaloy et al. \cite{javaloy2021rotograd} homogenize the gradient magnitudes through normalizing and scaling, ensuring training convergence.
+For gradient direction, Sinha et al. \cite{sinha2018gradient} and Maninis et al. \cite{maninis2019attentive} propose to enable task gradients statistically to be indistinguishable through adversarial training.
+
+
+Method
+Given a RGB image, the task of visual localization seeks to estimate the rigid transformation $T \in SE(3)$ from camera coordinate system to world coordinate system. 
+Such transformation is composed of a 3D rotation matrix $R \in SO(3)$ and a translation vector $t \in \mathbb{R}^{3}$.  
+
+\subsection{Overall}
+We propose OFVL-MS, a unified framework that jointly optimizes localization tasks of different scenes in a multi-task learning manner, where we view the visual localization of each scene as a new task. 
+OFVL-MS is a two-stage pipeline with scene coordinates prediction followed by a RANSAC-based PnP algorithm to calculate the camera pose $T$. 
+Specifically, OFVL-MS takes $N$ RGB images $I_{n} \in \mathbb{R}^{3 \times H \times W}, \ n\in\{1,2,...,N\}$ from different scenes as input and predicts dense 3D scene coordinates $\hat{D_n} = \{\hat{d}_{n,i} = (\hat{x}_{n,i}, \hat{y}_{n,i}, \hat{z}_{n,i}) | i=1,2,3,...,Q \}$ with 1D uncertainty $\hat{U_n} = \{\hat{u}_{n,i} | i=1,2,3,...,Q \}$, where $Q$ is the predicted 3D scene coordinate numbers. 
+Thus, we derive $Q$ correspondences between 2D pixel coordinates and 3D scene coordinates. 
+Finally, OFVL-MS utilizes RANSAC-based PnP algorithm to calculate 6-DOF camera pose $T_{n}=[R_{n}|t_{n}]$.
+In this work, we focus on designing and optimising OFVL-MS, which encourages all tasks to share as many parameters as possible for efficient storage deployment while maintaining superior performance for all tasks.
+\subsection{Design OFVL-MS}
+As shown in \cref{overall}, OFVL-MS is characterized by two components: backbone and regression layers. 
+
+\textbf{Backbone.} 
+The backbone first utilizes a pre-layer with stride of $2$ to map the input image to a higher dimension and lower resolution, and then leverages four ResBlocks \cite{he2016deep} with stride of $(1,1,2,2)$ and several attention modules to extract features. 
+The backbone concludes a set of task-shared parameters $\phi^{sh}$ for $N$ tasks and task-specific parameters $\phi^{sp}_{n}$ for task $n$ to transform each input $I_n$ into an intermediate representation $F_n =  f(I_n; \phi^{sh}, \phi^{sp}_{n}) \in \mathbb{R}^{C_{o} \times H_{o} \times W_{o}}$, where $C_{o}$ is the dimension of $F_n$, $H_{0}=H/8$, $W_{0}=W/8$. 
+
+\textbf{Regression Layer.} 
+Additionally, each task $n$ has a regression layer $h$, with exclusive parameters $\theta_n$, which takes $F_n$ as input and predicts 3D scene coordinate $\hat{D_n}$ as well as 1D uncertainty $\hat{U_n}$ for task $n$. 
+
+In this work, instead of altering the architecture of the network or adding a fixed set of parameters, we seek a framework that enables all tasks to share as many parameters as feasible while retaining excellent performance, i.e., proposed task-adaptive sharing policy and gradient balance algorithm. 
+We assume the layers with learnable parameters in the backbone except for the attention modules to be active layers, such as convolution and normalization layer, while other layers, such as ReLU layer and Sigmoid layer, are considered as inactive layers. 
+
+\textbf{Layer-adaptive Sharing Policy.}
+Theoretically, when manually determining whether $K$ active layers are shared or not, a combinatorial search over $2^K$ possible networks is required. 
+Thus, in lieu of hand-crafted weight or layer sharing schemes, inspired by TAPS~\cite{wallingford2022task}, we relax the combinatorial issue into a learnable one and introduce a layer-adaptive sharing policy that automatically determines whether each layer of the active layers is shared or not for diverse scenes. 
+Using a single weight and bias for each active layer, however, does not enable different tasks to share or monopolize the parameters dynamically at various iterations during training, hence limiting the adaptivity of OFVL-MS for the scenes. 
+To tackle this issue, as shown in \cref{layer-sharing}, taking a convolution layer as example, we cast the initial weight $w \in \mathbb{R}^{C_{out} \times C_{in} \times k \times k}$ 
+of the convolution kernel as task-shared parameters and define two additional parameters: task-specific weight $\tilde{w} \in \mathbb{R}^{C_{out} \times C_{in} \times k \times k}$, 
+and a learnable score $s \in \mathbb{R}^{1}$, where $C_{out}$, $C_{in}$ and $k$ mean output channels, input channels, and kernel size, respectively.
+In forward pass, we define an indicator function for the score to judge whether the parameters of convolution layer are shared or not in current iteration, formulated as: 
+
+\begin{equation}
+	\Theta(s) = \begin{cases} 
+		0 	& if \ \ s \ge \lambda \\ 
+		1 	& otherwise,
+	\end{cases}
+	\label{indi}
+\end{equation}
+where $\lambda$ is a preset threshold.
+The task-adaptive weight $\bar{w}$ 
+used for current iteration is formulated as:
+
+\begin{equation}
+	\begin{aligned}
+		\bar{w} = &\Theta(s)w + (1-\Theta(s))\tilde{w}.
+	\end{aligned}
+	\label{sewb}
+\end{equation} 
+
+If the score $s$ is larger than the preset threshold $\lambda$, the task-specific parameters $\tilde{w}$ will be activated and optimized, and vice versa. 
+We apply above procedure on all active layers to enable different tasks to share or monopolize the parameters dynamically at various iterations. 
+Besides, concluding additional parameters $\tilde{w}$ into each layer does not result in a large increase in memory cost since only the selected parameters $\bar{w}$ and $s$ are optimized at each iteration and all other parameters are kept offline. 
+Compared with TAPS, our proposed sharing policy delivers following merits: (1) we introduce individual task-shared weight $w$ and task-specific weight $\tilde{w}$ for each active layer rather than a coupled weight in TAPS, enabling the memory footprint to be agnostic to the number of tasks; (2) once the training for multi-task is done, the new added task can share task-shared parameters or task-specific parameters with any task in our setting, allowing for more flexible parameter sharing and real multi-task learning. 
+NOtably, we set the learnable score $s$ to be task-shared so that ensuring the parameters of all scenes can be integrated into a collective model. 
+Moreover, we calculate the summation of the absolute values of all scores as penalty loss to enable all tasks to share parameters as many as possible, achieving efficient storage deployment. 
+1. 
+Notably, as illustrated in \cref{dpss}, learning task-specific batch normalization can significantly improve the localization performance while adding small parameters, so we set the parameters of normalization layers in active layers as task-specific.
+\textbf{Task-specific Attention Module.}
+We further embed an attention module into the backbone, empowering OFVL-MS to learn more scene-related features. 
+The attention module learns a soft attention mask to the features, that can automatically determine the importance of features for each task along the channel dimension, enabling self-supervised learning of more scene-related features. 
+In this work, we adopt SENet \cite{hu2018squeeze} as attention module and integrate it into the BasicBlock of each ResBlock. 
+Each task $n$ has task-specific attention modules with exclusive parameters. 
+
+\subsection{Optimize OFVL-MS}
+Since each task has its own dataset domain, we need to utilize multiple GPUs to optimize these tasks.
+For the sake of description, we assume that a single GPU is used to train each scene.
+
+\textbf{Loss.}
+The goal of OFVL-MS is to ensure precise visual localization for all scenes while enabling different tasks to share as many parameters as possible.
+Therefore, we cast the training process of OFVL-MS as a joint optimization problem for predicted scene coordinates and scores in \cref{indi}.
+For the $n$-th scene, the loss $L_{n}$ involves two terms: the scene coordinates loss $L_{n}^{sc}$ and the penalty loss $L_{n}^{pe}$. 
+\begin{equation}
+	L_{n} = L_{n}^{sc} + \beta L_{n}^{pe}, 
+\end{equation}
+where $\beta$ denotes weight coefficient used to reconcile $L_{n}^{sc}$ and $L_{n}^{pe}$.
+
+\emph{Scene coordinates loss.} We employ the loss function proposed by KFNet \cite{zhou2020kfnet} to maximize the logarithmic likelihood for the probability density function of the predicted scene coordinates. 
+Specifically, the loss function of the $n$-th scene is formatted as:
+\begin{equation}
+	\label{loss}
+	L_{n}^{sc} = \frac{1}{Q} \sum_{i=1}^{Q} (3 log \hat{u}_{n,i} + \frac{|| d_{n,i}- \hat{d}_{n,i} ||^{2}_{2}}{2 \hat{u}_{n,i}^2} ),
+\end{equation}
+where $Q$ equals to $H/8 \times W/8$; $\hat{u}_{n,i}$ is the $i$-th predicted uncertainty; $d_{n,i}$ is the $i$-th ground truth scene coordinate; $\hat{d}_{n,i}$ is the $i$-th predicted scene coordinate. 
+
+\emph{Penalty loss on the learnable scores.} 
+The penalty loss $L_{n}^{pe}$ motivates all tasks to share the parameters of active layers as many as possible.
+Such loss is denoted by calculating the summation of the absolute values of scores $s_{n}$ for the $n$-th scene:
+\begin{equation}
+	L_{n}^{pe} = \frac{1}{||S_{n}||}\sum_{s_{n}\in S_{n}}|s_{n}|,
+\end{equation}
+where $S_{n}$ means the collection of the scores; $||S_{n}||$ denotes the number of scores.
+It is worth noting that the scores $s_{n}$ of all scenes are identical since they are set as task-shared.
+
+\textbf{Backward Pass and Gradient Normalization Algorithm.}
+For convenient portrayal, we denote the task-shared and task-specific parameters of OFVL-MS for $n$-th scene as $\chi^{sh}_{n} = \{\phi^{sh}\}$ and $\chi^{sp}_{n} = \{\phi^{sp}_{n},\theta_n\}$.
+
+For task-specific parameters, we define the gradients of $\chi^{sp}_{n,i}$ for $n$-th scene at $i$-th iteration as: $G_{n,i}^{sp} = \nabla_{\chi^{sp}_{n,i}} L_{n,i}$, 
+where $L_{n,i}$ means the loss function for the $n$-th scene at the $i$-th iteration.
+Subsequently, the task-specific parameters on each GPU will be optimized based on the calculated $G_{n,i}^{sp}$.
+Noting that when optimizing a scene with multiple GPUs, the gradients $G_{n,i}^{sp}$ on the GPUs would be averaged and then the parameters are updated accordingly. 
+For task-shared parameters, the gradients of $\chi^{sh}_{n,i}$ for $n$-th scene at $i$-th iteration is also formulated as: $G_{n,i}^{sh} = \nabla_{\chi_{n,i}^{sh}} L_{n,i}$. 
+
+A straightforward scheme for optimizing the task-shared parameters involves averaging the gradients $G_{n,i}^{sh}$ across all GPUs and then updating the corresponding weights. 
+While this method streamlines the optimization problem, it may also trigger gradient conflict among tasks, lowering overall performance due to an unequal competition among tasks for the shared parameters, i.e., gradient magnitude disparities. 
+Moreover, OFVL-MS is designed for jointly optimizing multiple indoor scenes, where the varied scene domains will further intensify the gradient conflict. 
+Inspired by \cite{liu2021towards, sinha2018gradient, javaloy2021rotograd, sener2018multi}, we utilize a gradient normalization algorithm to homogenize the gradient magnitude of the task-shared parameters for all scenes, allowing all tasks to converge at same pace and alleviating the gradient conflict. 
+Specifically, OFVL-MS first places gradient norms of task-shared parameters on a common scale $D$.
+Considering the magnitudes and the change rate of gradient reflect whether the optimization direction in current iteration is dependable or not, we define $D$ as the linear combination of task-wise gradient magnitudes:
+\begin{equation}
+	D = \sum_{n=1}^{N} W_{n,i}||{G}_{n,i}^{sh}||_{2},
+\end{equation}
+where the weight $W_{n,i}$ is denoted as the relative convergence of each task:
+\begin{equation}
+	W_{n,i} = \frac{||{G}_{n,i}^{sh}||_{2} / ||{G}_{n,i-1}^{sh}||_{2}}{\sum_{j=1}^{N}||{G}_{j,i}^{sh}||_{2} / ||{G}_{j,i-1}^{sh}||_{2}}.
+\end{equation}
+
+Then, given the common scale $D$, OFVL-MS generates the optimized gradients $\hat{G}_{n,i}^{sh}$:
+\begin{equation}
+	\label{formule5}
+	\hat{G}_{n,i}^{sh} = D\frac{{G}_{n,i}^{sh}}{||{G}_{n,i}^{sh} ||_{2}}.
+\end{equation}
+
+Ultimately, we average the gradients $\hat{G}_{n,i}^{sh}$ on all GPUs to derive $\hat{G}_{i}^{sh}$, ensuring the gradients of the task-shared parameters for all scene are equivalent. The $\hat{G}_{i}^{sh}$ is formulated as:
+\begin{equation}
+	\hat{G}_{i}^{sh} = \frac{1}{N}\sum_{n=1}^{N}\hat{G}_{n,i}^{sh}.
+\end{equation}
+
+\begin{table*} \large
+	\centering
+	\begin{spacing}{1.00}
+		\resizebox{0.85\textwidth}{!}{%
+			\begin{tabular}{l|l|ccccccc|c}
+				\toprule[2pt]
+				Methods & Metrics           & \multicolumn{1}{c}{Chess} & \multicolumn{1}{c}{Fire} & \multicolumn{1}{c}{Heads} & \multicolumn{1}{c}{Office} & \multicolumn{1}{c}{Pumpkin} & \multicolumn{1}{c}{Redkitchen} & \multicolumn{1}{c|}{Stairs} & \multicolumn{1}{c}{Average} \\ \midrule
+                \multirow{2}{*}{\begin{tabular}[c]{@{}l@{}} AS\end{tabular} \cite{sattler2016efficient}} & \textbf{Med. Err.} & 0.03, 0.87                 & 0.02, 1.01                & 0.01, 0.82                 & 0.04, 1.15                  & 0.07, 1.69                   & 0.05, 1.72                      & 0.04, 1.01                  & 0.03, 1.18                 \\
+                & \textbf{Acc.}      & ---                       & ---                    & ---                       & ---                        & ---                         & ---                            & ---                        & 68.7                         \\ \midrule
+                \multirow{2}{*}{\begin{tabular}[c]{@{}l@{}} InLoc\end{tabular} \cite{taira2018inloc}} & \textbf{Med. Err.} & 0.03, 1.05                 & 0.03, 1.07                & 0.02, 1.16                 & 0.03, 1.05                  & 0.05, 1.55                   & 0.04, 1.31                      & 0.09, 2.47                  & 0.04, 1.38                 \\
+                & \textbf{Acc.}      & ---                       & ---                      & ---                       & ---                        & ---                         & ---                            & ---                        & 66.3                         \\ \midrule
+                \multirow{2}{*}{\begin{tabular}[c]{@{}l@{}} HLoc\end{tabular} \cite{sarlin2019coarse}} & \textbf{Med. Err.} & 0.02, 0.85                 & 0.02, 0.94                & 0.01, 0.75                 & 0.03, 0.92                  & 0.05, 1.30                   & 0.04, 1.40                      & 0.05, 1.47                  & 0.03, 1.09                 \\
+                & \textbf{Acc.}      & ---                       & ---                      & ---                       & ---                        & ---                         & ---                            & ---                        & 73.1                         \\ \midrule
+				\multirow{2}{*}{MS-Transformer \cite{shavit2021learning}}                                                 & \textbf{Med. Err.} & 0.11, 4.66                 & 0.24, 9.6                & 0.14, 12.19                 & 0.17, 5.66                  & 0.18, 4.44                   & 0.17, 5.94                      & 0.26, 8.45                  & 0.18, 7.27                   \\
+				& \textbf{Acc.}      & ---                       & ---                      & ---                       & ---                        & ---                         & ---                            & ---                        & ---                         \\ \midrule
+                \multirow{2}{*}{DSAC* \cite{brachmann2018learning}}                                                  & \textbf{Med. Err.} & 0.02, 1.10                  & 0.02, 1.24                 & 0.01, 1.82                 & 0.03, 1.15                   & 0.04, 1.34                    & 0.04, 1.68                      & 0.03, 1.16                  & \textbf{0.02}, 1.35                  \\
+				& \textbf{Acc.}      & ---                      & ---                     & ---                      & ---                       & ---                        & ---                           & ---                       & 85.2                       \\ \midrule
+				\multirow{2}{*}{SCoordNet \cite{zhou2020kfnet}}                                               & \textbf{Med. Err.} & 0.019, 0.63                & 0.023, 0.91               & 0.018, 1.26                & 0.026, 0.73                & 0.039, 1.09                  & 0.039, 1.18                     & 0.037, 1.06                 & 0.029, 0.98                  \\
+				& \textbf{Acc.}      & ---                       & ---                      & ---                       & ---                        & ---                         & ---                            & ---                        & ---                         \\ \midrule
+				\multirow{2}{*}{HSCNet \cite{li2020hierarchical}}                                                  & \textbf{Med. Err.} & 0.02, 0.7                  & 0.02, 0.9                 & 0.01, 0.9                  & 0.03, 0.8                   & 0.04, 1.0                    & 0.04, 1.2                       & 0.03, 0.8                   & 0.03, 0.9                    \\
+				& \textbf{Acc.}      & \textbf{97.5}             & 96.7                     & \textbf{100.0}                       & 86.5                       & 59.9                        & 65.5                           & \textbf{87.5}                       & 84.8                        \\ \midrule
+				\multirow{2}{*}{FDANet \cite{xie2022deep}}                                                  & \textbf{Med. Err.} & 0.018, 0.64                & 0.018, 0.73               & 0.013, 1.07                & 0.026, 0.75                 & 0.036, 0.91                  & 0.034, 1.03                     & 0.041, 1.14                 & 0.026, 0.89                  \\
+				& \textbf{Acc.}      & 95.70                     & 96.10                    & 99.20                     & 88.08                      & 65.65                       & 78.32                          & 62.80                      & 83.69                       \\ \midrule
+				\multirow{2}{*}{VS-Net \cite{huang2021vs}}                                        & \textbf{Med. Err.} & \textbf{0.015, 0.5}                & 0.019, 0.8               & 0.012, 0.7                & \textbf{0.021, 0.6}                 & 0.037, 1.0                  & 0.036, 1.1                     & 0.028, 0.8                 & 0.024, 0.8                  \\
+				& \textbf{Acc.}      & ---                     & ---                    & ---                     & ---                      & ---                       & ---                          & ---                      & ---                       \\ \midrule[2pt]
+				\multirow{2}{*}{OFVL-MS18}                                                & \textbf{Med. Err.} & 0.021, 0.67                & 0.018, 0.67               & 0.010, 0.56                & 0.030, 0.83                 & 0.033, 0.96                  & 0.035, 1.02                     & 0.031, 0.89                 & 0.025, 0.80                  \\
+				& \textbf{Acc.}      & 96.20                     & 97.55                    & 98.90                     & 81.73                     & 67.15                       & 75.06                          & 79.80                      & 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

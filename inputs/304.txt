@@ -1,0 +1,240 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+Scene flow estimation is a popular computer vision problem with many applications in autonomous driving~\cite{menze2015object} and robotics~\cite{seita2023toolflownet}. 
+With the development of optical flow estimation and the emergence of numerous end-to-end trainable models in recent years, scene flow estimation, as a close research area to optical flow estimation, takes advantage of the rapid growth. 
+As a result, many end-to-end trainable models have been developed for scene flow estimation using optical flow architectures~\cite{liu2019flownet3d,teed2021raft,wu2019pointpwc}. 
+Moreover, with the growing popularity of Light Detection and Ranging (LiDAR), the interest has shifted to computing scene flow from point clouds instead of stereo image sequences.
+In this work, we focus on estimating scene flow from 3D point clouds.
+
+One of the challenges faced in scene flow estimation is fast movement. 
+Previous methods usually employ a complicated multi-stage refinement with either a coarse-to-fine architecture~\cite{wu2019pointpwc} or a recurrent architecture~\cite{teed2021raft} to address the problem. 
+We instead propose to solve scene flow estimation by a single-scale one-shot global matching method, that is able to capture arbitrary correspondence, thus, handling fast movements. 
+Occlusion is yet another challenge faced in scene flow estimation. 
+We take inspiration from an optical flow estimation method~\cite{xu2022gmflow} to enforce smoothness consistency during the matching process.
+
+The proposed method consists of two stages: feature extraction and matching. 
+A detailed description is given in Section~\ref{sec:method}.
+To extract high-quality features, we take inspiration from the recently dominant transformers~\cite{vaswani2017attention} and propose a hybrid local-global-cross transformer architecture to learn accurate and robust feature representations. 
+Both local and global-cross transformers are crucial for our approach as also shown experimentally in Section~\ref{sec:ablation}.
+The global matching process, including estimation and refinement, is guided solely by feature similarity matrices. 
+First, scene flow is calculated as a weighted average of translation vectors from each source point to all target points under the guidance of a cross-feature similarity matrix. 
+Since the matching is done in a global manner, it can capture short-distance correspondences as well as long-distance correspondences and, therefore, is capable to deal with fast movements. 
+Further refinement is done under the guidance of a self-feature similarity matrix to ensure scene flow smoothness in areas with similar features. 
+This allows to propagate the estimated scene flow from non-occluded areas to occluded areas, thus solving the problem of occlusions. 
+
+To summarize, our contributions are:
+(1) A hybrid local-global-cross transformer architecture is introduced to learn accurate and robust feature representations of 3D point clouds.
+(2) Based on the similarity of the hybrid features, we propose to use a global matching process to solve the scene flow estimation. 
+(3) Extensive experiments on popular datasets show that the proposed method outperforms previous scene flow methods by a large margin on FlyingThings3D~\cite{mayer2016large} and Waymo-Open~\cite{sun2020scalability} and achieves state-of-the-art generalization ability on KITTI Scene Flow~\cite{menze2015object}.
+
+
+
+Related Work
+\subsection{Scene Flow}
+Scene flow estimation~\cite{li2023deep} has developed quickly since the introduction of the KITTI Scene Flow~\cite{menze2015object} and FlyingThings3D~\cite{mayer2016large} benchmarks, which were the first benchmarks for estimating scene flow from stereo videos. Many scene flow methods~\cite{behl2017bounding,ma2019deep,menze2015object,ren2017cascaded,sommer2022sf2se3,vogel20153d,yang2021learning} assume that the objects in a scene are rigid and decompose the estimation task into subtasks. These subtasks often involve first detecting or segmenting objects in the scene and then fitting motion models for each object. In autonomous driving scenes, these methods are often effective, as such scenes typically involve static backgrounds and moving vehicles. However, they are not capable of handling more general scenes that include deformable objects. Moreover, the subtasks introduce non-differentiable components, making end-to-end training impossible without instance level supervision.
+
+Recent work in scene flow estimation mostly takes inspiration from the related task of optical flow~\cite{dosovitskiy2015flownet,ilg2017flownet,sun2018pwc,teed2020raft} and can be divided into several categories: encoder-decoder methods~\cite{gu2019hplflownet,liu2019flownet3d} that solve the scene flow by an hourglass architecture neural network, multi-scale methods~\cite{cheng2022bi,li2021hcrf,wu2019pointpwc} that estimate the motion from coarse to fine scales, or recurrent methods~\cite{kittenplon2021flowstep3d,teed2021raft,wei2021pv} that iteratively refine the estimated motion. 
+Other approaches~\cite{li2022sctn,puy2020flot} try to solve the problem by finding soft correspondences on point pairs within a small region. 
+In order to reduce the annotation requirement, some methods focus on runtime optimization~\cite{li2021neural, lang2023scoop}, prior assumptions~\cite{li2022rigidflow}, or even without the need of training data~\cite{chodosh2023re}.
+
+\paragraph{Encoder-decoder Methods:}
+Flownet~\cite{dosovitskiy2015flownet} and Flownet2.0~\cite{ilg2017flownet}, were the first methods to learn optical flow end-to-end with an hourglass-like model, and inspired many later methods. Flownet3D~\cite{liu2019flownet3d} first employs a set of convolutional layers to extract coarse features.
+A flow embedding layer is introduced to associate points based on their spatial localities and geometrical similarities in a coarse scale. A set of upscaling convolutional layers is then introduced to upsample the flow to the high resolution. 
+FlowNet3D++~\cite{wang2020flownet3d++} further incorporates point-to-plane distance and angular distance as additional geometry contraints to Flownet3D~\cite{liu2019flownet3d}. HPLFlowNet~\cite{gu2019hplflownet} employs Bilateral Convolutional Layers (BCL) to restore structural information from unstructured point clouds. Following the hourglass-like model, DownBCL, UpBCL, and CorrBCL operations are proposed to restore information from each point cloud and fuse information from both point clouds.
+
+\paragraph{Coarse-to-fine Methods:}
+PointPWC-Net~\cite{wu2019pointpwc} is a coarse-to-fine method for scene flow estimation using hierarchical feature extraction and warping, which is based on the optical flow method PWC-Net~\cite{sun2018pwc}. A novel learnable Cost Volume Layer is introduced to aggregate costs in a patch-to-patch manner. Additional self-supervised losses are introduced to train the model without ground-truth labels. Bi-PointFlowNet~\cite{cheng2022bi} follows the coarse-to-fine scheme and introduces bidirectional flow embedding layers to learn features along both forward and backward directions. Based on previous methods~\cite{liu2019flownet3d,wu2019pointpwc}, HCRF-Flow~\cite{li2021hcrf} introduces a high-order conditional random fields (CRFs) based relation module (Con-HCRFs) to explore rigid motion constraints among neighboring points to force point-wise smoothness and within local regions to force region-wise rigidity. FH-Net~\cite{ding2022fh} proposes a fast hierarchical network with lightweight Trans-flow layers to compute key points flow and inverse Trans-up layers to upsample the coarse flow based on the similarity between sparse and dense points.
+
+\paragraph{Recurrent Methods:}
+FlowStep3D~\cite{kittenplon2021flowstep3d}, is the first recurrent method for non-rigid scene flow estimation. They first use a global correlation unit to estimate an initial flow at the coarse scale, and then update the flow iteratively by a Gated Recurrent Unit (GRU). 
+RAFT3D~\cite{teed2021raft} also adopts a recurrent framework. Here, the objective is not the scene flow itself but a dense transformation field that maps each point from the first frame to the second frame. The transformation is then iteratively updated by a GRU. PV-RAFT~\cite{wei2021pv} presents point-voxel correlation fields to capture both short-range and long-range movements. 
+Both coarse-to-fine and recurrent methods take the cost volume as input to a convolutional neural network for scene flow prediction. However, these regression techniques may not be able to accurately capture fast movements, and as a result, multi-stage refinement is often necessary. 
+On the other hand, we propose a simpler architecture that solves scene flow estimation in a single-scale global matching process with no iterative refinement.
+
+\paragraph{Soft Correspondence Methods:}
+Some work poses the scene flow estimation as an optimal transport problem. FLOT~\cite{puy2020flot} introduces an Optimal Transport Module that gives a dense transport plan informing the correspondence between all pairs of points in the two point clouds. Convolutional layers are further applied to refine the scene flow. SCTN~\cite{li2022sctn} introduces a voxel-based sparse convolution followed by a point transformer feature extraction module. Both features, from convolution and transformer, are used for correspondence computation. 
+However, these methods involve complicated regularization and constraints to estimate the optimal transport from the correlation matrix. Moreover, the correspondences are only computed within a small neighboring region. 
+We instead follow the recent global matching paradigm~\cite{edstedt2023dkm,xu2022gmflow,zhao2022global} and solve the scene flow estimation with a global matcher that is able to capture both short-distance and long-distance correspondence.
+
+\paragraph{Runtime Optimization, Prior Assumptions, and Self-supervision:}
+Different from the proposed method, which is fully supervised and trained offline, some other works focus on runtime optimization, prior assumptions, and self-supervision.
+Li \textit{et al.}~\cite{li2021neural} revisit the need for explicit regularization in supervised scene flow learning. The deep learning methods tend to rely on prior statistics learned during training, which are domain-specific. This does not guarantee generalization ability during testing. To this end, Li \textit{et al.} propose to rely on runtime optimization with scene flow prior as strong regularization.
+Based on~\cite{li2021neural} Lang \textit{et al.}~\cite{lang2023scoop} propose to combine runtime optimization with self-supervision. A correspondence model is first trained to initialize the flow. Refinement is done by optimizing the flow refinement component during runtime. The whole process can be done under self-supervision. 
+Pontes \textit{et al.}~\cite{pontes2020scene} propose to use the graph Laplacian of a point cloud to force the scene flow to be "as rigid as possible". Same as in~\cite{li2021neural}, this constraint can be optimized during runtime.
+Li \textit{et al.}~\cite{li2022rigidflow} propose a self-supervised scene flow learning approach with local rigidity prior assumption for real-world scenes. Instead of relying on point-wise similarities for scene flow estimation, region-wise rigid alignment is enforced.
+Most recently, Chodosh \textit{et al.}~\cite{chodosh2023re} identifies the main challenges of LiDAR scene flow estimation as estimating the remaining simple motions after removing the dominant rigid motion. 
+By combining ICP, rigid assumptions, and runtime optimization, they achieve state-of-the-art performance without any training data.
+
+\subsection{Point Cloud Registration}
+Related to scene flow estimation, there are some correspondence-based point cloud registration methods. 
+Such methods separate the point cloud registration task into two stages: finding the correspondences and recovering the transformation.
+PPFNet~\cite{deng2018ppfnet} and PPF-FoldNet~\cite{deng2018ppf} proposed by Deng \textit{et al.} focus on finding sparse corresponding 3D local features. 
+Gojcic \textit{et al.}~\cite{gojcic2019perfect} propose to use voxelized smoothed density value (SDV) representation to match 3D point clouds. 
+These methods only compute sparse correspondences and are not capable of handling dense correspondences required in scene flow tasks. 
+More related works are CoFiNet~\cite{yu2021cofinet} and GeoTransformer~\cite{qin2022geometric}, both of which involve finding dense correspondences employing transformer architectures. 
+Yu \textit{et al.} in CoFiNet~\cite{yu2021cofinet} proposes a detection-free learning framework and find dense point correspondence in a coarse-to-fine manner. 
+Qin \textit{et al.} in GeoTransformer~\cite{qin2022geometric} further improves the accuracy by leveraging the geometric information. 
+RoITr~\cite{yu2023rotation} introduces a Rotation-Invariant Transformer to disentangle the geometry and poses, and tackle point cloud matching under arbitrary pose variations. 
+PEAL~\cite{yu2023peal} introduced prior embedded Explicit Attention Learning model (PEAL), and for the first time explicitly inject overlap prior into Transformer to solve point cloud registration under low overlap. 
+However, the goal of point cloud registration is not to estimate the translation vectors for each of the points, which makes our work different from these approaches.
+
+\subsection{Transformers}
+Transformers were first proposed in~\cite{vaswani2017attention} for translation tasks with an encoder-decoder architecture using only attention and fully connected layers. Transformers have been proven to be efficient in sequence-to-sequence problems, well-suited to research problems involving sequential and unstructured data. The key to the success of transformers over convolutional neural networks is that they can capture long-range dependencies within the sequence, which is very important, not only in translation but also in many other tasks e.g. computer vision~\cite{dosovitskiy2020image}, audio processing~\cite{liu2021tera}, recommender systems~\cite{sun2019bert4rec}, and natural language processing~\cite{wolf2020transformers}. 
+
+Transformers have also been explored for point clouds~\cite{lu2022transformers}. The coordinates of all points are stacked together directly as input to the transformers. For the tasks of classification and segmentation, PT~\cite{zhao2021point} proposes constructing a local point transformer using k-nearest-neighbors. Each of the points would then attend to its nearest neighbors. PointASNL~\cite{yan2020pointasnl} uses adaptive sampling before the local transformer, and can better deal with noise and outliers. PCT~\cite{guo2021pct} proposes to use global attention and results in a global point transformer. Pointformer~\cite{pan20213d} proposes a new scheme where first local transformers are used to extract multi-scale feature representations, then local-global transformers are used as cross attention to multi-scale features, finally, a global transformer captures context-aware representations. Point-BERT~\cite{yu2022point} is originally designed for masked point modeling. Instead of treating each point as one data item, they group the point cloud into several local patches. Each of these sub-clouds is tokenized to form input data. 
+
+Previous work on scene flow estimation exploits the capability of transformers for feature extraction either using global-based transformers in a local matching paradigm~\cite{li2022sctn} or local-based transformers in a recurrent architecture~\cite{fu2023pt}. 
+Instead, we propose to leverage both local and global transformers to learn a feature representation for each point on a single scale. 
+We show that high-quality feature representations are the fundamental property that is needed for scene flow estimation when formulated as a global matching problem.
+
+
+
+Proposed Method
+\label{sec:method}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/Framework.png}
+    \caption{\textbf{Method Overview.} We propose a simple yet powerful method for scene flow estimation. In the first stage (see Section~\ref{sec:feats}) we propose a strong local-global-cross transformer architecture that is capable of extracting robust and highly localizable features. In the second stage (see Section~\ref{sec:globalmatching}), a simple global matching yields the flow. In comparison to previous work, our approach is significantly simpler, while achieving state-of-the-art results.}
+    \label{framework}
+\end{figure}
+Given two point clouds $\pcA \in \reals^{N_1 \times 3}$ and $\pcB \in \reals^{N_2 \times 3}$ with only position information,
+the objective is to estimate the \emph{scene flow} $V \in \reals^{N_1 \times 3}$ that maps each point in the source point cloud to the target point cloud. 
+Due to the sparse nature of the point clouds, the points in the source and the target point clouds do not necessarily have a one-to-one correspondence, which makes it difficult to formulate scene flow estimation as a dense matching problem. 
+Instead, we show that learning a cross-feature similarity matrix of point pairs as soft correspondence is sufficient for scene flow estimation.
+Unlike many applications based on point cloud processing which need to acquire a high-level understanding, e.g. classification and segmentation, scene flow estimation requires a low-level understanding to distinguish geometry features between each element in the point clouds. 
+To this end, we propose a transformer architecture to learn high-quality features for each point.
+The proposed method consists of two core components: feature extraction (see Section~\ref{sec:feats}) and global matching (see Section~\ref{sec:globalmatching}).
+The overall framework is shown in Figure~\ref{framework}.
+
+\subsection{Feature Extraction}
+\label{sec:feats}
+\paragraph{Tokenization:}
+Given the 3D point clouds $\pcA$, $\pcB$, each point $x_i$ is first tokenized to get summarized information of its local neighbors. We first employ an off-the-shelf feature extraction network DGCNN~\cite{wang2019dynamic} to map the input 3D coordinate $x_i$ into a high dimensional feature space $x_i^h$ conditioned on its nearest neighbors $x_j$. Each layer of the network can be written as 
+\begin{equation}
+    x_{i}^h = \max_{x_j \in \mathcal{N}(i)} h(x_i, x_j-x_i),
+\end{equation}
+where $h$ represents a sequence of linear layers, batch normalization, and ReLU layers. 
+The local neighbors $x_j \in \mathcal{N}(i)$ are found by a k-nearest-neighbor (knn) algorithm.
+Multiple layers are stacked together to get the final feature representation.
+
+For each point, local information is incorporated within a small region by applying a local Point Transformer~\cite{zhao2021point} within $x_j \in \mathcal{N}(i)$. The transformer is given by
+\begin{equation}
+    x_{i}^l = \sum_{x_j \in \mathcal{N}(i)}\gamma(\varphi_l(x_i^h)-\psi_l(x_j^h)+\delta) \odot (\alpha_l(x_j^h)+\delta),
+\end{equation}
+where the input features are first passed through linear layers $\varphi_l$, $\psi_l$, and $\alpha_l$ to generate query, key and value. $\delta$ is the relative position embedding that gives information about the 3D coordinate distance between $x_i$ and $x_j$. 
+$\gamma$ represents a Multilayer Perceptron consisting of two linear layers and
+one ReLU nonlinearity. The output $x_{i}^l$ is further processed by a linear layer and a residual connection from $x_i^h$.
+\paragraph{Global-cross Transformer:}
+Transformer blocks are used to process the embedded tokens. Each of the blocks includes self-attention followed by cross-attention~\cite{sarlin2020superglue,sun2021loftr,vaswani2017attention,xu2022gmflow}. 
+
+The self-attention is formulated as
+\begin{equation}
+    x_i^g = \sum_{x_j \in \pcA}\langle\varphi_g(x_i^l), \psi_g(x_j^l)\rangle \alpha_g(x_j^l),
+\end{equation}
+where each point $x_i\in \pcA$ attends to all the other points $x_j\in \pcA$, same for the points $x_i\in \pcB$. Linear layers $\varphi_g$, $\psi_g$, and $\alpha_g$ generate the query, key, and value. $\langle , \rangle$ denotes a scalar product. Linear layer, layer norm, and skip connection are further applied to complete the self-attention module.
+
+The cross-attention is given as
+\begin{equation}
+    x_{i}^c = \sum_{x_j \in \pcB}\langle\varphi_c(x_i^g), \psi_c(x_j^g)\rangle \alpha_c(x_j^g),
+\end{equation}
+where each point $x_i\in \pcA$ in the source point cloud attends to all the points $x_j\in \pcB$ in the target point cloud, and vice versa. Feedforward network with multi-layer perceptron and layer norm are applied to aggregate information to the next transformer block. 
+The detailed architecture of our proposed local-global-cross transformer is presented in Figure~\ref{transformer}.
+The feature matrices $F_1 \in \reals^{N_1 \times d}$ and $F_2 \in \reals^{N_2 \times d}$ are formed as the concatenation of all the output feature vectors from the final transformer block, where $N_1$ and $N_2$ are the number of points in the two point clouds and $d$ is the feature dimension.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/Transformers.png}
+    \caption{\textbf{Transformer Architecture}. Detailed local (left), global (middle), and cross (right) transformer architecture. The local transformer incorporates attention within a small number of neighbors. The global transformer is applied on the source and target points separately and incorporates attention on the whole point clouds. The cross transformer further attends to the other point cloud and gets the final representation conditioned on both the source and the target.}
+    \label{transformer}
+\end{figure}
+
+\subsection{Global Matching}
+\label{sec:globalmatching}
+Feature similarity matrices are the only information that is needed for an accurate scene flow estimation. First, the \emph{cross similarity matrix} between the source and the target point clouds is given by multiplying the feature matrices $F_1$ and $F_2$ and then normalizing over the second dimension with softmax to get a right stochastic matrix, 
+\begin{equation}
+    C_\text{cross}=\frac{F_1F_2^T}{\sqrt{d}},% \in \reals^{N_1 \times N_2},
+\end{equation}
+\begin{equation}
+    \crossatt = \text{softmax}(C_\text{cross}),% \in \reals^{N_1 \times N_2},
+\end{equation}
+where each row of the matrix $\crossatt \in \reals^{N_1 \times N_2}$ is the matching confidence from one point in the source point cloud to all the points in the target point cloud. 
+The second similarity matrix is the \emph{self similarity matrix} of the source point cloud, given by
+\begin{equation}
+    C_\text{self}=\frac{W_q(F_1)W_k(F_1)^T}{\sqrt{d}},% \in \reals^{N_1 \times N_1},
+\end{equation}
+\begin{equation}
+    \selfatt = \text{softmax}(C_\text{self}),% \in \reals^{N_1 \times N_1},
+\end{equation}
+which is a matrix multiplication of the linearly projected point feature $F_1$. 
+$W_q$ and $W_k$ are learnable linear projection layers. 
+Each row of the matrix $\selfatt \in \reals^{N_1 \times N_1}$ is the feature similarity between one point in the source point cloud to all the other points in the source point cloud.
+Given the point cloud coordinates $\pcA \in \reals^{N \times 3}$ and $\pcB \in \reals^{N \times 3}$, the estimated matching point $\hat{\pcB}$ in the target point cloud is computed as a weighted average of the 3D coordinates based on the matching confidence
+\begin{equation}
+    \pcBpred = \crossatt \pcB.% \in \reals^{N_1 \times 3}.
+\end{equation}
+The scene flow is computed as the movement between the matching points
+\begin{equation}
+    \hat{V}_{\text{inter}} = \pcBpred - \pcA.% \in \reals^{N_1 \times 3}.
+\end{equation}
+The estimation procedure can also be seen as a weighted average of the translation vectors between point pairs, where a softmax ensures that the weights sum to one.
+
+For occlusions in the source point cloud, the matching would fail under the assumption that there exists a matching point in the target point cloud.
+We avoid this by employing a self similarity matrix that utilizes information from the source point cloud. 
+The self-similarity matrix $M_\text{self}$ bears the similarity information for each pair of points in the source point cloud. Nearby points tend to share similar features and thus have higher similarities. Multiplying $M_\text{self}$ with the predicted scene flow $\hat{V}_\text{inter}$ can be seen as an smoothing procedure, where for each point, its predicted scene flow vector is updated as the weighted average of the scene flow vectors of the nearby points that share similar features.
+This also allows the network to propagate the correctly computed non-occluded scene flow estimation to its nearby occluded areas, which gives
+\begin{equation}
+    \hat{V}_{\text{final}} = \selfatt \hat{V}_{\text{inter}}. % \in \reals^{N_1 \times 3}.
+\end{equation}
+\subsection{Loss Formulation}
+Let $\hat{V}$ be the estimated scene flow and $V_{gt}$ be the ground-truth. We follow CamLiFlow~\cite{liu2022camliflow} and use a robust training loss to supervise the process, given by
+\begin{equation}
+    \mathcal{L}_{\hat{V}} = \sum_{i}(\lVert\hat{V}_{\text{final}}(i)-V_{\text{gt}}(i)\rVert_1+\epsilon)^q,
+\end{equation}
+where $\epsilon$ is set to 0.01 and $q$ is set to 0.4. 
+
+
+
+Experiments
+\subsection{Implementation Details}
+The proposed method is implemented in PyTorch. Following previous methods~\cite{gu2019hplflownet,wu2019pointpwc}, the numbers of points $N_1$ and $N_2$ are both set to 8192 during training and testing, randomly sampled from the full set. 
+We perform data augmentation by randomly flipping horizontally and vertically. 
+We use the AdamW optimizer with a learning rate of $2 \cdot 10^{-4}$, a weight decay of $10^{-4}$, and OneCycleLR as the scheduler to anneal the learning rate. 
+The raining is done for $600$k iterations with a batch size of $8$.
+\subsection{Evaluation Metrics}
+For a fair comparison we follow previous work~\cite{gu2019hplflownet,teed2021raft,wu2019pointpwc} and evaluate the proposed method with the accuracy metric $EPE_{3D}$, and the robustness metrics $ACC_{S}$, $ACC_{R}$ and $Outliers$. 
+$EPE_{3D}$ is the 3D end point error $\parallel \hat{V}-V_{gt} \parallel_2$ between the estimated scene flow and the ground truth averaged over each point. 
+$ACC_{S}$ is the percentage of the estimated scene flow with an end point error less than 0.05 meter or relative error less than 5\%. 
+$ACC_{R}$ is the percentage of the estimated scene flow with an end point error less than 0.1 meter or relative error less than 10\%. 
+$Outliers$ is the percentage of the estimated scene flow with an end point error more than 0.3 meter or relative error more than 10\%.
+
+\subsection{Datasets}
+The proposed method is tested on three established benchmarks for scene flow estimation. 
+
+\textbf{FlyingThings3D}~\cite{mayer2016large} is a synthetic dataset of objects generated by ShapeNet~\cite{chang2015shapenet} with randomized movement rendered in a scene. 
+The dataset consists of 25000 stereo frames with ground truth data. 
+
+\textbf{KITTI Scene Flow}~\cite{menze2015object} is a real world dataset for autonomous driving. 
+The annotation is done with the help of CAD models. 
+It consists of 200 scenes for training and 200 scenes for testing.
+
+Both datasets have to be preprocessed in order to obtain 3D points from the depth images. There exist two widely used preprocessing methods to generate the point clouds and the ground truth scene flow, one proposed by Liu \textit{et al.} in FlowNet3D~\cite{liu2019flownet3d} and the other proposed by Gu \textit{et al.} in HPLFlowNet~\cite{gu2019hplflownet}. The difference between the two approaches is that Liu \textit{et al.}~\cite{liu2019flownet3d} keeps all valid points with an occlusion mask available during training and testing. Gu \textit{et al.}~\cite{gu2019hplflownet} simplifies the task by removing all occluded points. We denote the datasets preprocessed by Liu \textit{et al.} in FlowNet3D as F3D$_o$/KITTI$_o$ and by Gu \textit{et al.} in HPLFlowNet as F3D$_s$/KITTI$_s$. 
+In the original setting from~\cite{gu2019hplflownet,liu2019flownet3d}, the FlyingThing3D dataset \textbf{F3D$_s$} consists of 19640 and 3824 stereo scenes for training and testing, respectively. \textbf{F3D$_o$} consists of 20000 and 2000 stereo scenes for training and testing, respectively.
+For the KITTI dataset, \textbf{KITTI$_s$} consists of 142 scenes from the training set, and \textbf{KITTI$_o$} consists of 150 scenes from the training set. 
+Since there is no annotation available in the testing set of KITTI, we follow previous methods to test the generalization ability of the proposed method without any fine-tuning on KITTI$_s$ and KITTI$_o$. 
+For better evaluation and analysis, we additionally follow the setting in CamLiFlow~\cite{liu2022camliflow} to extend F3D$_s$ to include occluded points. We denote this as \textbf{F3D$_c$}.
+
+\textbf{Waymo-Open dataset}~\cite{sun2020scalability} is a large-scale autonomous driving dataset. 
+We follow~\cite{ding2022fh} to preprocess the dataset to create the scene flow dataset. 
+The dataset contains 798 training and 202 validation sequences. Each sequence consists of 20 seconds of 10Hz point cloud data. Different from ~\cite{ding2022fh} which only contains 100 sequences, we trained and tested our model on the full dataset. 
+
+\subsection{State-of-the-art Comparison}
+We compare our proposed method GMSF with state-of-the-art methods on FlyingThings3D in different settings. Table~\ref{F3Dc} shows the results on F3D$_c$. 
+Evaluation metrics are calculated over both \emph{non-occluded} points and \emph{all} points.
+Among all the methods, including methods with the corresponding stereo images as additional input~\cite{teed2021raft}, or even with optical flow as additional ground truth for supervision~\cite{liu2022camliflow,liu2023learning}, our proposed method achieves the best performance both in terms 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

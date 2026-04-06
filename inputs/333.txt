@@ -1,0 +1,324 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+
+
+
+Driven by the growth of datasets, the increase in model size, and advances in generative language foundation models \citep{achiam2023gpt,touvron2023llama}, multi-modal large language models (MLLMs) now offer unprecedented abilities as general-purpose interfaces.
+These advancements are spurring innovation across various visual and linguistic tasks \citep{chen2023x,lyu2023macaw,su2023pandagpt}.
+While significant strides have been made in building a unified foundation model for natural scenery \citep{chen2022unified,lu2022unified,lu2023unified}, the development of generalist medical artificial intelligence is still in its early stages \citep{moor2023foundation}.
+
+The goal of a unified and generalist medical foundation model is to enable joint training on massive medical datasets. 
+This model aims to handle multiple tasks and modalities within a single architecture with shared parameters \citep{zhang2023biomedgpt,li2024llava}.
+It seeks to eliminate the need for task-specific modules and further fine-tuning, thereby revolutionizing the traditional task-specific approach to model development \citep{wu2023towards,tu2024towards}.
+However, existing open-source efforts have not yet fully achieved these ambitious goals.
+
+A key challenge in creating a unified medical foundation model is the complexity of multi-modal, multi-task learning, often exacerbated by the tug-of-war problem \citep{hadsell2020embracing}.
+Inherent task conflicts and data imbalances can cause interference during the simultaneous learning of different tasks.
+This problem is particularly acute in the medical field, where tasks and modalities are highly specialized and diverse.
+As a result, the performance of each task may degrade compared to task-specialized models \citep{yu2020gradient,zhu2022uni}.
+
+\begin{figure}
+\centerline{\includegraphics[scale=0.32]{f1.pdf}}
+\caption{Multi-task learning in a unified framework: synergy hypothesis (a),  conflict hypothesis in LLM (b) and connector (c), conflict-synergy coexist hypothesis in LLM (d) and connector (e).}
+\label{F1}
+\end{figure}
+
+To mitigate the tug-of-war problem in multi-task learning, recent advances introduce the well-known Mixture-of-Experts (MoE) \citep{jacobs1991adaptive} into MLLMs.
+Figure~\ref{F1} illustrates three distinct hypotheses and their corresponding architectural implementations for multi-task learning.
+The first "synergy hypothesis" suggests that all tasks benefit from a fully shared backbone comprising a visual encoder, connector, and language model, which is the standard architecture for MLLMs.
+The second "conflict hypothesis", proposes that each task requires its own specific adaptations, thereby preventing knowledge sharing among tasks.
+The third "conflict-synergy coexistence hypothesis", posits that all tasks share multi-task adaptations, which reduces interference and promotes more efficient knowledge sharing. 
+However, current research \citep{zadouri2023pushing,gou2023mixture,liu2023moelora,lin2024moe} mainly tailors the MoE approach to the language model components, overlooking the potential benefits of exploring and enhancing the connector.
+Furthermore, the optimization of the tug-of-war problem lacks a detailed, explainable analysis.
+
+In this study, we first identify a tug-of-war problem in multi-task learning at the connector level within standard MLLM architectures.
+This issue indicates that different tasks may emphasize different types of features in multi-modal, multi-task scenarios. Consequently, a fully shared connector may fall short as it cannot accommodate the diverse modal features required by each task.
+Drawing inspiration from the successful application of MoE in LLMs, we introduce Connector-MoE (CMoE), a novel approach that employs a mixture of projection experts to align visual and language embedding spaces effectively, thus mitigating the tug-of-war problem.
+As a pioneering effort in constructing a unified generalist foundation model in the medical field, we present Uni-Med.
+This model comprises a universal visual feature extraction module, a CMoE module, and an LMM.
+Uni-Med demonstrates impressive performance across six distinct medical tasks, with minimal training computational overhead.
+It achieves joint training on 12 datasets on a single A800 in under 10 hours.
+The effectiveness and generalization of CMoE are underscored through ablation experiments. 
+Additionally, an interpretable analysis reveals that Uni-Med provides a superior solution to the tug-of-war problem at the connector level.
+Overall, Uni-Med delivers competitive or even superior performance compared to open-source, state-of-the-art medical MLLMs on all test sets.
+Our contributions can be summarized as:\\
+\textbullet \quad We present Uni-Med, an open-source medical generalist foundation model with a unified interface and shared parameters, which can perform six different medical tasks including question answering, visual question answering, report generation, referring expression comprehension, referring expression generation and image classification.\\
+\textbullet \quad We propose CMoE, a well-designed replacement module for the connector of MLLMs, which significantly outperforms baselines under any configuration, with up to an average 8\% performance gains. To our knowledge, Uni-Med is the first attempt to focus on the connector to mitigate the tug-of-war problem, which is critical but has always been overlooked. \\
+\textbullet \quad Focusing on the question of how the tug-of-war problem is optimized, which has never been quantitatively discussed, we provide detailed interpretability analysis and instructive findings from the perspective of gradient optimization and parameter statistics. \\
+\textbullet \quad Uni-Med achieves competitive or superior performance compared to the open-source, state-of-the-art medical MLLMs on test set of diverse tasks, which demonstrates the huge potential of medical generalist foundation models.
+
+
+
+
+Related work
+\paragraph{Medical foundation models}
+The increasing availability of medical data, as well as advances in multi-modal LLM technologies, have paved the way for the emergence of medical foundational models.
+Med-Flamingo \citep{moor2023med} continues pre-training on paired and interleaved medical image-text data based on OpenFlamingo \citep{awadalla2023openflamingo}. 
+LLaVA-Med \citep{li2024llava} curates a medical multi-modal instruction following dataset and fine-tunes LLaVA \citep{liu2024visual} with it. 
+XrayGPT \citep{thawkar2023xraygpt} can analyze and answer open-ended questions about chest X-rays. 
+BiomedGPT \citep{zhang2023biomedgpt} is a multi-task foundation model pretrained on a diverse source of medical images, literature, and clinical notes.
+However, most of these efforts require further fine-tuning on task-specific data to support downstream applications.
+One step further, the generalist foundation model uses the same weight to excel at various tasks without fine-tuning.
+RadFM \citep{wu2023towards} is dedicated to build a generalist foundation model for radiology.
+Med-PaLM M \citep{tu2024towards} is directly trained in a unified framework to jointly handle many tasks, which is perhaps most similar to our effort.
+Nevertheless, it does not provide access for usage.
+\paragraph{MoE in multi-task learning}
+MoE is originally considered to increase the model capacity \citep{riquelme2021scaling,fedus2022switch} and gains popularity in mitigating multi-task interference \citep{chen2023mod,chen2024llava}. It achieves this by utilizing a router to determine the token set handled by each expert, thus reducing interference between different types of samples.
+Recent studies have focused on combining MoE with LLM, such as MoE-LLaVA \citep{lin2024moe} and Mixtral 8x7B \citep{jiang2024mixtral}, or combining MoE with one of the representative parameter-efficient tuning techniques, i.e., LoRA \citep{hu2021lora}, such as Octavius \citep{chen2023octavius}, MoCLE \citep{gou2023mixture}, and MTLoRA \citep{agiza2024mtlora}.
+However, neither of them introduces MoE into the connector and explicitly provides interpretable analysis of how the multi-task interference is mitigated.
+\paragraph{Cross-modality connector in MLLM}
+The connector between the multi-modal encoder and the LLM is critical in aligning multi-modal features.
+One of the most popular paradigms is to map multi-modal features into a feature space that aligns with language, such as linear projection \citep{liu2024visual} and MLP projection \citep{liu2023improved,chen2023sharegpt4v}.
+Another paradigm is to transform multi-modal features into multi-modal tokens that are consistent with the embedded representation space of LLM, such as cross-attention \citep{li2022blip,ye2023mplug}, perceiver resampler \citep{alayrac2022flamingo,peng2023kosmos} and
+Q-Former \citep{li2023blip,zhu2023minigpt}.
+However, existing paradigms use the same connector when processing the same modal data for different tasks, ignoring the necessity to learn different alignment patterns for different tasks.
+
+
+
+
+Methodology
+\subsection{Preliminaries}
+\subsubsection{Multi-task interference}
+\label{3.1.1}
+To quantify the intricate tug-of-war problem in a unified foundation model, we provide interpretability from the perspective of gradient optimization and parameter statistics.
+\paragraph{Perspective of gradient optimization}
+When optimizing the shared parameters $\theta$ according to task $j$,
+the change in the update direction of loss $L_i$ for task $i$ can be defined as \citep{zhu2022uni}:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\Delta_j L_i\left(x_i\right) \doteq \mathbb{E}_{x_j}\left(L_i\left(x_i ; \theta\right)-L_i\left(x_i ; \theta-\lambda \frac{\nabla_\theta L_j\left(x_j\right)}{\left\|\nabla_\theta L_j\left(x_j\right)\right\|_2}\right)\right) \approx \lambda \mathbb{E}_{x_j}\left(\frac{\nabla_\theta L_j\left(x_j\right)^T}{\left\|\nabla_\theta L_j\left(x_j\right)\right\|_2} \nabla_\theta L_i\left(x_i\right)\right)
+\end{equation}
+\end{small}
+
+where $x_i$ and $x_j$ are the sampled training batches of task $i$ and $j$, respectively.
+The interference of task $j$ on task $i$ in the update direction can be quantified as:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\mathcal{GD}_{i, j}=\mathbb{E}_{x_i}\left(\frac{\Delta_j L_i\left(x_i\right)}{\Delta_i L_i\left(x_i\right)}\right)
+\end{equation}
+\end{small}
+
+The gradient magnitude similarity between task $i$ and task $j$ can be defined as:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\mathcal{GM}_{i, j}=\mathcal{GM}_{j, i}=\frac{2\mathbb{E}_{x_i}\left(\left\|\nabla_\theta L_i\left(x_i\right)\right\|_2\right)\mathbb{E}_{x_j}\left(\left\|\nabla_\theta L_j\left(x_j\right)\right\|_2\right)}{\left(\mathbb{E}_{x_i}\left(\left\|\nabla_\theta L_i\left(x_i\right)\right\|_2\right)\right)^2
++\left(\mathbb{E}_{x_j}\left(\left\|\nabla_\theta L_j\left(x_j\right)\right\|_2\right)\right)^2}
+\end{equation}
+\end{small}
+
+$\mathcal{GM}_{i, j}$ goes to zero when the difference in gradient magnitudes is large, indicating that some task is dominant \citep{yu2020gradient}.
+For all $T$ tasks, we can get $\bm{\mathcal{GD}},\bm{\mathcal{GM}} \in \mathbf{R}^{{T}\times T}$.
+Then, we define the tug-of-war indexes for each task in multi-task learning through the function $G$ as follows:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\textit{tug-of-war indexes} = G(\bm{\mathcal{GD}},\bm{\mathcal{GM}})=\left[\sum\nolimits_{j=1}^T \mathcal{GD}_{i, j} \cdot \mathcal{GM}_{i, j}\right]_{i=1}^T
+\end{equation}
+\end{small}
+\paragraph{Perspective of parameter statistics}
+Inspired by the Gradient Positive Sign Purity proposed by \citet{chen2020just}, we define the statistics score of a single parameter in multi-task learning:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\textit{statistics score}=\left|\frac{\sum_i^T \nabla_\theta L_i}{\sum_i^T\left|\nabla_\theta L_i\right|}\right|
+\end{equation}
+\end{small}
+
+where $\nabla_\theta L_i$ is the gradient for task $i$. 
+The range of the statistics score is [0, 1], and a value close to 1 indicates that this parameter suffers less gradient conflict during multi-task training.
+Upon collecting the statistics scores of all parameters, we can intuitively demonstrate and analyze the phenomenon of multi-task interference.
+
+To be specific, we sample 100 batches for each datasets and record the gradients to calculate all of the above metrics.
+Figure~\ref{F2} shows the dataset-level (more granular than task-level) multi-task interference of the synergy hypothesis model at the connector.
+\begin{figure}
+  \centerline{\includegraphics[scale=0.51]{f2.pdf}}
+  \caption{Dataset-level multi-task interference of the synergy hypothesis model at the connector. (a) perspective of gradient direction $\bm{\mathcal{GD}}$. (b) perspective of gradient magnitude $\bm{\mathcal{GM}}$.}
+\label{F2}
+\end{figure}
+
+\subsubsection{Mixture-of-Experts}
+
+A Mixture-of-Experts (MoE) contains a set of expert networks $E_1, E_2, ..., E_N$ along with a routing network $R$. 
+For each token $x_i$ in the input sequence $\bm{X}=\{x_i\}_{i=1}^L$, the output of MoE is the weighted sum of outputs from each expert, where the weight is calculated by the router:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+y_i=\sum_{k=1}^N R(x_i)_k \cdot E_k(x_i)
+\end{equation}
+\end{small}
+
+The types of $R$ can mainly be divided into: 
+1) Constant router, which assigns equal weight to each expert.
+2) Hard router, which enforces one-to-one mapping between tasks and experts.
+3) Sparse router, which selects Top-K experts with the maximum routing weight.
+4) Soft router, which calculates the routing weights for each expert.
+1}.
+\subsection{Model Architecture}
+\begin{figure}
+  \centerline{\includegraphics[scale=0.36]{f3.pdf}}
+  \caption{Overall architecture of Uni-Med, which consists of a universal vision feature extraction module, a connector-MoE module and an LLM. Uni-Med can perform six different medical tasks including question answering, visual question answering, report generation, referring expression comprehension, referring expression generation and image classification.}
+\label{F3}
+\end{figure}
+With the primary goal of achieving a unified medical generalist foundation
+model and mitigating the tug-of-war problem of multi-task learning in mind,
+we design the overall architecture of Uni-Med as illustrated in Figure~\ref{F3}, which contains three components:
+a universal vision feature extraction module, a connector-MoE module and an LLM.
+Detailed descriptions are presented in the following sections.
+\subsubsection{Visual feature extraction module}
+Taking one of the multi-modal medical images $\bm{I} \in \mathbf{R}^{{H}\times W\times C}$ as input, the visual encoder $\bm{V}_{en}$ extracts the image tokens $\bm{f}_v \in \mathbf{R}^{{N_v}\times {D_v}}$ for image perception, where 
+${N_v} = HW /{P^{2}}$ is the number of image patches and ${D_v}$ is the hidden size of visual embeddings.
+
+To alleviate the efficiency issues caused by prolonged visual input tokens during the training and inference, we scheme a resampler with a compression rate $\alpha$ for visual feature aggregation.
+Concretely, $\alpha$ adjacent visual tokens are concatenated and projected into one single embedding.
+Thus we obtain aggregated image tokens $\bm{f}_{v}^{ag} \in \mathbf{R}^{{N_v / \alpha}\times {D_v \alpha}}$ as follows:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\bm{f}_{v}^{ag}=\textit{resampler}\left(\bm{V}_{en}\left( \bm{I} \right), \alpha\right)
+\end{equation}
+\end{small}
+
+\subsubsection{Connector-MoE module}
+Aligning the visual space with the language embedding space of the large language model is a critical process, especially in the complex and diverse input of multi-task multi-modal medical image text pairs.
+Based on the conflict-synergy coexist hypothesis, we propose the Connector-MoE (CMoE) module, which aims to adaptively minimize task conflict and maximize task synergy at the connector.
+CMoE module has $N$ projection experts $E_1, E_2, ..., E_N$, where each expert is a two-layer MLP, and a soft router $R_{\textit{soft}}$ to control the contribution of each expert.
+
+According to Figure~\ref{F2},
+we find that: 
+(1) Gradient optimization conflict is common and consistent at the task level.
+(2) Even for the same task, there are significant differences in conflict and synergy at dataset-level.
+To alleviate the above problems, we randomly initialize vision-level special task tokens $\{\bm{f}_{t}^{sp} \}_{t \in T}$, where $\bm{f}_{t}^{sp} \in \mathbf{R}^{{D_v \alpha}}$ and $T$ is the set of tasks.
+$R_{\textit{soft}}$ is a lightweight MLP designed to receive the concatenated inputs of $\bm{f}_{v}^{ag}$ (token level) and $\bm{f}_{t}^{sp}$ (task level), and calculate the routing weights $\bm{w}_{\textit{soft}}\in \mathbf{R}^{{D_v / \alpha} \times {N}}$ of each expert for each image token, which can be formulated as:
+\begin{small}
+\begin{equation}
+\bm{w}_{\textit{soft}}\left(\bm{f}_{v}^{ag}\right)=
+\sigma \cdot
+R_{\textit{soft}}\left(
+\left[\bm{f}_{v}^{ag}, Repeat \left( \bm{f}_{t}^{sp}\right)\right]\right)
+\end{equation}
+\end{small}
+
+where $\left[,\right]$ denotes concatenation operation, $\sigma$ is \textit{SoftMax} function.
+Then we can obtain aligned visual tokens $\bm{f}_{v}^{align} \in \mathbf{R}^{{N_v / \alpha}\times {D_t}}$ through a weighted sum of all experts' output as follows:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\bm{f}_{v}^{align}=\sum_{k=1}^N \bm{w}_{\textit{soft},k} \cdot E_k(\bm{f}_{v}^{ag})
+\end{equation}
+\end{small}
+
+where ${D_t}$ is the hidden size of the language embedding space of the large language model and $\bm{w}_{\textit{soft},k}$ denotes the routing weight of the $k$-th projection expert.
+We discuss and analyze the effects of router type, router strategy, and number of experts in Section~\ref{4.2.1}.
+\begin{table}
+\small
+\tabcolsep= 0.23cm
+  \caption{Text-level special task identifiers for different tasks.}
+  \label{T1}
+  \centering
+\begin{tabular}{c c c c c c c}
+\toprule
+\multirow{3}{*}{\textbf{Task}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Question\\ Answering\end{tabular}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Visual\\ Question\\ Answering\end{tabular}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Report\\ Generation\end{tabular}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Referring\\ Expression \\ Comprehension\end{tabular}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Referring\\ Expression\\ Generation\end{tabular}} & \multirow{3}{*}{\begin{tabular}[c]{@{}c@{}}Image\\ Classification\end{tabular}} \\
+ &  &  &  &  &  &  \\
+ &  &  &  &  &  &  \\ \midrule
+\textbf{Identifier} & {[}qa{]} & {[}vqa{]} & {[}caption{]} & {[}refer{]} & {[}identify{]} & {[}cls{]} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Large language model}
+Similar to the vision-level special task tokens, we assign the text-level special task identifiers for question answering (QA), visual question answering (VQA), report generation (RG), referring expression comprehension (REC), referring expression generation (REG) and image classification (CLS) as shown in Table~\ref{T1}, which can help reduce multi-task ambiguity \citep{chen2023minigpt}.
+The text prompt is designed as
+"<Img> < ImageFeature> </Img> [Task Identifier] Instruction",
+which merges the converted image features with the textual instructions.
+After word embedding, we can obtain textual tokens $\bm{f}_t \in \mathbf{R}^{{N_t}\times {D_t}}$, where $N_t$ denotes the number of textual tokens.
+LLM generates the response $\bm{O} = \{O_i\}_{i=1}^{L}$ conditioned on the aligned visual tokens $\bm{f}_{v}^{align}$ and textual tokens $\bm{f}_t$ inputs in an autoregressive manner, which can be formulated as:
+\begin{small}
+\begin{equation}
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+p\left(\mathbf{O}_t \mid \bm{f}_{v}^{align}, \bm{f}_t\right)=\prod_{i=1}^L p\left(O_i \mid \bm{f}_{v}^{align}, \bm{f}_t, O_{<i}\right)
+\end{equation}
+\end{small}
+
+where $L$ is the length of output tokens.
+We use low-rank adaption (LoRA) \citep{hu2021lora} for efficient LLM fine-tuning, which is applied to all the linear layers.
+
+\begin{table}
+\tiny
+\tabcolsep= 0.056cm
+\renewcommand\arraystretch{0.992}
+\caption{Experiments of ablation study.
+Metrics are reported on "Slake-VQA/Path-VQA", "Slake-REC/SA-Med2D-REC", "Slake-REG/SA-Med2D-REG", "MIMIC-CXR/MPx-Single", "DermaMNIST/OrganSMNIST" for the task of VQA, REC, REG, RG, and CLS, respectively.}
+\label{T2}
+\begin{tabular}{cccccccccccccc}
+\toprule
+& \multicolumn{2}{c}{\textbf{Router}} & \textbf{VQA} &  & \textbf{REC} &  & \textbf{REG}&  & \textbf{RG} &  & \textbf{CLS} &  &  \\
+\multirow{-2}{*}{\textbf{Connector}} & \textbf{Type} & \textbf{Strategy} & BLEU-1 & \multirow{-2}{*}{$\Delta \left(\uparrow\right)$} & IoU & \multirow{-2}{*}{$\Delta \left(\uparrow\right)$} & BLEU-1 & \multirow{-2}{*}{$\Delta \left(\uparrow\right)$} & BLEU-1 & \multirow{-2}{*}{$\Delta \left(\uparrow\right)$} & Accuracy & \multirow{-2}{*}{$\Delta \left(\uparrow\right)$} & \multirow{-2}{*}{\begin{tabular}[c]{@{}c@{}}\textbf{Total}\\ \textbf{$\Delta \left(\uparrow\right)$}\end{tabular}} \\
+
+\midrule
+\multicolumn{14}{l}{\textbf{(a) Connector design}} \\
+\midrule
+
+Linear & - & - & 77.90 / 56.27 & -1.4\% & 28.44 / 11.59 & -23.9\% & 74.98 / 55.61 & -2.1\% & 13.80 / 15.85 & -11.6\% & 72.47 / 69.39 & -5.4\% & -8.9\% \\
+MLP & - & - & \cellcolor[HTML]{F2F2F2}79.81 / 56.48 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}35.18 / 16.26 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}74.54 / 58.42 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}18.55 / 15.50 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}76.26 / 73.64 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2} \\
+ & Constant & - & 82.74 / 57.38 & 2.6\% & 33.94 / 15.49 & -4.1\% & 73.58 / 58.51 & -0.6\% & 23.16 / 15.88 & 13.7\% & 75.91 / 76.50 & 1.7\% & 2.7\% \\
+ & Hard & - & 81.85 / \textbf{59.09} & \textbf{3.6\%} & 30.01 / 11.59 & -21.7\% & 70.91 / 58.04 & -2.8\% & 22.76 / 15.79 & 12.3\% & \textbf{81.55} / \textbf{81.18} & \textbf{8.6\%} & 0.0\% \\
+ & Sparse & Token & 80.68 / 57.02 & 1.0\% & 37.07 / 18.41 & 9.3\% & 76.86 / 60.08 & 3.0\% & 24.02 / 15.73 & 15.5\% & 73.47 / 74.93 & -1.0\% & 5.6\% \\
+ &  & Token & 81.79 / 57.69 & 2.3\% & 35.51 / 17.79 & 5.2\% & 74.43 / \textbf{61.34} & 2.4\% & \textbf{26.27} / 15.61 & \textbf{21.2\%} & 76.56 / 77.21 & 2.6\% & 6.7\% \\
+ &  & Task & \textbf{82.51} / 57.43 & 2.5\% & \textbf{38.33} / 19.68 & 15.0\% & \textbf{78.18} / 60.67 & \textbf{4.4\%} & 23.34 / \textbf{15.89} & 14.2\% & 77.56 / 76.55 & 2.8\% & 7.8\% \\
+\multirow{-6}{*}{CMoE} & \multirow{-3}{*}{Soft} & Token\&Task & \cellcolor[HTML]{D9D9D9}81.52 / 57.75 & \cellcolor[HTML]{D9D9D9}2.2\% & \cellcolor[HTML]{D9D9D9}37.54 / \textbf{20.30} & \cellcolor[HTML]{D9D9D9}\textbf{15.8\%} & \cellcolor[HTML]{D9D9D9}77.45 / 60.42 & \cellcolor[HTML]{D9D9D9}3.7\% & \cellcolor[HTML]{D9D9D9}24.70 / 15.55 & \cellcolor[HTML]{D9D9D9}16.7\% & \cellcolor[HTML]{D9D9D9}75.61 / 76.92 & \cellcolor[HTML]{D9D9D9}1.8\% & \cellcolor[HTML]{D9D9D9}\textbf{8.0\%} \\
+
+\midrule
+\multicolumn{14}{l}{\textbf{(b) Resampler design}} \\
+\midrule
+
+\multicolumn{3}{l}{Compression Rate = 1} & 79.63 / \textbf{58.34} & 1.5\% & 30.20 / 14.48 & -12.6\% & 70.81 / 60.12 & -1.0\% & 23.92 / 15.54 & 14.6\% & \textbf{78.20} / 76.16 & \textbf{3.0\%} & 1.1\% \\
+\multicolumn{3}{l}{Compression Rate = 2, Projection} & \textbf{83.74} / 57.70 & \textbf{3.5\%} & 37.02 / 18.57 & 9.7\% & 71.89 / 60.32 & -0.2\% & \textbf{25.83} / 15.77 & \textbf{20.5\%} & 74.56 / 76.70 & 1.0\% & 6.9\% \\
+\multicolumn{3}{l}{Compression Rate = 4, Max Pooling} & 80.36 / 57.44 & 1.2\% & 27.16 / 14.37 & -17.2\% & 68.30 / 57.56 & -4.9\% & 18.85 / 15.60 & 1.1\% & 75.71 / 73.08 & -0.7\% & -4.1\% \\
+\multicolumn{3}{l}{Compression Rate = 4, Avg Pooling} & 81.96 / 57.93 & 2.6\% & 34.21 / 14.76 & -6.0\% & 73.39 / 59.59 & 0.2\% & 22.18 / \textbf{15.88} & 11.0\% & 72.42 / 74.54 & -1.9\% & 1.2\% \\
+\multicolumn{3}{l}{Compression Rate = 4, Projection} & \cellcolor[HTML]{D9D9D9}81.52 / 57.75 & \cellcolor[HTML]{D9D9D9}2.2\% & \cellcolor[HTML]{D9D9D9}\textbf{37.54} / \textbf{20.30} & \cellcolor[HTML]{D9D9D9}\textbf{15.8\%} & \cellcolor[HTML]{D9D9D9}\textbf{77.45} / \textbf{60.42} & \cellcolor[HTML]{D9D9D9}\textbf{3.7\%} & \cellcolor[HTML]{D9D9D9}24.70 / 15.55 & \cellcolor[HTML]{D9D9D9}16.7\% & \cellcolor[HTML]{D9D9D9}75.61 / \textbf{76.92} & \cellcolor[HTML]{D9D9D9}1.8\% & \cellcolor[HTML]{D9D9D9}\textbf{8.0\%} \\
+
+\midrule
+\multicolumn{14}{l}{\textbf{(c) Number of projection experts}} \\
+\midrule
+
+\multicolumn{3}{c}{3} & 80.45 / 56.88 & 0.8\% & 35.98 / 17.36 & 4.5\% & 66.64 / 58.10 & -5.6\% & 24.00 / 16.00 & 16.3\% & 74.86 / 74.59 & -0.3\% & 3.1\% \\
+\multicolumn{3}{c}{5} & \cellcolor[HTML]{D9D9D9}81.52 / 57.75 & \cellcolor[HTML]{D9D9D9}2.2\% & \cellcolor[HTML]{D9D9D9}37.54 / \textbf{20.30} & \cellcolor[HTML]{D9D9D9}\textbf{15.8\%} & \cellcolor[HTML]{D9D9D9}\textbf{77.45} / 60.42 & \cellcolor[HTML]{D9D9D9}3.7\% & \cellcolor[HTML]{D9D9D9}24.70 / 15.55 & \cellcolor[HTML]{D9D9D9}16.7\% & \cellcolor[HTML]{D9D9D9}75.61 / 76.92 & \cellcolor[HTML]{D9D9D9}1.8\% & \cellcolor[HTML]{D9D9D9}\textbf{8.0\%} \\
+\multicolumn{3}{c}{8} & 82.71 / 57.86 & 3.0\% & 36.66 / 18.34 & 8.5\% & 71.15 / 58.40 & -2.3\% & 24.47 / \textbf{15.74} & 16.7\% & \textbf{77.91} / 76.53 & 3.0\% & 5.8\% \\
+\multicolumn{3}{c}{10} & \textbf{83.21} / 57.85 & 3.3\% & \textbf{38.70} / 19.01 & 13.5\% & 75.06 / 61.43 & 2.9\% & 25.02 / 15.05 & 16.0\% & 77.66 / \textbf{77.99} & \textbf{3.9\%} & 7.9\% \\
+\multicolumn{3}{c}{16} & 82.92 / \textbf{58.70} & \textbf{3.9\%} & 35.74 / 17.66 & 5.1\% & 76.74 / \textbf{61.45} & \textbf{4.1\%} & \textbf{27.18} / 15.48 & \textbf{23.2\%} & 75.86 / 77.36 & 2.3\% & 7.7\% \\
+
+\midrule
+\multicolumn{14}{l}{\textbf{(d) Module generalization under LoRA rank setting}} \\
+\midrule
+
+rank & \multicolumn{2}{c}{Connector\&Router} &  &  &  &  &  &  &  &  &  & &  \\
+ & \multicolumn{2}{c}{MLP} & \cellcolor[HTML]{F2F2F2}80.70 / 56.42 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}36.35 / 16.32 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}64.34 / 57.02 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}22.70 / 15.54 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}71.62 / 74.06 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2} \\
+ & \multicolumn{2}{c}{CMoE,Hard} & 81.94 / 57.77 & 2.0\% & 29.30 / 10.98 & -26.1\% & 70.14 / 51.45 & -0.4\% & 22.74 / 15.76 & 0.8\% & 81.95 / 80.46 & 11.5\% & -2.4\% \\
+\multirow{-3}{*}{4} & \multicolumn{2}{c}{CMoE,Soft} & \cellcolor[HTML]{D9D9D9}\textbf{82.63} / 57.66 & \cellcolor[HTML]{D9D9D9}2.3\% & \cellcolor[HTML]{D9D9D9}32.80 / 15.31 & \cellcolor[HTML]{D9D9D9}-8.0\% & \cellcolor[HTML]{D9D9D9}68.12 / \textbf{60.84} & \cellcolor[HTML]{D9D9D9}\textbf{6.3\%} & \cellcolor[HTML]{D9D9D9}24.46 / 15.61 & \cellcolor[HTML]{D9D9D9}4.1\% & \cellcolor[HTML]{D9D9D9}76.11 / 73.84 & \cellcolor[HTML]{D9D9D9}3.0\% & \cellcolor[HTML]{D9D9D9}1.5\% \\
+ & \multicolumn{2}{c}{MLP} & \cellcolor[HTML]{F2F2F2}79.81 / 56.48 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}35.18 / 16.26 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}74.54 / 58.42 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}18.55 / 15.50 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}76.26 / 73.64 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2} \\
+ & \multicolumn{2}{c}{CMoE,Hard} & 81.85 / \textbf{59.09} & 3.6\% & 30.01 / 11.59 & -21.7\% & 70.91 / 58.04 & -2.8\% & 22.76 / 15.79 & 12.3\% & 81.55 / \textbf{81.18} & 8.6\% & 0.0\% \\
+\multirow{-3}{*}{8} & \multicolumn{2}{c}{CMoE,Soft} & \cellcolor[HTML]{D9D9D9}81.52 / 57.75 & \cellcolor[HTML]{D9D9D9}2.2\% & \cellcolor[HTML]{D9D9D9}37.54 / \textbf{20.30} & \cellcolor[HTML]{D9D9D9}15.8\% & \cellcolor[HTML]{D9D9D9}\textbf{77.45} / 60.42 & \cellcolor[HTML]{D9D9D9}3.7\% & \cellcolor[HTML]{D9D9D9}24.70 / 15.55 & \cellcolor[HTML]{D9D9D9}16.7\% & \cellcolor[HTML]{D9D9D9}75.61 / 76.92 & \cellcolor[HTML]{D9D9D9}1.8\% & \cellcolor[HTML]{D9D9D9}\textbf{8.0\%} \\
+ & \multicolumn{2}{c}{MLP} & \cellcolor[HTML]{F2F2F2}79.10 / 56.45 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}32.73 / 14.81 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}72.65 / 57.89 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}24.42 / 16.09 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}69.18 / 75.43 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2} \\
+ & \multicolumn{2}{c}{CMoE,Hard} & 81.38 / 57.70 & 2.5\% & 30.01 / 12.89 & -10.6\% & 71.56 / 56.42 & -2.0\% & 22.05 / 15.69 & -6.1\% & 81.75 / 79.83 & 12.0\% & -0.8\% \\
+\multirow{-3}{*}{16} & \multicolumn{2}{c}{CMoE,Soft} & \cellcolor[HTML]{D9D9D9}82.54 / 58.85 & \cellcolor[HTML]{D9D9D9}\textbf{4.3\%} & \cellcolor[HTML]{D9D9D9}\textbf{38.11} / 19.13 & \cellcolor[HTML]{D9D9D9}\textbf{22.8\%} & \cellcolor[HTML]{D9D9D9}71.99 / 59.99 & \cellcolor[HTML]{D9D9D9}1.4\% & \cellcolor[HTML]{D9D9D9}26.52 / 15.58 & \cellcolor[HTML]{D9D9D9}2.7\% & \cellcolor[HTML]{D9D9D9}76.51 / 75.99 & \cellcolor[HTML]{D9D9D9}5.7\% & \cellcolor[HTML]{D9D9D9}7.4\% \\
+ & \multicolumn{2}{c}{MLP} & \cellcolor[HTML]{F2F2F2}79.23 / 56.50 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}33.50 / 16.13 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}72.04 / 58.78 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}18.67 / 15.42 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2}71.67 / 72.69 & \cellcolor[HTML]{F2F2F2} & \cellcolor[HTML]{F2F2F2} \\
+ & \multicolumn{2}{c}{CMoE,Hard} & 82.25 / 58.54 & 3.7\% & 30.56 / 11.97 & -17.3\% & 7
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

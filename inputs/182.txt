@@ -1,0 +1,192 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+While Neural Architecture Search (NAS) approaches automate neural architecture design, eliminating the need for manual design process with trial-and-error~\citep{zoph2016neural, liu2018darts, cai2018proxylessnas, luo2018neural, real2019regularized, white2020local}, they mostly suffer from the high search cost, which often includes the full training with the searched architectures. To address this issue, many previous works have proposed to utilize parameterized property predictors~\citep{luo2018neural, white2019bananas, white2021powerful, white2023neural, ning2020generic, ning2021evaluating, dudziak2020brp,  lee2021rapid, lee2021hardware, lee2023metaprediction} that can predict the performance of an architecture without training. However, existing NAS approaches still result in large waste of time as they need to explore an extensive search space and the property predictors mostly play a passive role such as the evaluators that rank architecture candidates provided by a search strategy to simply filter them out during the search process.
+
+To overcome such limitations, we propose a paradigm shift from NAS (Neural Architecture Search) to a novel conditional NAG (Neural Architecture Generation) framework that enables the \emph{generation} of desired neural architectures. Specifically, we introduce a novel predictor-guided \textbf{Diffusion}-based \textbf{N}eural \textbf{A}rchitecture \textbf{G}enerative framework called DiffusionNAG, which explicitly incorporates the predictors into generating architectures that satisfy the objectives (e.g., high accuracy or robustness against attack). To achieve this goal, we employ the diffusion generative models~\citep{ho2020denoising, song2021scorebased}, which generate data by gradually injecting noise into the data and learning to reverse this process. They have demonstrated remarkable generative performance across a wide range of domains. Especially, we are inspired by their parameterized model-guidance mechanism~\citep{sohl2015deep, vignac2022digress} that allows the diffusion generative models to excel in conditional generation over diverse domains such as generating images that match specific labels~\citep{ramesh2021zero} or discovering new drugs meeting particular property criteria~\citep{lee2023MOOD}.
+
+In this framework, we begin by training the base diffusion generative model to generate architectures that follow the distribution of a search space without requiring expensive label information, e.g., accuracy. Then, to achieve our primary goal of generating architectures that meet the specified target condition, we deploy the trained diffusion model to diverse downstream tasks, while controlling the generation process with property predictors. Specifically, we leverage the gradients of parameterized predictors to guide the generative model toward the space of the architectures with desired properties. The proposed conditional NAG framework offers the key advantages compared with the conventional NAS methods as follows: Firstly, our approach facilitates efficient search by generating architectures that follow the specific distribution of interest within the search space, minimizing the time wasted exploring architectures that are less likely to have the desired properties. Secondly, DiffusionNAG, which utilizes the predictor for both NAG and evaluation purposes, shows superior performance compared to the traditional approach, where the same predictor is solely limited to the evaluation role. Lastly, DiffusionNAG is easily applicable to various types of NAS tasks (e.g., latency or robustness-constrained NAS) as we can swap out the predictors in a plug-and-play manner without retraining the base generative model, making it practical for diverse NAS scenarios.
+
+Additionally, to ensure the generation of valid architectures, we design a novel score network for neural architectures. In previous works on NAS, neural architectures have been typically represented as directed acyclic graphs~\citep{zhang2019d} to model their computational flow where the input data sequentially passes through the multiple layers of the network to produce an output. However, existing graph diffusion models~\citep{niu2020permutation, jo2022score} have primarily focused on \emph{undirected} graphs, which represent structure information of graphs while completely ignoring the directional relationships between nodes, and thus cannot capture the computational flow in architectures. To address this issue, we introduce a score network that encodes the positional information of nodes to capture their order connected by directed edges.
+
+We demonstrate the effectiveness of DiffusionNAG with extensive experiments under two key predictor-based NAS scenarios: 1) Transferable NAS and 2) Bayesian Optimization (BO)-based NAS. For Transferable NAS using transferable dataset-aware predictors, DiffusionNAG achieves superior or comparable performance with the speedup of up to 35$\times$ on four datasets from Transferable NAS benchmarks, including the large MobileNetV3 (MBv3) search space and NAS-Bench-201. Notably, DiffusionNAG demonstrates superior generation quality compared to MetaD2A~\citep{lee2021rapid}, a closely related \emph{unconditional} generation-based method. For BO-based NAS with task-specific predictors, DiffusionNAG outperforms existing BO-based NAS approaches that rely on heuristic acquisition optimization strategies, such as random architecture sampling or architecture mutation, across four acquisition functions. This is because DiffusionNAG overcomes the limitation of existing BO-based NAS, which samples low-quality architectures during the initial phase, by sampling from the space of the architectures that satisfy the given properties. DiffusionNAG obtains especially large performance gains on the large MBv3 search space on the ImageNet 1K dataset, demonstrating its effectiveness in restricting the solution space when the search space is large. Furthermore, we verify that our score network generates 100\% valid architectures by successfully capturing their computational flow, whereas the diffusion model for undirected graphs~\citep{jo2022score} almost fails.
+
+Our contributions can be summarized as follows:
+\begin{itemize}[itemsep=1mm, parsep=1pt, leftmargin=*]
+\item We propose a paradigm shift from conventional NAS approaches to a novel conditional Neural Architecture Generation (NAG) scheme, by proposing a framework called DiffusionNAG. With the guidance of the property predictors, DiffusionNAG can generate task-optimal architectures for diverse tasks.
+\item DiffusionNAG offers several advantages compared with conventional NAS methods, including efficient and effective search, superior utilization of predictors for both NAG and evaluation purposes, and easy adaptability across diverse tasks.
+\item  Furthermore, to ensure the generation of valid architectures by accurately capturing the computational flow, we introduce a novel score network for neural architectures that encodes positional information in directed acyclic graphs representing architectures. 
+\item We have demonstrated the effectiveness of DiffusionNAG in Transferable NAS and BO-NAS scenarios, achieving significant acceleration and improved search performance in extensive experimental settings. DiffusionNAG significantly outperforms existing NAS methods in such experiments.
+
+
+\end{itemize}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Method
+\label{sec:method}
+\input{Figure_Tex/figure_concept_w_meta_predictor}
+In~\Cref{sec:nag}, we first formulate the diffusion process for the generation of the architectures that follow the distribution of the search space. In~\Cref{sec:method-guided}, we propose a conditional diffusion framework for NAG that leverages a predictor for guiding the generation process. Finally, we extend the architecture generation framework for Transferable NAS in~\Cref{sec:task-guided}.
+\paragraph{Representation of Neural Architectures}
+\label{sec:method-representation}
+A neural architecture $\bm{A}$ in the search space $\mathcal{A}$ is typically considered as a directed acyclic graph (DAG)~\citep{dong2020nasbench201}. Specifically, the architecture $\bm{A}$ with $N$ nodes is defined by its operator type matrix $\bm{\mathcal{V}} \in \mathbb{R}^{N \times F}$ and upper triangular adjacency matrix $\bm{\mathcal{E}} \in \mathbb{R}^{N \times N}$, as $\bm{A}=(\bm{\mathcal{V}}, \bm{\mathcal{E}}) \in \mathbb{R}^{N \times F} \times \mathbb{R}^{N \times N}$, where $F$ is the number of predefined operator sets. In the MobileNetV3 search space~\citep{cai2019once}, $N$ represents the maximum possible number of layers, and the operation sets denote a set of combinations of the kernel size and width.
+
+\subsection{Neural Architecture Diffusion Process} 
+\label{sec:nag}
+As a first step, we formulate an unconditional neural architecture diffusion process. Following~\citet{song2021scorebased}, we define a forward diffusion process that describes the perturbation of neural architecture distribution (search space) to a known prior distribution (e.g., Gaussian normal distribution) modeled by a stochastic differential equation (SDE), and then learn to reverse the perturbation process to sample the architectures from the search space starting from noise.
+
+\paragraph{Forward process}
+We define the forward diffusion process that maps the neural architecture distribution $p(\bm{A}_0)$ to the known prior distribution $p(\bm{A}_T)$ as the following It\^{o} SDE:
+\begin{align}
+    \mathrm{d}\bm{A}_t = \mathbf{f}_t(\bm{A}_t)\mathrm{d}t + g_t\mathrm{d}\mathbf{w},
+    \label{eq:forward_diffusion}
+\end{align}
+where $t$-subscript represents a function of time ($F_t(\cdot)\coloneqq F(\cdot,t)$), $\mathbf{f}_t(\cdot)\colon\mathcal{A}\to\mathcal{A}$ is the linear drift coefficient, $g_t\colon\mathcal{A}\to\mathbb{R}$ is the scalar diffusion coefficient, and $\mathbf{w}$ is the standard Wiener process. 
+Following \citet{jo2022score}, we adopt a similar approach where architectures are regarded as entities embedded in a continuous space. Subsequently, during the forward diffusion process, the architecture is perturbed with Gaussian noise at each step.
+
+\paragraph{Reverse process} The reverse-time diffusion process corresponding to the forward process is modeled by the following SDE~\citep{reversesde,song2021scorebased}:
+\begin{align}
+    \mathrm{d}\bm{A}_t = \left[\mathbf{f}_{t}(\bm{A}_t) - g_{t}^2 \pscore{\bm{A}_t}{\bm{A}_t} \right]\!\mathrm{d}\overbar{t} + g_{t}\mathrm{d}\bar{\mathbf{w}} ,
+    \label{eq:reverse_diffusion}
+\end{align}
+where $p_t$ denotes the marginal distribution under the forward diffusion process, $\mathrm{d}\overbar{t}$ represents an infinitesimal negative time step and $\bar{\mathbf{w}}$ is the reverse-time standard Wiener process.
+
+In order to use the reverse process as a generative model, the score network $\bm{s}_{\bm{\theta}}$ is trained to approximate the score function $\pscore{\bm{A}_t}{\bm{A}_t}$ with the following score matching~\citep{score-matching,song2021scorebased} objective, where $\lambda(t)$ is a given positive weighting function:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \bm{\theta}^* = \argmin_{\bm{\theta}}\mathbb{E}_t\! \left\{\lambda(t) \mathbb{E}_{\bm{A}_0}\mathbb{E}_{\bm{A}_t|\bm{A}_0} \left\| \bm{s}_{\bm{\theta}}(\bm{A}_t, t) - \pscore{\bm{A}_t}{\bm{A}_t} \right\|^2_2\right\} .
+    \label{eq:score_matching}
+\end{align}
+\end{sizeddisplay}
+Once the score network has been trained, we can generate neural architectures that follow the original distribution $p(\bm{A}_0)$ using the reverse process of \Cref{eq:reverse_diffusion}. To be specific, we start from noise sampled from the known prior distribution and simulate the reverse process, where the score function is approximated by the score network $\bm{s}_{\bm{\theta}^*}(\bm{A}_t, t)$. Following various continuous graph diffusion models~\citep{niu2020permutation, jo2022score}, we discretize the entries of the architecture matrices using the operator $\mathbbm{1}_{>0.5}$ to obtain discrete 0-1 matrices after generating samples by simulating the reverse diffusion process. Empirically, we observed that the entries of the generated samples after simulating the diffusion process do not significantly deviate from integer values of 0 and 1.
+
+\paragraph{Score Network for Neural Architectures}
+
+To generate valid neural architectures, the score network should capture 1) the dependency between nodes, reflecting the computational flow~\citep{dong2020bench, zhang2019d}, and 2) the accurate position of each layer within the overall architecture to comply with the rules of a specific search space. 
+Inspired by \citet{yan2021cate} on architecture encoding, we use $L$ transformer blocks ($\operatorname{T}$) with an attention mask $\bm{M}\in \mathbb{R}^{N\times N}$ that indicates the dependency between nodes, i.e., an upper triangular matrix of DAG representation~\citep{dong2020bench, zhang2019d}, to parameterize the score network. (See~\Cref{sec:supple-diffusionnag-details} for more detailed descriptions)
+Furthermore, we introduce positional embedding $\mathbf{Emb}_{pos}\!\left(\rvv_i\right)$ to more accurately capture the topological ordering of layers in architectures, which leads to the generation of valid architectures adhering to specific rules within the given search space as follows:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    &\mathbf{Emb}_i = \mathbf{Emb}_{ops}\left({\rvv}_i\right) +\mathbf{Emb}_{pos}\left(\rvv_i\right) + \mathbf{Emb}_{time}\left(t\right), \text { where }\, \rvv_i:i\text{-th row of } \bm{\mathcal{V}} \text{ for } i \in [N], \label{eq:scorenet-embedding} \\
+    &\bm{s}_{\bm{\theta}}\left(\bm{A}_t, t\right)
+    =\operatorname{MLP}\left(\bm{H}_L\right),
+    \text { where }\, \bm{H}_{i}^0=\mathbf{Emb}_i, \bm{H}^l=\operatorname{T}\left(\bm{H}^{l-1}, \bm{M}\right) \text { and }\bm{H}^l=[\bm{H}_1^l \cdots \bm{H}_N^l],
+    \label{eq:scorenet-architecture}
+\end{align}
+\end{sizeddisplay}
+where $\mathbf{Emb}_{ops}\!\left({\rvv}_i\right)$ and $\mathbf{Emb}_{time}\!\left(t\right)$ are embeddings of each node ${\rvv}_i$ and time $t$, respectively. 
+
+While simulating \Cref{eq:reverse_diffusion} backward in time can generate random architectures within the entire search space, random generation is insufficient for the main goal of DiffusionNAG.
+Therefore, we introduce a \emph{conditional} NAG framework to achieve this goal in the following section.
+
+\subsection{Conditional Neural Architecture Generation}
+\label{sec:method-guided}
+
+Inspired by the parameterized model-guidance scheme~\citep{sohl2015deep, vignac2022digress, dhariwal2021diffusion}, we incorporate a parameterized predictor in our framework to actively guide the generation toward architectures that satisfy specific objectives.
+Let $y$ be the desired property (e.g., high accuracy or robustness against attacks) we want the neural architectures to satisfy. 
+Then, we include the information of $y$ into the score function. 
+To be specific, we generate neural architectures from the conditional distribution $p_t(\bm{A}_t|{y})$ by solving the following conditional reverse-time SDE~\citep{song2021scorebased}:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \mathrm{d}\bm{A}_t = \left[\mathbf{f}_{t}(\bm{A}_t) - g_{t}^2 \pscore{\bm{A}_t}{\bm{A}_t|{y}} \right]\!\mathrm{d}\overbar{t} + g_{t}\mathrm{d}\bar{\mathbf{w}} .
+    \label{eq:cond_reverse_diffusion}
+\end{align}
+\end{sizeddisplay}
+Here, we can decompose the conditional score function $\pscore{\bm{A}_t}{\bm{A}_t|{y}}$ in \Cref{eq:cond_reverse_diffusion} as the sum of two gradients that is derived from the Bayes' theorem $p(\bm{A}_t|{y}) \propto  p(\bm{A}_t)\ p({y}|\bm{A}_t)$:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \pscore{\bm{A}_t}{\bm{A}_t|{y}} = \pscore{\bm{A}_t}{\bm{A}_t}
+    + \pscore{\bm{A}_t}{{y}|\bm{A}_t} .
+    \label{eq:decompose_cond_score}
+\end{align}
+\end{sizeddisplay}
+By approximating the score function $\pscore{\bm{A}_t}{\bm{A}_t}$ with the score network $\bm{s}_{\theta^{*}}$, the conditional generative process of \Cref{eq:cond_reverse_diffusion} can be simulated if the term $\pscore{\bm{A}_t}{{y}|\bm{A}_t}$ could be estimated.
+Since $\log p_t({y}|\bm{A}_t)$ represents the log-likelihood that the neural architecture $\bm{A}_t$ satisfies the target property ${y}$, we propose to model $\log p_t({y}|\bm{A}_t)$ using a pre-trained predictor $f_{\bm{\phi}}(y|\bm{A}_t)$ parameterized by $\bm{\phi}$, which predicts the desired property $y$ given a perturbed neural architecture $\bm{A}_t$:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \pscore{\bm{A}_t}{{y}|\bm{A}_t}
+    \approx {\nabla_{\bm{A}_t}\! \log f_{\bm{\phi}}({y}|\bm{A}_t)} .
+    \label{eq:classifier-guidance}
+\end{align} 
+\end{sizeddisplay}
+As a result, we construct the guidance scheme with the predictor as follows, where $k_t$ is a constant that determines the scale of the guidance of the predictor:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \mathrm{d}\bm{A}_t = \left\{\mathbf{f}_{t}(\bm{A}_t) - g_{t}^2 \Big[\bm{s}_{\bm{\theta}^{*}}(\bm{A}_t, t) + k_t {\nabla_{\bm{A}_t}\! \log f_{\bm{\phi}}({y}|\bm{A}_t)}\Big]\right\}\mathrm{d}\overbar{t}
+    + g_{t}\mathrm{d}\bar{\mathbf{w}} .
+    \label{eq:cond_reverse_diffusion_theta}
+\end{align}
+\end{sizeddisplay}
+Intuitively, the predictor guides the generative process by modifying the unconditional score function which is estimated by $s_{\bm{\theta}^{*}}$ at each sampling step. The key advantage of this framework is that we only need to train the score network \textbf{once} and can generate architectures with various target properties by simply changing the predictor. Our approach can reduce significant computational overhead for the conditional NAG compared to the classifier-free guidance scheme~\citep{hoogeboom2022equivariant} that requires retraining the diffusion model every time the conditioning properties change. 
+
+\subsection{Transferable Conditional Neural Architecture Generation}\label{sec:task-guided}
+Transferable NAS~\citep{lee2021rapid, shala2023transfer} offers practical NAS capabilities for diverse real-world tasks, by simulating human learning. They acquire a knowledge from past NAS tasks to improve search performance on new tasks. In this section, to achieve highly efficient Transferable NAS, we extend the conditional NAG framework discussed earlier into a diffusion-based transferable NAG method by combining our framework with the transferable dataset-aware predictors from Transferable NAS methods~\citep{lee2021rapid, shala2023transfer}.
+A dataset-aware predictor $f_{\bm{\phi}}(\bm{D}, \bm{A}_t)$ is conditioned on a dataset $\bm{D}$. In other words, even for the same architecture, if datasets are different, the predictor can predict accuracy differently. The predictor is meta-learned with~\Cref{eq:pp_objective} over the task distribution $p(\mathcal{T})$ utilizing a meta-dataset $\mathcal{S} \coloneqq  \{(\bm{A}^{(i)}, y_{i}, \bm{D}_i)\}_{i=1}^K$ with $K$ tasks consisting of (dataset, architecture, accuracy) triplets for each task. We use the meta-dataset collected by \cite{lee2021rapid}.
+The key advantage is that by exploiting the knowledge learned from the task distribution, we can conduct fast and accurate predictions for unseen datasets without additional predictor training.
+We integrate the meta-learned dataset-aware predictor $f_{\bm{\phi}}(\bm{D}, \bm{A}_t)$ into the conditional neural architecture generative process (\Cref{eq:cond_reverse_diffusion_theta}) for an unseen dataset $\bm{\tilde{D}}$ as follows:
+\begin{sizeddisplay}{\small}
+\begin{align}
+    \mathrm{d}\bm{A}_t = \left\{\mathbf{f}_{t}(\bm{A}_t) - g_{t}^2 \Big[\bm{s}_{\bm{\theta}^{*}}(\bm{A}_t, t) + k_t {\nabla_{\bm{A}_t}\! \log f_{\bm{\phi}}(y|\bm{\tilde{D}}, \bm{A}_t)}\Big]\right\}\mathrm{d}\overbar{t}
+    + g_{t}\mathrm{d}\bar{\mathbf{w}} .
+    \label{eq:cond_reverse_diffusion_theta_task}
+\end{align}
+\end{sizeddisplay}
+
+
+Experiment
+We validate the effectiveness of DiffusionNAG on two predictor-based NAS scenarios: Transferable NAS (\Cref{sec:exp-transfer-nas}) and BO-based NAS (\Cref{sec:exp-single-guided}). In~\Cref{sec:exp-analysis}, we demonstrate the effectiveness of the proposed score network. % In \Cref{sec:exp-analysis-generator}, we analyze DiffusionNAG's adaptation ability. %including the robustness of DiffusionNAG against the predictor quality. %In \Cref{sec:exp-transfer-nas}, we compare our DiffusionNAG with Transferable NAS methods on Transferable benchmarks. In \Cref{sec:exp-single-guided} 
+\paragraph{Search Space}
+We validate our framework on two Transferable NAS benchmark search spaces~\citep{lee2021rapid}: MobileNetV3 (MBv3)~\citep{cai2019once} and NAS-Bench-201 (NB201)~\citep{dong2020nasbench201}. Especially, MBv3 is a large search space, with approximately $\mathbf{10^{19}}$ architectures. (Please see~\Cref{sec:search_space} for detailed explanations.)
+\paragraph{Training Score Network}
+The score network is trained \emph{only once} for all experiments conducted within each search space. Note that training the score network \emph{only requires architectures (graph) without the need for accuracy which is expensive information}. The training process required 21.33 GPU hours (MBv3) and 3.43 GPU hours (NB201) on Tesla V100-SXM2, respectively. 
+
+\input{Table/tbl_main_mbv3}
+
+\subsection{Comparison with Transferable NAS Methods}
+\label{sec:exp-transfer-nas}
+\paragraph{Experimental Setup} Transferable NAS methods~\citep{shala2023transfer, lee2021rapid} are designed to leverage prior knowledge learned from previous NAS tasks, making NAS more practical on an unseen task. To achieve this, all Transferable NAS methods, including our DiffusionNAG,  utilize a \emph{transferable dataset-aware accuracy predictor}, as described in \Cref{sec:task-guided}. The dataset-aware predictor is meta-trained on the meta-dataset provided by \citet{lee2021rapid}, which consists of $153,408/4,230$ meta-training tasks for MBv3/NB201, respectively. For more details, please refer to  \citet{lee2021rapid}. \textbf{MetaD2A}~\citep{lee2021rapid}, which is the most closely related to our work, includes an unconditional architecture generative model that \emph{explicitly excludes the dataset-aware predictor} during the generation process. Instead, MetaD2A needs to search for optimal architectures across multiple tasks, train these architectures to obtain their accuracy data, and use this costly accuracy collection to train its generative model. Besides, it uses the dataset-aware predictor only during the subsequent evaluation stage to rank the generated architectures. During the test phase, it first \textit{objective-unconditionally generates} architectures and then evaluates the top architectures using its predictor. 
+\textbf{TNAS}~\citep{shala2023transfer} enhances the meta-learned dataset-aware predictor's adaptability to unseen datasets by utilizing BO with the deep-kernel GP strategy without involving any generation process (Please see~\Cref{sec:suppl-baselines} for details of the baselines.). \textbf{DiffusionNAG} \emph{conditionally generates} architectures with the diffusion model guided by the dataset-aware predictor. Our generation process, with a sampling batch size of 256, takes up to 2.02 GPU minutes on Tesla V100-SXM2 to sample one batch. Finally, we select the top architectures sorted by the predictor among the generated candidates. We conduct experiments on Transferable NAS benchmarks~\citep{lee2021rapid} such as four unseen datasets - CIFAR-10, CIFAR-100, Aircraft~\citep{aircraft-dataset}, and Oxford IIT Pets~\citep{pet-dataset} from large search space MBv3 (\Cref{tbl:main_mbv3}) and, NB201 (\Cref{tbl:main_nasbench201}). 
+\input{Table/tbl_main_nasbench201}
+\input{Figure_Tex/generator/gen_dist}
+\paragraph{Results on MBv3 Search Space} 
+In ~\Cref{tbl:main_mbv3}, MetaD2A, TNAS, and DiffusionNAG obtain the top 30 neural architectures for each datasets. Subsequently, we train these architectures on the datasets following the training pipeline described in~\Cref{sec:supple-training-pipeline}. Once the architectures are trained, we analyze the accuracy statistics for each method's group of architectures. Additionally, we calculate \textit{p-value} to assess the statistical significance of performance differences between the architecture groups obtained via DiffusionNAG and each method. A \textit{p-value} of 0.05 or lower denotes that a statistically meaningful difference exists in the performances of the generated architectures between the two groups.
+
+The results demonstrate that, except for the Aircraft dataset, DiffusionNAG consistently provides architectures with superior maximum accuracy (\textbf{max}) compared to other methods across three datasets. Additionally, the \textbf{mean} accuracy and minimum accuracy (\textbf{min}) of architectures within the DiffusionNAG group are higher across all datasets. In particular, the \textit{p-values} obtained from comparing the groups of architectures suggested by DiffusionNAG and those from other baselines are consistently below the 0.05 threshold across all datasets. This indicates that the architectures generated by DiffusionNAG have shown statistically significant performance improvements compared to those provided by the baseline methods when using transferable dataset-aware predictors.
+Furthermore, the results clearly support the superiority of the proposed predictor-guided conditional architecture generation method compared with either excluding predictors during generation (MetaD2A) or relying solely on predictors without generating architectures (TNAS).
+
+\paragraph{Results on NB201 Search Space} We highlight two key aspects from the results of \Cref{tbl:main_nasbench201}. Firstly, the architectures generated by DiffusionNAG attain oracle accuracies of $\mathbf{94.37\%}$ and $\mathbf{73.51\%}$ on CIFAR-10 and CIFAR-100 datasets, respectively, and outperform architectures obtained by the baseline methods on Aircraft and Oxford-IIIT Pets datasets. While MetaD2A and TNAS achieve accuracies of $\mathbf{59.15\%/57.71\%}$ and $\mathbf{40.00\%/39.04\%}$ on Aircraft and Oxford-IIIT Pets datasets, respectively, DiffusionNAG achieves comparable or better accuracies of $\mathbf{58.83\%}$ and $\mathbf{41.80\%}$, demonstrating its superiority. Secondly, DiffusionNAG significantly improves the search efficiency by minimizing the number of architectures that require full training (\textbf{Trained Archs}) to obtain a final accuracy (For CIFAR-10 and CIFAR-100, an accuracy is retrieved from NB201 benchmarks) compared to all baselines. Specifically, when considering the Aircraft and Oxford-IIIT Pets datasets, DiffusionNAG only needs to train $\mathbf{3/2}$ architectures for each dataset to complete the search process while MetaD2A and TNAS require $\mathbf{40/40}$ and $\mathbf{26/6}$ architectures, respectively. This results in a \textbf{remarkable speedup} of at least $\mathbf{15\times}$ and up to $\mathbf{35\times}$ on average. % when compared with baseline methods. 
+
+\input{Figure_Tex/SO_BO/SO}
+\input{Figure_Tex/SO_BO/NB201/C100}
+\paragraph{Further Anaylsis}
+We further analyze the accuracy statistics of the distribution of architectures generated by each method within the NB201 search space. Specifically, we conduct an in-depth study by generating 1,000 architectures using each method and analyzing their distribution, as presented in \Cref{tbl:gen_dist} and \Cref{fig:gen_dist}. We compare DiffusionNAG with two other methods: random architecture sampling (\textbf{Random}) and \textbf{MetaD2A}. Additionally, to assess the advantage of using a predictor in both the NAG and evaluation phases compared to an approach where the predictor is solely used in the evaluation phase, we unconditionally generate 10,000 architectures and then employ the predictor to select the top 1,000 architectures (\textbf{Uncond. + Sorting}).
+DiffusionNAG (\textbf{Cond.}) leverages the dataset-aware predictor $f_{\bm{\phi}}(\bm{D}, \bm{A}_t)$ to guide the generation process following~\Cref{eq:cond_reverse_diffusion_theta_task}. 
+
+The results from \Cref{tbl:gen_dist} and \Cref{fig:gen_dist} highlight three key advantages of our model over the baselines. Firstly, our model generates a higher proportion of high-performing architectures for each target dataset, closely following the Oracle Top-1000 distribution within the search space. Secondly, our model avoids generating extremely low-accuracy architectures, unlike the baseline methods, which generate architectures with only 10\% accuracy. This suggests that our model is capable of focusing on a target architecture distribution by excluding underperforming architectures. Lastly, as shown in \Cref{fig:gen_dist}, DiffusionNAG (\textbf{Cond.}) outperforms sorting after the unconditional NAG process (\textbf{Uncond. + Sorting}). These results highlight the value of involving the predictor not only in the evaluation phase but also in the NAG process, emphasizing the necessity of our \emph{conditional NAG} framework.
+
+\subsection{Improving Existing Bayesian Optimization-based NAS}\label{sec:exp-single-guided}
+
+In this section, we have demonstrated that DiffusionNAG significantly outperforms existing heuristic architecture sampling techniques used in Bayesian Optimization (BO)-based NAS approaches, leading to improved search performance in BO-based NAS. 
+\paragraph{BO-based NAS} The typical BO algorithm for NAS~\citep{white2023neural} is as follows: 1) Start with an initial population containing neural architecture-accuracy pairs by uniformly sampling $n_0$ architectures and obtaining their accuracy. 2) Train a predictor using architecture-accuracy pairs in the population, and 3) Sample $c$ candidate architectures by the Acquisition Optimization strategy (\textbf{AO strategy})~\citep{white2019bananas} and choose the one maximizing 
+an acquisition function based on the predictions of the predictor. 4) Evaluate the accuracy of the selected architec
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

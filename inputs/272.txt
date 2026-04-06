@@ -1,0 +1,279 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+\label{sec:intro}
+
+Deep Neural Network (DNN) models have achieved remarkable progress in various tasks, benefiting from abundant training samples and labels.
+Unfortunately, data labeling tends to be time-consuming and costly, especially for dense prediction tasks such as object detection and semantic segmentation, where experts may spend up to 90 minutes per image~\cite{lin2019block}.
+As such, effectively exploiting the limited annotation budget has become
+a long-standing problem in the advancement of computer vision.
+
+Many methods have been proposed to identify the most suitable samples for annotation, where the mainstream follows the active learning~\cite{ren2020survey,settles2009active} or subset selection~\cite{ramalingam2021less} pipelines.
+However,
+both kinds of methods rely on task-specific models. 
+As the most popular data selection strategy, active learning algorithms employ a time-consuming and computationally expensive batch selection strategy~\cite{sener2017active}, as shown in Fig.~\ref{fig:pre_pipeline}.
+Specifically, a task-specific model is first trained using a small initial set of labeled samples.
+Then, the model is utilized to select images within a specified batch budget size. 
+These selected images are annotated and added to the labeled pool, after which the model is retrained or fine-tuned using all the labeled samples.
+This iterative process is repeated multiple times for a large unlabeled data pool.
+Since the selection of data is tightly coupled with the task-specific model, the entire pipeline needs to be restarted from scratch and repeated when working on different tasks or datasets.
+In many cases, it even requires up to \textit{several days} to select sufficient samples from a medium-sized data pool (\eg, Core-Set \cite{sener2017active} in Tab.~\ref{tab:efficiency}). 
+\begin{figure}[htb!]
+    \centering
+    \hspace{3pt}
+    \begin{subfigure}{0.47\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{./figures/pipeline1.pdf}
+        \caption{\textbf{Active Learning Pipeline:} It follows the batch-selection strategy with iterative training.}
+        \label{fig:pre_pipeline}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.47\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{./figures/pipeline2.pdf}
+        \caption{\textbf{Our Free Data Selection Pipeline:} Samples are selected in a single-pass without extra model training.}
+        \label{fig:our_pipeline}
+    \end{subfigure} \hspace{3pt}
+    \caption{Comparisons between active learning pipeline and our proposed free selection pipeline.}% \ac{geal}.}
+\end{figure}
+In this paper, we challenge this \textit{status quo} by introducing an efficient data selection pipeline that enables the selection of data within a single pass (as illustrated in Fig.~\ref{fig:our_pipeline}), therefore achieving comparable efficiency to random selection.
+We identify the efficiency bottleneck of data selection methods as the training of the task-specific model. 
+Building upon insights from recent research on unsupervised learning~\cite{amir2021deep,zhu2023understanding}, we recognize that pretrained models~\cite{caron2021emerging,zhou2021ibot} possess the ability to encode the semantic information of images in a fine-grained level.
+This observation inspires us to integrate pretrained models into the data selection process, thereby decoupling data selection from task-specific models and leveraging the inherent diversity captured by pretrained models.
+By leveraging publicly available pretrained models, our pipeline incurs no additional training costs.
+To provide a concrete foundation for our design, we consider the following three guiding principles.
+
+\begin{itemize}[leftmargin=28pt]
+\item \textbf{Generality:} We strive for decoupling data selection from task-specific models. It is desired that a \textit{general} model works on the data selection of multiple tasks or datasets.
+\item \textbf{Efficiency:} The batch selection setting of active learning (Fig.~\ref{fig:pre_pipeline}) is known to be time-consuming due to its iterative nature. It is expected to be replaced with a \textit{single-pass} model inference on unlabeled data pools. 
+\item \textbf{Non-supervision:} Annotators may not always respond in time, and the entire data selection progress may be delayed by frequent requests for labels. It is preferred that annotations are not required until the end of data selection.
+\end{itemize}
+In view of the above principles, we propose the \textit{first} \acf{geal} method, to the best of our knowledge, satisfying all the above principles simultaneously.
+\ac{geal} selects data samples based on the diversity of local features.
+The features are extracted by a publicly available pretrained vision transformer~\cite{dosovitskiy2020image}, which is generic enough to facilitate data selection for different networks, datasets, and tasks after pretraining on large-scale datasets~\cite{deng2009imagenet} in an unsupervised manner, \eg, DINO~\cite{caron2021emerging}.
+We extract our newly defined semantic patterns by clustering the intermediate local features after an attention filter.
+The images are selected following a distance-based sampling strategy at the level of semantic patterns. 
+In pursuit of efficiency, this whole process is finished within a single-pass model inference without any extra training. 
+The data selection process is indeed unsupervised, which relieves the troubles of assigning responsive annotators.
+As a result, our method pursues a \textit{free} data selection using public pretrained models with a time efficiency close to random selection. We conduct extensive experiments on different tasks, datasets, and networks. When compared with existing active learning methods, our algorithm can achieve comparable performance with significantly advantageous efficiency.
+Our contributions are three-fold.
+\textbf{1)} We for the first time, introduce a new free data selection pipeline that adheres to three important principles of \textit{generality}, \textit{efficiency}, and \textit{non-supervision} with negligible time costs.
+\textbf{2)} We propose \ac{geal}, a novel method following our proposed pipeline. It can fill in the annotation budget in a single pass based on the inherent diversity of semantic patterns captured by pretrained models.
+\textbf{3)} Extensive experiments on image classification, object detection, and semantic segmentation demonstrate the effectiveness of our pipeline.
+
+
+
+
+Related Work
+\label{sec:related}
+\noindent \textbf{Active Learning.} Active learning aims to choose the most suitable samples for annotation so that model performance can be optimized with a limited annotation budget. Most existing work in this field \cite{sinha2019variational,yoo2019learning,sener2017active,haussmann2020scalable,yuan2021multiple,zhang2020state} follows a pool-based protocol, selecting samples based on the ranking of the whole dataset. There exist two mainstream sampling strategies for pool-based methods \textit{i.e.} uncertainty and diversity. Uncertainty inside the model prediction reflects the difficulty of data samples, estimated by different heuristics such as probabilistic models \cite{gorriz2017cost,ebrahimi2019uncertainty}, entropy \cite{joshi2009multi,mackay1992information}, ensembles\cite{beluch2018power,li2013adaptive}, and loss function \cite{yoo2019learning,huang2021semi}. Some other algorithms try to find the diverse subset which well represents the entire data pool. They measure the diversity with the Euclidean distance between global features~\cite{sener2017active}, adversarial loss \cite{sinha2019variational}, or KL-divergence between local representations  \cite{agarwal2020contextual}. However, all these methods couple the data selection with a task model and require repetitive model training in the batch selection pipeline, resulting in inefficiency.
+Differently, our proposed pipeline selects samples through \textit{a single-pass model inference} on each unlabeled pool.
+
+\begin{table}[t]
+\caption{\textbf{Principles of Data Selection Methods:} \textit{Task Model} refers to the coupling between data selection and a task-specific model. \textit{Batch Selection} shows whether the method repeats the data selection in batch multiple times. \textit{Multi-time Labeling} denotes whether it requests ground-truth labels in the data selection process. \textit{Time} estimates the approximate time to select $8000$ images from PASCAL VOC datasets (Sec.~\ref{sec:analysis}).}
+\label{tab:efficiency}
+\centering
+\small
+\tabcolsep 8pt
+\begin{tabular}{ccccc}
+    \toprule
+    \textbf{Methods} & \textbf{\makecell[c]{Task\\ Model\\}} & \textbf{\makecell[c]{Batch\\ Selection\\}} & \textbf{\makecell[c]{Multi-time\\ Labeling\\}} & \textbf{Time}\\
+    \midrule
+    Core-Set \cite{sener2017active} & \ding{51} & \ding{51} & \ding{51} & \multirow{3}{*}{\makecell[c]{$\sim 42\ hours$ \\ +\\ \textit{label query}}}  \\
+    Learn-Loss \cite{yoo2019learning} &\ding{51} & \ding{51} & \ding{51} &\\
+    CDAL \cite{agarwal2020contextual}&\ding{51} &\ding{51} &\ding{51} &\\
+    \midrule
+    \ac{geal} (ours) &\ding{55} &\ding{55} &\ding{55} & \makecell[c]{$285\ s$ ($\sim$530$\times$ faster)}\\
+    \bottomrule
+\end{tabular}
+\end{table}
+\noindent \textbf{Subset Selection.} As another category of data selection algorithms, subset selection methods often select all the required samples in a single pass with the model trained on a labeled seed set. The subset is usually selected based on some criterion of uncertainty~\cite{kaushal2018learning}, diversity~\cite{chang2021training,birodkar2019semantic}, or their combination~\cite{ramalingam2021less}. In contrast, our proposed pipeline needs neither extra training on the target dataset nor knowledge about the label space.
+\noindent \textbf{Unsupervised Learning.}  Both contrastive methods \cite{grill2020bootstrap,he2020momentum,zhang2021self,xiao2020should,huang2021spatio, tian2020makes, patrick2020multi} and generative models \cite{wei2022masked,he2022masked,tong2022videomae} have achieved great success in unsupervised representation learning. Contrastive methods discriminate different images without using any explicit categories. In contrast, generative methods directly predict masked visual information inside images. We exploit a general pretrained model \cite{caron2021emerging} to represent input images for task-agnostic data selection. As a result, we do not train models specific to each task like the traditional active learning pipeline.
+
+\noindent \textbf{Data Selection with Pretrained Models.} There are some attempts to combine unsupervised pretraining and data selection. \cite{yi2022pt4al} selects data samples by the loss of pretext tasks, but requires different pretext tasks for different downstream tasks. \cite{mahmood2021low} formulates active learning as an integer programming problem in the feature space, handling low-budget cases. \cite{wang2022unsupervised} and \cite{xie2023active} select samples based on the diversity of global features, targeted for semi-supervised learning and model finetuning settings respectively. Active labeling proposed in \cite{hou2021exploring} is the most similar to our paper, but their method considers selective partial labeling in each sample instead of sample selection and is limited to 3D tasks with the same networks for pretraining and downstream tasks.
+
+\begin{wrapfigure}{r}{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.8\linewidth]{./figures/preliminary.pdf}
+    \caption{\textbf{Core-Set over Off-the-Shelf Features}}
+    \label{fig:preliminary}
+\end{wrapfigure}
+
+
+Preliminary Study: Off-the-Shelf Features for Data Selection
+\label{sec:preliminary}
+
+Active learning work~\cite{sener2017active,agarwal2020contextual} often selects representative samples based on the features extracted by task-specific models trained separately for each task. 
+A straightforward alternative is to use 
+off-the-shelf features instead, which are extracted by general-purpose models pretrained on a large-scale dataset. If it performs well, we can trivially improve the efficiency by eliminating the training step on each dataset.
+
+We conduct this preliminary study on the object detection task over the PASCAL VOC dataset \cite{everingham2010pascal}.
+Consistent with our following experiments, we apply DeiT-S~\footnote{We follow the name of networks in \cite{touvron2021training} in our paper. DeiT-S is also called ViT-small in \cite{caron2021emerging}.}~\cite{touvron2021training} for feature extraction in data selection. The model is pretrained in either supervised or unsupervised (with DINO framework \cite{caron2021emerging}) manners on ImageNet~\cite{deng2009imagenet}. For data selection, we implement the classical Core-Set algorithm \cite{sener2017active} over the extracted global features, \textit{i.e.} the [CLS] token feature in the last layer.
+We use Core-Set with these features to select various numbers of training samples, and train object detection models (SSD-300~\cite{liu2016ssd}) over the selected subsets.
+Fig.~\ref{fig:preliminary} shows results in comparison with random selection. Unfortunately, we find that this naive combination of off-the-shelf features and Core-Set algorithms degrades the object detection performance, especially with relatively low sampling ratios. We consider two potential reasons for this failure:
+\textbf{1) Complex scenes are hard to represent globally.} Images may contain multiple objects including some very small ones.
+It is difficult for a global feature to represent all useful details in the image.
+\textbf{2) K-Center selects corner cases.} In the feature space, in order to cover all the data samples with a small radius, the K-Center algorithm of Core-Set tends to select all the corner cases.
+
+The above two concerns motivate our design in Sec.~\ref{sec:method}.
+We represent each image with dense semantic patterns to maintain useful local information. Images are sampled based on some probability related to the distance between local semantic patterns to relieve the harmful preference for corner cases.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./figures/overview.pdf}
+    \caption{\textbf{Overview of Our Proposed \ac{geal}:} Our method uses a general pretrained vision transformer to extract features from images. Semantic patterns are derived from the intermediate features. Afterwards, we perform a distance-based sampling algorithm to select semantic patterns as well as the associated images. These selected images are labeled for downstream task model training.}
+    \label{fig:overview}
+\end{figure}
+
+
+
+Methodology
+\label{sec:method}
+We detail our new data selection method \ac{geal}, formulated in Sec.~\ref{sec:formulation}. We define a concept called \textit{semantic pattern} in Sec.~\ref{sec:knowledge}. Afterward, the sample selection strategy is explained in Sec.~\ref{sec:sample}. An overview of our approach is illustrated in Fig.~\ref{fig:overview}. 
+
+\subsection{Formulation}
+\label{sec:formulation}
+We aim to select a diverse subset from the unlabeled data pool for annotation, which covers as much discriminative regional information in the original pool as possible. 
+The regional information inside an image $I$ is reflected by the local features $\mathbf{f}^I=\{f_r^I|r=1,2,\dots,HW\}$ of a pretrained DNN. $H,W$ are the height and width of the feature map. The $r$-th region feature $f^I_r\in\mathbb{R}^{K}$ in the feature map mainly describes the $r$-th region of the image~\cite{zhou2014object,raghu2021vision}.
+The discriminative power of all regional features $\mathbf{f}^I$ can be represented by countable knowledge points \cite{li2021visualizing}. $f_r^I$ is considered as a knowledge point \textit{w.r.t.} a pseudo-category $c$ if it is similar enough to the corresponding direction vector $\mu_c$.
+\begin{equation}
+    p(c|f_r^I)=\frac{\pi_c\cdot p_{vMF}(f_r^I|c)}{\sum_{c'}\pi_{c'}\cdot p_{vMF}(f_r^I|c')}>\tau,\quad p_{vMF}(f|c)=C_d(\kappa_c)\cdot\exp(\kappa_c\cdot \cos(f_r^I,\mu_c))
+\label{eq:vMF}
+\end{equation}
+$c$ is a pseudo-category describing some specific visual patterns, \textit{e.g.} an object part, which is represented by a vector $\mu_c$ in the feature space. $\pi_c$ is the prior probability of pseudo-category $c$, $\kappa_c$ is a concentration parameter, and $C_d(\kappa_c)$ is a normalizing constant. 
+
+Inversely, given knowledge points inside an image $I$, they can be clustered to estimate the $K$ pseudo-categories inside the image as $\hat{\mu}_j^I,j=1,2,\dots,K$. We define the estimation as semantic patterns in Sec.~\ref{sec:knowledge}. To ensure the diversity of our selection, our algorithm desires to find a subset of images $S_{\mathcal{I}}$ in Sec.~\ref{sec:sample}, whose semantic patterns $\bigcup_{I\in S_{\mathcal{I}}}\{\hat{\mu}_j^I\}_{j=1}^K$ can be representative in the unlabeled pool.
+
+\subsection{Per-Image Semantic Patterns Extraction}
+\label{sec:knowledge}
+To estimate the pseudo-categories, we define a novel notion called \textit{semantic patterns}, which are extracted \textbf{from each image separately}. Given a pretrained vision transformer~\cite{dosovitskiy2020image}, we consider its last layer features for image $I$ as $\mathbf{f}^I=\{f_r^I\}_{r=1}^{HW}$, where each patch corresponds to a region $r$. 
+
+According to Eq.~\ref{eq:vMF}, only a few regional features may be considered as meaningful knowledge points, while other regions are useless or even distracting. However, it is non-trivial to distill these knowledge points without any information about the pseudo-categories. To this end, we resort to the [CLS] token self-attention map of the transformer, which serves as a natural filter for regional importance even without the supervision of category information \cite{caron2021emerging}.
+
+\noindent \textbf{Attention Filter.}
+For image $I$, the last layer [CLS] token attention map (average of multi-heads) is denoted as $\mathbf{ca}^I=\{ca^I_r\in \mathbb{R}^+|r=1,2,\dots,HW\},\sum_{r=1}^{HW} {ca_r^I}=1$. We can filter the important regional features that jointly represent the most useful information in the entire image with Eq.~\ref{eq:attention}. 
+\begin{equation}
+    F(\mathbf{f}^I)=\{f_r^I|r=1,2,\dots,t,\sum_{j=1}^t ca^I_j \leq \tau < \sum_{j=1}^{t+1} ca_j^I\}
+    \label{eq:attention}
+\end{equation}
+where regions $r=1,2,\dots,HW$ are sorted in the \textbf{decreasing order} of $ca_r^I$, and $\tau\in(0,1)$ is a hyper-parameter, meaning the \textbf{maintenance ratio} of information represented by the filtered important features. The filtered features $F(\mathbf{f}^I)$ are considered as the knowledge points inside the images.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/cluster_features_1.png}
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/mask_th0.6_sample3_cosine.png}
+    \hfill
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/cluster_features_0.png}
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/mask_th0.6_sample3_euclidean.png}
+    \hfill
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/cluster_features_29.png}
+    \includegraphics[width=0.15\linewidth,height=0.15\linewidth]{./figures/mask_th0.8_sample3_cosine.png}
+    \caption{\textbf{Visualization of Semantic Patterns:} Every two images are considered as a group. \textit{Left:} The filtered local features (dots) of each image are grouped into semantic patterns (arrows). Gray features are eliminated in Eq.~\ref{eq:attention}. Dimensions are reduced by PCA for visualization. \textit{Right:} Regions inside images can be associated with corresponding local features and then semantic patterns.}
+    \label{fig:knowledge}
+\end{figure}
+
+\begin{algorithm}[t]
+    \caption{\textbf{Semantic Pattern Extraction}}
+    \label{alg:semantic}
+    \KwInput{Pretrained transformer $g$, unlabeled image pool $\mathcal{I}$, attention ratio $\tau$, centroid number $K$}
+    \KwOutput{Semantic patterns $\hat{\bm{\mu}}^I=\{\hat{\mu}^I_j\},I\in\mathcal{I}$}
+    \For{$I\in\mathcal{I}$}{
+        $\mathbf{ca}^I,\mathbf{pa}^I,\mathbf{f}^I=g(I)$\\
+        \tcc{last layer [CLS] and patch token attention and patch-wise features.}
+        Sort $ca^I_r,pa^I_r,f_r^I,r=1,2,\dots,HW$ in the decreasing order of attention $ca^I_r$\\
+        $F(\mathbf{f}^I)=\{f_r^I|r=1,2,\dots,t,$ $\sum_{j=1}^t ca_j^I \leq \tau < \sum_{j=1}^{t+1}ca_j^I\}$\\
+        \tcc{filter important regions based on the sorted attention (Eq.~\ref{eq:attention}).}
+        Derive local similarity $\widehat{pa}_{ij}^I$ with Eq.~\ref{eq:local}\\
+        \tcc{ignore attention between faraway regions.}
+        $\widehat{\textbf{pa}}^I=[\widehat{pa}_{ij}^I]_{i,j=1,2,\dots,t}$\\
+        \tcc{only consider filtered $t$ regions.}
+        $\{C_j^I\}_{j=1}^K=SpectralCluster(\widehat{\textbf{pa}}^I,K)$\\
+        \tcc{divide $t$ regions into $K$ clusters with spectral clustering algorithm.}
+        $\hat{\mu}_j^I=\frac{1}{|C_j|}\sum_{r\in C_{j}}f_r^I,\qquad j=1,2,\dots,K$\\
+        \tcc{calculate the representation of each semantic pattern.}
+    }
+\end{algorithm}
+
+\noindent \textbf{Feature Clustering.} To estimate the feature vectors for pseudo-categories, we perform clustering over the filtered $t$ knowledge points \textbf{inside each image separately}. Since K-Means is unreliable in the high-dimensional feature space (details in supplementary materials), we adopt spectral clustering instead. The self-attention map provides strong cues about the region-wise similarity inside each image. We denote the last layer attention map between patch tokens for image $I$ as $\textbf{pa}^I=\left[pa^I_{ij}\in\mathbb{R}\right]_{i,j=1,2,\dots,HW},\sum_{j=1}^{HW}pa^I_{ij}=1,\forall i$. It is more likely for nearby regions to interact with each other, so we only consider the attention between nearby patches \cite{he2022attribute}.
+\begin{equation}
+    \widehat{pa}^I_{ij}=\begin{cases}
+    pa^I_{ij} & d(i,j)\leq d_0\\
+    0 & d(i,j)>d_0\\
+    \end{cases}
+    \label{eq:local}
+\end{equation}
+where $d(i,j)$ is the Chebyshev distance between regions $i,j$ in the feature map. We empirically set the threshold $d_0=2$ in our experiments. Besides, we only consider the $t$ regions after the filter in Eq.~\ref{eq:attention}. In this case, we denote the new similarity matrix between patches as $\widehat{\textbf{pa}}^I=\left[\widehat{pa}_{ij}^I\right]_{i,j=1,2,\dots,t}$.
+    
+With this above $t\times t$ similarity matrix, we utilize spectral clustering algorithms \cite{ng2001spectral,yan2009fast} to divide the remaining $t$ regions after filtering (Eq.~\ref{eq:attention}) into $K$ clusters $C_j,j=1,2,\dots,K$, each corresponding to a pseudo-category, where $K$ is a hyper-parameter. The details of the spectral clustering algorithm are in our supplementary materials. We average the corresponding feature $f_r,r=1,2,\dots,t$ of each region $r$ belonging to each cluster $C_j$ as follows.
+\begin{equation}
+     \hat{\mu}_j^I=\frac{1}{|C_j|}\sum_{r\in C_{j}}f_r^I,\qquad j=1,2,\dots,K
+     \label{eq:semantic}
+\end{equation}
+where $f_r^I\in F(\mathbf{f}^I),r\in C_j$ are local features of image $I$ grouped into cluster $j$ through spectral clustering. $\hat{\bm{\mu}}^I=\{\hat{\mu}_j^I\}$ represents \textbf{semantic patterns} inside the image $I$. Fig.~\ref{fig:knowledge} visualizes some examples of $\hat{\mu}^I_j$. The whole process of semantic pattern extraction is shown in Alg.~\ref{alg:semantic}
+\subsection{Sample Selection with Semantic Patterns}
+\label{sec:sample}
+Our main target of data selection is to make the distributions of selected samples diverse and representative in the level of local \textit{semantic patterns} instead of the global feature level. This fine-grained strategy guarantees that our selected subset can cover rich local visual patterns represented by different pseudo-categories, which are crucial for detection and segmentation tasks. 
+
+To this end, we adopt a distance-based sampling strategy at the semantic pattern level. The detailed algorithm is shown in Alg.~\ref{alg:selection}. Given an unlabeled image pool $\mathcal{I}$, this process starts from randomly selecting an initial image $I_0$ \textit{i.e.} selecting all semantic patterns $\hat{\bm{\mu}}^{I_0}$ inside it. Then, we choose the next semantic pattern $\hat{\mu}_j^I$ inside image $I$ with probability in proportion to its squared distances from the nearest already selected semantic pattern (Eq.~\ref{eq:kseed}). 
+\begin{equation}
+    p(\hat{\mu}_j^I)\propto \min_{\hat{\mu}\in S_{\mathcal{K}}}\left[D(\hat{\mu}_j^I,\hat{\mu})\right]^2, I\in\mathcal{I},j=1,2,\dots,K
+    \label{eq:kseed}
+\end{equation}
+where $S_{\mathcal{K}}$ is the pool of all the already selected semantic patterns. When we choose a semantic pattern $\hat{\mu}_j^I$, all the semantic patterns $\hat{\bm{\mu}}^I$ inside the image $I$ that contains $\hat{\mu}_j^I$ are put into the selected pool $S_{\mathcal{K}}$. We use cosine distance for $D(\cdot,\cdot)$ as analyzed in the supplementary materials. This process continues until enough images have been selected. The selection only requires semantic patterns constructed from intermediate features offline beforehand. Consequently, only a \textit{single-pass} model inference \textit{without} any training or supervision is required in the entire data selection pipeline.
+
+\begin{algorithm}[t]
+    \caption{\textbf{Distance-based Selection}}
+    \label{alg:selection}
+    \KwInput{all semantic patterns $\hat{\bm{\mu}}^I=\{\hat{\mu}^I_j\}$ for each image $I$, total annotation budget size $b$}
+    \KwOutput{selected image pool $S_{\mathcal{I}}$}
+    Initialize $S_{\mathcal{I}}=\{I_0\}$\\
+    \tcc{initialize with a random image $I_0$}
+    Initialize $S_{\mathcal{K}}=\{\hat{\mu}_j^{I_0},j=1,\dots,K\}$\\ \tcc{initialize selected semantic pattern pool with all semantic patterns in $I_0$}
+    \Repeat{$|S_{\mathcal{I}}|=b$}{
+    Sample $\hat{\mu}_j^I$ with probability $p(\hat{\mu}_j^I)\propto \min_{\hat{\mu}\in S_{\mathcal{K}}}\left[D(\hat{\mu}_j^I,\hat{\mu})\right]^2$\\
+    \tcc{sample next semantic pattern $\hat{\mu}_j^I$ with the distance-based probability.}
+    $S_{\mathcal{I}}=S_{\mathcal{I}}\cup \{I\}$\\
+    \tcc{add image $I$ containing sampled $\hat{\mu}_j^I$ to selected image pool}
+    $S_{\mathcal{K}}=S_{\mathcal{K}}\cup \{\hat{\mu}_j^I,j=1,\dots,K\}$\\
+    \tcc{add all semantic patterns in image $I$ to selected semantic pattern pool}
+    }
+\end{algorithm}
+
+
+
+Experiments
+We evaluate \ac{geal} on object detection (Sec.~\ref{sec:object}), semantic segmentation (Sec.~\ref{sec:semantic}), and image classification (Sec.~\ref{sec:image}). The results of \ac{geal} are \textit{averaged over three independent selections with different random seeds}. Features are extracted by the same general pretrained model for all the tasks (Sec.~\ref{sec:pretrain}). We make some analysis of our proposed pipeline and method in Sec.~\ref{sec:analysis}. Finally, we examine the roles of different modules inside \ac{geal} in Sec.~\ref{sec:ablation}. We refer readers to supplementary materials for more implementation details, results, and ablation studies.
+
+\subsection{General Model for Feature Extraction}
+\label{sec:pretrain}
+We adopt DeiT-S \cite{touvron2021training} (path size 16$\times$16) pretrained with the unsupervised framework DINO \cite{caron2021emerging} on ImageNet \cite{deng2009imagenet} to extract features for data selection. The same pretrained model is used for all tasks. \ac{geal} can also fit other frameworks as well, as shown in supplementary materials. We emphasize that this pretrained DeiT-S model is only applied to the data selection process. For the downstream tasks, we still train the convolutional task models from scratch in accordance with prior work.
+\begin{figure}[t]
+    \centering
+\begin{minipage}[ht]{0.46\linewidth}
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/object2.pdf}
+    \caption{\textbf{Results on Object Detection:} The mAP on 100\% training data is 77.43.}
+    \label{fig:object}
+\end{minipage}
+\hfill
+\begin{minipage}[ht]{0.46\linewidth}
+    \centering
+    \includegraphics[width=0.9\linewidth]{figures/drn.pdf}
+    \caption{\textbf{Results on Semantic Segmentation:} The mIoU on 100\% training data is 62.95.}
+    \label{fig:seg}
+\end{minipage}
+\end{figure}
+
+\subsection{Object Detection}
+\label{sec:object}
+\noindent \textbf{Dataset and Task Model.} We carry out experiments on PASCAL VOC \cite{everingham2010pascal}. In line with prior work \cite{agarwal2020contextual,yoo2019learning}, we combine the training and validation sets of PASCAL VOC 2007 and 2012 as the training data pool with $16,551$ images. The performance of task model is evaluated on PASCAL VOC 2007 test set using \textit{mAP} metric.
+We follow previous work \cite{yoo2019learning,agarwal2020contextual} to train an SSD-300 model \cite{liu2016ssd} with VGG-16 backbone \cite{simonyan2014very} on the selected samples. It reaches $77.43$ mAP with $100\%$ training data.
+
+\noindent \textbf{Results and Comparison.} 
+We compare our performance with existing active learning methods (Fig.~\ref{fig:object}) for multiple sampling ratios. For fairness, we only include task-agnostic methods instead of those designed specifically for object detection \cite{yuan2021multiple,choi2021active} which should naturally perform better. Results show that \ac{geal} outperforms most traditional pipeline methods and remains competitive with the best ones. Besides, all these previous methods require repetitive model training and batch selection on each target dataset separately, while \ac{geal} can efficiently select all samples in a single pass. Sec.~\ref{sec:ablation} also shows that \ac{geal} can outperform other alternative general-purpose model baselines.
+\subsection{Semantic Segmentation}
+\label{sec:semantic}
+\noindent \textb
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

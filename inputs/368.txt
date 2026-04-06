@@ -1,0 +1,247 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+LiDAR sensor plays a crucial role in the Autonomous Driving (AD) system due to its high quality for modeling the depth and geometric information of the surroundings. As a result, a lot of studies aim to achieve the AD scene perception via LiDAR-based 3D object detection baseline models, such as CenterPoint~\citep{yin2021center}, PV-RCNN~\citep{shi2020pv}, and PV-RCNN++~\citep{shi2023pv}.
+
+Although the 3D object detection models can help autonomous driving recognize the surrounding environment, the existing baselines are hard to generalize to a new domain (such as different sensor settings or unseen cities). A long-term vision of the autonomous driving community is to develop a scene-generalizable pre-trained model, which can be widely applied to different downstream tasks. To achieve this goal, researchers begin to leverage the Self-Supervised Pre-Training (SS-PT) paradigm recently. For example, ProposalContrast~\citep{yin2022proposalcontrast} proposes a contrastive learning-based approach to enhance region-level feature extraction capability. Voxel-MAE~\citep{hess2023masked} designs a masking and reconstructing task to obtain a stronger backbone network. 
+
+However, as illustrated in ~Fig.\ref{fig:paradigm_comparision}, it should be pointed out that there is a crucial difference between the above-mentioned SS-PT and the desired Autonomous Driving Pre-Training (AD-PT) paradigm. The SS-PT aims to learn from a single set of unlabeled data to generate suitable representations for the \textbf{same} dataset, while AD-PT is expected to learn unified representations from as large and diversified data as possible, so that the learned features can be easily transferred to various downstream tasks. As a result, SS-PT may only perform well when the test and pre-training data are sampled from the same single dataset (such as Waymo~\citep{sun2020scalability} or nuScenes~\citep{caesar2020nuscenes}), while AD-PT presents better generalized performance on different datasets, which can be continuously improved with the increase of the number of the pre-training dataset. 
+Therefore, this paper is focused on achieving the AD-related pre-training which can be easily applied to different baseline models and benchmarks. By conducting extensive experiments, we argue that there are two key issues that need to be solved for achieving the real AD-PT: 1) how to build a unified AD dataset with diverse data distribution, and 2) how to learn generalizable representations from such a diverse dataset by designing an effective pre-training method.
+
+For the first item, we use a large-scale point cloud dataset named ONCE~\citep{mao2021one}, consisting of few-shot labeled (\textit{e.g.},$~\sim$0.5\%) and massive unlabeled data. First, to get accurate pseudo labels of the massive unlabeled data that can facilitate the subsequent pre-training task, we design a class-wise pseudo labeling strategy that uses multiple models to annotate different semantic classes, and then adopt semi-supervised methods (\textit{e.g.}, MeanTeacher~\citep{tarvainen2017mean}) to further improve the accuracy on the ONCE validation set. Second, to get a unified dataset with diverse raw data distribution from both LiDAR beam and object sizes, inspired by previous works~\citep{yang2021st3d,wei2022lidar,yuan2023bi3d,zhang2023uni3d}, we exploit point-to-beam playback re-sampling and object re-scaling strategies to diversify both scene- and region-level distribution.
+\begin{figure}[t]
+    \begin{subfigure}{0.49\linewidth}
+        \centering
+	\includegraphics[height=3.5cm]{images/fig_1/AD-PT_fig1_1_3.pdf}
+	\caption{Previous pre-training paradigm.}
+	\label{fig:subfig_original}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.49\linewidth}
+        \centering
+	\includegraphics[height=3.5cm]{images/fig_1/AD-PT_fig1_2_3.pdf}
+	\caption{AD-PT pre-training paradigm.}
+	\label{fig:subfig_downsample}
+    \end{subfigure}
+    \caption{Differences between previous pre-training paradigm and the proposed AD-PT paradigm.}
+    \label{fig:paradigm_comparision}
+\end{figure}
+For the second item, we find that the taxonomy differences between the pre-training ONCE dataset and different downstream datasets are quite large, resulting in that many hard samples with taxonomic inconsistency are difficult to be accurately detected during the fine-tuning stage. As a result, taxonomy differences between different benchmarks should be considered when performing the backbone pre-training. Besides, our study also indicates that during the pre-training process, the backbone model tends to fit with the semantic distribution of the ONCE dataset, impairing the perception ability on downstream datasets having different semantics. To address this issue, we propose an unknown-aware instance learning to ensure that some background regions on the pre-training dataset, which may be important for downstream datasets, can be appropriately activated by the designed pre-training task. Besides, to further mine representative instances during the pre-training, we design a consistency loss to constrain the pre-training representations from different augmented views to be consistent.  
+
+Our contributions can be summarized as follows:
+\begin{compactitem}
+\item[1.]
+    For the first time, we propose the AD-PT paradigm, which aims to learn unified representations by pre-training a general backbone and transfers knowledge to various benchmarks.
+	\item[2.]
+	To enable the AD-PT paradigm, we propose a diversity-based pre-training data preparation procedure and unknown-aware instance learning, which can be employed in the backbone pre-training process to strengthen the representative capability of extracted features.
+	\item[3.]
+	Our study provides a more unified approach, meaning that once the pre-trained checkpoint is generated, it can be directly loaded into multiple perception baselines and benchmarks. Results further verify that such an AD-PT paradigm achieves large accuracy gains on different benchmarks (\textit{e.g.}, $3.41\%$, $8.45\%$, $4.25\%$ on Waymo, nuScenes, and KITTI).
+
+\end{compactitem}
+
+
+
+
+Related Works
+\subsection{LiDAR-based 3D Object Detection}
+Current prevailing LiDAR-based 3D object detection works~\citep{lang2019pointpillars,shi2019pointrcnn,shi2020pv,shi2023pv,yan2018second,shi2020points,deng2022vista} can be roughly divided into point-based methods, voxel-based methods, and point-voxel-based methods. Point-based methods~\citep{shi2019pointrcnn,yang2019std} extract features and generate proposals directly from raw point clouds. PointRCNN~\citep{shi2019pointrcnn} is a prior work that generates 3D RoIs with foreground segmentation and designs an RCNN-style two-stage refinement. Unlike point-based methods, voxel-based methods~\citep{yan2018second,yin2021center} first transform unordered points into regular grids and then extract 3D features using 3D convolution. As a pioneer, SECOND~\citep{yan2018second} utilizes sparse convolution as 3D backbone and greatly improves the detection efficiency. CenterPoint~\citep{yin2021center} takes care of both accuracy and efficiency and proposes a one-stage method. To take advantage of both point-based and voxel-based methods, PV-RCNN~\citep{shi2020pv} and PV-RCNN++~\citep{shi2023pv} propose a point-voxel set abstraction to fuse point and voxel features.
+
+\subsection{Autonomous Driving-related Self-Supervised Pre-Training}
+\label{sec:ssl_pretrain}
+Inspired by the success of pre-training in 2D images, self-supervised learning methods have been extended to LiDAR-based AD scenarios~\citep{hess2023masked,lin2022bev,liang2021exploring,yang2022gd,xu2023mv,krispel2022maeli, yin2022proposalcontrast}. Previous methods mainly focus on using contrastive learning or masked autoencoder (MAE) to enhance feature extraction. Contrastive learning-based methods~\citep{liang2021exploring,yin2022proposalcontrast,huang2021spatio} use point clouds from different views or temporally-correlated frames as input, and further construct positive and negative samples. STRL~\citep{huang2021spatio} proposes a spatial-temporal representation learning that employs contrastive learning with two temporally-correlated frames. GCC-3D~\citep{liang2021exploring} and ProposalContrast constructs a consistency map to find the correspondence between different views, developing contrastive learning strategies at region-level. CO3~\citep{chen2022co} utilizes LiDAR point clouds from the vehicle- and infrastructure-side to build different views. MAE-based~\citep{hess2023masked,krispel2022maeli} methods utilize different mask strategies and try to reconstruct masked points by a designed decoder. Voxel-MAE~\citep{hess2023masked} introduces a voxel-level mask strategy and verifies the effectiveness of MAE. BEV-MAE~\citep{lin2022bev} designs a BEV-guided masking strategy. More recently, GD-MAE~\citep{yang2022gd} and MV-JAR~\citep{xu2023mv} explore masking strategies in transformer architecture.
+Different from the existing works that use a designed self-supervised approach to pre-train on unlabeled data and then fine-tune on labeled data with the same dataset, AD-PT aims to pre-train on a large-scale point cloud dataset and fine-tune on multiple different datasets (\textit{i.e.}, Waymo~\citep{sun2020scalability}, nuScenes\citep{caesar2020nuscenes}, KITTI~\citep{geiger2012we}).
+
+\begin{figure*}
+
+\centering
+\includegraphics[width=1.0\linewidth]{images/Visio-AD-PT_framework_6.pdf}
+\caption{The overview of the proposed AD-PT. By leveraging the proposed method to train on the unified large-scale point cloud dataset, we can obtain well-generalized pre-training parameters that can be applied to multiple datasets and support different baseline detectors.}
+\label{fig:AD_PT_framework}
+\end{figure*}
+
+
+
+Method
+To better illustrate our AD-PT framework, we first briefly describe the problem definition and overview of the proposed method in Sec.~\ref{method:preliminary}. Then, we detail the data preparation and model design of AD-PT in Sec.~\ref{method:data_preparation} and Sec.~\ref{method:openset}, respectively. 
+
+\subsection{Preliminary}
+\label{method:preliminary}
+
+\textbf{Problem Formulation.} Different from previous self-supervised pre-training methods, AD-PT performs large-scale point cloud pre-training in a \textbf{semi-supervised manner}. Specifically, we have access to {\small $N$} samples which are composed of a labeled set {\small $D_L=\{(x_i,y_i)\}_{i=1}^{N_L}$} and a unlabeled set {\small $D_U=\{x_i\}_{i=1}^{N_U}$}, where {\small $N_L$} and {\small $N_U$} denote the number of labeled and unlabeled samples. Note that {\small $N_L$} can be much smaller than {\small $N_U$} (\textit{e.g.}, $\sim$5K \textit{v.s.} $\sim$1M, about 0.5$\%$ labeled samples). The purpose of our work is to pre-train on a large-scale point cloud dataset with few-shot {\small $D_L$} and massive {\small $D_U$}, such that the pre-trained backbone parameters can be used for many down-stream benchmark datasets or 3D detection models.
+
+\textbf{Overview of AD-PT.} As shown in Fig.~\ref{fig:AD_PT_framework}, AD-PT mainly consists of a large-scale point cloud dataset preparation procedure and a unified AD-focused representation learning procedure. To initiate the pre-training, a \textbf{class-aware pseudo labels generator} is first developed to generate the pseudo labels of {\small $D_U$}. Then, to get more diverse samples, we propose a \textbf{diversity-based pre-training processor}. Finally, in order to pre-train on these pseudo-labeled data to learn their generalizable representations for AD purposes, an \textbf{unknown-aware instance learning} coupled with a consistency loss is designed.
+
+\subsection{Large-scale Point Cloud Dataset Preparation}
+\label{method:data_preparation}
+
+In this section, we detail the preparation of the unified large-scale dataset for AD. As shown in Fig.~\ref{fig:data_preparation}, our data creation consists of a class-aware pseudo label generator and a diversity-based pre-training processor to be introduced below.
+
+\subsubsection{Class-aware Pseudo Labels Generator}
+\label{pseudo_label}
+
+\begin{table}[t]
+    \centering
+	\begin{minipage}{0.52\linewidth}
+		\centering
+        \caption{Performance using different detectors on ONCE validation set. We report mAP using ONCE evaluation metric.} 
+        \label{tab:diff_model_once_val}
+        \resizebox{!}{0.65cm}
+        {
+        \begin{tabular}{c  c  c  c  c}
+            \toprule[1pt]
+            Detector & Head Choice & Vehicle & Pedestrian & Cyclist \\
+            \cmidrule{1-5}
+            ONCE Benchmark (Best) & Center Head & 66.79 & 49.90 & 63.45 \\
+            CenterPoint (ours) & Center Head & - & \textbf{56.01} & - \\
+            PV-RCNN++ (ours)  & Anchor Head & \textbf{82.50} & - & \textbf{71.19} \\
+            \bottomrule[1pt]
+        \end{tabular}
+        }
+	\end{minipage}
+	\hfill
+	\begin{minipage}{0.45\linewidth}
+	\centering
+        \caption{Statistics on the number of pseudo-labeled instances per frame. We compare it with ONCE labeled data set.}
+        \label{tab:statistic_once_pseudo}
+        \resizebox{!}{0.65cm}
+        {
+        \begin{tabular}{c c c  c c c}
+        \toprule[1pt]
+        \multicolumn{3}{c}{ONCE labeled set} & \multicolumn{3}{c}{Pseudo label set} \\ 
+        Vehicle & Ped. & Cyclist & Vehicle & Ped. & Cyclist \\
+        \cmidrule(lr){1-3} \cmidrule(lr){4-6}
+        19.01 & 4.52 & 5.63 & 15.67 & 1.63 & 1.90 \\
+        \bottomrule[1pt]
+        \end{tabular}
+        }
+	\end{minipage}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+	\begin{minipage}{0.55\linewidth}
+		\centering
+            \includegraphics[height=5cm]{images/AD-PT_data_preparation.pdf}
+        \caption{Overall dataset preparation procedure.} 
+        \label{fig:data_preparation}
+        
+	\end{minipage}
+	\hfill
+	\begin{minipage}{0.44\linewidth}
+	\centering
+        \includegraphics[height=5cm]{images/rescaling_1.pdf}
+        \caption{Statistics of object re-scaling.}
+        \label{fig:object_rescaling}
+	\end{minipage}
+\end{figure}
+
+It can be observed from Tab.~\ref{tab:abl_pseudo_method} that, pseudo-labels with high accuracy on the pre-training dataset are beneficial to enhance the detection accuracy on downstream datasets such as Waymo~\citep{sun2020scalability} and nuScenes~\citep{caesar2020nuscenes}. Therefore, to get more accurate pseudo labels, we design the following procedure. 
+
+\textbf{Class-aware Pseudo Labeling.} ONCE benchmark\footnote{https://once-for-auto-driving.io/benchmark.html} is utilized to evaluate the pseudo labeling accuracy and more results are shown in the supplementary material. We find that different baseline models have different biased perception abilities for different classes. For example, the center-based method (\textit{i.e.}, CenterPoint~\citep{yin2021center}) tends to detect better for small-scale targets (\textit{e.g.}, Pedestrian), while anchor-based methods perform better for other classes. According to the observation, we utilize the PV-RCNN++~\citep{shi2023pv} with anchor-head to annotate Vehicle and Cyclist classes on ONCE, where the accuracy on Vehicle and Cyclist is found to be much better than the methods listed in the ONCE benchmark. On the other hand, CenterPoint~\citep{yin2021center} is employed to label the Pedestrian class on ONCE. Finally, we use PV-RCNN++ and CenterPoint to perform a class-wise pseudo labeling process. 
+
+\textbf{Semi-supervised Data Labeling.} We further employ the semi-supervised learning method to fully exploit the unlabeled data to boost the accuracy of the pseudo labels. As shown in ONCE benchmark, MeanTeacher~\citep{tarvainen2017mean} can better improve the performance on ONCE, and therefore, we use the MeanTeacher to further enhance the class-wise detection ability. Tab.~\ref{tab:diff_model_once_val} shows that the accuracy on ONCE validation set can be improved after leveraging massive unlabeled data, significantly surpassing all previous records.
+
+\textbf{Pseudo Labeling Threshold.} To avoid labeling a large number of false positive instances, we set a relatively high threshold. In detail, for Vehicle, Pedestrian, and Cyclist, we filter out bounding boxes with confidence scores below 0.8, 0.7, and 0.7. As a result, it can be seen from Tab.~\ref{tab:statistic_once_pseudo} that, compared with ONCE labeled data, some hard samples with relatively low prediction scores are not annotated.
+
+\subsubsection{Diversity-based Pre-training Processor}
+
+As mentioned in~\citep{radford2021clip,kirillov2023segment}, the diversity of data is crucial for pre-training, since highly diverse data can greatly improve the generalization ability of the model. The same observation also holds in 3D pre-training. However, the existing datasets are mostly collected by the same LiDAR sensor within limited geographical regions, which impairs the data diversity. Inspired by~\citep{yuan2023bi3d,zhang2023uni3d}, discrepancies between different datasets can be categorized into scene-level (\textit{e.g.}, LiDAR beam) and instance-level (\textit{e.g.}, object size). Thus, we try to increase the diversity from the LiDAR beam and object size, and propose a point-to-beam playback re-sampling and an object re-scaling strategy.
+
+\textbf{Data with More Beam-Diversity: Point-to-Beam Playback Re-sampling.} To get beam-diverse data, we use the range image as an intermediate variable for point data up-sampling and down-sampling. Specifically, given a LiDAR point cloud with $n$ beam (\textit{e.g.}, 40 beam for ONCE dataset) and $m$ points per ring, the range image {\small $R^{n\times m}$} can be obtained by the following equation:
+\begin{equation}
+\label{eq:lidar2range}
+    r=\sqrt{x^2+y^2+z^2}, \ \ \theta=arctan(x/y), \ \ \phi=arcsin(z/r),
+\end{equation}
+where $\phi$ and $\theta$ are the inclination and azimuth of point clouds, respectively, and $r$ denotes the range of the point cloud. Each column and row of the range image corresponds to the same azimuth and inclination of the point clouds, respectively. Then, we can interpolate or sample over rows of a range image, which can also be seen as LiDAR beam re-sampling. Finally, we reconvert the range image to point clouds as follows:
+\begin{equation}
+\label{eq:range2lidar}
+    x=rcos(\phi)cos(\theta), \ \ y=rcos(\phi)sin(\theta), \ \ z=rsin(\phi),
+\end{equation}
+where $x$, $y$, $z$ denote the Cartesian coordinates of points, and Fig.~\ref{fig:beam_sampling} shows that point-to-beam playback re-sampling can generate scenes with different point densities, improving the scene-level diversity.
+
+\begin{figure}
+    \begin{subfigure}{0.33\linewidth}
+        \centering
+	\includegraphics[width=4.1cm]{images/fig_5/original.png}
+	\caption{Original point clouds}
+	\label{fig:subfig_original}
+    \end{subfigure}
+    \begin{subfigure}{0.33\linewidth}
+        \centering
+	\includegraphics[width=4.1cm]{images/fig_5/upsample.png}
+	\caption{Upsampled point clouds}
+	\label{fig:subfig_upsample}
+    \end{subfigure}
+    \begin{subfigure}{0.33\linewidth}
+        \centering
+	\includegraphics[width=4.1cm]{images/fig_5/downsample.png}
+	\caption{Downsampled point clouds}
+	\label{fig:subfig_downsample}
+    \end{subfigure}
+    \caption{Visualization of point-to-beam playback re-sampling.}
+    \label{fig:beam_sampling}
+\end{figure}
+
+\textbf{Data with More RoI-Diversity: Object Re-scaling.} According to the statement in~\citep{zhang2023uni3d,yang2021st3d,wang2020train} that different 3D datasets were collected in different locations, the object size has inconsistent distributions. As shown in Fig.~\ref{fig:object_rescaling}, a single dataset such as ONCE cannot cover a variety of object-size distributions, resulting in that the model cannot learn a unified representation. To overcome such a problem, we propose an object re-scaling mechanism that can randomly re-scale the length, width and height of each object. In detail, given a bounding box and points within it, we first transform the points to the local coordinate and then multiply the point's coordinates and the bounding box size by a provided scaling factor. Finally, we transform the scaled points with the bounding box to the ego-car coordinate. It can be seen from Fig.~\ref{fig:object_rescaling} that after object re-scaling, the produced dataset contains object sizes with more diversified distributions, further strengthening the instance-level point diversity.
+\subsection{Learning Unified Representations under Large-scale Point Cloud Dataset}
+\label{method:openset}
+
+By obtaining a unified pre-training dataset using the above-mentioned method, the scene-level and instance-level diversity can be improved. However, unlike 2D or vision-language pre-training datasets which cover a lot of categories to be identified for downstream tasks, our pseudo dataset has limited category labels (\textit{i.e.}, Vehicle, Pedestrian and Cyclist). Besides, as mentioned in Sec.~\ref{pseudo_label}, in order to get accurate pseudo annotations, we set a high confidence threshold, which may inevitably ignore some hard instances. As a result, these ignored instances, which are not concerned in the pre-training dataset but may be seen as categories of interest in downstream datasets (\textit{e.g.}, Barrier in the nuScenes dataset), will be suppressed during the pre-training process.
+
+To mitigate such a problem, it is necessary that both pre-training-related instances and some unknown instances with low scores can be considered when performing the backbone pre-training. From a new perspective, we regard the pre-training as an open-set learning problem. Different from traditional open-set detection~\citep{joseph2021towards} which aims at detecting unknown instances, our goal is to activate as many foreground regions as possible during the pre-training stage. Thus, we propose a two-branch unknown-aware instance learning head to avoid regarding potential foreground instances as the background parts. Further, a consistency loss is utilized to ensure the consistency of the calculated corresponding foreground regions.
+
+\textbf{Overall Model Structure.} In this part, we briefly introduce our pre-training model structure. Following the prevailing 3D detectors~\citep{shi2020pv,deng2021voxel,yan2018second}, as shown in Fig.~\ref{fig:AD_PT_framework}, the designed pre-training model consists of a voxel feature extractor, a 3D backbone with sparse convolution, a 2D backbone and the proposed head. Specifically, given point clouds {\small $\mathbf{P}\in \mathcal{R}^{N\times (3+d)}$}, we first transform points into \textit{\textbf{different views}} through different data augmentation methods {\small $\Gamma_1$} and {\small $\Gamma_2$}. Then, voxel features are extracted by a 3D backbone and mapped to BEV space. After that, dense features generated by a 2D backbone can be obtained, and finally, the dense features are fed into the proposed head. 
+
+\textbf{Unknown-aware Instance Learning Head.} Inspired by previous open-set detection works~\citep{joseph2021towards,zheng2022towards}, we consider \textit{\textbf{background region proposals}} with relatively high objectness scores to be unknown instances that are ignored during the pre-training stage but may be crucial to downstream tasks, where the objectness scores are obtained from the Region Proposal Network (RPN). However, due to that these unknown instances contain a lot of background regions, directly treating these instances as the foreground instances during the pre-training will cause the backbone network to activate a large number of background regions. To overcome such a problem, we utilize a two-branch head as a committee to discover which regions can be effectively presented as foreground instances. Specifically, given the RoI features {\small $\textbf{F}^{\Gamma_1}=[f_1^{\Gamma_1};f_2^{\Gamma_1};...;f_N^{\Gamma_1}]\in \mathcal{R}^{N\times C}$},  {\small $\textbf{F}^{\Gamma_2}=[f_1^{\Gamma_2};f_2^{\Gamma_2};...;f_N^{\Gamma_2}]\in \mathcal{R}^{N\times C}$} and their corresponding bounding boxes {\small $\textbf{B}^{\Gamma_1}\in \mathcal{R}^{N\times 7}$}, {\small $\textbf{B}^{\Gamma_2}\in \mathcal{R}^{N\times 7}$}, where {\small $N$} is the number of RoI features and {\small $C$} denotes the dimension of features, we first select $M$ features {\small $\Tilde{\textbf{F}}^{\Gamma_1}\in \mathcal{R}^{M\times C}$}, {\small $\Tilde{\textbf{F}}^{\Gamma_2}\in \mathcal{R}^{M\times C}$} and its corresponding bounding boxes {\small $\Tilde{\textbf{B}}^{\Gamma_1}\in \mathcal{R}^{N\times 7}$}, {\small $\Tilde{\textbf{B}}^{\Gamma_2}\in \mathcal{R}^{N\times 7}$} with the highest scores. Then, to obtain the positional relationship corresponding to the activation regions of the two branches, we calculate the distance of the box center between {\small $\Tilde{\textbf{B}}^{\Gamma_1}$} and {\small $\Tilde{\textbf{B}}^{\Gamma_2}$}, and the feature correspondence can be obtained by the following equation:
+\begin{equation}
+    {(\hat{\textbf{F}}^{\Gamma_1},\hat{\textbf{F}}^{\Gamma_2})}=\{(\Tilde{f}_i^{\Gamma_1},\Tilde{f}_j^{\Gamma_2})|\sqrt{(c_{i,x}^{\Gamma_1}-c_{j,x}^{\Gamma_2})^2+(c_{i,y}^{\Gamma_1}-c_{j,y}^{\Gamma_2})^2+(c_{i,z}^{\Gamma_1}-c_{j,z}^{\Gamma_2})^2}<\tau\},
+\end{equation}
+where {\small $(c_{i,x}^{\Gamma_1},c_{i,y}^{\Gamma_1},c_{i,z}^{\Gamma_1})$} and {\small $(c_{j,x}^{\Gamma_2},c_{j,y}^{\Gamma_2},c_{j,z}^{\Gamma_2})$} denote $i$-th and $j$-th box center of {\small $\Tilde{\textbf{B}}^{\Gamma_1}$} and {\small $\Tilde{\textbf{B}}^{\Gamma_2}$}, $\tau$ is a threshold. Once the correspondence features from different input views are obtained, these unknown instances will be updated as the foreground instances that can be fed into their original class head.
+\textbf{Consistency Loss.} 
+After obtaining the corresponding activation features of different branches, a consistency loss is utilized to ensure the consistency of the corresponding features as follows:
+\begin{equation}
+    \label{eq:consist_loss}
+    \mathcal{L}_{consist}=\frac{1}{BK}\sum_{i=1}^{B}\sum_{j=1}^{K}(\hat{f}^{\Gamma_1}_j-\hat{f}^{\Gamma_2}_j)^2,
+\end{equation}
+where {\small $B$} is the batch size and {\small $K$} is the number of the corresponding activation features.
+
+\textbf{Overall Function.} The overall loss function can be formulated as:
+\begin{equation}
+    \mathcal{L}_{total}=\mathcal{L}_{cls}+\mathcal{L}_{reg}+\mathcal{L}_{consist},
+\end{equation}
+where $\mathcal{L}_{cls}$ and $\mathcal{L}_{reg}$ represent classification loss and regression loss of the dense head, respectively, and $\mathcal{L}_{consist}$ is the activation consistent loss as shown in Eq.~\ref{eq:consist_loss}.
+
+
+Experiments
+
+\subsection{Experimental Setup}
+
+\noindent \textbf{Pre-training Dataset.} ONCE~\citep{mao2021one} is a large-scale dataset collected in many scenes and weather conditions. ONCE contains 581 sequences composed of 20 labeled ($\sim$19k frames) and 561 unlabeled sequences($\sim$1M frames). The labeled set divides into a train set with 6 sequences ($\sim$5K samples), a validation set with 4 sequences ($\sim$3k frames), and a test set with 10 sequences ($\sim$8k frames). We merge Car, Bus, Truck into a unified category (\textit{i.e.}, Vehicle) when performing the pre-training. Our main results are based on ONCE small split and use a larger split to verify the pre-training scalability.
+
+\noindent \textbf{Description of Downstream Datasets.} \textbf{\textit{1) Waymo Open Dataset}}~\citep{sun2020scalability} contains $\sim$150k frames.  \textbf{\textit{2) nuScenes Dataset}}~\citep{caesar2020nuscenes} provides point cloud data from a 32-beam LiDAR consisting of 28130 training samples and 6019 validation samples.  \textbf{\textit{3) KITTI Dataset}}~\citep{geiger2012we} includes 7481 training samples and is divided into a train set with 3712 samples and a validation set with 3769 samples.
+
+\noindent \textbf{Description of Selected Baselines.} In this paper, we compare our method with several baseline methods including both Self-Supervised Pre-Training (SS-PT) and semi-supervised learning methods. \textit{\textbf{SS-PT methods}}: as mentioned in Sec.~\ref{sec:ssl_pretrain}, We mainly compare with contrastive learning-based (\textit{i.e.}, GCC-3D~\citep{liang2021exploring}, ProposalContrast~\citep{yin2022proposalcontrast}) and MAE-based SS-PT methods (\textit{i.e.}, Voxel-MAE~\citep{hess2023masked}, BEV-MAE~\citep{lin2022bev}). All these methods are pre-trained and fine-tuned on the same dataset. \textit{\textbf{Semi-supervised learning methods}}: to verify the effectiveness of our method under the same experimental setting, we also compare with commonly-used semi-supervised technique (\textit{i.e.}, MeanTeacher~\citep{tarvainen2017mean}).
+
+\begin{table*}[t]
+    \caption{Fine-tuning performance on Waymo benchmark (LEVEL\_2 metric). Note that we only use a single checkpoint parameter to initialize all downstream baselines including SECOND, CenterPoint, PV-RCNN++. Semi denotes the semi-supervised method training on unlabeled ONCE split.}
+    \label{tab:waymo_results}
+    \centering
+    \begin{small}
+    \resizebox{1.0\linewidth}{!}
+    {
+        \begin{tabular}{c | c | c | c | c c c}
+            \toprule[1pt]
+            \multirow{2}{*}{Method} & \multirow{2}{*}{Paradigm} & \multirow{2}{*}{\makecell[c]{Data \\ amount}} & \multicolumn{4}{c}{L2 AP / APH}  \\
+            \cmidrule(l){4-7}
+            & & & Overall & Vehicle & Pedestrian & Cyclist \\
+            \cmidrule{1-7}
+            From scratch (SECOND)                                     & -    & 3\% & 52.00 / 37.70 & 58.11 / 57.44 & 51.34 / 27.38 & 46.57 / 28.28 \\
+            From scratch (SECOND)                                     & -    & 20\% & 60.62 / 56.86 & 64.26 / 63.73 & 59.72 / 50.38 & 57.87 / 56.48 \\
+            ProposalContrast (SECOND)~\citep{yin2022proposalcontrast} & SS-PT  & 20\% &  60.91 / 57.16 & 64.50 / 63.90 & \textbf{60.33} / 51.00 & 57.90 / 56.60 \\
+            BEV-MAE (SECOND)~\citep{lin2022bev}                       & SS-PT  & 20\% & 61.03 / 57.30 & 64.42 / 63.87 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

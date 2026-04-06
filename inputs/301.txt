@@ -1,0 +1,292 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figure1_v2.pdf}
+    \caption{(a) Similarity score distribution of dual-encoder and cross-encoder. (b) Student predictions and targets for different types of distillation methods. For partial ranking distillation, the relative order between easy negatives is disregarded.
+    }
+    \label{fig:abstract}
+\end{figure}
+Dominant pre-training works for image-text retrieval adopt dual-encoder architecture \cite{radford2021learning, jia2021scaling, wen2021cookie, lu2022cots} to separately extract image and text representations and employ contrastive learning to facilitate global image-text alignment.
+Although dual-encoder has high efficiency, its retrieval accuracy is sub-optimal due to the lack of modality interactions except for the final dot product. 
+In contrast, the cross-encoder architecture of another line of works perform deep cross-modal interaction between images and texts in a single encoder.
+This allows them to retrieve more accurately, but the need to calculate on all possible image-text pairs sacrifices retrieval efficiency.
+
+To obtain an efficient and accurate retriever, a natural idea is to distill the cross-modal matching knowledge from the cross-encoder into the dual-encoder.
+However, the discrepancies between the two models make the existing attention and logit distillation methods less versatile or effective.
+On the one hand, attention distillation requires extra modules to compute cross-modal attention of dual-encoder and a cross-encoder with specific architecture to provide distillation targets.
+On the other hand, the differences in training objectives and architectures between two models lead to significantly distinct and non-directly alignable cross-modal similarity score distributions. 
+
+To explore a general and efficient way to achieve effective knowledge transfer from cross-encoder to dual-encoder, we analyze their distinct characteristics and the difficulties hindering distillation, and make the following observations:
+(1) As shown in Figure \ref{fig:abstract}(a), the cross-modal similarity distribution of the dual-encoder constrained by contrastive learning tends to be "moderate" and normally distributed, whereas the similarity score distribution of cross-encoder optimized with image-text matching is more ``aggressive" and mainly concentrates on 0/1.
+Vanilla logit distillation based on KL-divergence enforces the similarity score distribution of dual-encoder to approximate that of cross-encoder. It is difficult due to the substantial differences between them and may interfere with the original training objective of dual-encoder, thereby disrupting the learning of coarse image-text alignment.
+However, we find that mimicking the ranking of negatives derived from sorting similarity scores is an effective distillation scheme, which we refer to as ranking distillation, as it solely depends on the relative ranking of the scores and is not influenced by the sharpness of score distribution.
+(2) Furthermore, performance gap between dual-encoder and cross-encoder mainly stems from inaccurate ranking of top-ranked items. 
+Supporting this claim, re-ranking top 32 items retrieved by dual-encoder with cross-encoder substantially improves retrieval accuracy. Further expanding the number of re-ranked items yields negligible gains, indicating that distillation should focus more on partial ranking of top-ranked samples rather than all samples. The illustrations of vanilla logit distillation, ranking distillation, and partial ranking distillation are shown in Figure \ref{fig:abstract}(b) for clarity.
+(3) Different types of loss have varied effects on the image-text embedding space of dual-encoder. Therefore, it is beneficial to maintain coordination between ranking distillation loss and the original training loss of dual-encoder to avoid interfering with the learning process.
+
+Based on the above observations, we propose a novel Contrastive Partial Ranking Distillation (CPRD) method to enable effective ranking knowledge distillation. Specifically, we learn the ranking of hard negative samples via contrastive learning. Given an image, we first utilize the dual-encoder to identify the top-K hard negative texts and obtain the ranking of these texts. Then, we feed the image and negative texts into cross-encoder to compute the matching scores and divide the negative texts into valid and invalid negative texts. Valid negative texts have a larger matching score with the image, and their relative order contains rich cross-modal matching knowledge. Therefore, we employ contrastive learning to pull higher-ranked valid negative texts closer to image while pushing the lower-ranked texts away, ensuring the consistency between ranking of valid negative texts from dual-encoder and that from the cross-encoder. On the other hand, invalid negative texts have a smaller matching score with the image, and their relative order does not contain valid information. Thus, we only employ contrastive learning to push all invalid negative texts away and disregard the relative order between them.
+
+This approach does not require the similarity distributions of dual-encoders and cross-encoders to be similar, overcoming the distillation difficulties caused by the substantial differences between similarity distributions.
+Furthermore, we achieve the objective of hard negative ranking learning with contrastive learning, aligning seamlessly with the dual-encoder training process.
+The contributions of this work can be summarized as follows:
+\begin{itemize}
+    \item We conduct a comprehensive investigation into the effective knowledge distillation from cross-encoders to dual-encoders and identify three key aspects.
+    \item We propose the Contrastive Partial Ranking Distillation (CPRD) method, which attains the objective of learning the relative order between valid hard negatives via contrastive learning, enabling effective knowledge transfer from cross-encoder to dual-encoder.
+    \item Experimental results show that our method outperforms previous distillation methods, significantly improving the retrieval and ranking accuracy of dual-encoder.
+\end{itemize}
+
+
+Related Work
+\label{sec:relatedwork}
+\noindent \textbf{Pre-training for Image-text Retrieval.}
+Pre-training works for image-text retrieval can be categorized into dual-encoder methods and cross-encoder methods. Dual-encoder methods \cite{radford2021learning, jia2021scaling, wen2021cookie, lu2022cots, sun2021lightningdot} adopt two separate encoders to extract the image and text features separately, and employ contrastive learning to align global representations in a shared embedding space. 
+Cross-encoder methods \cite{li2019visualbert, lu2019vilbert, chen2019uniter, li2020oscar, zhang2021vinvl, li2021align, zeng2021multi, li2022blip, bao2022vlmo} employ a single encoder for the joint encoding of image-text features. Many proxy tasks are proposed to facilitate cross-modal interaction in the cross-encoder, \textit{e.g.,} masked language modeling (MLM), masked region modeling (MRM), and masked image modeling (MIM), \textit{etc.}
+In order to improve the retrieval accuracy of dual-encoders, one line of approaches \cite{sun2021lightningdot, lu2022cots} draw inspiration from cross-encoder and enhance the cross-modal interaction by adapting MLM, MRM, and MIM tasks to dual-encoder. However, another approach, transferring knowledge from cross-encoder to dual-encoder through distillation, has not been fully explored. 
+\noindent \textbf{Knowledge Distillation from Cross-Encoder to Dual-Encoder.} 
+Previous works distilling knowledge from the cross-encoder to the dual-encoder can be divided into attention distillation methods\cite{wang2022distilled} and logit distillation methods\cite{miech2021thinking}.
+Attention distillation methods aim to align the cross-modal attention of two models, which requires two prerequisites: (1) Both models have to adopt attention-based backbone, \textit{e.g.,} ViT\cite{dosovitskiy2020image}, BERT\cite{kenton2019bert}, to produce attention map. (2) Input to dual-encoder and cross-encoder is exactly identical to guarantee their attention maps have the same shape and semantics. 
+These make attention distillation less versatile. 
+Inspired by the distillation works in image classification, Miech et al. \cite{miech2021thinking} and Lei et al. \cite{lei2022loopitr} introduce logit distillation into image-text retrieval. 
+The core idea is to constrain the consistency of the image-text similarity score distribution of the dual encoder and cross-encoder through KL-divergence based loss. 
+But substantial similarity distribution differences between dual-encoder and cross-encoder make it difficult to transfer knowledge effectively.
+To explore an effective and general distillation method to improve the performance of dual-encoders, we investigate and identify three key factors and further propose the Contrastive Partial Ranking Distillation method.
+
+\noindent \textbf{Ranking Distillation for Neural Ranking.} In the field of textual neural ranking, there are some studies on ranking distillation \cite{menon2022defense, reddi2021rankdistil, hofstatter2020improving}. Sashank et al.\cite{reddi2021rankdistil} propose rank distillation losses with cross-entropy or MSE loss to constrain the consistency of positive sample scores, which is less effective due to the significant differences in similarity score distribution in image-text retrieval.
+Sebastian et al.\cite{hofstatter2020improving} 
+propose Margin-MSE, which requires the same margin between positive and negative sample scores for student and teacher models. Aditya et al.\cite{menon2022defense} further propose M3SE, 
+requiring the student and teacher models to have the same margin between positive and the hardest negative sample.
+However, it only considers the hardest negative samples, limiting the knowledge that can be transferred. Moreover, the MSE loss is not coordinated with the contrastive learning for dual-encoder training, resulting in interference in the learning process. In contrast, our proposed CPRD method considers the relative order among multiple hard negative samples via contrastive learning, aligning with the original training loss of dual-encoder.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{figure2_update.pdf}
+    \caption{The illustration of the Contrastive Partial Ranking Distillation method. The left shows the overall training process and the right side elaborates on the computation process of image-text alignment and contrastive partial ranking distillation.}
+    \label{fig:framework}
+\end{figure*}
+
+
+
+Method
+
+In this section, we first introduce the architecture and training objective of vanilla dual-encoder and cross-encoder, and explain the reasons for the formation of their similarity distribution characteristics in Sec \ref{sec:revisit}. Then, we identify the source of the performance gap between them, underscore the importance of hard negatives ranking, and elaborate on our proposed Contrastive Partial Ranking Distillation (CPRD) method in Sec \ref{sec:prd}. Finally, we present the overall training objective of dual-encoder in Sec \ref{sec:train}.
+
+\subsection{Dual-Encoder and Cross-Encoder}
+\label{sec:revisit}
+
+\noindent \textbf{Dual-Encoder.} 
+The dual-encoder takes an image and its paired text as input, and extracts global visual and textual representations $\bm{v}_i$ and $\bm{t}_i$ with separate encoders.
+The dot product of $\bm{v}_i$ and $\bm{t}_i$ is used to measure the image-text similarity. 
+During pre-training, following previous works\cite{li2021align}, we maintain two queues $\mathcal{Q}^v$ and $\mathcal{Q}^t$ to preserve the momentum features from current mini-batch $\{\bm{\hat{v}}_j\}_{j=1}^{B}$ and $\{\bm{\hat{t}}_j\}_{j=1}^{B}$ and previous iterations $\{\bm{\hat{v}}_j\}_{j=B+1}^{B + Nq}$ and $\{\bm{\hat{t}}_j\}_{j=B+1}^{B + Nq}$. 
+For every image/text in the current mini-batch, its related text/image is deemed a positive sample, while the unmatched texts/images within the mini-batch and all samples in the previous iterations are considered as negatives. 
+The contrastive learning (\textit{i.e.}, InfoNCE loss) is employed to maximize the similarity between positive image-text pairs while minimizing the similarity between negative pairs, which is formulated as:
+\begin{equation}
+\begin{aligned}
+    \mathcal{L}_{\mathrm{I2T}}&=-\frac{1}{B}\sum_{i=1}^B \mathrm{log}\frac{\mathrm{exp}({\bm{v}_i^\top}\bm{\hat{t}}_i/ \tau)}{\sum_{j=1}^{B+N_q} \mathrm{exp}({\bm{v}_i^\top}\bm{\hat{t}}_j/ \tau)}, \\
+    \mathcal{L}_{\mathrm{T2I}}&=-\frac{1}{B}\sum_{i=1}^B \mathrm{log}\frac{\mathrm{exp}({\bm{t}_i^\top}\bm{\hat{v}}_i/ \tau)}{\sum_{j=1}^{B+N_q} \mathrm{exp}(\bm{t}_i^\top\bm{\hat{v}}_j / \tau)}, \\
+\end{aligned}
+\end{equation}
+where $\tau$ is the temperature and $B$ is the batch size.
+The total loss for image-text contrastive learning is defined as:
+\begin{equation}
+    \mathcal{L}_{\mathrm{align}} = (\mathcal{L}_{\mathrm{I2T}}+\mathcal{L}_{\mathrm{T2I}}) / 2.
+\end{equation}
+The characteristics of independent encoding for each modality in the dual-encoder and the objective of contrastive learning lead to a moderate similarity distribution.
+
+\noindent \textbf{Cross-Encoder.} 
+Cross-encoders typically start by utilizing visual and textual encoders to extract detailed image and text representations $\bm{V}_i$ and $\bm{T}_j$ from the input image-text pair. 
+Then the obtained primary representations are fed into a multi-modal encoder that employs self-attention or cross-attention to enable cross-modal interactions, thereby calculating the similarity score $\bm{p}_{i,j} \in [0,1]$ for the input image-text pair. 
+The image-text matching task serves as the training objective for the cross-encoder, which aims at judging whether the input image-text pair is matched or not and is formulated as:
+\begin{equation}
+    \mathcal{L}_{itm} = - \frac{1}{|\mathcal{S}|}\sum_{(i,j)\in \mathcal{S}}y_{ij}log\bm{p}_{i,j} + (1 - y_{ij}) log(1-\bm{p}_{i,j}),\notag
+\end{equation}
+where $y_{ij} \in \{0, 1\}$ is the ground-truth label indicating whether the image-text pair is matched or not. $\mathcal{S}$ is the index set of image-text pairs, obtained by random sampling or hard negative sampling strategies.
+The objective of image-text matching pushes $\bm{p}_{i,j}$ to either 0 or 1, making the similarity distribution of cross-encoder more concentrated. The substantial difference between similarity distribution of dual-encoder and cross-encoder makes KL-divergence based distillation less effective.
+
+\subsection{Contrastive Partial Ranking Distillation}
+\label{sec:prd}
+
+ 
+To achieve effective knowledge transfer from cross-encoder to dual-encoder, it is essential to first identify the source of performance gap between dual-encoder and cross-encoder. 
+We test the performance of the pre-trained dual-encoder and cross-encoder from \cite{li2022blip} on MSCOCO\cite{lin2014microsoft} dataset. Note that the retrieval results of cross-encoder are obtained by re-ranking top-K retrieved items from dual-encoder.
+The results are presented in Table \ref{tab:comparison_DE_CE}, and we observe that (1) As K increases from 0 to 32, the retrieval performance significantly improves.
+(2) When more less-challenging negatives are introduced, \ie, K continues to increase from 32 to 256, the performance saturates.
+It indicates that dual-encoder has filtered easy negatives and ranked most relevant items (including positives and hard negatives) into top 32, but lacks accurate ranking of them. Furthermore, given the orginal loss of the dual-encoder (InfoNCE loss) encompasses the objective of ranking positives ahead of hard negatives, the distillation only needs to focus on the cross-encoder's ranking knowledge of hard negatives.
+
+\begin{table}[t]
+ \caption{Performance comparison between dual-encoder (DE) and cross-encoder (CE) with different candidate number $\mathrm{K}$.}
+ \label{tab:comparison_DE_CE}
+ \footnotesize
+ \resizebox{\linewidth}{!}{
+ \begin{tabular}{lccccccc}
+    \toprule
+    \multirow{2}{*}{Model} & \multicolumn{3}{c}{image$\rightarrow$text} & \multicolumn{3}{c}{text$\rightarrow$image} & \multirow{2}{*}{R@S}\\
+     & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & \\
+    \midrule
+    DE & 73.8 & 92.1 & 95.7 & 55.8 & 80.6 & 88.1 & 486.2 \\
+    \midrule
+    CE, K=0 & 73.8 & 92.1 & 95.7 & 55.8 & 80.6 & 88.1 & 486.2 \\
+    CE, K=4 & 76.6 & 91.3 & 95.6 & 60.6 & 80.5 & 87.8 & 492.4 \\
+    CE, K=16 & 78.1 & 93.0 & 95.8 & 61.4 & 83.5 & 89.3 & 501.1 \\
+    CE, K=32 & 78.4 & 93.4 & 96.4 & \textbf{61.5} & \textbf{83.8} & \textbf{90.0} & 503.4 \\
+    CE, K=128 & 78.6 & 93.9 & 96.9 & 61.4 & 83.7 & 89.9 & \textbf{504.4} \\
+    CE, K=256 & \textbf{78.5} & \textbf{93.8} & \textbf{96.9} & 61.4 & 83.7 & 89.9 & 504.2 \\    
+ \bottomrule
+\end{tabular}}
+\end{table}
+
+Based on the above findings, we propose Contrastive Partial Ranking Distillation (CPRD), a method that leverages contrastive learning to enforce consistency in the ranking of hard negatives between dual-encoders and cross-encoders.
+As shown in Figure \ref{fig:framework}, in order to transfer knowledge about hard negatives ranking effectively, our CPRD method first mining sufficient hard negative samples with dual-encoder's similarity score, then construct the ranking target of hard negatives with cross-encoder, and finally perform partial ranking distillation via contrastive learning to transfer cross-modal matching knowledge effectively.
+
+\subsubsection{Hard Negative Mining} 
+
+A straightforward approach to obtain hard negatives is selecting the most similar unmatched images/texts within the mini-batch.
+However, the batch size must be sufficiently large to find adequately challenging hard negatives. 
+Therefore, we expand the mining scope to the queues $\mathcal{Q}^v$ and $\mathcal{Q}^t$.
+Here, we demonstrate the process of image-to-text retrieval, while the text-to-image retrieval is performed symmetrically.
+For the $i$-th image, we use dual-encoder to compute its similarity scores with all negative texts in $\mathcal{Q}^t$, which contains samples from both current mini-batch and previous iterations. 
+We then obtain the ranking result for the negative texts, denoted as $\bm{d}_i=\{d_{ij}\}_{j=1}^{B+N_q-1}$, by sorting the similarity scores in the descending order, where:
+\begin{equation}
+    \bm{v}_i^\top\hat{\bm{t}}_{d_{ij}} > \bm{v}_i^\top\hat{\bm{t}}_{d_{ik}},\ \forall \ j,k \in [1,...,B+N_q-1],\ j < k,
+\end{equation}
+and indices of top-$\mathrm{K}$ hard negative texts is $\bm{h}_i = \{d_{ij}\}_{j=1}^{\mathrm{K}}$.
+
+\subsubsection{Ranking Target Construction}\label{sec:ranking_target_construction}
+
+Then we construct the ranking target of top-K hard negatives with cross-encoder. To compute the similarity scores of the top-K hard negatives with the cross-encoder, we also need to maintain two additional queues $\mathcal{Q}_c^v$ and $\mathcal{Q}_c^t$ with size $N_c$ to preserve the image and text inputs from mini-batch and previous iterations for the cross-encoder.
+The similarity score set $\bm{P}_{i}$ of the cross-encoder for all hard negative texts is denoted as $\bm{P}_{i} = \{\bm{p}_{i,d_{ij}} | j \in [1,2,...,\mathrm{K}]\}$.
+The cross-encoder's ranking of hard negative texts $\bm{c}_i=\{c_{ij}\}_{j=1}^{\mathrm{K}}$ can then be obtained by sorting $\bm{P}_{i}$, where $c_{ij}$ satisfies:
+\begin{equation}
+    \bm{p}_{i,c_{ij}} > \bm{p}_{i,c_{ik}},\ \forall \ j,k \in [1,...,\mathrm{K}],\ j < k.
+\end{equation}
+
+However, the cross-encoder's ranking $\bm{c}_i$ can not be used as target directly because not all information in the ranking $\bm{c}_i$ is beneficial for dual-encoder. There are some low-ranked negative texts in $\bm{c}_i$ that have small similarity score $\bm{p}_{i,c_{ij}}$. We refer these texts as invalid hard negative texts $\{\bm{\hat{t}}_{c_{ij}}|\bm{p}_{i,c_{ij}} < m\}$, where $m$ is the hyper-parameter to distinguish between valid and invalid hard negative texts. The relative order among invalid hard negative texts does not contain helpful knowledge, and enforcing the dual-encoder to learn such relative order may hurt the model performance. Therefore, we construct a partial ranking $\bm{c}^*_i$ as the target, where the relative order between valid hard negative texts is the same with $\bm{c}_i$ but the relative order between invalid ones is disregarded.
+
+It is worth noting that using the cross-encoder to calculate similarity scores online brings additional training costs. To address this issue, we can employ an offline approach. 
+Specifically, we first use the dual-encoder to perform a fast retrieval on the entire pre-training dataset to obtain the top-N hard negative texts for each image. 
+Then we compute similarity scores of these negative image-text pairs with cross-encoder and store them in a similarity bank.
+During the training iterations, for the negative text $\bm{\hat{t}}_{d_{ij}}$, if $\bm{p}_{i,d_{ij}}$ is in the similarity bank, we load the pre-computed value; otherwise, we term $\bm{\hat{t}}_{d_{ij}}$ as invalid negative texts.
+We set $\mathrm{N}\gg K$ to ensure that most valid hard negatives are considered.
+
+\subsubsection{Contrastive Partial Ranking Learning}
+
+Given the ranking target $\bm{c}^*_i$ from cross-encoder, we expect the rankings from dual-encoder ($\bm{h}_i$) can be \textbf{\textit{partial}} consistent with $\bm{c}^*_i$, which means only the relative order between valid hard negatives should be maintained and the relative order between invalid hard negatives is ignored. The learning objective is formulated as:
+\begin{equation}
+    \min\limits_{\theta} \mathrm{Dist}(\bm{h}_i, \bm{c}^*_i),
+\end{equation}
+where $\theta$ is the parameters of dual-encoder, $\mathrm{Dist}(\cdot, \cdot)$ is the metric to measure the partial consistency between two ranking results. 
+Optimizing this objective faces two challenges: (1) An appropriate metric to measure the partial consistency between rankings; (2) The sort operation used to compute $\bm{c}^*_i$ and $\bm{h}_i$ is non-differentiable, hindering the end-to-end training. Both are hard to tackle.
+
+To implement effective partial ranking learning, we transform the non-differentiable ranking mimicking into the optimization of relative similarity scores.
+Specifically, for each valid hard negative text in $\bm{c}^*_i$, we require its similarity with the $i$-th image computed by dual-encoder to be larger than the similarities of other negative texts ranked behind it. 
+For invalid hard negative texts, we do not impose this constraint, which avoids learning relative order between them.
+The new objective can be formulated as:
+\begin{equation}
+    \begin{aligned}
+    \label{equ:obj}
+        \bm{v}^\top_i \bm{t}_{c_{ij}} &> \bm{v}^\top_i \bm{t}_{c_{ik}}, \\ 
+        \forall j, k,\ \ j < J_i^*, &1 \leq j < k \leq \mathrm{K}, \\ 
+    \end{aligned}
+\end{equation}
+where $J_i^*$ denotes the index of the first invalid hard negative text in the $\bm{c}^*_{i}$.
+
+Although Equation \ref{equ:obj} can already be used as a differentiable loss function for optimizing the dual-encoder, we find that an inappropriate loss function type may interfere with the coarse image-text alignment learned by dual-encoder. Formulating the ranking learning process in the form of contrastive learning is more coordinated with training of dual-encoder and yields better results. 
+Therefore, we propose a new contrastive partial ranking loss based on the InfoNCE loss, which is formulated as:
+\begin{flalign}
+    \mathcal{L}_{ij} = -log \frac{\mathrm{exp}(\bm{v}^\top_i\bm{\hat{t}}_{c_{ij}} / \tau)}{\sum \limits_{k=j}^{\mathrm{K}} \mathrm{exp}(\bm{v}^\top_i\bm{\hat{t}}_{c_{ik}} / \tau) + \sum \limits_{k=\mathrm{K}+1}^{B+N_q-1} \mathrm{exp}(\bm{v}^\top_i\bm{\hat{t}}_{d_{ik}} / \tau)}, \notag
+\end{flalign}
+
+\begin{flalign}
+\mathcal{L}_{\mathrm{CPRD}}^{\mathrm{I2T}} = \frac{1}{B}\sum_{i=1}^{B} \frac{1}{J_i^*-1} \sum \limits_{j=1}^{J_i^*-1} \mathcal{L}_{ij}, &&
+\end{flalign}
+where $\mathcal{L}_{ij}$ has the same effect with Equation \ref{equ:obj}. As mentioned above, $\mathcal{L}_{\mathrm{CPRD}}^{\mathrm{T2I}}$ can be computed in the symmetrical way and the final contrastive partial ranking distillation loss $\mathcal{L}_{\mathrm{CPRD}}$ is defined as:
+\begin{equation}
+    \mathcal{L}_{\mathrm{CPRD}} = (\mathcal{L}_{\mathrm{CPRD}}^{\mathrm{I2T}} + \mathcal{L}_{\mathrm{CPRD}}^{\mathrm{T2I}}) / 2.
+\end{equation}
+
+\subsection{Training Objectives}
+\label{sec:train}
+We perform distillation training with both image-text contrastive loss and new contrastive partial ranking distillation loss to learn the coarse image-text alignment and detailed ranking between hard negatives simultaneously. 
+The total loss is formulated as:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\mathrm{align}} + \mathcal{L}_{\mathrm{CPRD}}.
+\end{equation}
+
+
+Experiments
+\subsection{Datasets}
+
+\noindent \textbf{Pre-training Datasets.} 
+We pre-train our model with CC4M dataset, which contains 4 million images and 5.1 million captions from four public image-text datasets, including Conceptual Captions 3M\cite{sharma2018conceptual}, SBU\cite{ordonez2011im2text}, MSCOCO\cite{lin2014microsoft} and Visual Genome\cite{krishna2017visual}.
+
+\noindent \textbf{Downstream Datasets.}
+We conduct downstream image-text retrieval evaluation on two widely used datasets: MSCOCO\cite{lin2014microsoft} and Flick30K\cite{plummer2015flickr30k}. 
+In addition, we validate the effectiveness of our method on improving the ranking ability with the CrissCrossed Caption\cite{parekh2021crisscrossed} dataset. 
+The details of these downstream datasets and the evaluation metrics can be found in the supplemental material.
+
+\subsection{Implementation Details.}
+For dual-encoder, we adopt $\mathrm{BERT_{base}}$\cite{kenton2019bert} as text encoder and a ViT-B/16\cite{dosovitskiy2020image} pre-trained on ImageNet-1k as the visual encoder. For cross-encoder, we experiment with three models with varying performance, including ALBEF\cite{li2021align} pre-trained on 5M image-text pairs, ALBEF pre-trained on 15M image-text pairs, and BLIP\cite{li2022blip} pre-trained on $>$200M image-text pairs. We use the AdamW\cite{loshchilov2018decoupled} optimizer with a weight decay of 0.02. The learning rate is warmed up to 3$e{-4}$ in the first 2000 iterations and decays to 1$e{-5}$ following a cosine schedule. We pre-train the model for 20 epochs with a batch size of 512 on 8 NVIDIA V100 GPUs. 
+We take the image resolution of 256$\times$256 for pre-training and increase the image resolution to 384$\times$384 for fine-tuning.
+The momentum coefficient for updating momentum encoders is set as 0.995. The number of hard negative K and the threshold $m$ is set as 16 and 0.75. The queue size $N_q$ and $N_c$ are set as 57856 and 16384 respectively.
+The learnable temperature hyper-parameter for contrastive loss is initialized to 0.07. More implementation details can be found in the supplementary materials.
+
+\subsection{Teach Dual-Encoder with Cross-Encoder}
+
+In this section, we provide detailed steps to demonstrate how to use the cross-encoder as teacher for the dual-encoder effectively. 
+All models in this section are pre-trained on CC3M using an image resolution of $224\times 224$ with 8 NVIDIA V100 GPUs, and then tested for zero-shot image-text retrieval performance on MSCOCO. 
+The teacher model is ALBEF pre-trained on CC3M and is kept frozen during the distillation process, while the student model is a dual-encoder trained from scratch.
+
+\begin{table}[t]
+ \caption{The performance comparison with different queue size $N_c$. ``DE" and ``CE" represent the baseline dual-encoder and teacher cross-encoder.}
+ \label{tab:comparison_queue_size}
+ \footnotesize
+ \resizebox{\linewidth}{!}{
+ \begin{tabular}{lccccccc}
+    \toprule
+    \multirow{2}{*}{$N_c$} & \multicolumn{3}{c}{image$\rightarrow$text} & \multicolumn{3}{c}{text$\rightarrow$image} & \multirow{2}{*}{R@S}\\
+     & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & \\
+    \midrule
+    DE & 32.0 & 59.4 & 71.5 & 24.4 & 49.5 & 61.0 & 297.8 \\
+    CE & 40.5 & 66.5 & 76.1 & 30.2 & 55.3 & 66.5 & 335.1 \\
+    \hline
+    0 & 32.6 & 60.1 & 71.0 & 24.7 & 49.8 & 61.7 & 299.9 \\
+    1024 & 32.6 & 60.3 & 71.9 & 25.9 & 51.0 & 62.7 & 304.4 \\
+    4096 & 33.7 & 60.6 & 71.7 & 26.9 & 52.3 & \underline{64.0} & 309.2 \\
+    16384 & \underline{34.3} & \underline{61.4} & \underline{73.2} & \underline{27.0} & \textbf{52.8} & \textbf{64.5} & \underline{313.2} \\
+    32768 & \textbf{34.6} & \textbf{62.6}  & \textbf{73.5}  & \textbf{27.3}  & \underline{52.4}  & 63.8 & \textbf{314.2} \\
+ \bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[t]
+ \caption{The performance comparison with different numbers of hard negative considered for contrastive partial ranking distillation. ``None" indicates the offline approach for calculating hard negative pairs' similarity with cross-encoder, which does not need to set K.}
+ \label{tab:comparison_K}
+ \footnotesize
+ \resizebox{\linewidth}{!}{
+ \begin{tabular}{lccccccc}
+    \toprule
+    \multirow{2}{*}{K} & \multicolumn{3}{c}{image$\rightarrow$text} & \multicolumn{3}{c}{text$\rightarrow$image} & \multirow{2}{*}{R@S}\\
+     & R@1 & R@5 & R@10 & R@1 & R@5 & R@10 & \\
+    \midrule
+    0 & 32.0 & 59.4 & 71.5 & 24.4 & 49.5 & 61.0 & 297.8 \\
+    2 & 32.4 & 60.7 & 71.8 & 24.6 & 49.6 & 61.4 & 300.5 \\
+    4 & 33.5 & 61.1 & \underline{72.9} & 25.9 & 50.9 & 62.2 & 306.5 \\
+    8 & \textbf{34.6} & \underline{61.3} & \textbf{73.2} & 26.7 & 51.6 & 63.5 & 310.9 \\
+    16 & 34.1 & 61.1 & 72.6 & \textbf{27.3} & \textbf{53.0} & \underline{64.3} & \underline{312.4} \\
+    32 & \underline{34.3} & \underline{61.4} & \textbf{73.2} & \underline{27.0} & \underline{52.8} & \textbf{64.5} & \textbf{313.2} \\
+    None & 34.0 & 60.8 & 72.5 & 27.3 & 52.7 & 64.0 & 311.3 \\
+ \bottomrule
+\end{tabular}}
+\end{table}
+
+\noindent \textbf{The effect of queue size $N_c$.} 
+The 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

@@ -1,0 +1,239 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.\linewidth]{fig/intro.pdf}
+\caption{Spatiotemporal token dropout from a keyframe-centric perspective. We maintain tokens from the keyframe of a video clip, preserve a small amount of tokens from non-keyframes based on actor motions, and drop out the remaining tokens in this clip. On the first row, we preserve tokens relevant to the waving hand in non-keyframes as they benefit recognizing the action `point to'. On the second row, we drop out tokens irrelevant to the action `entering' in non-keyframes for efficient recognition.}
+\label{fig:intro}
+\end{figure}
+\label{sec:intro}
+Vision transformers (ViTs) have improved a series of recognition performance, including image classification~\cite{dosovitskiy2020image,touvron2021training,jiang2021all} and object detection~\cite{carion2020end,dai2021up,song2021vidt}. The image patches are regarded as tokens for ViT inputs for self-attention computations. When recognizing a video clip, we notice that the tokens are from each frame and thus formulate a large-scale input for ViTs. These video tokens introduce heavy computations during training and inference, especially in the self-attention computation step. While attempts have been made to reduce vision tokens~\cite{rao2021dynamicvit,liang2022not,fayyaz2022adaptive,wang2022efficient} for fast computations, it is still challenging for video action detection (VAD)~\cite{soomro2012ucf101,gu2018ava,li2021multisports} to balance accuracy and efficiency. This is because in VAD we need to localize actors in each frame and recognize their corresponding identities. For each actor, the temporal motion in video sequences shall be maintained for consistent identification. Meanwhile, the scene context ought to be kept to differentiate from other actors. Sufficient video tokens representing both actor motions and scene context will preserve VAD accuracy, which leaves a research direction on how to select them for efficient VAD.
+In this paper, we preserve video tokens representing actor motions and scene context, while dropping out irrelevant tokens. Based on the temporal coherency of video clips, we propose a spatiotemporal token dropout from a keyframe-centric perspective. For each video clip, we can select one keyframe representing the scene context where all the tokens shall be maintained. Meanwhile, we select tokens from other frames representing actor motions. Moreover, we drop out the remaining video tokens in this clip. Fig.~\ref{fig:intro} shows two examples. On the first row, we maintain all the tokens in the keyframe,  preserve the tokens in non-keyframe relating to the eyes and mouths associating to the action `talk to', the waving hand of the right person associating to the action `point to', and drop out the remaining video tokens. On the second row, we maintain all the tokens in the keyframe, preserve the tokens in non-keyframes relating to the movement of entering the car from outside which is associated with the action `enter', and drop out the remaining video tokens. Our spatiotemporal token dropout maintains the relevant actor motions and scene context from the coherent video clips, while discarding the remaining irrelevant ones for efficient computations. 
+We develop spatiotemporal token dropout via a keyframe-centric token pruning module within the ViT encoder backbone. The keyframe is either uniformly sampled or manually predefined in the video clips. We select the middle frame of the input clip with box annotations as the keyframe by default. The feature map of the selected keyframe is retained completely for actor localization. Besides, we extract an attention map enhanced by this keyframe. This attention map guides token dropout in the non-keyframes. After localization, we need to classify each localized bounding box (bbx) for actor identification. As video tokens are incomplete in non-keyframes, the classification performance is inferior in the bbx regions where tokens have been dropped out. Nevertheless, the inherent temporal consistency in video benefits us to refine both actor and scene context from the remaining video tokens. We expand the localized bbxs in the temporal domain for RoIAlign~\cite{DBLP:conf/iccv/HeGDG17} to capture token features related to actor motions. Then, we introduce a decoder to refine actor features guided by the remaining video tokens in this clip. The decoder concatenates the actor and token features, and performs self-attention to produce enriched actor features for better identification. We find that after token dropout, the degraded action classification can be effectively recovered by using remaining video tokens for context refinement. The recovered performance is the same as that using the whole video tokens for action classification. Through this context refinement, we can maintain the VAD performance using reduced video tokens for efficient computations.
+We conduct extensive experiments on three popular action detection datasets (AVA~\cite{gu2018ava}, UCF101-24~\cite{soomro2012ucf101}, JHMDB~\cite{jhuang2013towards}) to show the advantages of our proposed EVAD. In the ViT-B encoder backbone, for instance, we employ a keyframe-centric token pruning module three times with a keep rate $\rho$ of 0.7 (i.e,. the dropout rate is 0.3). The encoder outputs 34\% of the original video tokens, which reduces GFLOPs by 43\% and increases throughput by 40\% while achieving on-par performance. On the other hand, under the similar computation cost (i.e., a similar amount of tokens), we can take video clips in a higher resolution for performance improvement. For example, we can improve detection performance by 1.1 mAP when increasing the resolution from 256 to 288 on the short side with GFLOPs reduced by 22\% and throughput increased by 10\%. We also provide visualizations and ablation studies to show how our EVAD performs spatiotemporal token dropout to eliminate action irrelevant video tokens. 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=.99\linewidth]{fig/pipe.pdf}
+\caption{\textbf{Pipeline of EVAD.} Our detector consists of three parts: an encoder with keyframe-centric token pruning for efficient video feature extraction, a query-based localization branch using multiscale features of the keyframe for actor boxes prediction, and a classification branch conducting actor spatiotemporal feature refinement and relational modeling between actor RoI features and compact context tokens from ViT encoder.}
+\label{fig:pipe}
+\end{figure*}
+
+
+Related Works
+\subsection{Spatio-temporal Action Detection}
+Current state-of-the-art methods~\cite{DBLP:conf/iccv/Feichtenhofer0M19,feichtenhofer2020x3d,DBLP:conf/cvpr/WuF0HKG19,DBLP:conf/eccv/TangXMPL20,pan2021actor,chen2023cycleacr} commonly adopt a two-stage pipeline with two separated backbones, i.e., a 2D backbone for actor localization on keyframes and a 3D backbone for video feature extraction. Some previous approaches~\cite{kopuklu2019you,sun2018actor} simplified the pipeline by training two backbones in an end-to-end manner, which suffer from heavy complexity and optimization difficulty. Most recent methods~\cite{girdhar2019video,chen2021watch,zhao2022tuber,wu2023stmixer} utilize a unified backbone to perform action detection. VAT~\cite{girdhar2019video} is a transformer-style action detector to aggregate the spatiotemporal context around the target actors. WOO~\cite{chen2021watch} and TubeR~\cite{zhao2022tuber} are query-based action detectors following the detection frameworks of~\cite{sun2021sparse,carion2020end} to predict actor bounding boxes and action classes. STMixer~\cite{wu2023stmixer} is a one-stage query-based detector to adaptively sample discriminative features. Several newly transformer-based methods~\cite{fan2021multiscale,wu2022memvit,tong2022videomae} apply a ViT variant backbone and achieve competitive results following the two-stage pipeline. 
+Moreover, there are also emerging methods~\cite{arnab2022beyond,kumar2022end,xiao2022hierarchical} that focus on the training paradigm of deep networks for action detection task.
+
+\subsection{Spatio-temporal Redundancy}
+{\flushleft \bf Spatial redundancy.} The success of vision transformers has inspired various works~\cite{marin2021token,heo2021rethinking,rao2021dynamicvit,ryoo2021tokenlearner,liang2022not,renggli2022learning,fayyaz2022adaptive} to explore the spatial redundancy of intermediate tokens. 
+DynamicViT~\cite{rao2021dynamicvit} observes that accurate image recognition is based on a subset of most informative tokens and designs a dynamic token sparsification framework to prune redundant tokens. EViT~\cite{liang2022not} calculates the attentiveness of the class token to each token and identifies the top-k tokens using the attentiveness value. ATS~\cite{fayyaz2022adaptive} introduces a differentiable adaptive token sampler for adaptively sampling significant tokens based on the image content.
+
+{\flushleft \bf Spatio-temporal redundancy.} Due to the high redundancy of video datasets, extensive studies~\cite{ocsampler,DSN,wu2019adaframe,korbar2019scsampler,wang2021adaptive,zhi2021mgsampler,fayyaz20213d} have focused on developing efficient video recognition. 
+Some recent approaches~\cite{bertasius2021space,arnab2021vivit,bulat2021space,liu2022video,qing2022mar,park2022k,wang2022efficient,wang2023videomae} present efficient schemes specialized for video transformers. For the reduction of video tokens, MAR~\cite{qing2022mar} devises a hand-crafted masking strategy to discard a proportion of patches. K-centered~\cite{park2022k} proposes a patch-based sampling that outperforms the traditional frame-based sampling. STTS~\cite{wang2022efficient} conducts token selection sequentially in temporal and spatial dimensions within the transformer. VideoMAE V2~\cite{wang2023videomae} designs a dual masking strategy for efficient pre-training.
+
+In contrast to these methods, we are the first to investigate redundancy in video action detection. We consider the correlation of keyframe and adjacent frames to drop out redundant tokens, and implement an efficient transformer-based action detector in an end-to-end manner.
+
+
+Method
+\label{sec:method}
+\subsection{Overall EVAD Architecture}
+\label{sec:pipe}
+{\flushleft \bf Video transformers overview.}
+Video transformers~\cite{arnab2021vivit,tong2022videomae} perform tokenization by dividing the video sequence into $T/2\times H/16\times W/16$ cubes, each of size $2\times 16\times 16$. Then, project each cube to a 3D token using cude embedding. All tokens are added with positional encoding and fed into a sequentially-stacked transformer encoder consisting of a multi-head self-attention (MHSA) and a feed-forward network (FFN). The encoder output is used for classification after global average pooling. Alternatively, a learnable [CLS] token is added before the encoder for final prediction.
+
+{\flushleft \bf Our pipeline.}
+The pipeline of end-to-end video action detection proposed in this paper is based on the vanilla ViT, as shown in Fig.~\ref{fig:pipe}. To alleviate the computational bottleneck caused by joint space-time attention, we devise an efficient video action detector (EVAD) with an encoder-decoder architecture with respect to the characteristics of action detection. EVAD enables the encoder with token pruning to remove the redundant tokens, and the decoder to refine actor spatiotemporal features. Following the setting in WOO~\cite{chen2021watch}, we utilize multiple intermediate spatial feature maps of the keyframe in the encoder for actor localization, and the spatiotemporal feature map output from the last encoder layer for action classification.
+\textbf{Token Pruning}. We design a keyframe-centric token pruning module to progressively reduce the redundancy of video data and ensure that few and promising tokens are delivered for action localization and classification. The specific token pruning module will be detailed in the next subsection.
+\textbf{Localization}. We up-sample or down-sample intermediate ViT feature maps of the keyframe to produce multiscale feature maps and send them to feature pyramid network (FPN)~\cite{lin2017feature} for multiscale fusion. The localization branch predicts $n$ candidate boxes in the keyframe by a query-based method, same as in~\cite{sun2021sparse,chen2021watch}.
+\textbf{Classification}. We remap the compact context tokens from ViT encoder into a spatiotemporal feature map with a regular structure. Then, we conduct 3D RoIAlign on the restored feature map using extended prediction boxes from the localization branch to obtain $n$ actor RoI features. Subsequently, we utilize a context refinement decoder ($CRD$) for actor feature refinement and relational modeling between actor RoI features and compact context from the encoder, and the refined RoI features are passed through a classification layer for final prediction.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{fig/structure.pdf}
+\caption{\textbf{Structure of keyframe-centric token pruning.} We conduct token pruning within the original encoder layer. Specifically, we calculate the importance scores of non-keyframe tokens using a keyframe-enhanced attention map. Then, we preserve the top-k important non-keyframe tokens concatenated with keyframe tokens as the results.}
+\label{fig:stru}
+\end{figure}
+\subsection{Keyframe-centric Token Pruning}
+\label{sec:token}
+The high spatiotemporal redundancy of video with similar semantic information between adjacent frames makes it possible to perform token pruning with a high dropout rate on video transformers. In this paper, we design a keyframe-centric token pruning module, as shown in Fig.~\ref{fig:stru}. We split all spatiotemporal tokens into keyframe tokens and non-keyframe tokens. And we preserve all keyframe tokens for accurate actor localization in the keyframe.
+{\flushleft \bf Non-keyframe token pruning.}
+For the importance measure of non-keyframe tokens, we refer to the approach of EViT~\cite{liang2022not} in image classification, using the pre-computed attention map to represent the importance of each token without additional learnable parameters and nontrivial computational costs. 
+As shown in the top part of Fig.~\ref{fig:stru}, we first average the $num\_heads$ dimension of the attention map to obtain an $N\times N$ matrix, which represents the attentiveness between tokens (omitting the batch size). For example, $attn(i, j)$ denotes that the token i considers the importance of token j.
+Since there is no classification token specifically for video-level recognition, we calculate the average importance score of each token by $I_{j}=\frac{1}{N} \sum_{i=1}^{N}attn(i,j)$.
+Then we identify the top $(N*\rho-N_{1})$ tokens from the $N_{2}$ non-keyframe tokens in descending order by importance scores, where $N,N_{1},N_{2}$ represent the number of all, keyframe and non-keyframe tokens respectively, and $\rho$ represents token keeping rate.
+Normally, the keyframe contains the most accurate semantic information for the current sample, and other frames away from the keyframe incur nontrivial information bias. Thus, it is practical to conduct token pruning guided by the keyframe.
+To this end, we insert a {\it Keyframe Attentiveness Enhancement} step between acquiring the attention map and calculating the importance of each non-keyframe token. As presented in Fig.~\ref{fig:stru}, we apply a greater weight value to the keyframe queries, thereby retaining tokens with higher correlations to keyframe tokens. The importance score of each token is updated as follows:
+\begin{align}
+I_{j}=\frac{1}{N} \sum_{i=1}^{N}\left\{\begin{array}{ll}
+{w}_{kf}\cdot\operatorname{attn}(i,j), & i \in\left(0, N_{1}\right) \\
+\operatorname{atth}(i,j), & i \in\left(N_{1}, N\right)
+\end{array}\right.
+\end{align}
+where we assume the first $N_{1}$ tokens belong to the keyframe and the weight value ${w}_{kf}$ is a hyper-parameter will be ablated in Sec.~\ref{sec:ablation}.
+In other words, we discard some tokens that only have a high response with non-keyframes, which may not be high-quality tokens. Only if the non-keyframe becomes the keyframe of previous/next samples, these highly responsive tokens are high-quality. By dropping out these redundant tokens with a high response to non-keyframes, we can further reduce the number of tokens. After the execution of token pruning, we send the preserved tokens to the follow-up FFN of the encoder layer.
+The first token pruning is started at 1/3 of encoder layers to ensure that the model is capable of high-level semantic representation. Then, we perform token pruning every 1/4 of the total layers, discarding the redundant tokens and keeping the effective ones. As shown in Fig.~\ref{fig:vis_tp}, we visualize the preserved tokens of each pruning layer in ViT-B, and the model is able to retain important cues such as people and chairs. After multiple pruning, the number of tokens is drastically reduced, which enables the model to save computation costs and accelerate training and inference process.
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.\linewidth]{fig/pruning.pdf}
+\caption{\textbf{Visualization of preserved tokens by encoder layers with token pruning.} On the third column, the keyframe tokens are all retained for accurate actor localization. The number of tokens in other frames progressively reduces, whereas important cues such as people and chairs can be effectively retained.}
+\label{fig:vis_tp}
+\end{figure}
+
+\subsection{Video Action Detection}
+\label{sec:action}
+{\flushleft \bf Actor localization branch.} Benefit from preserving all keyframe tokens in Sec.~\ref{sec:token}, we can obtain multiple complete keyframe feature maps. We then up-sample or down-sample those keyframe feature maps for generating hierarchical features from the plain ViT. We then introduce a query-based actor localization head, inspired by Sparse R-CNN~\cite{sun2021sparse}, to detect actors in the keyframe.
+
+Finally, the outputs of actor localization branch are $n$ prediction boxes in the keyframe and corresponding actor confidence scores.
+{\flushleft \bf Action classification branch.}
+Different from conventional feature extraction, EVAD produces $M$ discrete video tokens. We need to restore the spatiotemporal structure of video feature map and then can perform location-related operations such as RoIAlign. We initialize a blank feature map shaped as $(T/2, H/16, W/16)$, fill the preserved tokens into this feature map according to their corresponding spatiotemporal positions, and pad the rest with zeros.
+Next, we use the boxes generated by the localization branch to extract actor RoI features via 3D RoIAlign for subsequent action prediction. Due to actor movement or camera translation, actor spatial position is changed across frames, and using the keyframe box for 3D RoIAlign cannot obtain partial actor feature deviated from the box. Directly extending the scope of the box to cover whole motion trajectory might harm actor feature representation by introducing background or other interfering information. Nevertheless, in EVAD feature extraction stage, the interfering ones in the video are progressively eliminated, thus we can properly extend the box scope to add the deviated feature. The results in Sec.~\ref{sec:ablation} demonstrate the ability of EVAD to cover large motion with extended boxes, while its counterpart ViTs impairs actor native feature representation.
+We observe that directly applying token pruning methods of vision classification can greatly reduce the number of tokens involved in the calculations, but have a negative impact on final detection performance. Video action detection requires localizing and classifying the actions of all actors, but token pruning algorithms lead to incoherent actor features in space-time. As shown in Fig.~\ref{fig:vis_tp}, the static appearance of people sitting in the chairs is not retained completely in every frame. In the encoder, pair-wise self-attention is capable of modeling global dependency among tokens. The semantic information of the dropout tokens within the actor regions can be incorporated into some preserved tokens. Thus, we can recover the removed actor features from the preserved video tokens. To this end, we design a context refinement decoder to refine actor spatiotemporal representation. Concretely, we concatenate $n$ actor RoI features with $M$ video tokens and feed them into a sequentially-stacked transformer decoder consisting of MHSA and FFN. Guiding by the preserved tokens, actor features can enrich themselves with actor representation and motion information from other frames. Also, without token pruning, the decoder can be used as a kind of relational modeling modules~\cite{sun2018actor,DBLP:conf/cvpr/ZhangTHS19,girdhar2019video,DBLP:conf/eccv/TangXMPL20,pan2021actor} to capture inter-actor and actor-context interaction information. The actor feature refining and relational modeling capabilities of our decoder will be ablated in Sec.~\ref{sec:ablation}. 
+
+The $n$ refined actor features output by the decoder are retrieved and passed through a classification layer to make final action prediction.
+
+
+Experiments
+\label{sec:exp}
+
+\subsection{Experimental Setup}
+{\flushleft \bf Datasets.} We evaluate our EVAD on three common datasets for video action detection: AVA~\cite{gu2018ava}, UCF101-24~\cite{soomro2012ucf101} and JHMDB~\cite{jhuang2013towards}. AVA is a large-scale benchmark and contains 299 15-minute videos, divided into 211k training clips and 57k validation clips. The videos are annotated at 1FPS for boxes and labels. Following the standard evaluation protocol, we report our performance on 60 common action classes. UCF101-24 is a subset of UCF101. It includes 3,207 videos from 24 sports classes. Each video contains a single action class. Following the common practice, we report the performance on split-1. JHMDB contains 928 trimmed videos from 21 action classes. We report the average results over all three splits.
+
+{\flushleft \bf Evaluation criteria.} We evaluate the performances with frame level mean Average Precision (mAP) under IoU threshold of 0.5 without multiple scales and flips for fair comparisons. We measure the throughput on a single A100 GPU with a batch size of 8 to estimate the average number of images that can be processed in one second. We specify a sample of video clip containing 16 frame images by default. 
+
+\subsection{Ablation Studies}
+\label{sec:ablation}
+We conduct in-depth ablation studies to investigate the effectiveness of our design in EVAD. All results are reported on AVA v2.2 with a 16-frame VideoMAE ViT-B backbone pre-trained and fine-tuned on Kinetics-400~\cite{kay2017kinetics}.
+
+\setlength{\tabcolsep}{2pt}
+\begin{table*}
+\small
+\centering
+    \hspace{-3em}
+    \begin{minipage}[t]{0.29\linewidth}
+        \centering
+        \begin{subtable}[t]{0.85\linewidth}
+            \begin{tabular}{lx{10}x{25}x{28}}
+            cls. head & $\rho$ & mAP & \#param\\
+            \shline linear (baseline) & 1.0 & $26.4$ & $169$M \\
+            WOO~\cite{chen2021watch} & 1.0 & $29.1$ & $314$M \\
+            \rowcolor{baselinecolor} our decoder & 1.0 & $30.5$ & $185$M \\
+            \hline linear & 0.7 & $22.5$ & $169$M \\
+            \rowcolor{baselinecolor} our decoder & 0.7 & $30.5$ & $185$M \\
+            \end{tabular}
+            \caption{\textbf{Classification branch}}
+            \label{tab:decoder}
+        \end{subtable}
+    \end{minipage}
+    \hspace{1mm}
+    \begin{minipage}[t]{0.22\linewidth}
+        \centering
+        \begin{subtable}[t]{0.85\linewidth}
+            \begin{tabular}{lx{25}x{28}}
+            case & mAP & GFLOPs\\
+            \shline $\rho$=1.0 & $30.5$ & $223.8$ \\
+            \hline random & $29.9$ & $158.9$ \\
+            CLS token & $30.5$ & $134.2$ \\
+            \rowcolor{baselinecolor} GAP & $30.5$ & $134.2$ \\
+            & \\
+            \end{tabular}
+            \caption{\textbf{Pruning strategy}}
+            \label{tab:type}
+        \end{subtable}
+    \end{minipage}
+    \hspace{1mm}
+    \begin{minipage}[t]{0.22\linewidth}
+        \centering
+        \begin{subtable}[t]{0.75\linewidth}
+            \begin{tabular}{lx{25}}
+            case & mAP\\
+            \rowcolor{baselinecolor} \shline keyframe & $30.5$\\
+            unified pruning & $30.0$\\
+            & \\
+            & \\
+            & \\
+            \end{tabular}
+            \caption{\textbf{Keyframe}}
+            \label{tab:key_tokens}
+        \end{subtable}
+    \end{minipage}
+    \hspace{1mm}
+    \begin{minipage}[t]{0.22\linewidth}
+        \centering
+        \begin{subtable}[t]{1.0\linewidth}
+            \begin{tabular}{lx{25}x{28}}
+            case & mAP & GFLOPs\\
+            \rowcolor{baselinecolor} \shline preserved tokens & $30.5$ & $134.2$ \\
+            all tokens & $30.2$ & $156.1$ \\
+            \\
+            \\
+            \\
+            \end{tabular}
+            \caption{\textbf{Decoder input}}
+            \label{tab:decoder_input}
+        \end{subtable}
+    \end{minipage} \\
+    \hspace{-2em}
+    \begin{minipage}[t]{0.32\linewidth}
+        \centering
+        \begin{subtable}[t]{0.75\linewidth}
+            \begin{tabular}{lx{18}x{18}x{18}x{18}x{18}}
+            depth & 1 & 2 & 4 & 6 & 8\\
+            \shline mAP & $27.2$ & $28.0$ & $29.7$ & \cellcolor{baselinecolor} $30.5$ & $30.3$\\
+            \\
+            \end{tabular}
+            \caption{\textbf{Decoder depth}}
+            \label{tab:depth}
+        \end{subtable}
+    \end{minipage}
+    \hspace{1mm}
+    \begin{minipage}[t]{0.34\linewidth}
+        \centering
+        \begin{subtable}[t]{1.\linewidth}
+            \begin{tabular}{lx{23}x{32}x{32}x{32}}
+            extend (x,y) & $(0,0)$ & $(0.2,0.1)$ & $(0.4,0.2)$ & $(0.6,0.3)$\\
+            \shline $\rho$=1.0 & $30.5$ & $30.5$ & $30.2$ & $30.0$\\
+            $\rho$=0.7 & $30.5$ & $30.5$ & \cellcolor{baselinecolor} $30.7$ & $30.4$ \\
+            \end{tabular}
+            \caption{\textbf{RoI extension}}
+            \label{tab:extend}
+        \end{subtable}
+    \end{minipage}
+    \hspace{1mm}
+    \begin{minipage}[t]{0.33\linewidth}
+        \centering
+        \begin{subtable}[t]{0.75\linewidth}
+            \begin{tabular}{lx{18}x{18}x{18}x{18}x{18}}
+            ${w}_{kf}$ & $1$ & $2$ & $4$ & $6$ & $8$\\
+            \shline mAP & $31.4$ & $31.7$ & \cellcolor{baselinecolor} $31.8$ & $31.7$ & $31.4$\\
+            \\
+            \end{tabular}
+            \caption{\textbf{Attentiveness enhancement}}
+            \label{tab:weight}
+        \end{subtable}
+    \end{minipage}
+    \caption{\textbf{Ablation experiments on AVA v2.2.} All models here adopt 16-frame vanilla ViT-B as backbone and keep rate $\rho$ is set to 0.7 as the default setting unless otherwise specified.}
+\end{table*} 
+\setlength{\tabcolsep}{1.4pt}
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=0.95\linewidth]{fig/inference_with_diff_rate.pdf}
+\caption{\textbf{Comparison on the performance of EVAD without re-training and re-training with keep rate $\rho$=0.7.} The numbers in `()' indicate the gap of the corresponding values to re-training with the target keep rate.}
+\label{fig:infer}
+\end{figure}
+
+{\flushleft \bf Inference w/o re-training.}
+EVAD does not add any additional learnable parameters for token pruning. Thus, we directly add our keyframe-centric token pruning module on the off-the-shelf pre-trained ViTs and show the performance of the models with different token keep rates in Fig.~\ref{fig:infer}. We observe that directly applying token pruning negatively affects the model performance, and we speculate that the model needs re-training to adapt to a dynamic number of tokens at different layers.
+Then, we incorporate our token pruning in the training process, and retrain EVAD with token keep rate of 0.7 and infer on multiple keep rates.
+As shown in Fig.~\ref{fig:infer}, the result on each keep rate is nearly comparable to the re-training performance with the target keep rate. This illustrates that our token pruning module allows to adapt to different levels of computation costs after re-training once.
+{\flushleft \bf Classification branch.}
+To illustrate the necessity of refining actor spatiotemporal features when using token dropout for efficient action detection, we conduct two groups of experiments, i.e., the encoder with keyframe-centric token pruning ($\rho$=0.7) and without token pruning (keep rate $\rho$=1.0), and examine the effect of context refinement decoder for actor feature refinement and relational modeling. Without token pruning, the decoder is used to conduct actor-context modeling to capture action interaction information. It enables +4.1 mAP gains over the baseline and outperforms the well-designed WOO head with fewer parameters. When token pruning is applied, partial actor features are eliminated during the pruning process, and the linear model is much worse than the baseline. Nevertheless, the strong feature refining capability of decoder compensates this gap and achieves a comparable performance with $\rho$=1.0.
+
+{\flushleft \bf Localization branch.} To explore the localization capability of EVAD and its impact on the overall performance, we directly use the boxes from an off-the-shelf detector~\cite{DBLP:conf/nips/RenHGS15}, which is commonly adopted in previous two-stage pipeline~\cite{DBLP:conf/iccv/Feichtenhofer0M19,DBLP:conf/cvpr/WuF0HKG19,DBLP:conf/eccv/TangXMPL20}. Our results shows that though utilizing the off-the-shelf detector can lead to an increase of +1.7 mAP, this comes at the cost of additional computational complexity, such as 246 GFLOPs for Faster R-CNN, and results in a more complex pipeline. The localization branch in our EVAD is lightweight with the cost of only 13.5 GFLOPs, and enjoys a simple end-to-end manner.
+{\flushleft \bf Pruning strategy.} We then ablate different token pruning strategies with $\rho$=0.7. (1) Random masking performs a random 
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

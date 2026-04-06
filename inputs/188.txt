@@ -1,0 +1,262 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+Face forgery technology \cite{deepfake, fs, infoswap} has made vigorous development in recent years.
+However, these realistic forgery faces are sometimes abused to maliciously disguise identities, especially celebrities and politicians, causing serious social problems.
+Therefore, how to reduce this risk has attracted widespread attention from researchers.
+
+Convolutional neural networks (CNNs) have shown excellent performance in face forgery detection \cite{attention1, twostream, xception, sola}. According to forgery or not, this task is often formalized as a binary classification problem, and some suitable classification networks \cite{xception, capsule} are introduced to this task.
+Although they perform well in the training domain, the learned features may be method-specific for the forgery methods within the training set \cite{recce}, and cannot show satisfactory generalization in unknown forgery methods.
+
+\begin{figure}[t]
+\centering\includegraphics[width=0.42\textwidth]{./img/intro4.png}
+\caption{Limitations of existing methods: features from different domains are still clustered by forgery-irrelevant similarities (image background, hair color, identity, etc.), proving that features still contain forgery-irrelevant information, limiting the generalization.}
+\label{fig:intro}
+\end{figure}
+
+Forgery data generated from various methods corresponds to different forgery domains.
+To improve the generalization in unknown domains, 
+some works \cite{facexray,selfblended,advtrain_cvpr22} study the common artifacts of various forgeries and use data augmentation to synthesize more training data.
+Several other works are devoted to mining better discriminative features, and attention mechanisms \cite{mat}, local relation \cite{localrelation}, and frequency information \cite{scl, f3net} are also introduced to capture better forgery traces.
+SRM \cite{srm} suppresses the acquisition of color and texture via high-frequency noise, thereby solving the overfitting to the training data.
+In addition, RECCE \cite{recce} copes with the complexity of various forgery domains by learning compact real representations based on the reconstruction.
+Compared with previous methods, the exploration of common characteristics and discriminative information allows the model to learn relatively more generalized features.
+
+Nevertheless, during training, the model tries to increase the discrimination between real and fake features, but treats different forgery domains (i.e. different forgery methods) as the unified ``fake" category without distinction.
+In common training sets \cite{ff++,celebdf}, there are some similarities between massive data in forgery-irrelevant information, such as hair color, image background, and identity. 
+Due to the uniform fake categorization, the goal of training is only to distinguish the fake from the real, without making further distinctions between forgery types.
+As a result, as shown in Figure \ref{fig:intro}, some features will present a clustering phenomenon based on above forgery-irrelevant similarities (hair color, background, identity, etc.) rather than forgery domain characteristics that are more relevant to the forgery detection task. This demonstrates that the learned features inevitably still contain some forgery-irrelevant information \cite{shapes}.
+
+The mixing of irrelevant information in features (i.e. the feature purity is not high) may limit the generalization.
+As shown in Figure \ref{fig:pure} (a), in the training domain, guided by the supervised information, the model will learn a pattern of which features are more relevant, and show good performance in the current domain.
+However, in unseen domains, the feature distribution has a deviation. 
+Following the original pattern, the features that the model focuses on will contain a high proportion of irrelevant information, which may cause the model to make decisions based on the similarity of such irrelevant information.
+On the contrary, as shown in Figure \ref{fig:pure} (b), when the feature purity is high, the irrelevant information contained in the feature itself is less. Even if the distribution of the unseen domain is biased, the proportion of irrelevant information in the extracted features will be correspondingly less.
+\begin{figure}[t]
+\centering\includegraphics[width=0.48\textwidth]{./img/purity3.png}
+\caption{Comparisons of the forgery-relevance for model focusing results at different feature purities.}
+\label{fig:pure}
+\end{figure}
+
+Based on above considerations, in this paper, instead of treating all forgery types as a unified category, we propose a novel guide-space (GS) based framework to increase a proper level of discrimination between different forgery domains.
+In this way, by learning the differences between forgery domains and the consistency of the same domain, the model can further pay more attention to forgery traces.
+And separating the features of different domains can reduce their correlation in irrelevant information.
+The learned features are more forgery-relevant, thus helping the generalization.
+
+Specifically, the increase in forgery domain discrimination needs to be controlled within a certain range, because a larger real-forgery distance should be preferably maintained at the same time.
+In this way, in unseen domains, the forgery features will be located far away from real features with a higher probability.
+Thus in our guide-space, we construct the guide embeddings of the real and different forgery domains, and make the features approach their respective guide embeddings to actively control the compactness of the real domain and the separation degree between different forgery domains.
+Further, considering that the correlation between different domains in terms of forgery-irrelevant similarity will interfere with the domain distinction, we mine this potential correlation based on the clustering results of the self-supervised features of images, and decouple the irrelevant information accordingly.
+In addition, we design a decision boundary manifold adjustment module (A-DBM) based on the degree of feature aggregation, to better realize the feature distribution defined by the guide-space.
+In summary, this paper has the following contributions:
+\begin{itemize}
+\setlength{\itemsep}{0pt}
+\item We argue that a proper level of discrimination between different forgery domains is also important to improve the generalization, so as to capture more forgery-relevant information and to weaken the impact of forgery-irrelevant information.
+\item We construct a guide-space to achieve the controllable separation of both real-forgery domains and forgery-forgery domains, and further decouple the forgery-irrelevant correlation between different domains to reduce their interference on domain separation.
+\item We design an adjustment strategy for the decision boundary manifold to make the features of the same domain better clustered and compliant with the distribution of the guide-space.
+\item Extensive experiments in multiple cross-domain settings confirm that our method can realize the state-of-the-art generalization, and achieve the cross-domain AUC of 84.97\% and 81.65\% on CelebDF and DFDC.
+\end{itemize}
+
+
+
+Related works
+Face forgery detection based on convolutional neural networks (CNNs) has been widely used \cite{twostream,mesonet,lips,geometry,twobranch,osn,fretal,multitask,uia-vit}.
+Early works \cite{xception,capsule} apply suitable classification networks to forgery detection tasks, and achieve good performance on the forgery domains presented in the training set. However, the learned features may be more suitable for forgery methods presented in the training set \cite{recce}, and cannot show good generalization on unknown forgery domains.
+
+\begin{figure*}[t]
+\centering\includegraphics[width=0.9\textwidth]{./img/frame6.pdf}
+\caption{Overview of our framework, including guide-space based controllable optimization, adjustment of decision boundary manifold (A-DBM), and irrelevant information decoupling module.}
+\label{fig:frame}
+\end{figure*}
+
+Recently, more efforts have been made to improve this generalization.
+Some methods attempt to learn common characteristics of different forgery domains.
+For example, works in \cite{facexray,selfblended,rl_aug,advtrain_cvpr22} use data augmentation to simulate common artifacts (blending boundary, color inconsistency, etc.) of forgeries.
+SPSL \cite{spsl} captures the phase spectrum changes caused by common up-sampling operations during the forgery process.
+They exhibit improved generalization, but these common features often cover a limited variety of forgeries.
+Several other studies are devoted to mining better discriminative features.
+To better capture forgery clues, the attention mechanism \cite{mat,attention1,rfm}, amplification strategy \cite{sola}, or local relationships \cite{PCLI2G,localrelation} between regions are studied.
+Besides low-level RGB features, the frequency information \cite{f3net,srm,frepgan,scl} is also introduced.
+In addition, RECCE \cite{recce} based on reconstruction learning tries to learn compact representations of real data to cope with the complexity of forgery domains. LTW \cite{ltw} utilizes meta-learning to balance the performance across multiple domains.
+
+Ideally, for a generalized model that extracts forgery-related information, the forgery features should be aggregated according to their respective domain types rather than forgery-irrelevant information. However, although the above methods mine better forgery traces, they treat different forgery domains as the uniform ``fake", which makes the features with forgery-irrelevant similarities but belonging to different domains still cluster together.
+
+
+
+Methodology
+To improve the generalization, we propose a novel guide-space (GS) based framework, which consists of three main schemes, i.e., guide-space based controllable optimization, adjustment of decision boundary manifold (A-DBM), and decoupling module for irrelevant information, as illustrated in Figure \ref{fig:frame}.
+We first pre-construct an ideal guide-space, making features closer to their guide embeddings of respective domains. To better aggregate features of the same domain, we adjust the decision boundary manifold by setting weights of samples within a batch. Further, to mitigate the interference of irrelevant correlations, we decouple these correlations with the aid of self-supervised feature clustering.
+The guide-space and decoupling module can benefit from each other to make features achieve better forgery relevance.
+The following subsections show details of three schemes.
+\subsection{Construction of guide-space}\label{sec:guide}
+Before training, we first construct a guide-space containing guide embeddings for the real domain and different types of forgery domains. 
+In the subsequent training, the features of different domains are approached to their respective guide embeddings to achieve distinguishability from each other.
+
+The construction of the guide-space requires the dimension $d$ of the face feature representation and the number of forgery categories $N$ in the training set. The features lie on a hypersphere of unit length $S=\left\{v \in R^d \mid\|v\|=1\right\}$. Let $\bm{g_r}$ and $\bm{g_{_{f}}}=\left\{\bm{g_{_{f_i}}} \mid i=1, \!\cdots \!, N\right\}$ represent the guide embeddings of the real and forgery domains to be solved, respectively. The visualization of $\bm{g_r}$ and $\bm{g_{_f}}$ in the guide-space is shown in Figure \ref{fig:sphere}.
+
+\begin{figure}[t]
+\centering\includegraphics[width=0.35\textwidth]{./img/sphere3.png}
+\caption{Visualization of the guide-space. The real guide embedding $\bm{g_r}$ and all forgery guide embeddings $\bm{g_{_f}}$ are at a fixed angle $\theta_0$ ($\theta_0 > \theta_{ij}$), and the larger the angle $\theta_{ij}$ between $\bm{g_{_f}}$, the better.}
+\label{fig:sphere}
+\end{figure}
+
+On the one hand, we make $\bm{g_r}$ and all embeddings in $\bm{g_{_f}}$ present a fixed large angle $\theta_0$ (a hyperparameter) to separate real and fake features. $\theta_0$ can explicitly and actively control the separation degree between real-forgery domains, and a large $\theta_0$ ensures the compactness of real domain features:
+\begin{equation}\label{eq:theta0}
+e^{\bm{g_r}^{T} \bm{g_{_{f_i}}}}=e^{cos(\theta_0)}(i=1, \cdots, N)
+\end{equation}
+
+On the other hand, the restriction of $\theta_0$ makes the embeddings in $\bm{g_{_f}}$ be located in a hyperplane of $d-1$ dimensions. Then all embeddings in $\bm{g_{_f}}$ should be as far as possible from each other, so as to increase the discrimination between forgery domains, and weaken the similarities in forgery-irrelevant information. This optimization is formulated as:
+\begin{equation}\label{eq:l_cf}
+L\left(\left\{\bm{g_{_{f_i}}}\right\}_{i=1}^N\right)=\frac{1}{N} \sum_{i=1}^N \log \sum_{j=1}^N e^{\bm{g_{{}_{f_i}}}^T \bm{g_{_{f_j}}} / \tau}
+\end{equation}
+where $\tau$ is a temperature parameter to control the scale of distribution \cite{dcl}.
+We first obtain $\bm{g_r}$ by random initialization, and then take Eq. (\ref{eq:theta0}) as the constraint of Eq. (\ref{eq:l_cf}) and solve this constrained optimization problem according to the Lagrangian multiplier method \cite{lagrangian} to obtain $\bm{g_{_f}}$.
+
+To guarantee that the equation is solvable, $d \geq N$.
+
+Let $\theta_{ij}(i, j=1, \cdots, N, i \neq j)$ represent the angle between $\bm{g_{_f}}$. 
+Adjusting $\theta_0$ can affect $\theta_{ij}$ and thus adjust the degree of separation between all embeddings.
+Note that $\theta_0$ is not as large as possible, because in the space with limited dimensions, the larger $\theta_0$, the smaller $\theta_{ij}$, and the separation $\theta_{ij}$ between forgery domains also needs to be maintained.
+With this well-designed guide-space, we can achieve both the separation of forgery domains and the compactness of the real domain. More importantly, this process is explicit and controllable, rather than implicit and uncontrolled learning.
+\subsection{Controllable optimization based on guide-space}
+In the optimization, let $\left\{\left(x_i, y_i, t_i\right)\right\}_{i=1}^B$ denote a batch of face images, where $y_i$ is the ground-truth label that marks whether the image is fake or not, i.e., $y_i \in\{0,1\}$. $t_i$ refers to the domain label, i.e., $t_i \in[0,N]$, where for real faces, $t_i=0$, and for fake faces, $t_i$ represents the forgery category label to which it belongs.
+The forgery detection model consists of a feature encoder $F(\cdot)$ followed by a binary classifier $h(\cdot)$.
+
+Based on the pre-calculated guide embeddings in Sec. \ref{sec:guide}, we make the features of each domain close to their respective guide embeddings, so as to achieve the separation between real-forgery domains and between forgery-forgery domains.
+Let $v_i$ denote the feature of image $x_i$ extracted by $F(\cdot)$, $G$ denote the set of all guide embeddings, $G=\left\{\bm{g_r}, \bm{g_{_{f_i}}} \mid i=1, \!\cdots \!, N\right\}$, and the loss function can be formulated as:
+\begin{equation}\label{eq:l_guide}
+L_{guide }=-\sum_{i=1}^B \lambda_i \log \frac{e^{v_i^T g_i^* / \tau}}{\sum_{v_j \in V \cup G} e^{v_i^T v_j / \tau}}
+\end{equation}
+where $\lambda_i$ is the weight of the current data $x_i$ in the loss calculation relative to the data within a batch, and in general, the loss is the average of each data, i.e., $\lambda_i=1 / B$. $g_i^*$ is the guide embedding corresponding to $x_i$. $g_i^*=\left\{\begin{array}{cl}g_r & \text { if } t_i=0 \\ g_{_{f_j}}\left(j=\Phi\left(t_i\right)\right) & \text { if } 1 \leq t_i \leq N\end{array}\right.$. $\Phi(\cdot)$ is the relation function between forgery domains and forgery guide embeddings.
+At each iteration, we compute the average feature for each forgery domain. According to the distance between each average feature and the guide embedding, we use Hungarian algorithm \cite{hungarian} to perform nearest-neighbor matching, and denote this matching relationship as $\Phi(\cdot)$. $V$ is a set that stores a large number of features (detailed in Sec. \ref{sec:cl}).
+
+Besides, we also use the traditional binary cross-entropy loss as a basic optimization goal:
+\begin{equation}\label{eq:l_ce}
+L_{c e}=-\sum_{i=1}^B \lambda_i\left(y_i \log p_i+\left(1-y_i\right) \log \left(1-p_i\right)\right)
+\end{equation}
+where $p_i$ is the predicted score obtained by the binary classifier $h(\cdot)$. $\lambda_i$ is the weight consistent with Eq. (\ref{eq:l_guide}).
+
+\begin{figure}[t]
+\centering\includegraphics[width=0.47\textwidth]{./img/conf2.png}
+\caption{Four cases in the calculation of the confidence. For each center point, inward arrows indicate that classes are consistent, and outward arrows indicate class inconsistencies. The thickness of the arrow reflects the value of the coefficient $\mu$ in Eq. (\ref{eq:conf}).}
+\label{fig:conf}
+\end{figure}
+\subsection{Adjustment of decision boundary manifold}
+Furthermore, we design a module to adjust the decision boundary manifold (A-DBM). By focusing on some poorly performing samples within a batch, we strive to achieve the aggregation of features of the same domain, resulting in a better decision boundary manifold that conforms to the guidance of the guide-space.
+
+Here, we define a metric called confidence to indicate the credibility of the model decision, which is calculated by the aggregation degree of the same domain features in the neighborhood of each feature point, and this process can be visualized in Figure \ref{fig:conf}.
+For a sample whose neighbors in the feature space belong to the same domain (Figure \ref{fig:conf} (a)), the model prediction tends to be reliable and is assigned high confidence; while for the sample densely adjacent to other classes, it may be located in an area where another class is clustered, and tends to be mis-predicted as another class with high probability, corresponding to a low confidence (Figure \ref{fig:conf} (c) and (d)). For the points around the decision boundary, the model decision has uncertainty and the confidence is at the median (Figure \ref{fig:conf} (b)).
+Specifically, for each image feature $v_i$, we calculate its similarity with each point in the feature set $V$, and then take the $k$ points with the highest similarity as its neighbors $K_i$ to obtain the adjacency relationship of the feature points.
+According to the aggregation degree of the same class of features within the neighbors, the confidence $c_i$ of each data $x_i$ can be formulated as:
+\begin{equation}\label{eq:conf}
+c_i=\frac{1}{\left|K_i\right|} \sum_{v_j \in K_i}\left(\mathbbm{1}_{t_i=t_j}-\mu \cdot \mathbbm{1}_{t_i \neq t_j}\right) \cdot \bm{\varepsilon}_{i j}
+\end{equation}
+where $\bm{\varepsilon}_{i j}$ refers to the similarity between $v_i$ and $v_j$, and $\varepsilon_{i j}=\frac{1}{2}\left(1+v_i v_j\right)$.
+$\mu$ is an adjustment coefficient. If $x_i$ is a real image, neighbors that are inconsistent with its class all belong to various fake categories with equal importance, i.e., $\mu=1$. However, if $x_i$ is a forgery image, the class inconsistency includes two situations of real and other forgery domains. It is more important to separate it from the real data than to separate it from data of other forgery domains, so $\mu=1$ for the former and $\mu=0.5$ for the latter.
+
+Based on the confidence, we can find samples that perform poorly according to the aggregation degree of features of the same domain. Then we assign higher attention (i.e., higher weight $\lambda_i$ in Eq. (\ref{eq:l_guide}) and (\ref{eq:l_ce})) to these low-confidence samples to improve their clustering effect, resulting in a better decision boundary manifold.
+Given confidence $c_i$ ($i \in[B]$) of data within a batch, $\lambda_i$ can be formulated as:
+\begin{equation}\label{eq:lam}
+\lambda_i=\operatorname{softmax}\left(-c_i\right)
+\end{equation}
+
+\subsection{Decoupling module for irrelevant information} \label{sec:cl}
+In order for features to be more forgery-relevant, we design a decoupling module to alleviate the interference of irrelevant information on distinguishing different domains.
+Before training, we first mine the potential correlation between images of the given training data.
+We use a self-supervised model \cite{swinv2} pre-trained on face pictures to perform feature extraction on the training set. The self-supervised features have a certain degree of general representation ability for images.
+Then we cluster the features \cite{cluster} to find correlations between the data, as shown in the decoupling module of Figure \ref{fig:frame}.
+If features of different forgery domains are gathered into the same cluster, it proves that they have strong similarities in forgery-irrelevant information and need to be focused on in training to be separated. Conversely, if the features of the same domain belong to different clusters, they should be pulled closer to make features more related to forgery.
+
+Let $\rho_i$ denote the cluster label of each instance $x_i$, we first construct a sample set $V_i^{+}$ that needs to be pulled closer and a sample set $V_i^{-}$ that needs to be pushed away. $V_i^{+}=\left\{v_j \in V \mid t_i=t_j, \rho_i \neq \rho_j\right\}$, $V_i^{-}=\left\{v_j \in V \mid t_i \neq t_j, \rho_i=\rho_j\right\}$.
+We randomly select $n^+$ and $n^-$ features from $V_i^{+}$ and $V_i^{-}$ respectively to participate in the calculation, and the corresponding feature set can be denoted as 
+$\tilde{V}_i^{+}$ and $\tilde{V}_i^{-}$ ($\tilde{V}_i^{+} \subset V_i^{+}$, $\tilde{V}_i^{-} \subset V_i^{-}$). The feature candidate set $V=\left\{\left(x_j, y_j, t_j\right)\right\}_{j=1}^Q$, which is a queue of dynamic accumulation of multiple batch features, with the current batch enqueued and the oldest batch dequeued. This $V$ with larger size $Q$ than the batch size allows better sampling in a broader and comprehensive selection scope. 
+
+On the one hand, we push away samples in $\tilde{V}_i^{-}$ that belong to different domains from $x_i$ but are clustered by irrelevant information. This separation helps to reduce the irrelevant information contained in the features.
+Based on KCL \cite{kcl} loss, the pushing loss is denoted as:
+\begin{equation}\label{eq:neg}
+\small
+L_{push}=\sum_{i=1}^B \lambda_i \cdot \frac{1}{1+n^{-}} \sum_{v_j^{-} \in \tilde{V}_i^{-}} \log \frac{e^{v_i^T v_j^{-} / \tau}}{\sum_{v_j \in V \cup G} e^{v_i^T v_j / \tau}}
+\end{equation}
+
+On the other hand, we pull the samples in $\tilde{V}_i^{+}$ closer.
+This closeness due to the same domain rather than the similarity of irrelevant information implies an increase in the forgery-relevance of the features. The pulling loss is :
+\begin{equation}\label{eq:pos}
+\small
+L_{pull}=-\sum_{i=1}^B \lambda_i \cdot \frac{1}{1+n^{+}} \sum_{v_j^{+} \in \widetilde{V}_i^{+}} \log \frac{e^{v_i^T v_j^{+} / \tau}}{\sum_{v_j \in V \cup G} e^{v_i^T v_j / \tau}}
+\end{equation}
+In summary, our overall loss can be formulated as:
+\begin{equation}\label{eq:all}
+L=\gamma_1 \cdot L_{guide}+\gamma_2 \cdot L_{c e}+\gamma_3 \cdot L_{pull}+\gamma_4 \cdot L_{push}
+\end{equation}
+where $\lambda_i$ is calculated by Eq. (\ref{eq:lam}), and $\gamma$ is the scale factor.
+
+
+
+Experiments
+\subsection{Experimental settings}\label{sec:expset}
+\paragraph{Datasets:}
+We conduct experiments on three benchmark public forgery datasets:
+1) FaceForensics++(FF++) \cite{ff++} contains four forgery methods (i.e., Deepfakes (DF) \cite{deepfake}, Face2Face (F2F) \cite{f2f}, FaceSwap (FS) \cite{fs}, and NeuralTextures (NT) \cite{nt}) with three image qualities including raw, high quality (HQ) and low quality (LQ).
+2) CelebDF \cite{celebdf} contains real videos of 59 celebrities and corresponding high-quality fake videos generated by the improved forgery techniques.
+3) Deepfake Detection Challenge (DFDC) \cite{dfdc} is a more challenging dataset that comes with the competition, with many manipulation and perturbation methods.
+\paragraph{Metrics:}  Following works in \cite{mat,recce,spsl,rfm,srm}, we use Accuracy score (Acc) and Area Under the Receiver Operating Characteristic Curve (AUC) as the metrics to evaluate the performance.
+Between the two, we pay more attention to the AUC results, since the Acc values are affected by specific thresholds and data balance.
+\paragraph{Implementation Details:} In our experiments, we use EfficientNet-B4 (EN-B4) \cite{efb4} as the backbone when not otherwise specified. In the guide-space, $\theta_0=120^{\circ}$. 
+For A-DBM, we adjust $\lambda_i$ from the 10-$th$ epoch, and before that, $\lambda_i=1/B$. $k=\left|K_i\right|=55$ in Eq. (\ref{eq:conf}).
+In decoupling, the self-supervised model is trained under SimMIM \cite{simmim} framework, and the number of clusters is 500.
+$n^+$ and $n^-$ are both 10. In Eq. (\ref{eq:all}), $\gamma_1=1$, $\gamma_2=0.5$, $\gamma_3=0.01$, and $\gamma_4=0.005$. The temperature parameter $\tau=1$. During the training, the batchsize $B=256$, and the size $Q$ of the set $V$ is 5120.
+The maximum number of epochs is 60.
+\subsection{In-Domain evaluations}\label{sec:indomain}
+We first verify the detection ability of our method against in-domain forgery methods (i.e., methods contained in the training set) on FF++ dataset. We train on both HQ and LQ image qualities using the four included forgery methods, and Table \ref{tab:indomain} lists the performance comparisons between ours and some current state-of-the-art methods.
+\begin{table}[t]
+\centering 
+\resizebox{0.49\textwidth}{28.5mm}{
+\begin{tabular}{l|p{0.9cm}<{\centering}p{0.9cm}<{\centering}|p{0.9cm}<{\centering}p{0.9cm}<{\centering}}
+\toprule[1.2pt]
+\multicolumn{1}{c|}{\multirow{2}{*}{Methods}} & \multicolumn{2}{c|}{FF++ (HQ)}  & \multicolumn{2}{c}{FF++ (LQ)}   \\ \cmidrule{2-5} 
+\multicolumn{1}{c|}{}                         & Acc       & AUC        & Acc        & AUC       \\ \midrule[1pt]
+Xception \cite{xception}                      & 95.04          & 96.30          & 84.11          & 92.50          \\ 
+F$^3$-Net (Xception) \cite{f3net}           & 97.31          & 98.10          & 86.89          & 93.30          \\ 
+EN-B4 \cite{efb4}                           & 96.63          & 99.18          & 86.67          & 88.20          \\ 
+MAT (EN-B4) \cite{mat}                      & 97.60          & 99.29          & 88.69          & 90.40          \\ 
+SPSL \cite{spsl}                            & 91.50          & 95.32          & 81.57          & 82.82          \\ 
+RFM \cite{rfm}                              & 95.69          & 98.79          & 87.06          & 89.83          \\ 
+Local-relation \cite{localrelation}         & 97.59          & 99.56          & 91.47          & 95.21          \\ 
+RECCE \cite{recce}                          & 97.06          & 99.32          & 91.03          & 95.02          \\ 
+CD-Net \cite{cdnet}                         & 98.75          & 99.90          & 88.12          & 95.20          \\ \midrule[1pt]
+Ours                                        & \textbf{99.24} & \textbf{99.95} & \textbf{92.76} & \textbf{96.85} \\ \bottomrule[1.2pt]
+\end{tabular}}
+\caption{ In-domain comparisons on FF++ dataset. Results contain Acc (\%) and AUC (\%) of high quality (HQ) and low quality (LQ).}\label{tab:indomain}
+\end{table}
+
+It can be seen that our method achieves the best performance on HQ and LQ with AUC of 99.95\% and 96.85\%, respectively, confirming that our method is effective for both high-quality and low-quality data.
+On the HQ dataset, the AUC of our method is 1.16\% higher than that of RFM which enlarges the model's attention by erasing sensitive areas. F$^3$-Net \cite{f3net}, SPSL \cite{spsl}, and CD-Net \cite{cdnet} consider the frequency domain information, and ours are all ahead of them. 
+On the LQ dataset, our AUC is 6.45\% higher than that of MAT \cite{mat} using the attention mechanism. Local-relation \cite{localrelation} fusing RGB and frequency domain information achieves the sub-optimal performance with the AUC of 95.21\%, while ours is still 1.64\% higher than that.
+
+Although the above methods use attention, frequency information, local consistency, etc. to learn more generalized features, the supervision of binary classification makes the semantic and texture features still exist in the feature space.
+In contrast, our method increases the discrimination between domains through the guide-space, and decouples forgery-irrelevant information from features, so as to learn more forgery-relevant representations.
+\subsection{Cross-domain evaluations for generalization}\label{sec:cross-domain}
+To verify the generalization of our method, we train the models using four forgery methods on the HQ dataset of FF++, and then test the cross-domain generalization on CelebDF and DFDC.
+We compare with many state-of-the-art methods, such as DCL \cite{dcl} using the contrastive learning (CL), F$^3$-Net \cite{f3net}, SRM \cite{srm}, Local-relation \cite{localrelation} considering frequency domain information, UIA-ViT \cite{uia-vit} based on the transformer, LTW \cite{ltw} based on the meta-learning, and reconstruction-learning based RECCE \cite{recce}.
+The corresponding AUC results are shown in Table \ref{tab:crossdomain}.
+
+\begin{table}[t]
+\centering 
+\begin{tabular}{l|cc}
+\toprule[1.2pt]
+Methods                            & CelebDF        & DFDC           \\ \midrule[1pt]
+Xception \cite{xception}           & 66.91          & 67.93          \\
+F$^3$-Net (Xception) \cite{f3net}  & 71.21          & 72.88          \\
+EN-B4 \cite{efb4}                  & 66.24          & 66.81          \\
+MAT(EN-B4) \cite{mat}              & 76.65          & 67.34          \\
+Face X-ray \cite{spsl}             & 74.20          & 70.00          \\
+RFM \cite{rfm}                     & 67.64          & 68.01          \\
+SRM \cite{srm}                     & 79.40          & 79.70          \\
+Local-relation \cite{localrelation} & 78.26          & 76.53          \\
+RECCE \cite{recce}                 & 77.39          & 76.75          \\
+LTW \cite{ltw}           
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

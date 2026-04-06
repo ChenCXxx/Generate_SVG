@@ -1,0 +1,189 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+\label{sec:intro}
+The domain gap between curated datasets (source domain) and real-world applications (target domain, \eg, on edge devices or robotic systems) often leads to deteriorated performance for object detectors. Meanwhile, accurate labels provided by humans are costly or even unavailable in practice. Aiming at maximizing performance in the target domain while minimizing human supervision, unsupervised domain adaptation mitigates the domain gap via adversarial training~\cite{chen2018domain,saito2019strong}, domain randomization~\cite{kim2019diversify}, image translation~\cite{inoue2018cross,hsu2020progressive,chen2020harmonizing}, \etc.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\columnwidth]{figures/teaser.pdf}
+    \caption{\textbf{Overview of Contrastive Mean Teacher.}
+    \textbf{Top:} Mean-teacher self-training~\cite{cai2019exploring,deng2021unbiased,li2022cross,chen2022learning} for unsupervised domain adaptation (left) and Momentum Contrast~\cite{he2020momentum} for unsupervised representation learning (right) share the same underlying structure, and thus can be naturally integrated into our unified framework, \emph{Contrastive Mean Teacher}.
+    \textbf{Bottom:} Contrastive Mean Teacher benefits unsupervised domain adaptation even when pseudo-labels are noisy. In this example, the teacher detector incorrectly detects the truck as a train and the bounding box is slightly off. Reinforcing this wrong pseudo-label in the student harms the performance. Contrarily, our proposed {\em object-level} contrastive learning still finds meaningful learning signals from it, by enforcing feature-level similarities between the same objects and dis-similarities between different ones.}
+    \label{fig:teaser}
+\end{figure}
+
+In contrast to the aforementioned techniques that explicitly model the domain gap, state-of-the-art domain adaptive object detectors~\cite{li2022cross,chen2022learning} follow a mean-teacher self-training paradigm~\cite{cai2019exploring,deng2021unbiased}, which explores a teacher-student mutual learning strategy to gradually adapt the object detector for cross-domain detection. As illustrated in Figure~\ref{fig:teaser}-top, the teacher generates pseudo-labels from detected objects in the target domain, and the pseudo-labels are then used to supervise the student's predictions. In return, the teacher's weights are updated as the exponential moving average (EMA) of the student's weights.
+
+Outside of unsupervised domain adaptation, contrastive learning~\cite{chen2020simple,he2020momentum,grill2020bootstrap,caron2020unsupervised} has served as an effective approach to learning from unlabeled data. Contrastive learning optimizes feature representations based on the similarities between instances in a fully self-supervised manner. {\em Intriguingly}, as shown in Figure~\ref{fig:teaser}-top, there in fact exist strong {\em alignment and synergy} between the Momentum Contrast paradigm~\cite{he2020momentum} from contrastive learning and the mean-teacher self-training paradigm~\cite{cai2019exploring,deng2021unbiased} from unsupervised domain adaptation: The momentum encoder (teacher detector) provides stable learning targets for the online encoder (student detector), and in return the former is smoothly updated by the latter's EMA. Inspired by this observation, we propose \emph{Contrastive Mean Teacher (CMT)} -- a unified framework with the two paradigms naturally integrated. We find that their benefits can compound, especially with contrastive learning facilitating the feature adaptation towards the target domain from the following aspects.
+
+First, mean-teacher self-training suffers from the poor quality of pseudo-labels, but contrastive learning does not rely on accurate labels. Figure~\ref{fig:teaser}-bottom shows an illustrative example: On the one hand, the teacher detector produces pseudo-labels in the mean-teacher self-training framework, but they can never be perfect (otherwise, domain adaptation would not be needed). The student is trained to fit its detection results towards these noisy pseudo-labels. Consequently, mis-predictions in the pseudo-labels become harmful learning signals and limit the target-domain student performance. On the other hand, contrastive learning does not require accurate labels for learning. Either separating individual instances~\cite{chen2020simple,he2020momentum} or separating instance clusters~\cite{caron2020unsupervised} (which do not necessarily coincide with the actual classes) can produce powerful representations. Therefore, CMT effectively learns to adapt its features in the target domain, even with noisy pseudo-labels.
+
+Second, by introducing an {\em object-level} contrastive learning strategy, we learn more fine-grained, localized representations that are crucial for object detection. Traditionally, contrastive learning treats data samples as monolithic instances but ignores the complex composition of objects in natural scenes. This is problematic as a natural image consists of multiple heterogeneous objects, so learning one homogeneous feature may not suffice for object detection. Hence, some recent contrastive learning approaches learn representations at the pixel~\cite{van2021unsupervised}, region~\cite{bai2022point}, or object~\cite{wei2021aligning} levels, for object detection {\em yet without considering the challenging scenario of domain adaptation}. Different from such prior work, in CMT we propose object-level contrastive learning to precisely adapt localized features to the target domain. In addition, we exploit predicted classes from noisy pseudo-labels, and further augment our object-level contrastive learning with {\em multi-scale} features, to maximize the beneficial learning signals.
+
+Third, CMT is a general-purpose framework and can be readily combined with existing work in mean-teacher self-training. The object-level contrastive loss acts as a {\em drop-in enhancement} for feature learning, and does not change the original training pipelines. Combined with the most recent methods (\eg, Adaptive Teacher~\cite{li2022cross}, Probabilistic Teacher~\cite{chen2022learning}), we achieve new state-of-the-art performance in unsupervised domain adaptation for object detection.
+
+To conclude, our contributions include:
+\begin{itemize}[leftmargin=*, noitemsep, nolistsep]
+    \item We identify the intrinsic alignment and synergy between contrastive learning and mean-teacher self-training, and propose an integrated unsupervised domain adaptation framework, Contrastive Mean Teacher (CMT).
+    \item We develop a general-purpose object-level contrastive learning strategy to enhance the representation learning in unsupervised domain adaptation for object detection. Notably, the benefit of our strategy becomes more pronounced with increased pseudo-label noise (see Figure~\ref{fig:noise}).
+    \item We show that our proposed framework can be combined with several existing mean-teacher self-training methods without effort, and the combination achieves state-of-the-art performance on multiple benchmarks, \eg, improving the adaptation performance on Cityscapes to Foggy Cityscapes from 49.8\% mAP to 51.9\% mAP.
+\end{itemize}
+
+
+Related Work
+\label{sec:related}
+\noindent\textbf{Unsupervised domain adaptation for object detection.}
+Unsupervised domain adaptation is initially studied for image classification~\cite{ganin2016domain}, and recently extended to object detection applications.
+Adversarial feature learning methods~\cite{chen2018domain,saito2019strong,xu2020exploring,vs2021mega} employ a domain discriminator and train the feature encoder and discriminator adversarially, so that domain-invariant visual features can be learned.
+Image-to-image translation methods~\cite{inoue2018cross,hsu2020progressive,chen2020harmonizing} synthesize source-like images from target-domain contents (or the other way around) using generative models (\eg, CycleGAN~\cite{zhu2017unpaired}) to mitigate domain gaps.
+More recently, the idea of Mean Teacher~\cite{tarvainen2017mean} is extended from semi-supervised object detection to unsupervised domain adaptation for object detection by \cite{cai2019exploring}. Following this exploration, Unbiased Mean Teacher (UMT)~\cite{deng2021unbiased} integrates image translation with Mean Teacher, Adaptive Teacher~\cite{li2022cross} applies weak-strong augmentation and adversarial training, and Probabilistic Teacher (PT)~\cite{chen2022learning} improves pseudo-labeling with uncertainty-guided self-training for both classification and localization. Though this line of research plays a leading role in unsupervised domain adaptation for object detection, the major challenge still comes from the poor quality of pseudo-labels generated by Mean Teacher.
+For a comprehensive overview of this topic, one may refer to \cite{oza2021unsupervised}.
+
+\noindent\textbf{Contrastive learning.}
+Contrastive loss~\cite{hadsell2006dimensionality} measures the representation similarities between sample pairs. Recently, contrastive learning successfully powers self-supervised visual representation pre-training, with the help of a large batch size~\cite{chen2020simple}, memory bank~\cite{he2020momentum}, asymmetric architecture~\cite{grill2020bootstrap}, or clustering~\cite{caron2020unsupervised}. Self-supervised contrastive learning has outperformed supervised pre-training in some settings~\cite{tomasev2022pushing}.
+To align contrastive pre-training with down-stream tasks other than image classification (\eg, object detection, semantic segmentation), more fine-grained approaches have been proposed based on masks~\cite{van2021unsupervised,henaff2021efficient}, objects~\cite{wei2021aligning}, or regions~\cite{bai2022point}.
+Our object-level contrastive learning strategy is inspired by this line of research. Instead of applying contrastive learning in pre-training visual backbones, we study how to improve domain adaptive object detectors using noisy pseudo-labels and object-level contrast. Technically, we construct contrastive pairs using the predicted classes in pseudo-labels and optimize multi-scale features, both of which are different from typical object-level contrastive learning. Recently, contrastive learning is explored in teacher-student learning for detection~\cite{yao2021g, vs2023towards}. However, our work is the \emph{first} to analyze the synergy between Mean Teacher~\cite{tarvainen2017mean} and contrastive learning. Moreover, we present a \emph{simple and general} framework CMT that does not rely on negative sample mining or selection.
+
+
+Approach
+\label{sec:approach}
+We introduce our proposed Contrastive Mean Teacher (CMT) in the following steps. In Section~\ref{sec:mean-teacher}, we first describe the mean-teacher self-training paradigm that is shared by recent methods~\cite{cai2019exploring,deng2021unbiased,li2022cross,chen2022learning} in unsupervised domain adaptation for object detection. Then in Section~\ref{sec:moco}, we connect mean-teacher self-training with Momentum Contrast~\cite{he2020momentum}, a typical contrastive learning method, to unify them into one framework, Contrastive Mean Teacher (see Figure~\ref{fig:main}-left). Finally in Section~\ref{sec:obj-contrast}, we introduce the object-level contrastive learning strategy used in CMT (see Figure~\ref{fig:main}-right). We include the pseudo-code for CMT in the supplementary material.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=2\columnwidth]{figures/main_new.pdf}
+    \caption{
+    \textbf{Our proposed Contrastive Mean Teacher (CMT) framework.}
+    \textbf{Left:} Mean-teacher self-training paradigm in unsupervised domain adaptation for object detection. The \textcolor{Orange}{unsupervised branch} uses unlabeled target-domain images and pseudo-labels generated by the teacher, which is updated by the student's exponential moving average (EMA), and performs \textcolor{NavyBlue}{object-level contrastive learning}; the \textcolor{LimeGreen}{supervised branch} uses labeled source-domain images.
+    \textbf{Right:} \textcolor{NavyBlue}{Object-level contrastive learning} strategy. Object-level features can be extracted from the teacher's and student's feature maps using the pseudo-labels. Contrastive loss is enforced for refined feature adaptation.}
+    \label{fig:main}
+\end{figure*}
+
+\subsection{Mean-teacher Self-training}
+\label{sec:mean-teacher}
+We build our approach upon recent unsupervised domain adaptation methods of the mean-teacher self-training paradigm. In this section, we summarize the mutual-learning process in this paradigm.
+
+\noindent\textbf{Overall structure.} This paradigm mainly consists of two detector models of the identical architecture, the teacher and the student. There is mutual knowledge transfer between the two, but the two directions of knowledge transfer are in different forms. Both models take inputs from the target domain. Figure~\ref{fig:teaser}-top-left shows a brief sketch of this mean-teacher self-training paradigm.
+
+\noindent\textbf{Teacher $\rightarrow$ Student knowledge transfer.} The teacher first detects objects in the target-domain input images. Then, pseudo-labels can be generated from the detection results by some post-processing (\eg, filtering by confidence scores and non-maximum suppression). The teacher's knowledge is transferred by fitting the student's predictions towards these pseudo-labels in the target domain. Standard bounding box regression loss and classification loss are minimized in this knowledge transfer. To ensure high quality of the pseudo-labels, the teacher's inputs are weakly augmented (\eg, simple cropping and flipping)~\cite{li2022cross,chen2022learning} or translated to the source-domain style~\cite{deng2021unbiased}. Meanwhile, the student's inputs are strongly augmented (\eg, blurring and color jittering) or not translated to the source-domain style.
+
+\noindent\textbf{Student $\rightarrow$ Teacher knowledge transfer.} The student is updated by minimizing the detection loss with gradient descent. We do not compute gradients for the teacher, though. The teacher's weights $\theta^\mathcal{T}$ are updated as the exponential moving average (EMA) of the student's weights $\theta^\mathcal{S}$:
+\begin{equation}
+\theta^\mathcal{T}\gets\alpha\theta^\mathcal{T} + (1-\alpha)\theta^\mathcal{S},
+\end{equation}
+where $\alpha\in[0, 1)$ is a momentum coefficient and is usually large (0.9996 in our setting) to ensure smooth teacher updates.
+Therefore, the teacher can be considered as an ensemble of historical students and provides more stable learning targets. The teacher is also used as the model for evaluation, due to its reliable target-domain performance.
+
+\subsection{Aligning Mean-teacher Self-training with Momentum Contrast}
+\label{sec:moco}
+In this section, we first briefly introduce Momentum Contrast (MoCo)~\cite{he2020momentum}, and then describe the alignment between mean-teacher self-training and MoCo.
+
+\noindent\textbf{Momentum Contrast.} MoCo is a widely used contrastive learning method for unsupervised visual representation learning. Figure~\ref{fig:teaser}-top-right shows the overall pipeline of this method. It has an online encoder $f(\cdot;\theta^\mathcal{Q})$ and a momentum encoder $f(\cdot;\theta^\mathcal{K})$ that share the same architecture but have different weights. Each input image $I_i$ is augmented into two different views $t^\mathcal{Q}(I_i)$ and $t^\mathcal{K}(I_i)$, and then fed into the two encoders to produce features $z^\mathcal{Q}_i=\text{Normalize}\left(f(t^\mathcal{Q}(I_i);\theta^\mathcal{Q})\right)$ and $z^\mathcal{K}_i=\text{Normalize}\left(f(t^\mathcal{K}(I_i);\theta^\mathcal{K})\right)$. The online encoder is optimized by minimizing the contrastive loss:
+\begin{equation}
+\mathcal{L}_\text{MoCo}=-\log\frac{\exp(z_i^\mathcal{Q}\cdot z_i^\mathcal{K}/\tau)}{\sum_{j\in\mathcal{D}}\exp(z_i^\mathcal{Q}\cdot z_j^\mathcal{K}/\tau)},
+\label{eq:moco}
+\end{equation}
+where $\tau>0$ is a temperature hyper-parameter and $\mathcal{D}$ is a memory bank of other image features. The feature pair $\langle z_i^\mathcal{Q}, z_i^\mathcal{K}\rangle$ in the numerator corresponds to the same original image, so it is called a positive pair; $\langle z_i^\mathcal{Q}, z_j^\mathcal{K}\rangle$ is a negative pair. In MoCo the memory bank contains a large amount of features generated by the momentum encoder in previous iterations, but in this work we find only using features within one image batch is adequate for our task.
+
+The weights of the momentum encoder $\theta^\mathcal{K}$ is updated as the EMA of the online encoder's weights $\theta^\mathcal{Q}$:
+\begin{equation}
+\theta^\mathcal{K}\gets\alpha\theta^\mathcal{K} + (1-\alpha)\theta^\mathcal{Q}.
+\end{equation}
+
+\noindent\textbf{Alignment between two paradigms.} The mean-teacher self-training and MoCo share the same intrinsic structure, though their designated tasks are different (see Figure~\ref{fig:teaser}):
+\begin{itemize}[leftmargin=*, noitemsep, nolistsep]
+    \item Two networks of the same architecture are learned jointly. The teacher detector (momentum encoder) is updated as the EMA of the student detector (online encoder), while the latter is updated by gradient descent of minimizing the detection loss (contrastive loss).
+    \item The image needs no label. It is augmented differently by $t^\mathcal{S},t^\mathcal{T}$ ($t^\mathcal{Q},t^\mathcal{K}$) into different views. However, the object classes and locations (semantic information) stay the same in two views, so that supervision can be enforced.
+    \item The teacher detector (momentum encoder) produces stable learning targets, because it evolves smoothly due to a large $\alpha$ and can be considered as an ensemble of previous models. In mean-teacher self-training, the teacher's data augmentation encourages stable pseudo-labels as well.
+\end{itemize}
+
+Therefore, we can naturally integrate the two paradigms into one unified framework, \emph{Contrastive Mean Teacher} (CMT, as shown in Figure~\ref{fig:main}). Since our focused task is still unsupervised domain adaptation for object detection, the main body of CMT follows the mean-teacher self-training paradigm as described in Section~\ref{sec:mean-teacher}, and contrastive learning is combined into it as a drop-in enhancement for feature adaptation. Specifically, we introduce an object-level contrastive learning strategy in CMT.
+
+\subsection{Object-level Contrastive Learning}
+\label{sec:obj-contrast}
+As described in Section~\ref{sec:mean-teacher}, the teacher generates pseudo-labels from target-domain images for the student to learn. In addition to the supervision at the final prediction level, we make better use of the pseudo-labels to refine the features, via object-level contrastive learning.
+
+\noindent\textbf{Extracting object-level features.} Both the teacher and student take the same image batch $\mathcal{I}$ from the target domain, but may transform $\mathcal{I}$ differently as $t^\mathcal{T}(\mathcal{I})$ and $t^\mathcal{S}(\mathcal{I})$. The teacher generates a set of $N$ pseudo-labels for $\mathcal{I}$, including bounding boxes $\mathcal{B}=\{B_1,\dots,B_N\}$ and predicted classes $\mathcal{C}=\{C_1,\dots,C_N\}$. From the input $t^\mathcal{T}(\mathcal{I})$, we can extract an intermediate feature map $F^\mathcal{T}$ from the teacher's backbone, and similarly get the student's feature map $F^\mathcal{S}$. We use RoIAlign~\cite{he2017mask}, a pooling operation for Regions of Interest (RoI), to extract object-level features and normalize them following the common practice~\cite{chen2020simple,he2020momentum}: $z^\mathcal{M}_i=\text{Normalize}(\text{ROIAlign}(F^\mathcal{M},B_i))$, where the model $\mathcal{M}\in\{\mathcal{T},\mathcal{S}\}$. If $t^\mathcal{T}$ and $t^\mathcal{S}$ change bounding boxes differently, we need to transform $B_i$ to align two feature maps.
+
+\noindent\textbf{Class-based contrast.} We perform contrastive learning between the teacher's and student's object-level features. Inspired by supervised contrastive learning~\cite{khosla2020supervised}, we utilize the teacher's predicted classes to exploit learning signals from pseudo-labels. The contrastive loss is formulated as:
+\begin{equation}
+\resizebox{\columnwidth}{!}{$
+\mathcal{L}_\text{contrast}=\frac{\lambda_\text{contrast}}{N}\sum_{i=1}^N\frac{-1}{|\mathcal{P}(i)|}\sum_{p\in \mathcal{P}(i)}\log\frac{\exp(z_i^\mathcal{S}\cdot z_p^\mathcal{T}/\tau)}{\sum_{j=1}^N\exp(z_i^\mathcal{S}\cdot z_j^\mathcal{T}/\tau)},
+$}
+\label{eq:contrast}
+\end{equation}
+where the positive pair set $\mathcal{P}(i)=\{p\mid C_p=C_i, p\in\{1,\dots,N\}\}$ includes all objects of the same predicted class as object $i$, and the balancing weight $\lambda_\text{contrast}>0$ and temperature $\tau>0$ are hyper-parameters. $\mathcal{L}_\text{contrast}$ is added to all other losses (\eg, supervised source-domain detection loss, unsupervised target-domain detection loss) in the mean-teacher self-training method.
+
+\noindent\textbf{Multi-scale features.}
+To provide additional learning signals, we perform our object-level contrastive learning at multiple feature levels of the backbone (\eg, VGG~\cite{simonyan2014very}, ResNet~\cite{he2016deep}). For example for the teacher, we have $k$ feature maps $\{F^\mathcal{T}_1,\dots,F^\mathcal{T}_k\}$ of multiple scales. We then scale bounding boxes accordingly, so that they still correspond to the same objects, and extract multi-scale features. The object-level contrastive losses (Equation~\ref{eq:contrast}) at multiple levels are added up and optimized together.
+
+
+Experiments
+\label{sec:experiment}
+\subsection{Datasets and Evaluation}
+Our proposed approach Contrastive Mean Teacher (CMT) is evaluated on the following datasets: Cityscapes, Foggy Cityscapes, KITTI, Pascal VOC, and Clipart1k.
+
+\noindent\textbf{Cityscapes}~\cite{cordts2016cityscapes} is a dataset of street scenes. It contains 2,975 training images and 500 validation images, collected from 50 cities. For object detection, we use 8 categories and the bounding boxes are converted from segmentation masks.
+
+\noindent\textbf{Foggy Cityscapes}~\cite{sakaridis2018semantic} is a dataset synthesized from Cityscapes by adding fog to the original images. Three fog levels (0.02, 0.01, 0.005) are simulated corresponding to different visibility ranges. We use the most challenging 0.02 split as well as all splits in our experiments.
+
+\noindent\textbf{KITTI}~\cite{geiger2012we} is another dataset of street scenes, but the data are collected using cameras and in cities that are different from Cityscapes. We use the training split of 7,481 images for domain adaptation, and only consider the car category shared by both KITTI and Cityscapes.
+
+\noindent\textbf{Pascal VOC}~\cite{everingham2010pascal} is a dataset of 20 categories of common objects in realistic scenes. We use the training split of Pascal VOC 2012 containing 11,540 images.
+
+\noindent\textbf{Clipart1k}~\cite{inoue2018cross} is a dataset of clip art images. It shares the same categories as Pascal VOC, but the image style differs. The training and validation splits both have 500 images.
+
+Following prior work, we conduct experiments on three domain adaptation tasks: From normal weather to adverse weather (Cityscapes $\rightarrow$ Foggy Cityscapes), across different cameras (KITTI $\rightarrow$ Cityscapes), and from realistic images to artistic images (Pascal VOC $\rightarrow$ Clipart1k). We use the training splits of both the source domain and the target domain in the unsupervised domain adaptation procedure, and use the validation split of the target domain for performance evaluation. For comparison, we use the mean average precision (mAP) metric with the 0.5 threshold for Intersection over Union (IoU), following the standard practice on the Pascal VOC object detection benchmark.
+
+We consider two base methods in mean-teacher self-training: Adaptive Teacher (AT)~\cite{li2022cross} and Probabilistic Teacher (PT)~\cite{chen2022learning}, since they are state-of-the-art unsupervised domain adaptation methods for object detection. We combine them with our Contrastive Mean Teacher (CMT) framework by adding the object-level contrastive learning objectives to their original adaptation pipelines.
+
+\begin{table*}[t]
+    \centering
+    \begin{tabular}{@{}l|l|c|c c c c c c c c|c@{}}
+        \toprule
+        Type & Method & Split & person & rider & car & truck & bus & train & motor & bike & mAP \\
+        \midrule
+        - & Source$^\dag$ & 0.02 & 22.4 & 26.6 & 28.5 & 9.0 & 16.0 & 4.3 & 15.2 & 25.3 & 18.4 \\
+        - & Oracle$^\dag$ & 0.02 & 39.5 & 47.3 & 59.1 & 33.1 & 47.3 & 42.9 & 38.1 & 40.8 & 43.5 \\
+        \midrule
+        DR & DM~\cite{kim2019diversify} & 0.02 & 30.8 & 40.5 & 40.5 & 27.2 & 38.4 & 34.5 & 28.4 & 32.3 & 34.6 \\
+        AFL + IT & HTCN~\cite{chen2020harmonizing} & 0.02 & 33.2 & 47.5 & 47.9 & 31.6 & 47.4 & 40.9 & 32.3 & 37.1 & 39.8 \\
+        AFL & MeGA-CDA~\cite{vs2021mega} & 0.02 & 37.7 & 49.0 & 52.4 & 25.4 & 49.2 & 46.9 & 34.5 & 39.0 & 41.8 \\
+        AFL & TIA~\cite{zhao2022task} & 0.02 & 34.8 & 46.3 & 49.7 & 31.1 & 52.1 & 48.6 & 37.7 & 38.1 & 42.3 \\
+        GR & SIGMA~\cite{li2022sigma} & 0.02 & 46.9 & 48.4 & 63.7 & 27.1 & 50.7 & 35.9 & 34.7 & 41.4 & 43.5 \\
+        \midrule
+        MT + GR & MTOR~\cite{cai2019exploring} & 0.02 & 30.6 & 41.4 & 44.0 & 21.9 & 43.4 & 40.2 & 31.7 & 33.2 & 35.1 \\
+        MT + IT & UMT~\cite{deng2021unbiased} & 0.02 & 33.0 & 46.7 & 48.6 & 34.1 & 56.5 & 46.8 & 30.4 & 37.3 & 41.7 \\
+        MT & PT~\cite{chen2022learning} & 0.02 & 40.2 & 48.8 & 59.7 & 30.7 & 51.8 & 30.6 & 35.4 & 44.5 & 42.7 \\
+        MT & PT~\cite{chen2022learning} + CMT (Ours) & 0.02 & 42.3 & 51.7 & 64.0 & 26.0 & 42.7 & 37.1 & 42.5 & 44.0 & 43.8 (+1.1) \\
+        MT + AFL & AT$^\ddag$~\cite{li2022cross} & 0.02 & 45.3 & 55.7 & 63.6 & 36.8 & 64.9 & 34.9 & 42.1 & 51.3 & 49.3 \\
+        MT + AFL & AT~\cite{li2022cross} + CMT (Ours) & 0.02 & 45.9 & 55.7 & 63.7 & 39.6 & 66.0 & 38.8 & 41.4 & 51.2 & \bf{50.3 (+1.0)} \\
+        \midrule\midrule
+        - & Source$^\dag$ & All & 27.9 & 33.4 & 40.4 & 12.1 & 23.2 & 10.1 & 20.7 & 30.9 & 24.8 \\
+        - & Oracle$^\dag$ & All & 41.2 & 49.1 & 61.6 & 32.6 & 56.6 & 49.0 & 37.9 & 42.4 & 46.3\\
+        \midrule
+        AFL + IT & PDA~\cite{hsu2020progressive} & All & 36.0 & 45.5 & 54.4 & 24.3 & 44.1 & 25.8 & 29.1 & 35.9 & 36.9 \\
+        AFL & ICR-CCR~\cite{xu2020exploring} & All & 32.9 & 43.8 & 49.2 & 27.2 & 36.4 & 36.4 & 30.3 & 34.6 & 37.4 \\
+        \midrule
+        MT & PT~\cite{chen2022learning} & All & 43.2 & 52.4 & 63.4 & 33.4 & 56.6 & 37.8 & 41.3 & 48.7 & 47.1 \\
+        MT & PT~\cite{chen2022learning} + CMT (Ours) & All & 45.6 & 55.1 & 66.5 & 34.0 & 59.4 & 42.4 & 43.9 & 47.4 & 49.3 (+2.2) \\
+        MT + AFL & AT$^\ddag$~\cite{li2022cross} & All & 46.3 & 55.9 & 64.3 & 38.5 & 61.1 & 39.3 & 40.8 & 52.3 & 49.8 \\
+        MT + AFL & AT~\cite{li2022cross} + CMT (Ours) & All & 47.0 & 55.7 & 64.5 & 39.4 & 63.2 & 51.9 & 40.3 & 53.1 & \bf{51.9 (+2.1)} \\
+        \bottomrule
+    \end{tabular}\\
+    \footnotesize{$^\dag$ Results from PT~\cite{chen2022learning}. $^\ddag$ Results reproduced using the released code by AT~\cite{li2022cross} to acquire complete results on the ``0.02'' split.}
+    \caption{\textbf{Domain adaptation from normal weather (Cityscapes) to adverse weather (Foggy Cityscapes).} Mean-teacher self-training (``MT'') methods are leading in unsupervised domain adaptation for object detection, outperforming adversarial feature learning (``AFL''), image-to-image translation (``IT''), domain randomization (``DR''), and graph reasoning (``GR'') methods. Our proposed Contrastive Mean Teacher (CMT) consistently improves mean-teacher methods including PT~\cite{chen2022learning} and AT~\cite{li2022cross} on both splits of Foggy Cityscapes (``0.02'' and ``All''), and achieves a new state-of-the-art result of \textbf{51.9\% mAP}. The performance gain of CMT is more significant when more unlabeled training data are available, revealing its potential in improving real-world applications.}
+    \label{tab:foggy}
+\end{table*}
+
+\subsection{Implementation Details}
+For a fair comparison with previous methods, we use the standard Faster R-CNN object detector~\cite{ren2015faster} with the VGG-16~\cite{simonyan2014very} (on Cityscapes) or ResNet-101~\cite{he2016deep} (on Pascal VOC) backbone as the detection model. As for hyper-parameters in all experiments, we set the temperature $\tau=0.07$ (following \cite{he2020momentum,khosla2020supervised}) and balancing weight $\lambda_\text{contrast}=0.05$ (around which we observe only minor performance variations). We extract multi-scale features from the last 4 stages of the backbone networks. Other hyper-parameters are the same as in the original implementation of AT and PT. Our implementation is based on Detectron2~\cite{wu2019detectron2} and the publicly available code by AT and PT. Each experiment is conducted on 4 NVIDIA A100 GPUs.
+
+\noindent\textbf{Post-processing pseudo-labels.} For AT, we observe that some objects are completely erased in the student's view due to the strong augmentation of Cutout~\cite{devries2017improved,zhong2020random}. In such cases, it is no longer meaningful to enforce their features to be similar to those in the teacher's view. We exclude such objects by an empirical criterion: In each object bounding box, we count the pixels where the RGB value difference between the teacher's and student's view is larger than 40. If the ratio of such pixels is higher than 50\%, then the object is considered as removed by Cutout and not included in our object-level contrastive learning. This criterion excludes about one third of all objects. For PT, since the uncertainty-aware pseudo-labels are represented as categorical distributions (for classification) and normal distributions (for location), we need to post-process them to acquire one-hot class labels and bounding boxes for our
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.

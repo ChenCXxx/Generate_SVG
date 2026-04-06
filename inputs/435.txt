@@ -1,0 +1,278 @@
+Please determine whether the image is the most important illustration that illustrates the new method the paper proposes
+
+Introduction
+
+
+The landscape of modern object detection systems has undergone significant transformation since the pioneering work DEtection TRansformer (DETR)~\cite{carion2020end}. Since DETR yielded impressive results in object detection, numerous subsequent research works such as Deformable-DETR~\cite{zhu2020deformable}, DINO~\cite{zhang2022dino}, and H-DETR~\cite{jia2022detrs} have further advanced this field. Moreover, these DETR-based approaches have been successfully extended to address various core visual recognition tasks, including instance / panoptic segmentation~\cite{cheng2021masked,li2022panoptic,wang2021max,Yu_2022_CVPR,yuan2020object,li2022mask,FangQueryInst,dong2021solq,yu2021soit}, pose estimation~\cite{stoffl2021end,li2021pose,shi2022end}, and multi-object tracking~\cite{chen2021transformer,meinhardt2022trackformer,sun2020transtrack}. The notable progress in these areas can be credited to ongoing advancements in enhancing the DETR-based framework for improved object detection performance.
+
+Considerable endeavors have been dedicated to advancing the performance of DETR-based methods from various perspectives. These efforts include refining transformer encoder and decoder architectures~\cite{meng2021CondDETR,zhang2022SAMDETR,zhu2020deformable,cfdetr2022,adamixer22cvpr,zhu2020deformable,gao2021fast,lin2021detr,lin2023detr} as well as redesigning of query formulations~\cite{wang2021anchor,liu2022dab,li2022dn,zhang2022dino}.
+While substantial research has been dedicated to developing accurate ranking mechanisms for dense one-stage object detectors like FCOS~\cite{tian2019fcos} or ATSS~\cite{zhang2020bridging}, few studies have specifically investigated this aspect for modern object detectors based on DETR. However, ranking mechanisms are vital in enhancing the average precision performance, particularly under high IoU thresholds.
+
+This study's primary focus revolves around constructing a high-quality object detector using DETR that exhibits strong performance at relatively high IoU thresholds. We acknowledge the criticality of establishing an accurate ranking order for bounding box predictions in constructing these detectors.
+To achieve this, we introduce two rank-oriented designs that effectively leverage the benefits of precise ranking information. First, we propose a rank-adaptive classification head and a query rank layer after each Transformer decoder layer. 
+Rank-adaptive classification head adjusts the classification scores using rank-aware learnable logit bias vectors, while the query rank layer fuses additional ranking embeddings into the object queries. Second, we propose two rank-oriented optimization techniques: a loss function modification and a matching cost design. These functions facilitate the ranking procedure of the model and prioritize more accurate bounding box predictions with higher IoU scores when compared to the ground truth.
+In summary, our rank-oriented designs consistently enhance object detection performance, particularly the AP scores under high IoU thresholds.
+To validate the efficacy of our approach, we conducted comprehensive experiments, showcasing consistent performance improvements across recent strong DETR-based methods such as H-DETR and DINO-DETR. For example, based on H-DETR, our method demonstrates a notable increase in AP$_{75}$ of +$2.1\%$ ($52.9\%$ vs. $55.0\%$) and +$2.7\%$ ($55.1\%$ vs. $57.8\%$) when utilizing ResNet-$50$ and Swin-T backbones, respectively.
+It is worth highlighting that our approach achieves competitive performance, reaching an $50.2\%$ AP in the 1$\times$ training schedule on the COCO \texttt{val} dataset. These results serve as compelling evidence for the effectiveness and reliability of our proposed methodology.
+
+
+Related Work
+
+
+\paragraph{DETR for Object Detection.}
+Since the groundbreaking introduction of transformers in 2D object detection by the pioneering work DETR~\cite{carion2020end}, numerous subsequent studies\cite{meng2021CondDETR,gao2021fast,dai2021dynamic,wang2021anchor,ma2023revisiting} have developed diverse and advanced extensions based on DETR. This is primarily due to DETR's ability to eliminate the need for hand-designed components such as non-maximum suppression (NMS).
+One of the first foundational developments, Deformable-DETR~\cite{zhu2020deformable}, introduced a multi-scale deformable self/cross-attention scheme, which selectively attends to a small set of key sampling points in a reference bounding box. This approach yielded improved performance compared to DETR, particularly for small objects. 
+Furthermore, DAB-DETR~\cite{liu2022dab} and DN-DETR~\cite{li2022dn} demonstrated that a novel query formulation could also enhance performance.
+The subsequent work, DINO-DETR~\cite{zhang2022dino}, achieved state-of-the-art results in object detection tasks, showcasing the advantages of DETR design by addressing the inefficiency caused by the one-to-one matching scheme.
+In contrast to these works, our focus lies in the design of the rank-oriented mechanism for DETR.
+We propose rank-oriented architecture designs and
+rank-oriented matching cost and loss function designs to construct a highly performant DETR-based object detector with competitive AP$_{75}$ results.
+
+\paragraph{Ranking for Object Detection.}
+There exists a lot of effort to study how to improve the ranking for object detection tasks.
+For example,
+IoU-Net~\cite{jiang2018acquisition} constructed an additional IoU predictor and an IoU-guided NMS scheme that considers both classification scores and localization scores during inference. 
+Generalized focal loss~\cite{li2020generalized} proposed a quality focal loss to act as a joint representation of the IoU score and classification score.
+VarifocalNet~\cite{zhang2021varifocalnet} introduced an IoU-aware classification score to achieve a more accurate ranking of candidate detection results.
+TOOD~\cite{feng2021tood} defined a high-order combination of the classification score and the IoU score as the anchor alignment metric to encourage the object detector to focus on high-quality anchors dynamically.
+In addition, ranking-based loss functions~\cite{qian2020dr,chen2020ap,oksuz2020ranking,oksuz2021rank,kahraman2023correlation} are designed to encourage the detector to rank the predicted bounding boxes according to their quality and penalizes incorrect rankings.
+The very recent con-current work Stable-DINO~\cite{liu2023detection} and Align-DETR~\cite{cai2023align} also applied the idea of IoU-aware classification score to improve the loss and matching design for DINO-DETR~\cite{zhang2022dino}.
+In contrast to the aforementioned endeavors, we further introduce a query rank scheme aimed to reduce false positive rates.
+
+\paragraph{Dynamic Neural Networks.}
+In contrast to static models, which have fixed computational graphs and parameters at the inference stage, dynamic neural networks~\cite{han2021dynamic,wang2023computation} can adapt their structures or parameters to different inputs, leading to notable advantages in terms of performance, adaptiveness~\cite{yang2023hundreds, guo2023zero}, computational efficiency~\cite{yue2023offline,yue2023vcr,yang2023boosting,wang2022efficient}, and representational power~\cite{pu2023adaptive}. Dynamic networks are typically categorized into three types: sample-wise~\cite{huang2017multi,wang2021not,han2022learning, han2023dynamic,pu2023fine}, spatial-wise~\cite{wang2021glancing,huang2022glance,han2022latency,han2023latency,han2021spatially}, and temporal-wise~\cite{hansen2019neural,wang2021adaptive}. In this work, we introduce a novel query-wise dynamic approach, which dynamically integrates ranking information into the object queries based on their box quality ranking, endowing object queries with better representation ability.
+
+
+
+
+Approach
+Above all, we revisit the overall pipeline of the modern DETR-based methods~\cite{jia2022detrs,zhang2022dino} in Section~\ref{method.1}.
+The detailed design of the proposed method, including the rank-oriented architecture design and optimization design, is subsequently illustrated in Section~\ref{method.2} and Section~\ref{method.3}.
+Eventually, we discuss the connections and differences between our approach and related works in Section~\ref{method.4}.
+
+\subsection{Preliminary}\label{method.1}
+
+\noindent\paragraph{Pipeline.} Detection Transformers (DETRs) process an input image $\mathcal{I}$ by first passing it through a backbone network and a Transformer encoder to obtain a sequence of enhanced pixel embeddings $\mathcal{X}=\{\mathbf{x}_1,\mathbf{x}_2,\cdots,\mathbf{x}_\textsf{N}\}$. The enhanced pixel embeddings, along with a default set of object query embeddings $\mathcal{Q}^0=\{\mathbf{q}_1^0,\mathbf{q}_2^0,\cdots,\mathbf{q}_n^0\}$, are then fed into the Transformer decoder. After each Transformer decoder layer, task-specific prediction heads are applied to the updated object query embeddings to generate a set of classification predictions $\mathcal{P}^l=\{\mathbf{p}_1^l, \mathbf{p}_2^l,\cdots, \mathbf{p}_n^l\}$ and bounding box predictions $\mathcal{B}^l=\{\mathbf{b}_1^l, \mathbf{b}_2^l,\cdots, \mathbf{b}_n^l\}$, respectively, where $l \in \{1, 2, \cdots, L\}$ denotes the layer index of the Transformer decoder. Finally, DETR performs one-to-one bipartite matching between the predictions and the ground-truth bounding boxes and labels $\mathcal{G}=\{\mathbf{g}_1, \mathbf{g}_2, \cdots,\mathbf{g}_m\}$ by associating each ground truth with the prediction that has the minimal matching cost and applying the corresponding supervision.
+
+\noindent\paragraph{Object Query.} To update the object query $\mathcal{Q}^0$ after each Transformer decoder layer, typically, DETRs form a total of $L$ subsets, i.e., $\{\mathcal{Q}^1, \mathcal{Q}^2, \cdots, \mathcal{Q}^L\}$, for $L$ Transformer decoder layers. For both the initial object query $\mathcal{Q}^0$ and the updated ones after each layer, each $\mathcal{Q}^l$ is formed by adding two parts: content queries $\mathcal{Q}^l_c=\{\mathbf{q}^l_{c,1},\mathbf{q}^l_{c,2},\cdots,\mathbf{q}^l_{c,n}\}$ and position queries $\mathcal{Q}^l_p=\{\mathbf{q}^l_{p,1},\mathbf{q}^l_{p,2},\cdots,\mathbf{q}^l_{p,n}\}$. The content queries capture semantic category information, while the position queries encode prior positional information such as the distribution of bounding box centers and sizes.
+
+\noindent\paragraph{Ranking in DETR.}
+Rank-oriented design plays a crucial role in modern object detectors, particularly in achieving superior average precision (AP) scores under high Intersection over Union (IoU) thresholds. The success of state-of-the-art detectors, such as H-DETR and DINO-DETR, relies on using simple rank-oriented designs, specifically a two-stage scheme and mixed query selection. These detectors generate the initial positional query $\mathcal{Q}_p^0$ by ranking the dense coarse bounding box predictions output by the Transformer encoder feature maps and selecting the top ${\sim}300$ confident ones. During evaluation, they gather $n\times K$ bounding box predictions based on the object query embedding $\mathcal{Q}^L$ produced by the final Transformer decoder layer (each query within $\mathcal{Q}^L$ generates $K$ predictions associated with each category), sort them by their classification confidence scores in descending order, and only return the top ${\sim}100$ most confident predictions.
+
+In this work, we focus on further extracting the benefits brought by the ranking-oriented designs and introduces a set of improved designs to push the envelope of high-quality object detection performance.
+The subsequent discussion provides further elaboration on these details.
+
+
+\subsection{Rank-oriented Architecture Design: ensure lower FP and FN}\label{method.2}
+While the original rank-oriented design only incorporates rank information into the initial positional query $\mathcal{Q}_p^0$, we propose an enhanced approach that leverages the benefits of sorting throughout the entire Transformer decoder process. Specifically, we introduce a rank-adaptive classification head after each Transformer decoder layer, and a query rank layer before each of the last $L-1$ Transformer decoder layers. This novel design is intended to boost the detection of true positives while suppressing false positives and correcting false negatives, leading to lower false positive rates and false negative rates. \Cref{fig:our_method} illustrates the detailed pipeline of our rank-oriented architecture designs.
+
+\noindent \textbf{Rank-adaptive Classification Head.}
+We modify the original classification head by adding a set of learnable logit bias vectors $\mathcal{S}^l=\{\mathbf{s}_1^l, \mathbf{s}_2^l,\cdots, \mathbf{s}_n^l\}$ to the classification scores $\mathcal{T}^l=\{\mathbf{t}_1^l, \mathbf{t}_2^l,\cdots, \mathbf{t}_n^l\}$ (before $\operatorname{Sigmoid}(\cdot)$ function) associated with each object query independently.
+The classification predictions of the $l$-th decoder layer $\mathcal{P}^l=\{\mathbf{p}_1^l, \mathbf{p}_2^l,\cdots, \mathbf{p}_n^l\}$ can be formulated as:
+\begin{align}
+\mathbf{p}^l_i = \operatorname{Sigmoid}(\mathbf{t}^l_i\bluetext{ + \mathbf{s}^l_i}),\quad \mathbf{t}^l_i=\operatorname{MLP}_\text{cls}(\mathbf{q}^l_i),
+\label{eq:logit_bias}
+\end{align}
+where $\mathcal{Q}^l=\{\mathbf{q}_1^l, \mathbf{q}_2^l,\cdots, \mathbf{q}_n^l\}$ represents the output embedding after the $l$-th Transformer decoder layer.
+The hidden dimensions of both $\mathbf{t}^l_i$ and $\mathbf{s}^l_i$ are the number of categories, i.e., $K$.
+The overall pipeline is shown in \Cref{fig:our_method}(b).
+It is noteworthy that we can directly incorporate a set of learnable embedding, denoted as $\mathcal{S}^l$, into the classification scores $\mathcal{T}^l$. This is practicable because the associated $\mathcal{Q}^l$ \emph{has already been sorted} in the query rank layer, as explained below.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[t]{1\textwidth}
+    \begin{subfigure}[b]{0.25\textwidth}
+    {\includegraphics[scale=0.33]{img/RankDETR_appro1_v3.pdf}}
+    \caption{\footnotesize{Rank-oriented Arch.}}
+    \end{subfigure}
+\hspace{2mm}
+    \begin{subfigure}[b]{0.36\textwidth}
+    {\includegraphics[scale=0.29]{img/RankDETR_appro2_v3.pdf}}
+    \caption{\footnotesize{Rank-adaptive Cls. Head}}
+    \label{fig:our_method:rch}
+    \end{subfigure}
+\hspace{-5mm}
+    \begin{subfigure}[b]{0.375\textwidth}
+    {\includegraphics[scale=0.305]{img/RankDETR_appro3_v3.pdf}}
+    \caption{\footnotesize{Query Rank Layer}}
+    \label{fig:our_method:qrl}
+    \end{subfigure}
+\end{minipage}
+\caption{\small{\textbf{Illustrating the rank-oriented architecture design.} (a) The rank-oriented architecture consists of a query rank layer before each of the last $L-1$ Transformer decoder layer and a rank-adaptive classification head after each Transformer decoder layer. (b) The rank-adaptive classification head learns to adjust the classification scores accordingly. (c) The query rank layer exploits the latest ranking information to recreate the content queries and position queries used as the input to the following Transformer decoder layer.}}
+\label{fig:our_method}
+\end{figure*}
+\noindent \textbf{Query Rank Layer.}
+We further introduce a query rank layer before each of the last $L-1$ Transformer decoder layers to regenerate the sorted positional query and content query accordingly.
+
+First, we explain how to construct the rank-aware content query:
+\begin{align}
+\overline{\mathcal{Q}}_c^{l} = \operatorname{MLP}_\text{fuse}(\hat{\mathcal{Q}}_{c}^{l-1} \| \mathcal{C}^{l}), \quad \hat{\mathcal{Q}}_{c}^{l-1} = \operatorname{Sort}(\mathcal{Q}_{c}^{l-1}; \mathcal{\hat{P}}^{l-1}), 
+\end{align}
+where we first sort the output of $(l-1)$-th Transformer decoder layer $\mathcal{Q}_{c}^{l-1}$ in descending order of $\mathcal{\hat{P}}^{l-1}=\text{MLP}_\text{cls}(\mathcal{Q}_{c}^{l-1})$.
+Since each element in $\mathcal{\hat{P}}^{l-1}$ is a $K$-dimensional vector, we use the maximum value over $K$ categories (classification confidence) as the ranking basis.
+The operation symbol $\operatorname{Sort}(A;B)$ sorts elements within $A$ based on the decreasing order of the elements in $B$.
+Then, we concatenate ($\|$) the sorted object content queries $\hat{\mathcal{Q}}_{c}^{l-1}$ with a set of randomly initialized content query $\mathcal{C}^{l}$ in the feature dimension, where $l \in \{2, \cdots, L \}$. This set of content query $\mathcal{C}^{l}$ is optimized in an end-to-end manner. Subsequently, we fuse them back to the original dimension using a fully connected layer ($\operatorname{MLP}_\text{fuse}$).
+In other words, for each Transformer decoder layer, we maintain a set of rank-aware static content embeddings shared across different samples. These embeddings effectively model and utilize the distribution of the most frequent semantic information~\cite{he2022rankseg}.
+
+Next, we present the mathematical formulations for computing the rank-aware positional query.
+To align the order of the positional queries with the ranked content query, we either sort or recreate the positional queries, depending on the initialization method of positional queries for different DETR-based detectors.
+For H-DETR, which inherits Deformable DETR and uses the same positional query  for all $L$ Transformer decoder layers, we simply sort the positional query of the previous layer:
+
+\begin{equation}
+\setlength{\abovedisplayskip}{-5pt}
+\setlength{\belowdisplayskip}{-5pt}
+\begin{aligned}
+\label{eq:pe_hdetr}
+\overline{\mathcal{Q}}_p^{l} = \operatorname{Sort}(\overline{Q}_p^{l-1}; \mathcal{\hat{P}}^{l-1}), 
+\end{aligned}
+\end{equation}
+
+For DINO-DETR, which generates new positional queries from the bounding box predictions in each Transformer decoder layer, we sort the bounding box predictions of each object query and recreate the positional query embedding from the sorted boxes:
+
+\begin{equation}
+\setlength{\abovedisplayskip}{-5pt}
+\setlength{\belowdisplayskip}{-5pt}
+\begin{aligned}
+\label{eq:pe_dino}
+\overline{\mathcal{Q}}_p^{l} = \operatorname{PE}(\overline{\mathcal{B}}^{l-1}), \quad \overline{\mathcal{B}}^{l-1} = \operatorname{Sort}({\mathcal{B}}^{l-1}; \mathcal{\hat{P}}^{l-1}), 
+\end{aligned}
+\end{equation}
+
+where $\mathcal{B}^{l-1}$ and $\mathcal{\hat{P}}^{l-1}$ represent the bounding box predictions and classification predictions based on the output of $(l-1)$-th Transformer decoder layer, i.e., $\mathcal{Q}^{l-1}$.
+$\operatorname{PE}(\cdot)$ contains a sine position encoding function and a small multilayer perceptron to recreate the positional query embedding $\overline{\mathcal{Q}}_p^{l}$.
+In other words, each element of $\overline{\mathcal{Q}}_p^{l}$ is estimated by $\overline{\mathbf{q}}_{p,i}^{l} = \operatorname{PE}(\overline{\mathbf{b}}_{i}^{l-1})$.
+ In \Cref{fig:our_method}(c), we illustrate the positional query update process for H-DETR~(\Cref{eq:pe_hdetr}) and omit that process for DINO-DETR~(\Cref{eq:pe_dino}), because we primarily conducted experiments on H-DETR.
+
+Finally, we transmit the regenerated rank-aware positional query embedding and content query embedding to the subsequent Transformer decoder layer. 
+\noindent \textbf{Analysis.} The key motivations behind these two rank-oriented architecture designs are adjusting the classification scores of the object queries according to their ranking order information. Within each Transformer decoder layer, we incorporate two sets of learnable representations: the logit bias vectors $\mathcal{S}^l$ and the content query vectors $\mathcal{C}^l$.
+By leveraging these two rank-aware representations, we have empirically demonstrated the capability of our approach to effectively address false positives (oLRP$_{\text{FP}}$: $24.5\%$$\to$$24.1\%$) and mitigate false negatives (oLRP$_{\text{FN}}$: $39.5\%$$\to$$38.6\%$). For a more comprehensive understanding of our findings, please refer to the experiment section.
+\subsection{Rank-oriented Matching Cost and Loss: boost the AP under high IoU thresholds}\label{method.3}
+
+The conventional DETR and its derivatives specify the Hungarian matching cost function $\mathcal{L}_{\textrm{Hungarian}}$ and the training loss function $\mathcal{L}$ using the identical manner, as shown below:
+\begin{align}
+\label{eq.loss}
+- \lambda_{1} \mathrm{GIoU}(\hbb, \bb) + \lambda_{2}  \ell_1(\hbb, \bb) + \lambda_{3} \mathrm{FL}(\hat{\mathbf{p}}[c]),
+\end{align}
+where we use $\hbb$, $\hbp$ (or $\bb$, $c$) to represent the predicted (or ground-truth) bounding box and classification score respectively.
+$c$ corresponds to the ground-truth semantic category of $\bb$. In addition, we use the notation $\mathrm{FL}(\cdot)$ to represent the semantic classification focal loss~\cite{lin2017focal}.
+We propose to enhance the rank-oriented design by introducing the GIoU-aware classification head (supervised by the proposed GIoU-aware classification loss) and the high-order matching cost function scheme as follows.
+
+\textbf{GIoU-aware Classification Loss.}
+Instead of applying the binary target to supervise the classification head,
+we propose to use the normalized GIoU scores to supervise the classification prediction:
+\begin{align}
+\label{eq:fl_giou}
+\mathrm{FL}^{\textrm{GIoU}}(\hat{\mathbf{p}}[c]) = -|t-\hat{\mathbf{p}}[c]|^\gamma \cdot [ t \cdot \log(\hat{\mathbf{p}}[c]) + (1-t) \cdot \log(1-\hat{\mathbf{p}}[c]) ],
+\end{align}
+where we let $t = (\mathrm{GIoU}(\hbb, \bb) + 1)/2$, and we denote the GIoU-aware classification loss as $\mathrm{FL}^{\textrm{GIoU}}(\cdot)$.
+To incorporate both semantic classification and localization accuracy, we modify the original classification head to a GIoU-aware classification head supervised by the above loss function.
+When $t=1$, $\mathrm{FL}^{\textrm{GIoU}}(\cdot)$ simplifies to the original focal loss, denoted as $\mathrm{FL}(\cdot)$.
+Furthermore, we compare our results with the varifocal loss~\cite{zhang2021varifocalnet}, and we provide its mathematical formulation below:
+\begin{align}
+\label{eq:vfl}
+\mathrm{VFL}(\hat{\mathbf{p}}[c]) = -t \cdot [ t \cdot \log(\hat{\mathbf{p}}[c]) + (1-t) \cdot \log(1-\hat{\mathbf{p}}[c]) ].
+\end{align}
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[t]{1\textwidth}
+\begin{subfigure}[b]{0.475\textwidth}
+{\includegraphics[width=\textwidth,height=15mm]{img/Rank_match_loss_1_v2.pdf}}
+\caption{\footnotesize{The original Matching Cost and Loss}}
+\end{subfigure}
+\hspace{2mm}
+\begin{subfigure}[b]{0.5\textwidth}
+{\includegraphics[width=\textwidth,height=15mm]{img/Rank_match_loss_2_v2.pdf}}
+\caption{\footnotesize{Rank-oriented Matching Cost and Loss}}
+\end{subfigure}
+\end{minipage}
+\caption{\small{\textbf{Illustrating the rank-oriented matching cost and loss design.} (a) The original DETR and its variants use a classification head and a bounding box regression head to perform predictions. The matching cost function is a linear combination of the classification scores and bounding box overlap scores. (b) The rank-oriented matching cost and loss scheme uses a GIoU-aware classification head and high-order matching cost function to prioritize predictions of more accurate localization accuracy.}}
+\label{fig:our_method_loss}
+\end{figure*}
+\textbf{High-order Matching Cost.}
+In contrast to utilizing the Hungarian algorithm with a matching cost defined as the weighted sum of classification cost, $\ell_1$ loss, and GIoU loss, we propose employing a high-order matching cost function that captures a more intricate combination of the classification score and the IoU scores:
+\begin{align}
+\label{eq.loss3}
+\mathcal{L}^{\textrm{high-order}}_{\textrm{Hungarian}} = \hat{\mathbf{p}}[c] \cdot {\text{IoU}}^{\alpha},
+\end{align}
+where $\text{IoU}$ represents the intersection over union scores between the predicted bounding box and the ground truth one. We adopt a larger value of ${\alpha}$ (e.g., \textgreater $2$) to prioritize the importance of localization accuracy, thereby promoting more accurate bounding box predictions and downgrading the inaccurate ones. It is worth noting that we use a high-order matching cost from the middle training stage, as most predictions exhibit poor localization quality during the early training stage.
+\noindent \textbf{Analysis.}
+The rank-oriented loss function and matching cost are designed to enhance object detection performance at high IoU thresholds. The GIoU-aware classification loss facilitates the ranking procedure by endowing the classification score with GIoU-awareness, resulting in more accurate ranking in the query ranking layer. Meanwhile, the high-order matching cost selects the queries with both high classification confidence and superior IoU scores as positive samples, effectively suppressing challenging negative predictions with high classification scores but low localization IoU scores. This is achieved by magnifying the advantage of a more accurate localization score using $\gamma^{\alpha}$, where $\gamma$ is the ratio of accurate localization score to less accurate score. Empirical results show significant boosts in AP$_{75}$ with GIoU-aware classification loss ($52.9\%$$\to$$54.1\%$) or high-order matching cost design ($52.9\%$$\to$$54.0\%$). Detailed comparisons are provided in the experiment section.
+\subsection{Discussion}\label{method.4}
+
+The concept of GIoU-aware classification loss has been explored in several prior works~\cite{jiang2018acquisition,li2020generalized,zhang2021varifocalnet,feng2021tood} predating the era of DETR. These works aimed to address the discrepancy between classification scores and localization accuracy. In line with recent concurrent research~\cite{cai2023align,liu2023detection}, our method shares the same insight in designing rank-oriented matching cost and loss functions.
+However, our approach distinguishes itself by emphasizing the ranking aspect and introducing an additional rank-oriented architecture design, which includes the rank-adaptive classification head and query rank layer. Furthermore, our empirical results demonstrate the complementarity between the rank-oriented architecture design and the rank-oriented matching cost and loss design.
+
+
+
+Experiment
+
+
+\subsection{Experiment Setting}
+\label{exp:setup}
+We perform object detection experiments using the COCO object detection benchmark~\cite{Lin2014COCO} with detrex~\cite{ren2023detrex} toolbox. Our model is trained on the \texttt{train} set and evaluated on the \texttt{val} set. We adhere to the same experimental setup as the original papers for H-DETR~\cite{jia2022detrs} and DINO-DETR~\cite{zhang2022dino}.
+\subsection{Main Results}
+\label{exp:main}
+\noindent \textbf{Comparison with competing methods.} \Cref{tab:competing} compares Rank-DETR with other high-performing DETR-based methods on the COCO object detection \texttt{val} dataset. The evaluation demonstrates that Rank-DETR achieves remarkable results, attaining an AP score of $50.2\%$ with only $12$ training epochs. This performance surpasses H-DETR~\cite{jia2022detrs} by +$1.5\%$ and outperforms the recent state-of-the-art method DINO-DETR~\cite{zhang2022dino} by +$1.2\%$ AP. Notably, we observe significant improvements in AP$_{75}$, highlighting the advantage of our approach at higher IoU thresholds.
+
+\begin{table*}[h]
+\centering
+\resizebox{1.0\linewidth}{!}
+{
+\tablestyle{7.5pt}{1.2}
+\begin{tabular}{l|c|c|c|cccccc}
+   Method & Backbone & \#query & \#epochs & AP & AP$_{50}$ & AP$_{75}$ & AP$_{S}$ & AP$_{M}$ & AP$_{L}$\\
+    \shline
+    Deformable-DETR~\cite{zhu2020deformable}      & R$50$ & $300$ & $50$ & $46.9$ & $65.6$ & $51.0$ & $29.6$ & $50.1$ & $61.6   $ \\
+    DN-DETR~\cite{li2022dn}                       & R$50$ & $300$ & $12$ & $43.4$ & $61.9$ & $47.2$ & $24.8$ & $46.8$ & $59.4$ \\
+    DINO-DETR~\cite{zhang2022dino}                & R$50$ & $900$ & $12$ & $49.0$ & $66.6$ & $53.5$ & $32.0$ & $52.3$ & $63.0$ \\
+    H-DETR~\cite{jia2022detrs}        & R$50$ & $300$ & $12$ & $48.7$ & $66.4$ & $52.9$ & $31.2$ & $51.5$ & $63.5$ \\
+    \hline
+    Rank-DETR & R$50$ & $300$ & $12$ & $50.2$ & $67.7$ & $55.0$ & $34.1$ & $53.6$ & $64.0$ \\
+\end{tabular}
+}
+\caption{\small{Comparison with previous highly performant DETR-based detectors on COCO \texttt{val2017} with R$50$.}}
+\label{tab:competing}
+\end{table*}
+
+\begin{table}[t]
+\begin{minipage}[t]{1\linewidth}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+\definecolor{deepgreen}{rgb}{0.07, 0.53, 0.03}
+\centering
+\footnotesize
+\label{tab:improve_hdetr}
+\resizebox{1.0\linewidth}{!}
+{
+\tablestyle{10pt}{1.4}
+\begin{tabular}{l|c|c|ccccccc}
+Method    & Backbone & \#epochs & AP & AP$_{50}$ & AP$_{75}$ & AP$_{S}$ & AP$_{M}$ & AP$_{L}$\\
+\shline
+H-Deformable-DETR & R$50$   & $12$ & $48.7$ & $66.4$ & $52.9$ & $31.2$ & $51.5$ & $63.5$ \\
+Ours              & R$50$   & $12$ & $50.2$ & $67.7$ & $55.0$ & $34.1$ & $53.6$ & $64.0$ \\ \hline
+H-Deformable-DETR & Swin-T  & $12$ & $50.6$ & $68.9$ & $55.1$ & $33.4$ & $53.7$ & $65.9$ \\
+Ours              & Swin-T  & $12$ & $52.7$ & $70.6$ & $57.8$ & $35.3$ & $55.8$ & $67.5$ \\
+\hline
+H-Deformable-DETR & Swin-L  & $12$ & $55.9$ & $75.2$ & $61.0$ & $39.1$ & $59.9$ & $72.2$ \\
+Ours              & Swin-L  & $12$ & $57.3$ & $75.9$ & $62.9$ & $40.8$ & $61.3$ & $73.2$ \\ \hline
+H-Deformable-DETR & R$50$   & $36$ & $50.0$ & $68.3$ & $54.4$ & $32.9$ & $52.7$ & $65.3$ \\
+Ours              & R$50$   & $36$ & $51.2$ & $68.9$ & $56.2$ & $34.5$ & $54.9$ & $64.9$ \\ \hline
+H-Deformable-DETR & Swin-T  & $36$ & $53.2$ & $71.5$ & $58.2$ & $35.9$ & $56.4$ & $68.2$ \\
+Ours              & Swin-T  & $36$ & $54.7$ & $72.5$ & $60.0$ & $37.7$ & $58.5$ & $69.5$ \\ \hline
+H-Deformable-DETR & Swin-L  & $36$ & $57.1$ & $76.2$ & $62.5$ & $39.7$ & $61.4$ & $73.4$ \\
+Ours              & Swin-L  & $36$ & $58.2$ & $76.7$ & $63.9$ & $42.4$ & $62.2$ & $73.6$ \\
+\end{tabular}
+}
+\caption{\small{Improving object detection results based on H-DETR.}
+\label{tab:compare_to_hdetr}
+}
+\end{minipage}
+\begin{minipage}[t]{1\linewidth}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+\definecolor{deepgreen}{rgb}{0.07, 0.53, 0.03}
+\centering
+
+
+<image>
+
+Please determine whether the image is the most important scientific illustration of the current paper.
