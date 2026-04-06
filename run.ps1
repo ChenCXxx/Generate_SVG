@@ -19,5 +19,6 @@ if ($null -eq $files) {
         $idx = $f.BaseName
         Write-Host "--- Processing: $idx ---"
         python autofigure2.py --method_file "$($f.FullName)" --output_dir "outputs\$idx"
+    }
 }
 Write-Host "Success!"
